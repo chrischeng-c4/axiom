@@ -43,7 +43,6 @@ fn baseline() -> FeatureBaseline {
         .expect("versioned competitor feature baseline")
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in competitor_feature_parity.rs is hand-written pending codegen support">
 fn matrix() -> Vec<FeatureRow> {
     baseline().rows
 }
@@ -86,7 +85,6 @@ fn competitor_baseline_has_versioned_official_provenance() {
         }
     }
 }
-// </HANDWRITE>
 
 #[test]
 fn rabbitmq_topic_exchange_is_routing_peer_not_replay_baseline() {

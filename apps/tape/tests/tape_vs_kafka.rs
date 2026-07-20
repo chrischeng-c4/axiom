@@ -38,32 +38,37 @@ impl Drop for KafkaContainer {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "release-only mandatory competitor gate; run via Tape EC"]
 async fn tape_beats_kafka_on_local_backlog_replay() {
-    if cfg!(debug_assertions) {
-        eprintln!("release-only competitor gate: rerun with `cargo test --release`");
-        return;
-    }
-    let Some((container, bootstrap)) = spawn_kafka_broker().await else {
-        eprintln!("skipping tape_beats_kafka_on_local_backlog_replay: docker/apache/kafka:3.9.0 unavailable");
-        return;
-    };
+    assert!(
+        !cfg!(debug_assertions),
+        "release-only competitor gate: rerun with `cargo test --release`"
+    );
+    let (container, bootstrap) = spawn_kafka_broker()
+        .await
+        .expect("required apache/kafka:3.9.0 KRaft prerequisite is unavailable");
 
     let payload = payload(PAYLOAD_BYTES);
     let (tape, tape_url) = support::spawn_tape_service(EVENTS, payload.clone()).await;
     let tape_replay_us = support::tape_service_replay_us(&tape_url, EVENTS).await;
     let kafka_replay_us = kafka_replay_us(&bootstrap, EVENTS, payload.to_string()).await;
-    let report = tape::bench::external_replay_win(
-        "Kafka (KRaft, single-node)",
-        "local_backlog_full_replay",
-        EVENTS,
-        PAYLOAD_BYTES,
-        tape_replay_us,
-        kafka_replay_us,
-        REQUIRED_REPLAY_RATIO,
-        "apps/tape/tests/tape_vs_kafka.rs starts real Tape h2c and apache/kafka:3.9.0 KRaft services, then downloads and validates the same durable 20k-event replay across both network boundaries",
-    );
+    let ratio = kafka_replay_us as f64 / tape_replay_us.max(1) as f64;
+    let report = json!({
+        "peer": "Kafka (KRaft, single-node)",
+        "workload": "local_backlog_full_replay",
+        "events": EVENTS,
+        "payload_bytes": PAYLOAD_BYTES,
+        "tape_replay_us": tape_replay_us,
+        "peer_replay_us": kafka_replay_us,
+        "ratio": ratio,
+        "required_ratio": REQUIRED_REPLAY_RATIO,
+        "win_claim": ratio >= REQUIRED_REPLAY_RATIO,
+        "oracle_owner": "apps/tape/tests/tape_vs_kafka.rs",
+    });
 
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    tape::bench::verify_external_replay_win(&report).expect("Tape beats Kafka replay");
+    assert!(
+        ratio >= REQUIRED_REPLAY_RATIO,
+        "Tape/Kafka replay ratio {ratio:.2}x is below required {REQUIRED_REPLAY_RATIO:.2}x (Kafka {kafka_replay_us}us, Tape {tape_replay_us}us)"
+    );
     drop(tape);
     drop(container);
 }
