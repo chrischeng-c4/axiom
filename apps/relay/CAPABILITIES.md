@@ -273,21 +273,12 @@ Required Verification: conformance
 Promise:
 Expose the standard one-port operational surface the service trait requires —
 probes, metrics scrape, live spec, and Swagger UI stay always-on and
-auth-exempt on the serve port, with `relay spec` as the offline twin. Every
-HTTP request is correlatable end to end: the shared `service-http` trace
-layer honors a valid W3C `traceparent` when present and creates a local root
-trace when absent, with the ids flowing into every request span and
-structured log line. Server-Timing per-response latency attribution (the
-shared `service-http::server_timing` contract) is wired into relay's HTTP
-stack: every response carries a `Server-Timing: app;dur=<ms>` baseline
-(#2490).
+auth-exempt on the serve port, with `relay spec` as the offline twin.
 Gate Inventory:
 - apps/relay/tests/http2_transport.rs; apps/relay/tests/auth.rs; apps/relay/tests/spec_cli.rs; apps/relay/src/server.rs
 Surfaces:
 - HTTP: `/healthz` + `/readyz` + `/metrics` + `/openapi.json` + `/docs` + `service_http::standard_probe_routes` - auth-exempt liveness, readiness, Prometheus scrape, live-spec, and Swagger UI endpoints on the one serve port via `service_http::standard_probe_routes`.
 - CLI: `relay spec` - offline OpenAPI evidence for the same operational contract when no server is running.
-- Logs: structured stdout with per-request trace correlation — `service_http::trace_layer()` accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.
-- HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency) on every response (#2490).
 EC Dimensions:
 - behavior: `cargo test -p relay --test http2_transport` - probe surface, drain flip, and Prometheus metrics over h2c and HTTP/1.1
 
