@@ -4978,9 +4978,8 @@ fn capability_tracker_reconciliations(
                 active_wi: missing_refs.join(", "),
                 tracker_lookup: tracker_lookup_summary(&missing_refs, resolved_wi_refs),
                 capability_gap: row.gaps.clone(),
-                next_action:
-                    "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human confirmation"
-                        .to_string(),
+                next_action: "keep closed/missing refs as advisory history; repair any still-open mislabeled ref, otherwise publish the agent-reviewed bounded replacement"
+                    .to_string(),
             })
         })
         .collect()
@@ -5097,8 +5096,7 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
                 && (claim_has_bounded_wi
                     || matches
                         .iter()
-                        .any(|issue| issue.issue_type != IssueType::Epic)
-                    || has_active_wi_ref(row) && matches.is_empty())
+                        .any(|issue| issue.issue_type != IssueType::Epic))
         {
             continue;
         }
@@ -5181,7 +5179,11 @@ fn capability_plan_summary_rows(
                 summary.existing_wi_refs.push(reference);
             }
         }
-        let operator = suggested_capability_operator(row, issues);
+        let operator = if row_candidates.is_empty() {
+            suggested_capability_operator(row, issues)
+        } else {
+            "epicize -> atomize"
+        };
         summary.next_operator = merge_capability_plan_operator(&summary.next_operator, operator);
         if summary.first_action == "monitor" {
             if let Some(candidate) = row_candidates.first() {
@@ -7348,14 +7350,17 @@ Generator ownership is complete; package-manager roadmap remains open.
         let reconciliations = capability_tracker_reconciliations(&rows, &[], &resolved_wi_refs);
         let summary = capability_plan_summary_rows(&rows, &[], &candidates);
 
-        assert!(candidates.is_empty());
+        assert_eq!(candidates.len(), 2);
         assert_eq!(reconciliations.len(), 2);
         assert_eq!(summary.len(), 1);
         assert_eq!(summary[0].capability, "Package Manager");
-        assert_eq!(summary[0].candidate_count, 0);
+        assert_eq!(summary[0].candidate_count, 2);
         assert_eq!(summary[0].existing_wi_refs, vec!["#3779", "#3780"]);
-        assert_eq!(summary[0].next_operator, "reconcile tracker ref");
-        assert_eq!(summary[0].first_action, "Reconcile WI reference: #3779");
+        assert_eq!(summary[0].next_operator, "epicize -> atomize");
+        assert_eq!(
+            summary[0].first_action,
+            "Close capability claim: Package Manager / package-manager-readiness"
+        );
 
         let map = CapabilityMap {
             capability_count: 1,
@@ -7374,14 +7379,14 @@ Generator ownership is complete; package-manager roadmap remains open.
             &[],
             "either",
         );
-        assert!(body.contains("candidate_count: 0"));
+        assert!(body.contains("candidate_count: 2"));
         assert!(body.contains("reconciliation_count: 2"));
         assert!(body.contains("resolved_wi_ref_count: 1"));
         assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
         assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
         assert!(body.contains("## Tracker WI Ref Lookups"));
         assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
-        assert!(!body.contains("## Candidate WI Drafts"));
+        assert!(body.contains("## Candidate WI Drafts"));
         assert!(body.contains("Complete the digest-bound review payload"));
         assert!(body.contains("`aw goal capability --project jet --non-interactive`"));
     }
