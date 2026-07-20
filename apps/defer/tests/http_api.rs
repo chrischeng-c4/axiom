@@ -304,6 +304,48 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
         StatusCode::FORBIDDEN,
         "a queue-scoped credential must not cross a tenant boundary"
     );
+    assert_eq!(
+        client
+            .post(format!("{auth_url}/v1/queues/jobs/tasks"))
+            .bearer_auth("admin")
+            .json(&serde_json::json!({
+                "task_id": "cancel-through-api",
+                "target": {"url": "http://127.0.0.1/", "method": "POST", "headers": {}},
+                "payload": {"contract": "public-cancel-inspect"},
+                "schedule_at": Utc::now() + chrono::Duration::minutes(5),
+                "priority": 10,
+                "max_attempts": 1
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        client
+            .delete(format!(
+                "{auth_url}/v1/queues/jobs/tasks/cancel-through-api"
+            ))
+            .bearer_auth("admin")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let canceled: serde_json::Value = client
+        .get(format!(
+            "{auth_url}/v1/queues/jobs/tasks/cancel-through-api"
+        ))
+        .bearer_auth("reader")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(canceled["status"], "Canceled");
 
     auth_server.abort();
     target.abort();

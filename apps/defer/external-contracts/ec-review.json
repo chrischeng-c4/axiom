@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "defer",
-  "source_digest": "sha256:fa1cbf8e929807496a8370b88cc661bc2d664b1f6032729e7c8dedbcd8eb3b9b",
+  "source_digest": "sha256:ea406245b377a06be7ca43b0a23493cc6aa5883ac8f4abf14b12781cf8d48bc4",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2215-revision-2",
-  "reviewed_at": "2026-07-20T22:27:55.578368+00:00",
-  "summary": "Accepted after independent re-review. The revised EC now covers Defer's full delayed-task security boundary with required-auth route and tokenless-probe observations, cross-queue tenant denial, bounded admission, fenced and signed dispatch, trusted and attacker peer-TLS cases, rendered production Kubernetes security composition, a real shipped Defer process performing production-cadence credential-file rotation with redacted JSON audit evidence, and shared invalid/unreadable last-known-good behavior. The gates execute non-zero work and contain positive and negative outcomes that prevent empty, disconnected, or deny-all implementations from passing.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2216-revision-2",
+  "reviewed_at": "2026-07-20T23:17:04.847879+00:00",
+  "summary": "Accepted after independent re-review. The revised EC supplies an exact, uniquely parsed 15-row Cloud Tasks-shaped scope with explicit category exclusions and a fail-closed performance boundary that keeps Cloud Tasks performance unproven and VAT/Relay evidence local only. Defer-side cases independently exercise every in-scope row, including real HTTP method/header/body delivery, retry/idempotency, public cancel/inspect, HMAC negatives, and three-node Raft proofs for globally committed rate/burst/in-flight limits plus DeadLettered convergence and durable restart. The corrected competitor row records Cloud Tasks retry exhaustion as deletion rather than DLQ parity.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/defer/external-contracts/behavior/2215.md"
+  "target_path": "apps/defer/external-contracts/behavior/2216.md"
 }

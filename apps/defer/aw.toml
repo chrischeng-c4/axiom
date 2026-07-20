@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "defer"
-generated_from_td_digest = "sha256:fa1cbf8e929807496a8370b88cc661bc2d664b1f6032729e7c8dedbcd8eb3b9b"
+generated_from_td_digest = "sha256:ea406245b377a06be7ca43b0a23493cc6aa5883ac8f4abf14b12781cf8d48bc4"
 
 [[aw.ec.generated.cases]]
 id = "defer-cli-interface-conformance"
@@ -66,6 +66,115 @@ assertions = [
     "Sixty-four repeated rounds of help, llm outline, OpenAPI emission, and source-Dockerfile rendering complete with zero failures and byte-identical stdout for each operation; a nondeterministic or partial output fails.",
     "Sixteen additional TypeScript generation rounds produce byte-identical exact five-file outputs, and every temporary output directory disappears after its round rather than accumulating state.",
     "The full repeated gate completes within 60 seconds and reports file-descriptor growth <= 8 when the host exposes an FD inventory; a missing progress count, leaked child/temp state, breached bound, or skipped ignored test fails.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-durable-ha"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "replicated-scheduler-state-and-repeated-failover"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-durable-ha"
+test_path = "apps/defer/tests/behavior_defer_competitor_durable_ha.rs"
+command = "cargo test -p defer --test raft_scheduler -- --nocapture"
+required_for_production = true
+assertions = [
+    "A real three-node Raft cluster commits queue and task state, preserves the live lease across leader loss, rejects wrong-replica and stale-epoch settlement, and only reassigns after committed expiry with a higher epoch and fresh attempt id.",
+    "The failed node restarts from the same durable directory, catches up terminal state, then a second leader loss elects another primary that commits and completes a new task, proving repeated durable HA rather than a one-shot memory replay.",
+    "Rate, burst, and max-in-flight limits are consumed by proposals through different followers as one committed aggregate; the next leader preserves both the sub-second rate denial and active in-flight denial, then admits work only after the committed one-second refill or exact fenced acknowledgement.",
+    "A two-attempt task is nacked through a follower from Retried to DeadLettered, every live replica converges, and a killed node restarted from the same durable directory recovers one terminal task with no scheduled or in-flight residue.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-http-target-delivery"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "real-method-header-body-retry-idempotency-and-terminal-success"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-http-target-delivery"
+test_path = "apps/defer/tests/behavior_defer_competitor_http_target_delivery.rs"
+command = "cargo test -p defer --test http_dispatch -- --nocapture"
+required_for_production = true
+assertions = [
+    "A real target observes PATCH, the per-task x-defer-tenant header, and the exact JSON body on both a 503 attempt and its 204 retry; the stable queue/task idempotency key is unchanged, attempt ids are fresh, and committed status becomes Succeeded.",
+    "If the target accepts HTTP 204 after the committed lease fence is lost, the stale executor reports LostOwnership and a fresh fenced attempt retries with the same idempotency key before committing success.",
+    "Eight real HTTP effects complete with non-zero concurrency while observed peak in-flight work equals the configured hard bound of three.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-matrix-scope"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "managed-http-push-scope-and-explicit-exclusions"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-matrix-scope"
+test_path = "apps/defer/tests/behavior_defer_competitor_matrix_scope.rs"
+command = "cargo test -p defer --test competitor_feature_matrix -- --nocapture"
+required_for_production = true
+assertions = [
+    "A parsed machine-readable contract names Google Cloud Tasks as the sole managed-HTTP-push semantic competitor, classifies Celery and Sidekiq exactly as category mismatches, and requires one unique four-field row for each of the exact 15 capabilities.",
+    "The exact DLQ row records that Cloud Tasks deletes retry-exhausted tasks while Defer intentionally retains an explicit replicated DeadLettered terminal; official RetryConfig and Cloud-Tasks-versus-Pub/Sub references remain named in the artifact.",
+    "Force-run bypass, arbitrary worker execution, cron composition, and workflows retain exact exclusion rationales; complete assertions keep real Cloud Tasks performance unproven, VAT protocol-only, and Relay a non-substitute local overhead ceiling capped at 20%.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-public-task-access"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "public-h2c-create-cancel-inspect-and-live-credentials"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-public-task-access"
+test_path = "apps/defer/tests/behavior_defer_competitor_public_task_access.rs"
+command = "cargo test -p defer --test http_api --test service_auth -- --nocapture"
+required_for_production = true
+assertions = [
+    "The public h2c API creates a future task with an authorized administrator, cancels it through DELETE, and lets a queue reader inspect the same id as terminal Canceled while unauthenticated task/admin requests and cross-queue access are rejected.",
+    "The shipped required-auth process adopts an atomic registry replacement at the production watcher cadence, rejects the retired bearer, activates the replacement reader without restart, and emits credential-free structured audit events.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-queue-controls-and-dedupe"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "committed-rate-burst-concurrency-control-and-dedupe"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-queue-controls-and-dedupe"
+test_path = "apps/defer/tests/behavior_defer_competitor_queue_controls_and_dedupe.rs"
+command = "cargo test -p defer --test rate_limits -- --nocapture"
+required_for_production = true
+assertions = [
+    "Exactly eight deterministic single-scheduler queue-policy tests execute and enforce per-tick budget, token-bucket rate and burst timing, expired-lease reclaim, queue-local policy updates, pause/resume isolation, and disabled-queue create/dispatch rejection.",
+    "A batch containing an existing task id fails atomically without inserting either surrounding task, and batch settlement rejects the wrong executor and stale epoch before accepting the exact current fence.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-target-signing"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "cloud-neutral-target-authentication-with-independent-negatives"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-target-signing"
+test_path = "apps/defer/tests/behavior_defer_competitor_target_signing.rs"
+command = "cargo test -p defer --test http_dispatch_signing -- --nocapture"
+required_for_production = true
+assertions = [
+    "An independent target-side oracle recomputes exact length-delimited HMAC-SHA256 for two retry attempts, requires the stable idempotency key and fresh attempt id, and accepts both production signatures under the declared key id.",
+    "Mutating idempotency key, attempt id, target URL, timestamp, or body bytes, or using a wrong key id or secret, causes rejection; HMAC is the intentional cloud-neutral target-auth contract rather than an OAuth/OIDC copy.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-task-lifecycle"
+capability_id = "competitor-feature-parity"
+claim_id = "delayed-task-competitor-feature-matrix"
+contract_id = "eta-priority-retry-dlq-cancel-and-terminal-state"
+category = "behavior"
+td_ref = "apps/defer/external-contracts/behavior/2216.md#defer-competitor-task-lifecycle"
+test_path = "apps/defer/tests/behavior_defer_competitor_task_lifecycle.rs"
+command = "cargo test -p defer --test task_lifecycle -- --nocapture"
+required_for_production = true
+assertions = [
+    "Exactly five lifecycle tests execute: ETA eligibility precedes priority, due tasks use descending priority with FIFO ties, and queue concurrency permits cap dispatch until terminal acknowledgement frees capacity.",
+    "A failed attempt is unavailable before backoff, retries with attempt two at the due instant, then enters explicit DeadLettered state at max attempts; cancellation prevents dispatch and remains inspectable as Canceled.",
 ]
 
 [[aw.ec.generated.cases]]

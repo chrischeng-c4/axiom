@@ -5,6 +5,18 @@ semantic competitor; language worker frameworks such as Celery and Sidekiq
 are explicitly outside the comparison because they do not own the same HTTP
 push service contract.
 
+```yaml
+comparison_contract:
+  semantic_competitor: google-cloud-tasks
+  category: managed-http-push-queue
+  worker_frameworks:
+    celery: excluded-category-mismatch
+    sidekiq: excluded-category-mismatch
+  cloud_tasks_performance: unproven
+  vat_role: protocol-emulator-only
+  relay_role: local-implementation-overhead-ceiling-only
+```
+
 | Capability | Cloud Tasks | Defer | Product decision |
 |---|---|---|---|
 | Future schedule / ETA | yes | yes | core |
@@ -16,7 +28,7 @@ push service contract.
 | Per-task target headers and method | yes | yes | core |
 | Target authentication | OAuth/OIDC | HMAC signing | intentionally cloud-neutral |
 | Durable HA scheduler state | managed | Raft + per-replica durable state | core |
-| DLQ terminal state | queue policy | explicit replicated terminal state | core |
+| DLQ terminal state | no; exhausted tasks are deleted | explicit replicated terminal state | intentional Defer extension; Cloud Tasks is not a DLQ oracle |
 | Task cancellation / inspection | yes | yes | core |
 | Force-run bypass | yes | no | excluded: bypassing committed rate/permit policy weakens the service contract |
 | Arbitrary language worker execution | no | no | excluded: Relay owns pull workers; Defer owns HTTP push |
@@ -29,6 +41,11 @@ Reference contracts:
   https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects.locations.queues.tasks
 - Google Cloud Tasks queue rate and concurrency controls:
   https://docs.cloud.google.com/tasks/docs/configuring-queues
+- Google Cloud Tasks RetryConfig deletes tasks after retry exhaustion:
+  https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects.locations.queues
+- Google Cloud Tasks versus Pub/Sub assigns dead-letter topics to Pub/Sub:
+  https://docs.cloud.google.com/tasks/docs/comp-pub-sub
+
 The only competitor selected for a formal efficiency claim is Google
 Cloud Tasks. Until a real Cloud Tasks queue and publicly reachable target are
 available under the same declared region/hardware/network conditions, that
