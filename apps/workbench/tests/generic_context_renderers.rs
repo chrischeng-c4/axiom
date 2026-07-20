@@ -17,7 +17,10 @@ impl GitFixture {
         let temporary_directory = TempDir::new().expect("temporary fixture");
         let root = temporary_directory.path().to_path_buf();
         run_git(&root, &["init", "--quiet"]);
-        run_git(&root, &["config", "user.email", "workbench@example.invalid"]);
+        run_git(
+            &root,
+            &["config", "user.email", "workbench@example.invalid"],
+        );
         run_git(&root, &["config", "user.name", "Workbench Test"]);
         fs::write(root.join("README.md"), "# Baseline\n").expect("baseline Markdown");
         run_git(&root, &["add", "README.md"]);
@@ -126,9 +129,8 @@ fn non_aw_fixture_renders_markdown_and_git_context() {
     assert!(!fixture.root.join("aw.toml").exists());
     let registry = RendererRegistry::generic();
 
-    let markdown = registry.render(
-        &ContextRequest::file(&fixture.root, "README.md").expect("Markdown request"),
-    );
+    let markdown = registry
+        .render(&ContextRequest::file(&fixture.root, "README.md").expect("Markdown request"));
     assert_eq!(markdown.kind, ContextDocumentKind::Markdown);
     assert!(markdown.body_html.contains("<h1>Workbench fixture</h1>"));
     assert!(markdown.body_html.contains("&lt;script&gt;"));
@@ -137,12 +139,19 @@ fn non_aw_fixture_renders_markdown_and_git_context() {
     assert_eq!(markdown.navigation[0].path, Path::new("README.md"));
     assert!(markdown.provenance.sources[0].ends_with("README.md"));
 
-    let git = registry.render(&ContextRequest::workspace(&fixture.root).expect("workspace request"));
+    let git =
+        registry.render(&ContextRequest::workspace(&fixture.root).expect("workspace request"));
     assert_eq!(git.kind, ContextDocumentKind::Git);
     assert!(git.body_html.contains("README.md"));
     assert!(git.body_html.contains("Workbench fixture"));
-    assert!(git.navigation.iter().any(|item| item.path == Path::new("README.md")));
-    assert!(git.navigation.iter().any(|item| item.path == Path::new("docs/guide.md")));
+    assert!(git
+        .navigation
+        .iter()
+        .any(|item| item.path == Path::new("README.md")));
+    assert!(git
+        .navigation
+        .iter()
+        .any(|item| item.path == Path::new("docs/guide.md")));
 }
 
 #[test]
@@ -153,9 +162,8 @@ fn unsupported_and_corrupt_artifacts_have_navigable_fallbacks() {
     let registry = RendererRegistry::generic();
 
     for target in ["corrupt.md", "artifact.bin", "missing.md"] {
-        let document = registry.render(
-            &ContextRequest::file(&fixture.root, target).expect("confined request"),
-        );
+        let document = registry
+            .render(&ContextRequest::file(&fixture.root, target).expect("confined request"));
         assert_eq!(document.kind, ContextDocumentKind::Fallback);
         assert_eq!(document.renderer_id, "fallback");
         assert_eq!(document.navigation[0].path, Path::new(target));
@@ -171,9 +179,8 @@ fn renderers_are_path_confined_and_runtime_independent() {
     let fixture = GitFixture::new();
     let before = fs::read(fixture.root.join("README.md")).expect("before snapshot");
     let registry = RendererRegistry::generic();
-    let _ = registry.render(
-        &ContextRequest::file(&fixture.root, "README.md").expect("Markdown request"),
-    );
+    let _ = registry
+        .render(&ContextRequest::file(&fixture.root, "README.md").expect("Markdown request"));
     let _ = registry.render(&ContextRequest::workspace(&fixture.root).expect("Git request"));
     let after = fs::read(fixture.root.join("README.md")).expect("after snapshot");
     assert_eq!(before, after, "rendering must not mutate workspace files");

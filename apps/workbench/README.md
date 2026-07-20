@@ -77,6 +77,21 @@ paths, and files never become cwd.
 Active cwd is ephemeral runtime context. It does not add, remove, rename, or
 reselect registered launch folders; those remain user-owned launch identity.
 
+## Generic Context Renderers
+
+The provider-neutral renderer registry selects compatible renderers by
+descending priority and stable renderer id. A failed renderer contributes a
+visible warning and the registry continues to the next candidate; unsupported,
+missing, corrupt, or oversized artifacts retain a navigable fallback instead
+of breaking the terminal surface.
+
+The Markdown renderer reads at most one MiB of UTF-8 source, escapes raw HTML,
+and neutralizes unsafe link targets before emitting HTML. The Git renderer runs
+only read-only status and diff commands with optional locks disabled, bounds
+their output, and exposes changed paths for source navigation. Both operate on
+ordinary repositories without `aw.toml`, remain confined to the selected root,
+and have no dependency on PTY or cwd runtime state.
+
 ## Verification
 
 ```bash
@@ -84,4 +99,5 @@ cargo test -p workbench --test desktop_launch_smoke -- --nocapture
 cargo test -p workbench --test folder_shell_journey -- --nocapture
 cargo test -p workbench --test pty_agent_adapters -- --nocapture
 cargo test -p workbench --test pty_cwd_context -- --nocapture
+cargo test -p workbench --test generic_context_renderers -- --nocapture
 ```

@@ -3,8 +3,7 @@ pub mod git;
 pub mod markdown;
 
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
     path::{Component, Path, PathBuf},
 };
 
@@ -63,12 +62,13 @@ impl ContextRequest {
         match &self.target {
             ContextTarget::Workspace => Ok(self.root.clone()),
             ContextTarget::File(relative_path) => {
-                let candidate = fs::canonicalize(self.root.join(relative_path)).map_err(|error| {
-                    RendererError::new(format!(
-                        "could not resolve context target {}: {error}",
-                        relative_path.display()
-                    ))
-                })?;
+                let candidate =
+                    fs::canonicalize(self.root.join(relative_path)).map_err(|error| {
+                        RendererError::new(format!(
+                            "could not resolve context target {}: {error}",
+                            relative_path.display()
+                        ))
+                    })?;
                 if !candidate.starts_with(&self.root) {
                     return Err(RendererError::new(format!(
                         "context target escapes the selected root: {}",
@@ -216,7 +216,12 @@ fn fallback_document(request: &ContextRequest, warnings: Vec<String>) -> Context
         title: "Context preview unavailable".to_owned(),
         body_html: format!(
             "<section><h2>Preview unavailable</h2><p>{}</p></section>",
-            escape_html(warnings.first().map(String::as_str).unwrap_or("Unknown error"))
+            escape_html(
+                warnings
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("Unknown error")
+            )
         ),
         navigation: vec![ContextNavigation {
             label,
@@ -232,7 +237,10 @@ fn fallback_document(request: &ContextRequest, warnings: Vec<String>) -> Context
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, RendererError> {
     let canonical = fs::canonicalize(path).map_err(|error| {
-        RendererError::new(format!("could not resolve context root {}: {error}", path.display()))
+        RendererError::new(format!(
+            "could not resolve context root {}: {error}",
+            path.display()
+        ))
     })?;
     if !canonical.is_dir() {
         return Err(RendererError::new(format!(

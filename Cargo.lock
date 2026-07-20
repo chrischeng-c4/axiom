@@ -17871,6 +17871,7 @@ name = "workbench"
 version = "0.4.9"
 dependencies = [
  "portable-pty",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "tauri",

@@ -66,6 +66,18 @@ Only explicit OSC 7 file-URI frames may update active cwd. Never infer paths
 from prompts, `cd` text, ordinary terminal output, or renderer content, and
 never mutate the registered folder registry as a side effect of cwd telemetry.
 
+The provider-neutral context renderer gate is:
+
+```bash
+cargo test -p workbench --test generic_context_renderers -- --nocapture
+```
+
+Keep the registry independent from PTY, active-cwd, registered-folder, and AW
+runtime state. Renderers are read-only, path-confined, output-bounded adapters;
+failures must produce a navigable fallback or allow the next compatible
+renderer to run. Git probes and rendering commands must keep optional locks
+disabled, and Markdown must not pass raw HTML or unsafe link targets through.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

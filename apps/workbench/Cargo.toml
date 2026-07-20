@@ -21,6 +21,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 portable-pty = "0.9"
+pulldown-cmark = "0.12"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

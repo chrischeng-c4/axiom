@@ -133,9 +133,7 @@ fn destination_is_safe(destination: &str) -> bool {
     if destination.is_empty() || destination.starts_with('#') {
         return true;
     }
-    if lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
     {
         return true;
     }

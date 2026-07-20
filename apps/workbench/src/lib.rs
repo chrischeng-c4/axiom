@@ -17,6 +17,11 @@ pub mod cwd_context;
 /// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#logic
 pub mod native_agent_pty;
 
+/// Provider-neutral, read-only context renderer registry.
+///
+/// @spec apps/workbench/tech-design/logic/add-workbench-context-renderer-registry-with-markdown-and-git-re.md#logic
+pub mod context;
+
 /// Marker emitted only after the configured native window exists.
 pub const HOST_READY_MARKER: &str = "WORKBENCH_HOST_READY";
 

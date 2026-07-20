@@ -42,11 +42,11 @@ impl ContextRenderer for GitRenderer {
     }
 
     fn render(&self, request: &ContextRequest) -> Result<ContextDocument, RendererError> {
-        let status = run_git(request.root(), &["status", "--short", "--branch"])?;
-        let diff_stat = run_git(
+        let status = run_git(
             request.root(),
-            &["diff", "--no-ext-diff", "--stat"],
+            &["status", "--short", "--branch", "--untracked-files=all"],
         )?;
+        let diff_stat = run_git(request.root(), &["diff", "--no-ext-diff", "--stat"])?;
         let diff = run_git(request.root(), &["diff", "--no-ext-diff", "--"])?;
 
         let navigation = changed_paths(&status)
@@ -114,7 +114,9 @@ fn changed_paths(status: &str) -> Vec<PathBuf> {
         let Some(raw_path) = line.get(3..) else {
             continue;
         };
-        let raw_path = raw_path.rsplit_once(" -> ").map_or(raw_path, |(_, path)| path);
+        let raw_path = raw_path
+            .rsplit_once(" -> ")
+            .map_or(raw_path, |(_, path)| path);
         let path = PathBuf::from(raw_path.trim_matches('"'));
         if safe_relative_path(&path) {
             paths.insert(path);
@@ -125,8 +127,8 @@ fn changed_paths(status: &str) -> Vec<PathBuf> {
 
 fn safe_relative_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
-        && path.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
-        })
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 // HANDWRITE-END
