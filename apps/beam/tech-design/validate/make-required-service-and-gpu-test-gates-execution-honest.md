@@ -84,3 +84,35 @@ changes:
     anchor: gpu_matches_cpu_oracle
     description: "Panic on missing GPU adapter when `BEAM_REQUIRED_GATES` is set, and emit JSON evidence."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: beam-test-gate-execution-policy-verification
+requirements:
+  honest_gate_failure:
+    id: R2
+    text: "Panic and fail the test run if required GPU context or service listener prerequisites are missing when `BEAM_REQUIRED_GATES` is set."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test service --test gpu_matches_cpu
+  machine_readable_evidence:
+    id: R3
+    text: "Emit structured machine-readable JSON evidence to stdout recording actual adapter, transport, and executed assertion count."
+    kind: functional
+    risk: medium
+    verify: cargo test -p beam --test service --test gpu_matches_cpu
+  test_gate_configuration:
+    id: R1
+    text: "Configure the test gate in `apps/beam/aw.toml` to execute all Beam unit and integration tests with `BEAM_REQUIRED_GATES=1`."
+    kind: functional
+    risk: high
+    verify: aw health --project beam tests --verify-tests
+---
+flowchart TD
+    r1[R1 test gate configuration] --> aw_health_project_beam_tests_verify_tests[aw health --project beam tests --verify-tests]
+    r2[R2 honest gate failure] --> cargo_test_p_beam_test_service_test_gpu_matches_cpu[cargo test -p beam --test service --test gpu_matches_cpu]
+    r3[R3 machine readable evidence] --> cargo_test_p_beam_test_service_test_gpu_matches_cpu
+```
