@@ -1,4 +1,4 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/specs/3781.md#workspace-task-runner-readiness
+// SPEC-MANAGED: apps/jet/external-contracts/behavior/workspace-task-runner-readiness.md#workspace-task-runner-readiness
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec workspace-task-runner-readiness
@@ -10,6 +10,7 @@
 // @command cargo test -p jet --lib task_runner -- --nocapture
 // AW-EC-END
 
+// Contract: Jet workspace task runner passes its readiness suite for graph execution and caching.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn workspace_task_runner_readiness() {
@@ -23,16 +24,47 @@ fn workspace_task_runner_readiness() {
             env!("CARGO_MANIFEST_DIR")
         );
     }
-    let status = std::process::Command::new("sh")
+    let output = std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(&root)
-        .status()
+        .output()
         .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success()
+        && aw_ec_cargo_test_executed_count(command, &stdout, &stderr) == Some(0)
+    {
+        panic!("AW EC {id} FAILED: cargo test command passed but executed 0 tests: {command}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
     assert!(
-        status.success(),
-        "AW EC {id} FAILED (exit {:?}): {command}",
-        status.code()
+        output.status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code()
     );
+}
+
+fn aw_ec_cargo_test_executed_count(command: &str, stdout: &str, stderr: &str) -> Option<usize> {
+    if !command.contains("cargo test") {
+        return None;
+    }
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = aw_ec_parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn aw_ec_parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
 }
 // CODEGEN-END

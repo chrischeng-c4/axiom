@@ -1,21 +1,21 @@
-// SPEC-MANAGED: apps/jet/external-contracts/behavior/production-replacement-readiness.md#production-replacement-readiness
+// SPEC-MANAGED: apps/jet/external-contracts/behavior/1784.md#jet-mangle-utf8-safety
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec production-replacement-readiness
-// @capability rust-native-frontend-toolchain
-// @claim production-replacement-readiness
-// @contract production-replacement-readiness
+// @ec jet-mangle-utf8-safety
+// @capability library-build-publishing
+// @claim 1784
+// @contract 1784
 // @category behavior
 // @required_for_production true
-// @command apps/jet/scripts/verify-basic-dom-gates.sh --all
+// @command cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored
 // AW-EC-END
 
-// Contract: The full production replacement flow passes its required end-to-end gates.
+// Contract: jet build --lib must not panic or corrupt output when collision renaming encounters UTF-8 text, comments, or template content.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn production_replacement_readiness() {
-    let command = "apps/jet/scripts/verify-basic-dom-gates.sh --all";
-    let id = "production-replacement-readiness";
+fn jet_mangle_utf8_safety() {
+    let command = "cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored";
+    let id = "jet-mangle-utf8-safety";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

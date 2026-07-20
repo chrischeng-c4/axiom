@@ -1,21 +1,21 @@
-// SPEC-MANAGED: apps/jet/external-contracts/behavior/production-replacement-readiness.md#production-replacement-readiness
+// SPEC-MANAGED: apps/jet/external-contracts/behavior/1840.md#1840
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec production-replacement-readiness
-// @capability rust-native-frontend-toolchain
-// @claim production-replacement-readiness
-// @contract production-replacement-readiness
+// @ec 1840
+// @capability library-build-publishing
+// @claim 1840
+// @contract 1840
 // @category behavior
 // @required_for_production true
-// @command apps/jet/scripts/verify-basic-dom-gates.sh --all
+// @command cargo test -p jet --test behavior_ec_1840 -- --ignored
 // AW-EC-END
 
-// Contract: The full production replacement flow passes its required end-to-end gates.
+// Contract: A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn production_replacement_readiness() {
-    let command = "apps/jet/scripts/verify-basic-dom-gates.sh --all";
-    let id = "production-replacement-readiness";
+fn ec_1840() {
+    let command = "cargo test -p jet --test behavior_ec_1840 -- --ignored";
+    let id = "1840";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

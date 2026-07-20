@@ -5,7 +5,7 @@ name = "jet"
 [aw.ec.generated]
 version = 1
 project = "jet"
-generated_from_td_digest = "sha256:43b8c0e844f79c3a26fe79f56a55ba2f061b15c90e607d0eb7d7fc0836301a24"
+generated_from_td_digest = "sha256:9de382ded655d1be3bf57fbf2a9b1d2b71c4bc4bcf2c87bb5b7aab35e46d9abc"
 
 [[aw.ec.generated.cases]]
 id = "1839"
@@ -17,9 +17,7 @@ td_ref = "apps/jet/external-contracts/behavior/1839.md#1839"
 test_path = "apps/jet/tests/behavior_ec_1839.rs"
 command = "cargo test -p jet --test behavior_ec_1839 -- --ignored"
 required_for_production = true
-assertions = [
-    "A CommonJS artifact produced from export * from '<module>' exposes every named source export through module.exports while excluding default.",
-]
+assertions = ["A CommonJS artifact produced from export * from '<module>' exposes every named source export through module.exports while excluding default."]
 
 [[aw.ec.generated.cases]]
 id = "1840"
@@ -31,9 +29,7 @@ td_ref = "apps/jet/external-contracts/behavior/1840.md#1840"
 test_path = "apps/jet/tests/behavior_ec_1840.rs"
 command = "cargo test -p jet --test behavior_ec_1840 -- --ignored"
 required_for_production = true
-assertions = [
-    "A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name.",
-]
+assertions = ["A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name."]
 
 [[aw.ec.generated.cases]]
 id = "antd-visual-table-dom-wasm-parity"
@@ -41,11 +37,11 @@ capability_id = "browser-trace-parity"
 claim_id = "antd-visual-table-dom-wasm-parity"
 contract_id = "antd-visual-table-dom-wasm-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#antd-visual-table-dom-wasm-parity"
+td_ref = "apps/jet/external-contracts/behavior/antd-visual-table-dom-wasm-parity.md#antd-visual-table-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_antd_visual_table_dom_wasm_parity.rs"
 command = "cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Ant Design visual-table rendering stays equivalent between React DOM and Jet WASM."]
 
 [[aw.ec.generated.cases]]
 id = "asset-sourcemap-negative-paths"
@@ -53,11 +49,11 @@ capability_id = "bundler-production-build"
 claim_id = "asset-sourcemap-negative-paths"
 contract_id = "asset-sourcemap-negative-paths"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3782.md#asset-sourcemap-negative-paths"
+td_ref = "apps/jet/external-contracts/behavior/asset-sourcemap-negative-paths.md#asset-sourcemap-negative-paths"
 test_path = "apps/jet/tests/behavior_asset_sourcemap_negative_paths.rs"
 command = "cargo test -p jet --lib asset -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Invalid asset source-map inputs report a safe failure without producing malformed output."]
 
 [[aw.ec.generated.cases]]
 id = "browser-trace-parity-readiness"
@@ -65,11 +61,11 @@ capability_id = "browser-trace-parity"
 claim_id = "browser-trace-parity-readiness"
 contract_id = "browser-trace-parity-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#browser-trace-parity-readiness"
+td_ref = "apps/jet/external-contracts/behavior/browser-trace-parity-readiness.md#browser-trace-parity-readiness"
 test_path = "apps/jet/tests/behavior_browser_trace_parity_readiness.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase browser"
 required_for_production = true
-assertions = []
+assertions = ["The browser verification phase produces the required trace and parity evidence."]
 
 [[aw.ec.generated.cases]]
 id = "built-in-ts-test-runtime"
@@ -77,11 +73,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "built-in-ts-test-runtime"
 contract_id = "built-in-ts-test-runtime"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3785.md#built-in-ts-test-runtime"
+td_ref = "apps/jet/external-contracts/behavior/built-in-ts-test-runtime.md#built-in-ts-test-runtime"
 test_path = "apps/jet/tests/behavior_built_in_ts_test_runtime.rs"
 command = "cargo test -p jet --lib test_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet built-in TypeScript test runtime executes supported TypeScript tests with expected results."]
 
 [[aw.ec.generated.cases]]
 id = "component-workbench-readiness"
@@ -89,11 +85,11 @@ capability_id = "component-workbench"
 claim_id = "component-workbench-readiness"
 contract_id = "component-workbench-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#component-workbench-readiness"
+td_ref = "apps/jet/external-contracts/behavior/component-workbench-readiness.md#component-workbench-readiness"
 test_path = "apps/jet/tests/behavior_component_workbench_readiness.rs"
 command = "cargo test -p jet --test stories_build -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["The component workbench builds a usable static story surface with required manager and preview behavior."]
 
 [[aw.ec.generated.cases]]
 id = "counter-dom-wasm-parity-after-click"
@@ -101,7 +97,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "counter-dom-wasm-parity-after-click"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3941.md#counter-dom-wasm-parity-after-click"
+td_ref = "apps/jet/external-contracts/behavior/counter-dom-wasm-parity-after-click.md#counter-dom-wasm-parity-after-click"
 test_path = "apps/jet/tests/behavior_counter_dom_wasm_parity_after_click.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance counter_demo_matches_react_dom_oracle_initial_and_after_click -- --nocapture"
 required_for_production = true
@@ -118,11 +114,11 @@ capability_id = "component-workbench"
 claim_id = "csf-story-discovery"
 contract_id = "csf-story-discovery"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md#csf-story-discovery"
+td_ref = "apps/jet/external-contracts/behavior/csf-story-discovery.md#csf-story-discovery"
 test_path = "apps/jet/tests/behavior_csf_story_discovery.rs"
 command = "cargo test -p jet --test csf_discovery -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["CSF story modules are discovered and parsed into a usable story index."]
 
 [[aw.ec.generated.cases]]
 id = "csf2-template-bind-re-exports"
@@ -130,11 +126,11 @@ capability_id = "component-workbench"
 claim_id = "csf2-template-bind-re-exports"
 contract_id = "csf2-template-bind-re-exports"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md#csf2-template-bind-re-exports"
+td_ref = "apps/jet/external-contracts/behavior/csf2-template-bind-re-exports.md#csf2-template-bind-re-exports"
 test_path = "apps/jet/tests/behavior_csf2_template_bind_re_exports.rs"
 command = "cargo test -p jet --test csf_discovery -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["CSF2 Template.bind stories and re-exported stories remain discoverable with their bound args."]
 
 [[aw.ec.generated.cases]]
 id = "dev-server-cli-contract"
@@ -142,11 +138,11 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-cli-contract"
 contract_id = "dev-server-cli-contract"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-cli-contract"
+td_ref = "apps/jet/external-contracts/behavior/dev-server-cli-contract.md#dev-server-cli-contract"
 test_path = "apps/jet/tests/behavior_dev_server_cli_contract.rs"
 command = "cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev-server command accepts the supported CLI contract and rejects invalid invocations."]
 
 [[aw.ec.generated.cases]]
 id = "dev-server-local-serving-hmr"
@@ -154,11 +150,11 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-local-serving-hmr"
 contract_id = "dev-server-local-serving-hmr"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-local-serving-hmr"
+td_ref = "apps/jet/external-contracts/behavior/dev-server-local-serving-hmr.md#dev-server-local-serving-hmr"
 test_path = "apps/jet/tests/behavior_dev_server_local_serving_hmr.rs"
 command = "cargo test -p jet --lib dev_server -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev server serves local modules and applies hot updates without requiring a full restart."]
 
 [[aw.ec.generated.cases]]
 id = "dev-server-proxy-contract"
@@ -166,11 +162,11 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-proxy-contract"
 contract_id = "dev-server-proxy-contract"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-proxy-contract"
+td_ref = "apps/jet/external-contracts/behavior/dev-server-proxy-contract.md#dev-server-proxy-contract"
 test_path = "apps/jet/tests/behavior_dev_server_proxy_contract.rs"
 command = "cargo test -p jet --lib dev_server::proxy -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Configured dev-server proxy routes requests to the upstream target with preserved contract behavior."]
 
 [[aw.ec.generated.cases]]
 id = "dev-server-replacement-readiness"
@@ -178,11 +174,11 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-replacement-readiness"
 contract_id = "dev-server-replacement-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-replacement-readiness"
+td_ref = "apps/jet/external-contracts/behavior/dev-server-replacement-readiness.md#dev-server-replacement-readiness"
 test_path = "apps/jet/tests/behavior_dev_server_replacement_readiness.rs"
 command = "cargo test -p jet --lib dev_server -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev server satisfies the replacement readiness suite for local serving, HMR, and proxy behavior."]
 
 [[aw.ec.generated.cases]]
 id = "dom-renderer-controlled-input-parity"
@@ -190,7 +186,7 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-input-parity"
 contract_id = "dom-renderer-controlled-input-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/4004.md#dom-renderer-controlled-input-parity"
+td_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-parity.md#dom-renderer-controlled-input-parity"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_input_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_input_parity -- --nocapture"
 required_for_production = true
@@ -207,11 +203,11 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-input-parity"
 contract_id = "dom-renderer-controlled-input-regression"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/4015.md#dom-renderer-controlled-input-regression"
+td_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-regression.md#dom-renderer-controlled-input-regression"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_input_regression.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_input_parity -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["The controlled-input parity regression remains covered by the React DOM oracle scenario."]
 
 [[aw.ec.generated.cases]]
 id = "dom-renderer-controlled-textarea-parity"
@@ -219,11 +215,11 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-textarea-parity"
 contract_id = "dom-renderer-controlled-textarea-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/4015.md#dom-renderer-controlled-textarea-parity"
+td_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-textarea-parity.md#dom-renderer-controlled-textarea-parity"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_textarea_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_textarea_parity -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Controlled textarea values remain equal between React DOM and Jet WASM after updates."]
 
 [[aw.ec.generated.cases]]
 id = "full-jet-health-after-unit-repair"
@@ -231,7 +227,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "full-jet-health-after-unit-repair"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3945.md#full-jet-health-after-unit-repair"
+td_ref = "apps/jet/external-contracts/behavior/full-jet-health-after-unit-repair.md#full-jet-health-after-unit-repair"
 test_path = "apps/jet/tests/behavior_full_jet_health_after_unit_repair.rs"
 command = "cargo test -p jet-wasm --test renderer_layout -- --nocapture"
 required_for_production = true
@@ -246,11 +242,11 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "full-toolchain-dogfood-flow"
 contract_id = "full-toolchain-dogfood-flow"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3778.md#full-toolchain-dogfood-flow"
+td_ref = "apps/jet/external-contracts/behavior/full-toolchain-dogfood-flow.md#full-toolchain-dogfood-flow"
 test_path = "apps/jet/tests/behavior_full_toolchain_dogfood_flow.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --all"
 required_for_production = true
-assertions = []
+assertions = ["The end-to-end Jet toolchain dogfood flow passes all required package, build, browser, and production gates."]
 
 [[aw.ec.generated.cases]]
 id = "generic-cross-file-prop-controls"
@@ -258,11 +254,11 @@ capability_id = "component-workbench"
 claim_id = "generic-cross-file-prop-controls"
 contract_id = "generic-cross-file-prop-controls"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md#generic-cross-file-prop-controls"
+td_ref = "apps/jet/external-contracts/behavior/generic-cross-file-prop-controls.md#generic-cross-file-prop-controls"
 test_path = "apps/jet/tests/behavior_generic_cross_file_prop_controls.rs"
 command = "cargo test -p jet --test controls -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories controls derive editable values for generic, cross-file, and intersection prop types."]
 
 [[aw.ec.generated.cases]]
 id = "hook-state-preserving-refresh"
@@ -270,11 +266,11 @@ capability_id = "component-workbench"
 claim_id = "hook-state-preserving-refresh"
 contract_id = "hook-state-preserving-refresh"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#hook-state-preserving-refresh"
+td_ref = "apps/jet/external-contracts/behavior/hook-state-preserving-refresh.md#hook-state-preserving-refresh"
 test_path = "apps/jet/tests/behavior_hook_state_preserving_refresh.rs"
 command = "cargo test -p jet --test preview_hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Preview HMR preserves React hook state across a compatible source edit."]
 
 [[aw.ec.generated.cases]]
 id = "jet-mangle-utf8-safety"
@@ -286,9 +282,7 @@ td_ref = "apps/jet/external-contracts/behavior/1784.md#jet-mangle-utf8-safety"
 test_path = "apps/jet/tests/behavior_jet_mangle_utf8_safety.rs"
 command = "cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored"
 required_for_production = true
-assertions = [
-    "jet build --lib must not panic or corrupt output when collision renaming encounters UTF-8 text, comments, or template content.",
-]
+assertions = ["jet build --lib must not panic or corrupt output when collision renaming encounters UTF-8 text, comments, or template content."]
 
 [[aw.ec.generated.cases]]
 id = "library-dom-wasm-parity"
@@ -296,7 +290,7 @@ capability_id = "browser-trace-parity"
 claim_id = "library-dom-wasm-parity-fixtures"
 contract_id = "library-dom-wasm-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity"
+td_ref = "apps/jet/external-contracts/behavior/library-dom-wasm-parity.md#library-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_library_dom_wasm_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture"
 required_for_production = true
@@ -314,11 +308,11 @@ capability_id = "browser-trace-parity"
 claim_id = "library-wasm-lowering-fixtures"
 contract_id = "library-wasm-lowering-fixtures"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#library-wasm-lowering-fixtures"
+td_ref = "apps/jet/external-contracts/behavior/library-wasm-lowering-fixtures.md#library-wasm-lowering-fixtures"
 test_path = "apps/jet/tests/behavior_library_wasm_lowering_fixtures.rs"
 command = "cargo test -p jet --test tsx_to_rust_imports -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["TSX-to-Rust lowering preserves supported import forms in library fixtures."]
 
 [[aw.ec.generated.cases]]
 id = "live-wasm-capture-after-click"
@@ -326,7 +320,7 @@ capability_id = "browser-trace-parity"
 claim_id = "browser-automation-diagnostics"
 contract_id = "live-wasm-capture-after-click"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-browser-observation-bundle.md#live-wasm-capture-after-click"
+td_ref = "apps/jet/external-contracts/behavior/live-wasm-capture-after-click.md#live-wasm-capture-after-click"
 test_path = "apps/jet/tests/behavior_live_wasm_capture_after_click.rs"
 command = "cargo test -p jet --test browser_cli_smoke -- --nocapture"
 required_for_production = true
@@ -344,11 +338,11 @@ capability_id = "browser-trace-parity"
 claim_id = "mui-visual-table-dom-wasm-parity"
 contract_id = "mui-visual-table-dom-wasm-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#mui-visual-table-dom-wasm-parity"
+td_ref = "apps/jet/external-contracts/behavior/mui-visual-table-dom-wasm-parity.md#mui-visual-table-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_mui_visual_table_dom_wasm_parity.rs"
 command = "cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Material UI visual-table rendering stays equivalent between React DOM and Jet WASM."]
 
 [[aw.ec.generated.cases]]
 id = "multi-fixture-dom-wasm-canvas-paint-parity"
@@ -356,7 +350,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-canvas-paint-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3958.md#multi-fixture-dom-wasm-canvas-paint-parity"
+td_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-canvas-paint-parity.md#multi-fixture-dom-wasm-canvas-paint-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_canvas_paint_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_canvas_paint_parity -- --nocapture"
 required_for_production = true
@@ -372,7 +366,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-layout-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3944.md#multi-fixture-dom-wasm-layout-parity"
+td_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-layout-parity.md#multi-fixture-dom-wasm-layout-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_layout_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_layout_parity -- --nocapture"
 required_for_production = true
@@ -389,7 +383,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3943.md#multi-fixture-dom-wasm-parity"
+td_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-parity.md#multi-fixture-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_parity -- --nocapture"
 required_for_production = true
@@ -406,7 +400,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-screenshot-pixel-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3972.md#multi-fixture-dom-wasm-screenshot-pixel-parity"
+td_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-screenshot-pixel-parity.md#multi-fixture-dom-wasm-screenshot-pixel-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_screenshot_pixel_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_screenshot_pixel_parity -- --nocapture"
 required_for_production = true
@@ -423,11 +417,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "native-test-runner-core"
 contract_id = "native-test-runner-core"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3785.md#native-test-runner-core"
+td_ref = "apps/jet/external-contracts/behavior/native-test-runner-core.md#native-test-runner-core"
 test_path = "apps/jet/tests/behavior_native_test_runner_core.rs"
 command = "cargo test -p jet --lib test_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet native test runner discovers, executes, and reports supported test cases."]
 
 [[aw.ec.generated.cases]]
 id = "nx-graph-parity"
@@ -435,11 +429,11 @@ capability_id = "workspace-task-runner"
 claim_id = "nx-graph-parity"
 contract_id = "nx-graph-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3781.md#nx-graph-parity"
+td_ref = "apps/jet/external-contracts/behavior/nx-graph-parity.md#nx-graph-parity"
 test_path = "apps/jet/tests/behavior_nx_graph_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::nx -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet builds an Nx workspace dependency graph consistent with the workspace configuration."]
 
 [[aw.ec.generated.cases]]
 id = "package-manager-lockfile-parity"
@@ -447,11 +441,11 @@ capability_id = "package-manager"
 claim_id = "package-manager-lockfile-parity"
 contract_id = "package-manager-lockfile-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-lockfile-parity"
+td_ref = "apps/jet/external-contracts/behavior/package-manager-lockfile-parity.md#package-manager-lockfile-parity"
 test_path = "apps/jet/tests/behavior_package_manager_lockfile_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::lockfile -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet lockfile parsing and hydration preserve package integrity and dependency resolution."]
 
 [[aw.ec.generated.cases]]
 id = "package-manager-registry-integrity"
@@ -459,11 +453,11 @@ capability_id = "package-manager"
 claim_id = "package-manager-registry-integrity"
 contract_id = "package-manager-registry-integrity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-registry-integrity"
+td_ref = "apps/jet/external-contracts/behavior/package-manager-registry-integrity.md#package-manager-registry-integrity"
 test_path = "apps/jet/tests/behavior_package_manager_registry_integrity.rs"
 command = "cargo test -p jet --lib pkg_manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet package registry resolution preserves package metadata and integrity guarantees."]
 
 [[aw.ec.generated.cases]]
 id = "package-manager-workspace-parity"
@@ -471,11 +465,11 @@ capability_id = "package-manager"
 claim_id = "package-manager-workspace-parity"
 contract_id = "package-manager-workspace-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-workspace-parity"
+td_ref = "apps/jet/external-contracts/behavior/package-manager-workspace-parity.md#package-manager-workspace-parity"
 test_path = "apps/jet/tests/behavior_package_manager_workspace_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::workspace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace package discovery and linking preserve declared workspace relationships."]
 
 [[aw.ec.generated.cases]]
 id = "package-phase-gate"
@@ -483,11 +477,11 @@ capability_id = "package-manager"
 claim_id = "package-manager-readiness"
 contract_id = "package-phase-gate"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/validate/complete-package-management-replacement-gate-before-build.md#package-phase-gate"
+td_ref = "apps/jet/external-contracts/behavior/package-phase-gate.md#package-phase-gate"
 test_path = "apps/jet/tests/behavior_package_phase_gate.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase package"
 required_for_production = true
-assertions = []
+assertions = ["The package-manager verification phase passes its complete required gate set."]
 
 [[aw.ec.generated.cases]]
 id = "phase-3-build-gate"
@@ -495,11 +489,11 @@ capability_id = "bundler-production-build"
 claim_id = "bundler-production-readiness"
 contract_id = "phase-3-build-gate"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/remove-optional-esbuild-from-phase-3-production-build-gate.md#phase-3-build-gate"
+td_ref = "apps/jet/external-contracts/behavior/phase-3-build-gate.md#phase-3-build-gate"
 test_path = "apps/jet/tests/behavior_phase_3_build_gate.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase build"
 required_for_production = true
-assertions = []
+assertions = ["The production build verification phase passes its complete required gate set."]
 
 [[aw.ec.generated.cases]]
 id = "prebundle-importmap-parity"
@@ -507,11 +501,11 @@ capability_id = "dev-server-hmr"
 claim_id = "prebundle-importmap-parity"
 contract_id = "prebundle-importmap-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#prebundle-importmap-parity"
+td_ref = "apps/jet/external-contracts/behavior/prebundle-importmap-parity.md#prebundle-importmap-parity"
 test_path = "apps/jet/tests/behavior_prebundle_importmap_parity.rs"
 command = "cargo test -p jet --lib dev_server::prebundle -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Dev-server prebundling produces an import map that resolves configured dependencies."]
 
 [[aw.ec.generated.cases]]
 id = "product-flow-e2e-readiness"
@@ -519,11 +513,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "product-flow-e2e-readiness"
 contract_id = "product-flow-e2e-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3784.md#product-flow-e2e-readiness"
+td_ref = "apps/jet/external-contracts/behavior/product-flow-e2e-readiness.md#product-flow-e2e-readiness"
 test_path = "apps/jet/tests/behavior_product_flow_e2e_readiness.rs"
 command = "cargo test -p jet --lib e2e -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet native product-flow end-to-end scenarios execute through the supported user journey."]
 
 [[aw.ec.generated.cases]]
 id = "product-flow-e2e-review"
@@ -531,11 +525,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "product-flow-e2e-review"
 contract_id = "product-flow-e2e-review"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3784.md#product-flow-e2e-review"
+td_ref = "apps/jet/external-contracts/behavior/product-flow-e2e-review.md#product-flow-e2e-review"
 test_path = "apps/jet/tests/behavior_product_flow_e2e_review.rs"
 command = "cargo test -p jet --lib e2e -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Product-flow evidence exposes the required reviewable end-to-end outcome."]
 
 [[aw.ec.generated.cases]]
 id = "production-bundle-output-parity"
@@ -543,11 +537,11 @@ capability_id = "bundler-production-build"
 claim_id = "production-bundle-output-parity"
 contract_id = "production-bundle-output-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3782.md#production-bundle-output-parity"
+td_ref = "apps/jet/external-contracts/behavior/production-bundle-output-parity.md#production-bundle-output-parity"
 test_path = "apps/jet/tests/behavior_production_bundle_output_parity.rs"
 command = "cargo test -p jet --lib bundler -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet production bundler emits parseable output with required module resolution behavior."]
 
 [[aw.ec.generated.cases]]
 id = "production-replacement-readiness"
@@ -555,11 +549,11 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "production-replacement-readiness"
 contract_id = "production-replacement-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3778.md#production-replacement-readiness"
+td_ref = "apps/jet/external-contracts/behavior/production-replacement-readiness.md#production-replacement-readiness"
 test_path = "apps/jet/tests/behavior_production_replacement_readiness.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --all"
 required_for_production = true
-assertions = []
+assertions = ["The full production replacement flow passes its required end-to-end gates."]
 
 [[aw.ec.generated.cases]]
 id = "react-refresh-state-preserved"
@@ -567,11 +561,11 @@ capability_id = "dev-server-hmr"
 claim_id = "react-refresh-state-preserved"
 contract_id = "react-refresh-state-preserved"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3780.md#react-refresh-state-preserved"
+td_ref = "apps/jet/external-contracts/behavior/react-refresh-state-preserved.md#react-refresh-state-preserved"
 test_path = "apps/jet/tests/behavior_react_refresh_state_preserved.rs"
 command = "cargo test -p jet --lib dev_server::hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["React refresh chooses a hot update that preserves state when the edit is compatible."]
 
 [[aw.ec.generated.cases]]
 id = "reporter-artifacts"
@@ -579,11 +573,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "reporter-artifacts"
 contract_id = "reporter-artifacts"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3785.md#reporter-artifacts"
+td_ref = "apps/jet/external-contracts/behavior/reporter-artifacts.md#reporter-artifacts"
 test_path = "apps/jet/tests/behavior_reporter_artifacts.rs"
 command = "cargo test -p jet --lib reporter -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet reporter emits the expected test-result and artifact records for completed runs."]
 
 [[aw.ec.generated.cases]]
 id = "scss-sass-compilation"
@@ -591,11 +585,11 @@ capability_id = "bundler-production-build"
 claim_id = "scss-sass-compilation"
 contract_id = "scss-sass-compilation"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/scss-sass-compilation-in-the-build-lib-css-pipeline.md#scss-sass-compilation"
+td_ref = "apps/jet/external-contracts/behavior/scss-sass-compilation.md#scss-sass-compilation"
 test_path = "apps/jet/tests/behavior_scss_sass_compilation.rs"
 command = "cargo test -p jet --lib css::scss"
 required_for_production = true
-assertions = []
+assertions = ["Jet compiles SCSS and Sass imports through the library CSS build pipeline."]
 
 [[aw.ec.generated.cases]]
 id = "stack-aware-openapi-codegen"
@@ -603,11 +597,11 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "stack-aware-openapi-codegen"
 contract_id = "stack-aware-openapi-codegen"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#stack-aware-openapi-codegen"
+td_ref = "apps/jet/external-contracts/behavior/stack-aware-openapi-codegen.md#stack-aware-openapi-codegen"
 test_path = "apps/jet/tests/behavior_stack_aware_openapi_codegen.rs"
 command = "cargo test -p jet --test openapi_golden"
 required_for_production = true
-assertions = []
+assertions = ["Jet OpenAPI code generation selects the correct stack-aware client and hook output."]
 
 [[aw.ec.generated.cases]]
 id = "stories-bare-import-resolution"
@@ -615,11 +609,11 @@ capability_id = "component-workbench"
 claim_id = "stories-bare-import-resolution"
 contract_id = "stories-bare-import-resolution"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md#stories-bare-import-resolution"
+td_ref = "apps/jet/external-contracts/behavior/stories-bare-import-resolution.md#stories-bare-import-resolution"
 test_path = "apps/jet/tests/behavior_stories_bare_import_resolution.rs"
 command = "cargo test -p jet --test manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories manager resolves bare imports from node_modules for development and static export."]
 
 [[aw.ec.generated.cases]]
 id = "stories-controls-panel"
@@ -627,11 +621,11 @@ capability_id = "component-workbench"
 claim_id = "stories-controls-panel"
 contract_id = "stories-controls-panel"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md#stories-controls-panel"
+td_ref = "apps/jet/external-contracts/behavior/stories-controls-panel.md#stories-controls-panel"
 test_path = "apps/jet/tests/behavior_stories_controls_panel.rs"
 command = "cargo test -p jet --test controls -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories controls render prop-derived inputs and update the preview when args change."]
 
 [[aw.ec.generated.cases]]
 id = "stories-dev-manager"
@@ -639,11 +633,11 @@ capability_id = "component-workbench"
 claim_id = "stories-dev-manager"
 contract_id = "stories-dev-manager"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#stories-dev-manager"
+td_ref = "apps/jet/external-contracts/behavior/stories-dev-manager.md#stories-dev-manager"
 test_path = "apps/jet/tests/behavior_stories_dev_manager.rs"
 command = "cargo test -p jet --test manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet stories dev starts a manager with sidebar and preview behavior for discovered stories."]
 
 [[aw.ec.generated.cases]]
 id = "stories-preview-hmr"
@@ -651,11 +645,11 @@ capability_id = "component-workbench"
 claim_id = "stories-preview-hmr"
 contract_id = "stories-preview-hmr"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#stories-preview-hmr"
+td_ref = "apps/jet/external-contracts/behavior/stories-preview-hmr.md#stories-preview-hmr"
 test_path = "apps/jet/tests/behavior_stories_preview_hmr.rs"
 command = "cargo test -p jet --test preview_hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories preview HMR refreshes modules while preserving compatible component state."]
 
 [[aw.ec.generated.cases]]
 id = "stories-static-export"
@@ -663,11 +657,11 @@ capability_id = "component-workbench"
 claim_id = "stories-static-export"
 contract_id = "stories-static-export"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md#stories-static-export"
+td_ref = "apps/jet/external-contracts/behavior/stories-static-export.md#stories-static-export"
 test_path = "apps/jet/tests/behavior_stories_static_export.rs"
 command = "cargo test -p jet --test stories_build -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet stories build emits a static workbench with manager, previews, and relative asset URLs."]
 
 [[aw.ec.generated.cases]]
 id = "task-runner-graph-cache"
@@ -675,11 +669,11 @@ capability_id = "workspace-task-runner"
 claim_id = "task-runner-graph-cache"
 contract_id = "task-runner-graph-cache"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3781.md#task-runner-graph-cache"
+td_ref = "apps/jet/external-contracts/behavior/task-runner-graph-cache.md#task-runner-graph-cache"
 test_path = "apps/jet/tests/behavior_task_runner_graph_cache.rs"
 command = "cargo test -p jet --lib task_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet task runner builds and executes a dependency graph with its cache contract intact."]
 
 [[aw.ec.generated.cases]]
 id = "trace-evidence-artifacts"
@@ -687,11 +681,11 @@ capability_id = "browser-trace-parity"
 claim_id = "trace-evidence-artifacts"
 contract_id = "trace-evidence-artifacts"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#trace-evidence-artifacts"
+td_ref = "apps/jet/external-contracts/behavior/trace-evidence-artifacts.md#trace-evidence-artifacts"
 test_path = "apps/jet/tests/behavior_trace_evidence_artifacts.rs"
 command = "cargo test -p jet --lib trace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet trace subsystem emits required trace evidence artifacts for supported runs."]
 
 [[aw.ec.generated.cases]]
 id = "trace-replay-evidence"
@@ -699,11 +693,11 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "trace-replay-evidence"
 contract_id = "trace-replay-evidence"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3784.md#trace-replay-evidence"
+td_ref = "apps/jet/external-contracts/behavior/trace-replay-evidence.md#trace-replay-evidence"
 test_path = "apps/jet/tests/behavior_trace_replay_evidence.rs"
 command = "cargo test -p jet --lib trace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Recorded Jet trace evidence replays into the expected observable outcome."]
 
 [[aw.ec.generated.cases]]
 id = "transform-resolver-parity"
@@ -711,11 +705,11 @@ capability_id = "bundler-production-build"
 claim_id = "transform-resolver-parity"
 contract_id = "transform-resolver-parity"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3782.md#transform-resolver-parity"
+td_ref = "apps/jet/external-contracts/behavior/transform-resolver-parity.md#transform-resolver-parity"
 test_path = "apps/jet/tests/behavior_transform_resolver_parity.rs"
 command = "cargo test -p jet --lib transform -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet transform resolver resolves supported source and package imports consistently."]
 
 [[aw.ec.generated.cases]]
 id = "webgpu-large-table-smoke"
@@ -723,11 +717,11 @@ capability_id = "browser-trace-parity"
 claim_id = "webgpu-large-table-smoke"
 contract_id = "webgpu-large-table-smoke"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-large-table-smoke"
+td_ref = "apps/jet/external-contracts/behavior/webgpu-large-table-smoke.md#webgpu-large-table-smoke"
 test_path = "apps/jet/tests/behavior_webgpu_large_table_smoke.rs"
 command = "cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_status_and_visual_probe_when_available -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Default WebGPU renderer reports runtime status and captures the required large-table visual probe."]
 
 [[aw.ec.generated.cases]]
 id = "webgpu-wasm-build-default"
@@ -735,11 +729,11 @@ capability_id = "browser-trace-parity"
 claim_id = "webgpu-wasm-build-default"
 contract_id = "webgpu-wasm-build-default"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-wasm-build-default"
+td_ref = "apps/jet/external-contracts/behavior/webgpu-wasm-build-default.md#webgpu-wasm-build-default"
 test_path = "apps/jet/tests/behavior_webgpu_wasm_build_default.rs"
 command = "cargo test -p jet --test wasm_build_end_to_end wasm_build_selects_webgpu_scaffold_by_default -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet WASM build selects the WebGPU scaffold by default."]
 
 [[aw.ec.generated.cases]]
 id = "workspace-package-selection"
@@ -747,11 +741,11 @@ capability_id = "workspace-task-runner"
 claim_id = "workspace-package-selection"
 contract_id = "workspace-package-selection"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3781.md#workspace-package-selection"
+td_ref = "apps/jet/external-contracts/behavior/workspace-package-selection.md#workspace-package-selection"
 test_path = "apps/jet/tests/behavior_workspace_package_selection.rs"
 command = "cargo test -p jet --lib pkg_manager::workspace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace package selection resolves the requested workspace package and its metadata."]
 
 [[aw.ec.generated.cases]]
 id = "workspace-task-runner-readiness"
@@ -759,9 +753,9 @@ capability_id = "workspace-task-runner"
 claim_id = "workspace-task-runner-readiness"
 contract_id = "workspace-task-runner-readiness"
 category = "behavior"
-td_ref = ".aw/tech-design/projects/jet/specs/3781.md#workspace-task-runner-readiness"
+td_ref = "apps/jet/external-contracts/behavior/workspace-task-runner-readiness.md#workspace-task-runner-readiness"
 test_path = "apps/jet/tests/behavior_workspace_task_runner_readiness.rs"
 command = "cargo test -p jet --lib task_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace task runner passes its readiness suite for graph execution and caching."]
 # AW-EC-END
