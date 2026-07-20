@@ -7512,7 +7512,7 @@ pub fn convert_flat_region_function_declarations_to_var(
     (rewritten, stats)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Runs flat-region function-declaration→var-hoisting conversion (#2132)
 /// immediately followed by same-chunk export-binding elision (#2128) as one
