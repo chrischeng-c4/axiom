@@ -117,6 +117,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-vector-security-boundary | epic | #769 | planned | planned | none | pending security hardening gate |
+| beam-service-auth | change | #2150 | planned | planned | none | pending service-auth enforcement |
 
 ### Competitor Feature Parity
 
