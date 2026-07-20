@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:c71dc69c" tracker="pending-tracker" reason="Define a serde report for workload relay-durable-publish-lease-ack-v1; a report-only ignored child measures 2000 128-byte messages in 100-message batches on temporary FsyncPolicy Always storage, while the ignored parent parses the child stdout and requires both phases to have at least 20 samples, zero errors, complete counts, at least 500 messages per second, and batch p95 no greater than 500000 microseconds."
+// TODO: hand-write content for `apps/relay/tests/measured_performance.rs`.
+// HANDWRITE-END
