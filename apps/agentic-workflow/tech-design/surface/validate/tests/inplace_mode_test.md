@@ -78,7 +78,7 @@ No public AST symbols.
 //! These tests require the `score` binary; cargo wires `CARGO_BIN_EXE_aw`
 //! automatically when the binary target is part of the same package.
 
-use agentic_workflow::issues::LocalBackend;
+use agentic_workflow::issues::{LocalBackend, AW_FIXTURE_LOCAL_BACKEND_ENV};
 use std::process::Command;
 
 fn skip_unless_ready() -> Option<(std::path::PathBuf, String)> {
@@ -246,6 +246,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -282,6 +285,7 @@ path = "."
 
     // Run `aw td create <slug>`.
     let out = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -355,6 +359,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -394,6 +401,7 @@ path = "."
         .unwrap();
 
     let out = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -447,7 +455,7 @@ fn td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init() {
     bootstrap_repo(&git, root);
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
 
@@ -518,6 +526,7 @@ fn td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init() {
     );
 
     let output = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -573,7 +582,7 @@ fn td_create_rebased_lifecycle_preserves_reachable_exact_td_init() {
     bootstrap_repo(&git, root);
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
     let slug = "1602-valid-resume";
@@ -607,6 +616,7 @@ fn td_create_rebased_lifecycle_preserves_reachable_exact_td_init() {
     );
 
     let output = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -636,7 +646,7 @@ fn td_create_commits_fresh_numeric_skeleton_once() {
     bootstrap_repo(&git, root);
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
     let slug = "1580";
@@ -658,6 +668,7 @@ fn td_create_commits_fresh_numeric_skeleton_once() {
         .success());
 
     let first = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -697,6 +708,7 @@ fn td_create_commits_fresh_numeric_skeleton_once() {
         .to_string();
 
     let second = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -742,7 +754,7 @@ fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
     bootstrap_repo(&git, root);
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
     commit_all_with_message(&git, root, "bootstrap #1580 locked fixture");
@@ -791,6 +803,7 @@ fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
     std::fs::write(root.join(spec_path), &legacy).unwrap();
 
     let output = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -825,6 +838,7 @@ fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
         .unwrap();
 
     let repeat = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -861,7 +875,7 @@ fn td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton() {
     bootstrap_repo(&git, root);
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
     commit_all_with_message(&git, root, "bootstrap combined recovery fixture");
@@ -920,6 +934,7 @@ fn td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton() {
     std::fs::write(root.join(spec_path), &legacy).unwrap();
 
     let output = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -1180,7 +1195,7 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
     std::fs::write(
         root.join("aw.toml"),
-        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n\n[agentic_workflow.issue_platform]\ntype = \"local\"\n",
     )
     .unwrap();
 
@@ -1209,6 +1224,7 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
         .unwrap();
 
     let out = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg("1887")
@@ -1252,7 +1268,11 @@ fn td_create_records_spec_path_in_issue_implements() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join("aw.toml"), "").unwrap();
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
 
     let slug = "demo-939-implements-test";
     let issue_body = format!(
@@ -1280,6 +1300,7 @@ fn td_create_records_spec_path_in_issue_implements() {
 
     let spec_path = "custom/td-939-implements-test.md";
     let out = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -1321,7 +1342,11 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
     bootstrap_repo(&git, root);
 
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join("aw.toml"), "").unwrap();
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
 
     let slug = "demo-939-implements-idempotent-test";
     let spec_path = "custom/td-939-implements-idempotent-test.md";
@@ -1350,6 +1375,7 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
         .unwrap();
 
     let out = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -1588,6 +1614,7 @@ fn run_td_section_apply(
     spec_path: &str,
 ) -> serde_json::Value {
     let output = Command::new(bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -1729,6 +1756,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -1778,6 +1808,7 @@ path = "."
     let test_target_path = "tests/default_target_plan_test.rs";
 
     let brief = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -1905,6 +1936,7 @@ path = "."
     assert_eq!(spec.matches("<!-- type: changes lang: yaml -->").count(), 1);
 
     let final_check = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "check", spec_path])
         .current_dir(root)
         .output()
@@ -1927,6 +1959,7 @@ path = "."
         .trim()
         .to_string();
     let lock = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -1998,6 +2031,7 @@ path = "."
 
     for read_only_flag in ["--check", "--show"] {
         let read_only = Command::new(&bin)
+            .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .args([
                 "td",
                 "lock",
@@ -2030,6 +2064,7 @@ path = "."
     }
 
     let gen = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2091,6 +2126,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -2131,6 +2169,7 @@ path = "."
     // writes the skeleton and initializes the first section (`logic`)
     // payload with the blank template.
     let brief = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2169,6 +2208,7 @@ path = "."
     std::fs::write(&payload_abs, &real_payload_json).unwrap();
 
     let apply_logic = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2232,6 +2272,7 @@ path = "."
     std::fs::write(&payload_abs, &placeholder_payload_json).unwrap();
 
     let replay = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2310,6 +2351,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -2442,6 +2486,7 @@ flowchart TD
         .unwrap();
 
     let check = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "check", spec_path])
         .current_dir(root)
         .output()
@@ -2459,6 +2504,7 @@ flowchart TD
     );
 
     let brief = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2484,6 +2530,7 @@ flowchart TD
     std::fs::remove_file(&logic_payload).unwrap();
     let before_missing = std::fs::read(&spec_abs).unwrap();
     let missing = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2516,6 +2563,7 @@ flowchart TD
     .unwrap();
     let before_malformed = std::fs::read(&spec_abs).unwrap();
     let malformed = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2570,6 +2618,7 @@ flowchart TD
     )
     .unwrap();
     let apply_logic = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2632,6 +2681,7 @@ flowchart TD
     )
     .unwrap();
     let apply_unit = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2685,6 +2735,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -2787,6 +2840,7 @@ flowchart TD
         .unwrap();
 
     let brief = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2828,6 +2882,7 @@ flowchart TD
         .stdout;
 
     let invalid = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2911,6 +2966,7 @@ flowchart TD
     .unwrap();
 
     let applied = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args([
             "td",
             "create",
@@ -2970,6 +3026,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -3105,6 +3164,7 @@ changes:
     let spec_before = git_stdout_bytes(&git, root, &["cat-file", "blob", &spec_object]);
 
     let gen = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3188,6 +3248,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -3259,6 +3322,7 @@ definitions:
     );
 
     let lock = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -3271,6 +3335,7 @@ definitions:
     );
 
     let gen = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3307,6 +3372,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -3393,6 +3461,7 @@ changes:
     );
 
     let lock = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -3405,6 +3474,7 @@ changes:
     );
 
     let gen = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3442,6 +3512,9 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "."
+
+[agentic_workflow.issue_platform]
+type = "local"
 "#,
     )
     .unwrap();
@@ -3519,6 +3592,7 @@ changes:
     let target_before = std::fs::read(root.join("src/alias.rs")).unwrap();
 
     let gen = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
