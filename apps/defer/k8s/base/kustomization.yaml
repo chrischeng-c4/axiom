@@ -1,4 +1,3 @@
-# HANDWRITE-BEGIN gap="missing-generator:deployment:defer-direct-install-base" tracker="#766" reason="Defer's direct-install StatefulSet composition remains hand-authored until service-k8s emits the application base."
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: defer
@@ -14,4 +13,3 @@ labels:
       app.kubernetes.io/name: defer
       app.kubernetes.io/part-of: defer
     includeSelectors: false
-# HANDWRITE-END

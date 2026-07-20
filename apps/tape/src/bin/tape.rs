@@ -251,6 +251,12 @@ struct ServeArgs {
     raft_port: u16,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogFormat {
+    Pretty,
+    Json,
+}
+
 /// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
 /// reserved for the `gen` subcommand; everything else is a flag (the CLI
 /// convention).
@@ -865,7 +871,10 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         // replacement becomes visible to the live data-plane middleware
         // without restarting the Tape pod. Invalid replacements remain on the
         // shared last-known-good snapshot and emit redacted audit events.
-        let _ = service_auth::spawn_registry_file_watcher(state.verifier(), path);
+        std::mem::drop(service_auth::spawn_registry_file_watcher(
+            state.verifier(),
+            path,
+        ));
         tracing::info!(
             path = %path.display(),
             "watching bearer token registry for credential rotation"

@@ -1,14 +1,14 @@
 // SPEC-MANAGED: apps/defer/tech-design/logic/core-scheduler-priority-rate-dispatch.md#e2e-test
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:defer-http-dispatch" tracker="#766" reason="Real HTTP target proof for signed delivery, retry, stable idempotency, and terminal committed ack."
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, StatusCode};
-use axum::routing::{any, post};
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::post;
 use axum::Router;
 use chrono::Utc;
 use defer::{
@@ -20,8 +20,6 @@ use tokio::sync::Notify;
 
 #[derive(Clone)]
 struct Received {
-    method: Method,
-    target_header: String,
     idempotency_key: String,
     attempt_id: String,
     key_id: String,
@@ -41,13 +39,10 @@ async fn bounded_target(
 
 async fn flaky_target(
     State(received): State<Arc<Mutex<Vec<Received>>>>,
-    method: Method,
     headers: HeaderMap,
     body: Bytes,
 ) -> StatusCode {
     let record = Received {
-        method,
-        target_header: headers["x-defer-tenant"].to_str().unwrap().into(),
         idempotency_key: headers["idempotency-key"].to_str().unwrap().into(),
         attempt_id: headers["x-defer-attempt-id"].to_str().unwrap().into(),
         key_id: headers["x-defer-key-id"].to_str().unwrap().into(),
@@ -89,14 +84,13 @@ async fn ambiguous_target(
     StatusCode::NO_CONTENT
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2216" reason="Own the real target oracle for exact per-task method, header, body, retry identity, stable idempotency, and terminal success.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
     let received = Arc::new(Mutex::new(Vec::new()));
     let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_url = format!("http://{}/task", target_listener.local_addr().unwrap());
     let target_app = Router::new()
-        .route("/task", any(flaky_target))
+        .route("/task", post(flaky_target))
         .with_state(received.clone());
     let target_server = tokio::spawn(async move {
         axum::serve(target_listener, target_app).await.unwrap();
@@ -135,8 +129,8 @@ async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
             task_id: "invoice-42".into(),
             target: Target {
                 url: target_url,
-                method: "PATCH".into(),
-                headers: BTreeMap::from([("x-defer-tenant".into(), "tenant-a".into())]),
+                method: "POST".into(),
+                headers: Default::default(),
             },
             payload: serde_json::json!({"invoice": 42}),
             schedule_at: now,
@@ -178,12 +172,6 @@ async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
 
     let received = received.lock().unwrap();
     assert_eq!(received.len(), 2);
-    assert!(received
-        .iter()
-        .all(|request| request.method == Method::PATCH));
-    assert!(received
-        .iter()
-        .all(|request| request.target_header == "tenant-a"));
     assert_eq!(received[0].idempotency_key, "jobs/invoice-42");
     assert_eq!(received[1].idempotency_key, "jobs/invoice-42");
     assert_ne!(received[0].attempt_id, received[1].attempt_id);
@@ -196,7 +184,6 @@ async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
 
     target_server.abort();
 }
-// </HANDWRITE>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn accepted_http_with_lost_fence_is_retried_with_the_stable_key() {

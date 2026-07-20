@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-24T10:40:30.472409+00:00"
-digest = "sha256:28f2a3ef9ed54a3baaa0eb25c56da7c2d8fe0ef63914688eb1548dcb7174498f"
-source_digest = "sha256:28f2a3ef9ed54a3baaa0eb25c56da7c2d8fe0ef63914688eb1548dcb7174498f"
-ir_digest = "sha256:730ee5015f9f4240276a990b843933334b24f8f7c4008c5fb19cab306c390055"
+generated_at = "2026-07-20T03:53:10.002784+00:00"
+digest = "sha256:5a2e6cfdbd82ed50ba952dc5fb5c484cbda3603813758a6f0260b951eeb261a1"
+source_digest = "sha256:5a2e6cfdbd82ed50ba952dc5fb5c484cbda3603813758a6f0260b951eeb261a1"
+ir_digest = "sha256:edcbc16be3ee960a6612608c508dc3456fb86e27cb320172f6d53814d6c0f7fa"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -599,10 +599,4 @@ section_count = 3
 path = "validate/link-stateful-service-workload-claim-to-primary-td-verification.md"
 digest = "sha256:2645752ee8b89e114a6e8df282fb77ed383ad156913c73b8909c639d73f61979"
 ir_digest = "sha256:3c895f5992b4e5b038d6e53c33417917f9e006282b9639f5a59d04731943bfbe"
-section_count = 3
-
-[[files]]
-path = "validate/verify-low-cost-gke-deployment-scaling-and-cleanup.md"
-digest = "sha256:9a63a5b7d5b9bef07b4ca5e034559635b357a12a0e8cdc95576e63a8f8860896"
-ir_digest = "sha256:cdeb8fc99b42ec0aa881678dc2b2c4b5d77387811914777c02d42e6d1ed28903"
 section_count = 3

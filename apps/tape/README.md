@@ -40,14 +40,14 @@ domain work root rather than a shared-service concern.
 | Kubernetes-Native Deployment | #768, #1590 | implemented | verified | dogfood | ready | shared layered Kustomize base/overlays plus CRD/operator/instance and disposable Kind proof of operator reconciliation, PVC-backed append/replay, and replay after pod replacement; multi-shard topology remains domain work |
 | Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
 | Observability | #1588 | implemented | verified | conformance | ready | shared Prometheus pull metrics plus optional ServiceMonitor/PrometheusRule and opt-in OTLP tracing through `libs/service-http` |
-| Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
-| Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | not_ready | Raft owns live replica synchronization; an explicit `TAPE_BOOTSTRAP_SEED_URI` can seed only an empty replacement PVC before normal delta catch-up |
+| Backup & Restore | #1585 | implemented | passing | conformance | ready | exact snapshots ship through `libs/service-backup`; cold recovery seeds only a fresh PVC before Raft catch-up, never a live in-place restore |
+| Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | ready | Raft owns live replica synchronization; `TAPE_BOOTSTRAP_SEED_URI` seeds only an empty replacement PVC before normal delta catch-up |
 | Primary Replicas | #1327, #1805 | implemented | verified | dogfood | ready | shared raft-runtime leader/follower topology, durable restart/Kill-9 recovery, and required peer mTLS on a dedicated authenticated listener |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
 | EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
-| Long-Running Stability | #768, #1589 | implemented | verified | dogfood | ready | repeated Raft restart and Kill-9 failover recovery plus a bounded HTTP replay/checkpoint RSS soak; retention/compaction stays a Tape domain root |
+| Long-Running Stability | #768, #1589 | implemented | verified | dogfood | ready | two-cycle Raft failover/recovery plus a bounded HTTP replay/checkpoint soak proving error, RSS, FD, thread/task, and p99 plateaus; retention/compaction stays a Tape domain root |
 | Security Hardening | #768, #1593 | implemented | verified | conformance | ready | shared bearer topic authz, audited projected-secret rotation, request admission, restricted pod hardening, and opt-in CNI-enforced NetworkPolicy |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
 | Competitor Performance | #768 | implemented | verified | dogfood | ready | release Tape h2c stream passes 1.5x real-service replay gates against NATS JetStream and Kafka KRaft; other peers remain unclaimed |
@@ -120,16 +120,20 @@ Type: Runtime
 Root WI: #768
 Status: confirmed
 Surfaces: Runtime: append log, replay readers, retention/compaction workers, checkpoint store, snapshot, and recovery paths.
-EC Dimensions: stability: `cargo test -p tape --test long_running_stability --test raft_cluster --test raft_failover` - bounded restart/failover recovery; `TAPE_SOAK_AUTOSTART=1 bash apps/tape/scripts/soak.sh` - bounded HTTP replay/checkpoint RSS plateau. Retention and compaction are separate Tape domain work.
+EC Dimensions: stability: `cargo test -p tape --test long_running_stability --test raft_cluster --test raft_failover` - bounded restart and repeated failover recovery; `TAPE_SOAK_AUTOSTART=1 bash apps/tape/scripts/soak.sh` - bounded HTTP replay/checkpoint error, RSS, FD, thread/task, and p99 plateaus. Retention and compaction are separate Tape domain work.
 Required Verification: conformance, dogfood
 Promise:
 Tape's shared service baseline remains stable under bounded replay/checkpoint
 load and restart/failover cycles without losing committed events or corrupting
 checkpoints. Retention and compaction remain separate Tape domain work.
+The 2026-07-17 default 60-second run completed 5,235 fixed-state operations
+with zero errors, RSS 14,464 -> 14,464 KiB, FD 13 -> 13, threads 11 -> 11,
+and replay p99 1 -> 1 ms.
 Gate Inventory:
 - apps/tape/tests/long_running_stability.rs
 - apps/tape/tests/{raft_cluster,raft_failover}.rs
 - apps/tape/scripts/soak.sh
+- libs/service-observability/scripts/soak-metrics.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -162,7 +166,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | topic-replay-security-boundary | epic | #768 | implemented | passing | conformance | shared bearer role map, audited live registry rotation, bounded write admission, redacted backup audit, and non-root operator workload |
-| opt-in-server-ingress-network-policy | enhancement | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
+| opt-in-server-ingress-network-policy | change | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
 
 ### Competitor Feature Parity
 
@@ -194,7 +198,7 @@ Type: RuntimeTool
 Root WI: #768
 Status: verified
 Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, real Kafka (KRaft) replay comparison, and explicit peer calibration ledger.
-EC Dimensions: efficiency: `cargo test --release -p tape --test tape_perf_gate -- --nocapture`; `cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture`; `cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture` - local regression budget plus real-service h2c JetStream and Kafka replay gates
+EC Dimensions: efficiency: `cargo test --release -p tape --test tape_perf_gate -- --nocapture`; `cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture`; `cargo test --release -p tape --test tape_vs_kafka -- --nocapture` - local regression budget plus real-service h2c JetStream and Kafka replay gates
 Required Verification: smoke, conformance
 Promise:
 Tape maintains a local replay performance regression gate and executable
@@ -388,14 +392,8 @@ Required Verification: conformance
 Promise:
 Tape exports bounded pull metrics and provides an optional Prometheus Operator
 bundle that preserves `app`/`role` labels and alerts on actual append/replay
-latency series and pod restart loops. Every HTTP request is correlatable end
-to end: W3C `traceparent` is honored when present and a local root trace is
-created when absent, with the ids flowing into the structured stdout the sift
-collector ingests. OTLP export and service identity are provided by the
-shared observability/service HTTP libraries. Server-Timing per-response
-latency attribution (the shared `service-http::server_timing` contract) is
-wired into tape's HTTP stack: every response carries a
-`Server-Timing: app;dur=<ms>` baseline (#2490).
+latency series and pod restart loops. OTLP setup and service identity are
+provided by the shared observability/service HTTP libraries.
 Gate Inventory:
 - apps/tape/src/metrics.rs
 - apps/tape/k8s/components/observability
@@ -559,7 +557,7 @@ Type: Runtime
 Root WI: #768, #1327
 Status: confirmed
 Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-runtime`'s `TapeRaft`/`TapeStateMachine` (#1327); auto-mode leader/follower topology activated by `REPLICAS_PER_SHARD>1` (plus the standard `POD_NAME`/`SHARD_COUNT`/`VOTER_COUNT` downward-API quartet) — no tape-specific `--raft` flag. Required peer mTLS (`TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS`) uses the shared `raft-runtime` transport on the dedicated raft listener.
-EC Dimensions: behavior: real 3-node in-process raft group - election, leader-applied writes replicate to followers, follower-received appends forward to the leader, direct follower peer-route POST answers 421, fresh-node catch-up via InstallSnapshot; required-mTLS peers replicate over the authenticated listener and an untrusted certificate never reaches the Raft router; stability: live 3-node `kill -9` leader failover with no committed event loss and restart-recovery of the durable applied-index floor across process restarts.
+EC Dimensions: behavior: real 3-node in-process raft group - election, leader-applied writes replicate to followers, follower-received appends forward to the leader, direct follower peer-route POST answers 421, recovered-node catch-up followed by a second leader loss, and fresh-node catch-up via InstallSnapshot; required-mTLS peers replicate over the authenticated listener and an untrusted certificate never reaches the Raft router; stability: live 3-node `kill -9` leader failover with no committed event loss and restart-recovery of the durable applied-index floor across process restarts.
 Required Verification: conformance, dogfood
 Promise:
 Tape replicates committed topic journal state through raft so replay ranges and

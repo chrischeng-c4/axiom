@@ -30,11 +30,10 @@ use anyhow::{Context, Result};
 use axum::Router;
 use raft_runtime::{
     ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow,
-    PeerTransport, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
+    PeerTransport, ProposalCache, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use storage_durable::atomic_write;
 
 use crate::{
     ConsumerCheckpoint, RetentionOutcome, RetentionPolicy, Subscription, SubscriptionAckError,
@@ -167,22 +166,14 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
     }
 
     let raft_dir = data_dir.join("raft");
-    std::fs::create_dir(&raft_dir)
-        .with_context(|| format!("create bootstrap raft dir {}", raft_dir.display()))?;
-    let marker = raft_dir.join(format!("applied-{node_id}.idx"));
-    let snapshot_path = snapshot_path_for(&marker);
-    let snapshot_bytes =
-        serde_json::to_vec(&snapshot).context("encode bootstrap JournalSnapshot")?;
-
-    // Publish the snapshot before its floor marker. A crash after the first
-    // rename is still safe: TapeStateMachine::new sees the snapshot and its
-    // own `up_to`; it must never see a marker that claims an absent snapshot.
-    atomic_write(&snapshot_path, &snapshot_bytes, FsyncPolicy::Always)?;
-    atomic_write(
-        &marker,
-        snapshot.up_to.to_string().as_bytes(),
+    let store = RaftStore::open(
+        raft_dir
+            .to_str()
+            .context("raft data dir is not valid UTF-8")?,
+        node_id,
         FsyncPolicy::Always,
     )?;
+    store.seed_snapshot(snapshot.up_to, 0, bytes.to_vec())?;
     Ok(())
 }
 // </HANDWRITE>
@@ -276,38 +267,6 @@ impl TapeStateMachine {
                 cache
             }),
         }))
-    }
-
-    /// Durably record the applied floor AND the full journal snapshot
-    /// (atomic temp-write + fsync + rename, same recipe for both files).
-    /// Best-effort: a persist failure degrades to at-least-once replay /
-    /// stale-content recovery on the next restart (logged), it never stalls
-    /// the apply loop.
-    ///
-    /// Writing the whole journal on every apply is a deliberate
-    /// correctness-first tradeoff for this slice (proving no committed event
-    /// loss matters more than write amplification here); throttling this to
-    /// every `SNAPSHOT_EVERY` applies, mirroring raft-runtime's own log
-    /// compaction cadence, is a reasonable follow-up once tape's journals are
-    /// large enough for it to matter.
-    fn persist_marker(&self, index: Index) {
-        let Some(path) = &self.marker else { return };
-        if let Err(e) = atomic_write(path, index.to_string().as_bytes(), FsyncPolicy::Always) {
-            tracing::warn!(index, error = %e, "raft: applied-marker persist failed (floor stale-low; entries at/below it may re-apply on restart)");
-        }
-
-        let snap_path = snapshot_path_for(path);
-        let write_snapshot = || -> Result<()> {
-            let journal = self.journal.lock().expect("journal mutex poisoned").clone();
-            let bytes = serde_json::to_vec(&JournalSnapshot {
-                up_to: index,
-                journal,
-            })?;
-            atomic_write(&snap_path, &bytes, FsyncPolicy::Always)
-        };
-        if let Err(e) = write_snapshot() {
-            tracing::warn!(index, error = %e, "raft: journal-snapshot persist failed (restart may recover stale journal content)");
-        }
     }
 
     /// Remove and return the apply outcome at `index` (the proposing handler
@@ -563,7 +522,21 @@ impl TapeRaft {
                 cfg,
             ),
         };
-        Ok(TapeRaft { host, sm })
+        static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let session = wall
+            ^ ((std::process::id() as u64) << 32)
+            ^ NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+        Ok(TapeRaft {
+            host,
+            sm,
+            node_id,
+            session,
+            proposal_sequence: AtomicU64::new(1),
+        })
     }
 
     /// Spawn from a k8s-derived [`ClusterTopology`] (the auto-mode serve
@@ -612,6 +585,12 @@ impl TapeRaft {
             snapshot: SnapshotPolicy::EveryEntries(snapshot_every),
             ..HostConfig::default()
         }
+    }
+
+    /// Drain the shared Raft host's in-flight peer RPCs before its h2 client
+    /// and peer listener are torn down.
+    pub async fn shutdown(&self) -> Result<()> {
+        self.host.shutdown().await
     }
 
     /// Peer raft RPCs + leader forwarding + `/raftz`. The h2c compatibility

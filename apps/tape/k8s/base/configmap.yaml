@@ -12,6 +12,8 @@ data:
   TAPE_BIND: "0.0.0.0:7137"
   # SIGTERM drain window; matches the StatefulSet's grace period.
   TAPE_GRACE_SECS: "30"
+  # Sift's node collector accepts the shared versioned JSONL contract.
+  TAPE_LOG_FORMAT: "json"
   # Production defaults to structured logs. Dev overlays use debug.
   RUST_LOG: "info"
   # Direct Kustomize starts tokenless. Staging/prod overlays may set required
