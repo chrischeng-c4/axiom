@@ -327,6 +327,34 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             .delete(format!(
                 "{auth_url}/v1/queues/jobs/tasks/cancel-through-api"
             ))
+            .bearer_auth("reader")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN,
+        "read access must not grant task cancellation"
+    );
+    let still_scheduled: serde_json::Value = client
+        .get(format!(
+            "{auth_url}/v1/queues/jobs/tasks/cancel-through-api"
+        ))
+        .bearer_auth("reader")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        still_scheduled["status"], "Scheduled",
+        "a rejected cancellation must not mutate task state"
+    );
+    assert_eq!(
+        client
+            .delete(format!(
+                "{auth_url}/v1/queues/jobs/tasks/cancel-through-api"
+            ))
             .bearer_auth("admin")
             .send()
             .await
