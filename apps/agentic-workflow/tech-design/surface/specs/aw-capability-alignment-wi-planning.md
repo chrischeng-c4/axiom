@@ -212,6 +212,9 @@ scenarios:
       - "explicit capability_plan_review_backing=human remains blocking and never fabricates approval"
       - "accepted evidence is bound to the exact plan plus machine manifest digest and rejects the recorded author as same-agent reviewer"
       - "closed, missing, or otherwise stale doc-stored WI refs remain reconciliation evidence but never suppress a bounded replacement WI for an unverified claim"
+      - "capability Root WI and claim WI remain distinct; one claim id yields at most one candidate across capabilities while retaining every capability alignment, and only an explicit claim WI ref or the exact claim id in an open non-epic WI suppresses the duplicate"
+      - "every claim candidate includes a machine-runnable verification command plus a claim-specific expected result with non-zero evidence coverage"
+      - "candidate gates retain every same-project test target declared by the claim, expected results name the observable claim, and generated WIs require implementation plus the passing gate instead of allowing linkage, prose, downgrade, or deferral alone to close"
       - "needs_revision evidence publishes no work items and routes back to aw wi plan with concrete findings"
       - "accepted review publishes only bounded, deduplicated claim WIs and records their parent epic reference"
       - "the capability runner routes each published claim WI through EC-first TD/codegen lifecycle until primary TD evidence closes the claim"
@@ -946,7 +949,7 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, keep stale doc-stored WI refs advisory, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
+    description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, keep stale doc-stored WI refs advisory, keep capability Root WI distinct from claim WI, deduplicate repeated claims while preserving all capability alignments, suppress only explicit claim WI refs and exact claim-id matches, retain all declared test targets, require implementation plus runnable claim-specific observable verification, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
   - path: apps/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli

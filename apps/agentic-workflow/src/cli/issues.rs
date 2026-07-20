@@ -4681,9 +4681,11 @@ struct CapabilityCandidate {
     issue_type: String,
     source_capability_id: String,
     source_capability: String,
+    related_capabilities: Vec<String>,
     claim_id: Option<String>,
     capability_gap: String,
     first_gate: String,
+    expected_result: String,
     parent_wi_refs: Vec<String>,
 }
 
@@ -5077,12 +5079,24 @@ fn tracker_lookup_summary(
 }
 
 fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<CapabilityCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates: Vec<CapabilityCandidate> = Vec::new();
     for row in rows {
         if !has_actionable_gap(row) {
             continue;
         }
-        let matches = matching_issues_for_capability(row, issues);
+        let mut matches = matching_issues_for_capability(row, issues);
+        if let Some(claim_id) = row.claim_id.as_deref() {
+            for related_row in rows
+                .iter()
+                .filter(|related| related.claim_id.as_deref() == Some(claim_id))
+            {
+                for issue in matching_issues_for_capability(related_row, issues) {
+                    if !matches.iter().any(|matched| matched.slug == issue.slug) {
+                        matches.push(issue);
+                    }
+                }
+            }
+        }
         let claim_has_bounded_wi = row.claim_id.as_deref().is_some_and(|claim_id| {
             matches.iter().any(|issue| {
                 issue.issue_type != IssueType::Epic
@@ -5098,6 +5112,28 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
                         .iter()
                         .any(|issue| issue.issue_type != IssueType::Epic))
         {
+            continue;
+        }
+        if let Some(existing) = row.claim_id.as_deref().and_then(|claim_id| {
+            candidates
+                .iter_mut()
+                .find(|candidate| candidate.claim_id.as_deref() == Some(claim_id))
+        }) {
+            let alignment = format!("{} ({})", row.capability_id, row.capability.trim());
+            if alignment
+                != format!(
+                    "{} ({})",
+                    existing.source_capability_id,
+                    existing.source_capability.trim()
+                )
+                && !existing.related_capabilities.contains(&alignment)
+            {
+                existing.related_capabilities.push(alignment.clone());
+                existing.expected_result.push_str(&format!(
+                    "; related alignment {alignment} declares evidence: {}",
+                    row.evidence.trim()
+                ));
+            }
             continue;
         }
         let mut parent_wi_refs = matches
@@ -5120,18 +5156,145 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
             issue_type: infer_candidate_issue_type(&row.gaps).to_string(),
             source_capability_id: row.capability_id.clone(),
             source_capability: row.capability.clone(),
+            related_capabilities: Vec::new(),
             claim_id: row.claim_id.clone(),
             capability_gap: row.gaps.clone(),
             first_gate: if row.claim_id.is_some() {
-                row.evidence.clone()
+                capability_candidate_first_gate(row)
             } else {
                 "Create one bounded WI with acceptance criteria and a concrete verification command."
                     .to_string()
             },
+            expected_result: capability_candidate_expected_result(row),
             parent_wi_refs,
         });
     }
     candidates
+}
+
+fn capability_candidate_first_gate(row: &CapabilityRow) -> String {
+    [&row.evidence]
+        .into_iter()
+        .find_map(|text| {
+            text.split('`')
+                .enumerate()
+                .filter(|(index, _)| index % 2 == 1)
+                .map(|(_, code)| code.trim())
+                .find(|code| looks_like_runnable_verification_command(code))
+                .map(str::to_string)
+        })
+        .or_else(|| capability_evidence_command(&row.evidence))
+        .or_else(|| {
+            row.evidence
+                .strip_prefix("claim gate:")
+                .map(str::trim)
+                .filter(|command| looks_like_runnable_verification_command(command))
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            row.ec_dimensions
+                .split('`')
+                .enumerate()
+                .filter(|(index, _)| index % 2 == 1)
+                .map(|(_, code)| code.trim())
+                .find(|code| looks_like_runnable_verification_command(code))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| row.evidence.clone())
+}
+
+fn capability_evidence_command(evidence: &str) -> Option<String> {
+    let mut test_project: Option<String> = None;
+    let mut tests = Vec::new();
+    let mut script = None;
+    for token in evidence.split(|character: char| {
+        character.is_whitespace() || matches!(character, ';' | ',' | '(' | ')')
+    }) {
+        let path = token.trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && !matches!(character, '/' | '.' | '-' | '_')
+        });
+        let segments = path.split('/').collect::<Vec<_>>();
+        if segments.len() >= 4
+            && segments[0] == "apps"
+            && segments[2] == "tests"
+            && segments.last().is_some_and(|leaf| leaf.ends_with(".rs"))
+        {
+            let project = segments[1].to_string();
+            if test_project
+                .as_ref()
+                .is_none_or(|current| current == &project)
+            {
+                test_project.get_or_insert(project);
+                let test = segments.last()?.trim_end_matches(".rs").to_string();
+                if !tests.contains(&test) {
+                    tests.push(test);
+                }
+            }
+        }
+        if segments.len() >= 4
+            && segments[0] == "apps"
+            && segments[2] == "scripts"
+            && segments.last().is_some_and(|leaf| leaf.ends_with(".sh"))
+        {
+            script.get_or_insert_with(|| format!("bash {path}"));
+        }
+    }
+    if let Some(project) = test_project {
+        let tests = tests
+            .iter()
+            .map(|test| format!("--test {test}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Some(format!("cargo test -p {project} {tests}"));
+    }
+    script
+}
+
+fn capability_candidate_expected_result(row: &CapabilityRow) -> String {
+    let claim = row
+        .claim_id
+        .as_deref()
+        .unwrap_or(row.capability_id.as_str());
+    let observable = claim.replace('-', " ");
+    let gate = capability_candidate_first_gate(row);
+    let evidence = row
+        .evidence
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "`{gate}` exits 0 and observes `{observable}` for claim `{claim}` through the declared oracle; a missing oracle, zero matches, or an unobserved claim fails. Oracle and evidence: {evidence}"
+    )
+}
+
+fn looks_like_runnable_verification_command(command: &str) -> bool {
+    let command = command.trim();
+    const PREFIXES: &[&str] = &[
+        "./",
+        "aw ",
+        "bash ",
+        "cargo ",
+        "cd ",
+        "docker ",
+        "guard ",
+        "kind ",
+        "kubectl ",
+        "kustomize ",
+        "make ",
+        "meter ",
+        "npm ",
+        "pnpm ",
+        "python ",
+        "python3 ",
+        "terraform ",
+        "vat ",
+    ];
+    PREFIXES.iter().any(|prefix| command.starts_with(prefix))
+        || command
+            .split_whitespace()
+            .next()
+            .is_some_and(|token| token.contains('='))
+            && command.split_whitespace().count() > 1
 }
 
 fn capability_plan_summary_rows(
@@ -5337,10 +5500,10 @@ fn infer_candidate_issue_type(gap: &str) -> &'static str {
 }
 
 fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) -> Vec<&'a Issue> {
-    let mut explicit_numbers = extract_hash_numbers(&row.active_wi);
-    explicit_numbers.extend(extract_active_wi_numbers(&row.active_wi));
-    explicit_numbers.extend(extract_hash_numbers(&row.root_wi));
-    explicit_numbers.extend(extract_active_wi_numbers(&row.root_wi));
+    let mut explicit_active_numbers = extract_hash_numbers(&row.active_wi);
+    explicit_active_numbers.extend(extract_active_wi_numbers(&row.active_wi));
+    let mut explicit_root_numbers = extract_hash_numbers(&row.root_wi);
+    explicit_root_numbers.extend(extract_active_wi_numbers(&row.root_wi));
     let active_wi_lower = row.active_wi.to_ascii_lowercase();
     let root_wi_lower = row.root_wi.to_ascii_lowercase();
     let keywords = capability_keywords(row);
@@ -5348,10 +5511,12 @@ fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) 
     issues
         .iter()
         .filter(|issue| {
-            if issue
-                .github_id
-                .or(issue.gitlab_id)
-                .is_some_and(|id| explicit_numbers.contains(&id))
+            let issue_id = issue.github_id.or(issue.gitlab_id);
+            if issue_id.is_some_and(|id| explicit_active_numbers.contains(&id)) {
+                return true;
+            }
+            if issue_id.is_some_and(|id| explicit_root_numbers.contains(&id))
+                && (row.claim_id.is_none() || issue.issue_type == IssueType::Epic)
             {
                 return true;
             }
@@ -5362,28 +5527,30 @@ fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) 
                 if active_wi_lower.contains(&issue_ref)
                     || active_wi_lower.contains(&issue.slug.to_ascii_lowercase())
                     || (!title.is_empty() && active_wi_lower.contains(&title))
-                    || root_wi_lower.contains(&issue_ref)
-                    || root_wi_lower.contains(&issue.slug.to_ascii_lowercase())
-                    || (!title.is_empty() && root_wi_lower.contains(&title))
+                {
+                    return true;
+                }
+                if (row.claim_id.is_none() || issue.issue_type == IssueType::Epic)
+                    && (root_wi_lower.contains(&issue_ref)
+                        || root_wi_lower.contains(&issue.slug.to_ascii_lowercase())
+                        || (!title.is_empty() && root_wi_lower.contains(&title)))
                 {
                     return true;
                 }
             }
 
+            let search = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
             if let Some(claim_id) = row.claim_id.as_deref() {
-                let search = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
                 return search.contains(&claim_id.to_ascii_lowercase());
             }
-
             if keywords.is_empty() {
                 return false;
             }
-            let search = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
             let hits = keywords
                 .iter()
                 .filter(|keyword| search.contains(keyword.as_str()))
                 .count();
-            hits >= 2
+            hits >= 3
         })
         .collect()
 }
@@ -5693,11 +5860,20 @@ fn render_capability_wi_plan(
         out.push_str("| none | - | - | - | - |\n");
     } else {
         for candidate in candidates {
+            let source_capability = if candidate.related_capabilities.is_empty() {
+                candidate.source_capability.clone()
+            } else {
+                format!(
+                    "{}<br>{}",
+                    candidate.source_capability,
+                    candidate.related_capabilities.join("<br>")
+                )
+            };
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} |\n",
                 markdown_table_cell(&candidate.title),
                 candidate.issue_type,
-                markdown_table_cell(&candidate.source_capability),
+                markdown_table_cell(&source_capability),
                 markdown_table_cell(&candidate.capability_gap),
                 markdown_table_cell(&candidate.first_gate)
             ));
@@ -5796,15 +5972,19 @@ fn capability_candidate_wi_body(
         candidate.source_capability_id,
         candidate.source_capability.trim()
     ));
+    if !candidate.related_capabilities.is_empty() {
+        out.push_str("Related Capability Alignments:\n");
+        for alignment in &candidate.related_capabilities {
+            out.push_str(&format!("- {alignment}\n"));
+        }
+    }
     out.push_str(&format!("Capability Gap: `{claim_or_gap}`\n"));
     out.push_str(&format!(
         "Progress Evidence: {}\n\n",
         candidate.first_gate.trim()
     ));
     out.push_str("## Requirements\n\n");
-    out.push_str(
-        "- R1: Close the capability gap with implementation, linkage, or verified evidence.\n",
-    );
+    out.push_str("- R1: Implement the scoped capability behavior and make its declared verification gate pass; linkage or prose alone is not closure.\n");
     out.push_str("- R2: Keep the capability contract, work item, and TD/CB evidence aligned.\n\n");
     out.push_str("## Scope\n\n### In Scope\n\n");
     out.push_str("- Resolve this specific capability gap or claim.\n");
@@ -5818,8 +5998,15 @@ fn capability_candidate_wi_body(
     out.push_str(&format!(
         "- AC1: `aw capability check --project {project}` no longer reports this candidate as a planning blocker.\n"
     ));
-    out.push_str("- AC2: The work item links to primary TD/CB evidence or a documented verification artifact for the capability gap.\n");
-    out.push_str("- AC3: Required verification passes, or the capability claim is explicitly downgraded/deferred.\n\n");
+    out.push_str("- AC2: The work item links primary TD/CB evidence that defines the implementation edge and the independent observable oracle; a documentation-only artifact is insufficient.\n");
+    out.push_str("- AC3: The declared verification gate exits 0 and produces the Expected Result below. Downgrade or deferral requires a separate explicit capability-contract decision and does not close this WI.\n\n");
+    if looks_like_runnable_verification_command(&candidate.first_gate) {
+        out.push_str("\n### Verification Gate\n\n");
+        out.push_str(&format!("`{}`\n\n", candidate.first_gate.trim()));
+        out.push_str("Expected Result:\n");
+        out.push_str(candidate.expected_result.trim());
+        out.push_str(".\n\n");
+    }
     out.push_str("## Reference Context\n\n### Related Specs\n\n");
     out.push_str("| Spec | Relevance |\n|------|-----------|\n");
     out.push_str(&format!(
@@ -7186,6 +7373,10 @@ Generator ownership is complete; package-manager roadmap remains open.
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].parent_wi_refs, vec!["#766"]);
+        assert_eq!(
+            candidates[0].first_gate,
+            "cargo test -p defer --test cli_contract"
+        );
         let body = capability_candidate_wi_body(
             "defer",
             Path::new("apps/defer/CAPABILITIES.md"),
@@ -7194,6 +7385,162 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("Capability: `cli-interface`"));
         assert!(body.contains("Capability Gap: `defer-cli-convention`"));
         assert!(body.contains("Parent WI: #766"));
+        assert!(body.contains("### Verification Gate"));
+        assert!(body.contains("`cargo test -p defer --test cli_contract`"));
+        assert!(body.contains("Expected Result:"));
+        assert!(body.contains("observes `defer cli convention`"));
+        assert!(body.contains("linkage or prose alone is not closure"));
+        assert!(body.contains("a documentation-only artifact is insufficient"));
+        assert!(body.contains("does not close this WI"));
+    }
+
+    #[test]
+    fn capability_evidence_command_keeps_all_same_project_test_targets() {
+        assert_eq!(
+            capability_evidence_command(
+                "apps/relay/tests/deploy_cli.rs; apps/relay/tests/spec_cli.rs"
+            )
+            .as_deref(),
+            Some("cargo test -p relay --test deploy_cli --test spec_cli")
+        );
+    }
+
+    #[test]
+    fn capability_plan_deduplicates_one_claim_across_capabilities() {
+        let first = CapabilityRow {
+            capability_id: "competitor-feature-parity".to_string(),
+            capability: "Competitive Broker Feature Parity".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "Rust API: Relay".to_string(),
+            ec_dimensions: "behavior: `cargo test -p relay --test raft_core`".to_string(),
+            current_state: "Raft converges".to_string(),
+            gaps: "claim in-process-raft-convergence: primary evidence required".to_string(),
+            root_wi: "#108".to_string(),
+            active_wi: "#108".to_string(),
+            evidence: "apps/relay/tests/raft_core.rs".to_string(),
+            claim_id: Some("in-process-raft-convergence".to_string()),
+            claim_user_story: None,
+        };
+        let mut second = first.clone();
+        second.capability_id = "raft-ha".to_string();
+        second.capability = "Raft HA".to_string();
+        second.root_wi = "#1207".to_string();
+        second.active_wi = "#1207".to_string();
+
+        let candidates = capability_wi_candidates(&[first, second], &[]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].claim_id.as_deref(),
+            Some("in-process-raft-convergence")
+        );
+        assert_eq!(
+            candidates[0].related_capabilities,
+            vec!["raft-ha (Raft HA)"]
+        );
+        assert_eq!(
+            candidates[0].first_gate,
+            "cargo test -p relay --test raft_core"
+        );
+    }
+
+    #[test]
+    fn capability_plan_deduplicates_claim_against_explicit_open_wi_ref() {
+        let row = CapabilityRow {
+            capability_id: "work-queue-lifecycle".to_string(),
+            capability: "Work Queue Lifecycle".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "HTTP: consume".to_string(),
+            ec_dimensions: "behavior: `cargo test -p relay --test work_queue_api`".to_string(),
+            current_state: "Lease lifecycle exists".to_string(),
+            gaps: "claim lease-heartbeat-ack-lifecycle: committed lifecycle evidence required"
+                .to_string(),
+            root_wi: "none".to_string(),
+            active_wi: "#1850".to_string(),
+            evidence: "apps/relay/tests/work_queue_api.rs".to_string(),
+            claim_id: Some("lease-heartbeat-ack-lifecycle".to_string()),
+            claim_user_story: None,
+        };
+        let mut issue = planning_issue(
+            IssueType::Bug,
+            "relay: replicate lease lifecycle and fence consume ownership",
+            Some("p0"),
+            1850,
+        );
+        issue.body = "Lease grant, heartbeat, acknowledgement, expiry, reclaim, and the work-queue lifecycle must be committed and fenced."
+            .to_string();
+
+        let candidates = capability_wi_candidates(&[row], &[issue]);
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn capability_plan_does_not_treat_non_epic_root_wi_as_claim_wi() {
+        let row = CapabilityRow {
+            capability_id: "competitor-feature-parity".to_string(),
+            capability: "Competitive Broker Feature Parity".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "HTTP: publish and consume".to_string(),
+            ec_dimensions: "behavior: `cargo test -p relay --test raft_core`".to_string(),
+            current_state: "Feature breadth exists".to_string(),
+            gaps: "claim durable-raft-hard-state-restore: persistence evidence required"
+                .to_string(),
+            root_wi: "#1850".to_string(),
+            active_wi: "none".to_string(),
+            evidence: "apps/relay/tests/raft_persistence.rs".to_string(),
+            claim_id: Some("durable-raft-hard-state-restore".to_string()),
+            claim_user_story: None,
+        };
+        let mut issue = planning_issue(
+            IssueType::Bug,
+            "relay: replicate lease lifecycle and fence consume ownership",
+            Some("p0"),
+            1850,
+        );
+        issue.body =
+            "Lease, acknowledgement, expiry, and reclaim mutations are committed.".to_string();
+
+        let candidates = capability_wi_candidates(&[row], &[issue]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].claim_id.as_deref(),
+            Some("durable-raft-hard-state-restore")
+        );
+    }
+
+    #[test]
+    fn capability_plan_does_not_guess_open_wi_from_partial_claim_terms() {
+        let row = CapabilityRow {
+            capability_id: "cli-interface".to_string(),
+            capability: "CLI Interface".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "CLI: relay".to_string(),
+            ec_dimensions: "behavior: `cargo test -p relay --test raft_config`".to_string(),
+            current_state: "Auto mode exists".to_string(),
+            gaps: "claim auto-mode-raft-node-entrypoint: entrypoint evidence required".to_string(),
+            root_wi: "#1207".to_string(),
+            active_wi: "#1207".to_string(),
+            evidence: "apps/relay/tests/raft_config.rs".to_string(),
+            claim_id: Some("auto-mode-raft-node-entrypoint".to_string()),
+            claim_user_story: None,
+        };
+        let mut issue = planning_issue(
+            IssueType::Bug,
+            "relay: replicate lease lifecycle and fence consume ownership",
+            Some("p0"),
+            1850,
+        );
+        issue.body = "The raft node must commit the lease lifecycle before delivery.".to_string();
+
+        let candidates = capability_wi_candidates(&[row], &[issue]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].claim_id.as_deref(),
+            Some("auto-mode-raft-node-entrypoint")
+        );
     }
 
     #[test]
@@ -7210,9 +7557,12 @@ Generator ownership is complete; package-manager roadmap remains open.
             issue_type: "enhancement".to_string(),
             source_capability_id: "cli-interface".to_string(),
             source_capability: "CLI Interface".to_string(),
+            related_capabilities: Vec::new(),
             claim_id: Some("defer-cli-convention".to_string()),
             capability_gap: "missing primary TD".to_string(),
             first_gate: "cargo test -p defer --test cli_contract".to_string(),
+            expected_result: "The gate observes `defer cli convention` for `defer-cli-convention`"
+                .to_string(),
             parent_wi_refs: vec!["#766".to_string()],
         };
 

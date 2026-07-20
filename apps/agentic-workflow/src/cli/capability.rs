@@ -8747,6 +8747,16 @@ fn markdown_cell(value: &str) -> String {
 }
 
 fn root_wi_for_capability(capability: &CapabilitySection) -> String {
+    if let Some(root_wi) = capability
+        .current_state
+        .strip_prefix("Root WI:")
+        .and_then(|rest| rest.split(';').next())
+        .map(str::trim)
+        .filter(|wi| !is_empty_table_value(wi))
+    {
+        return root_wi.to_string();
+    }
+
     capability
         .gaps
         .iter()
@@ -12778,7 +12788,7 @@ pub fn capability_rows_for_wi_plan(
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
-                    root_wi: active_wi_for_capability(capability),
+                    root_wi: root_wi_for_capability(capability),
                     active_wi: active_wi_for_claim(capability, work_root),
                     evidence: claim_wi_plan_evidence(claim),
                     claim_id: Some(claim.id.clone()),
@@ -12819,7 +12829,7 @@ pub fn capability_rows_for_wi_plan(
                 } else {
                     gap_summary
                 },
-                root_wi: active_wi_for_capability(capability),
+                root_wi: root_wi_for_capability(capability),
                 active_wi: if active_wi.is_empty() {
                     "none".to_string()
                 } else {
@@ -16551,7 +16561,7 @@ Required Verification: smoke, conformance
 ## Search
 
 ID: search
-Root WI: #4141
+Root WI: #4100
 Status: auditing
 Type: Service
 Surfaces:
@@ -16611,6 +16621,7 @@ Cube: apps/lumen/tests/perf-cube.json
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
             .unwrap();
         assert!(query_planner.gaps.contains("claim query-planner"));
+        assert_eq!(query_planner.root_wi, "#4100");
         assert_eq!(query_planner.active_wi, "#4141");
         assert_eq!(query_planner.capability_type, "Service");
         assert!(query_planner
