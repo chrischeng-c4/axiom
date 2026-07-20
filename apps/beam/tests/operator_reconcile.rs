@@ -10,6 +10,9 @@ fn spec() -> BeamSpec {
         port: Some(7373),
         log_level: Some("debug".into()),
         grace_secs: Some(45),
+        replicas: None,
+        storage_size: None,
+        request_gpu: None,
     }
 }
 
