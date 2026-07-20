@@ -143,7 +143,6 @@ changes:
     impl_mode: hand-written
     description: Configure the production external contract with agent-backed semantic review and the exact production_journey runner.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
