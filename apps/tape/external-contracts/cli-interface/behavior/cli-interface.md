@@ -31,10 +31,10 @@ e2e_tests:
     claim_id: tape-openapi-generated-client-contract
     contract_id: tape-spec-gen-public-api-journey
     category: behavior
-    command: "cargo test -p tape --test backup -- --nocapture"
+    command: "cargo test -p tape --test spec_generated_clients -- --nocapture"
     assertions:
-      - "tape spec gen emits typed TypeScript, Python, and Rust client artifacts from Tape's offline OpenAPI document."
-      - "The generated client contract stays scoped to Tape's topic append, replay, checkpoint, and administrative backup surfaces."
+      - "The non-zero integration test executes tape spec gen and emits typed TypeScript, Python, and Rust client artifacts from Tape's offline OpenAPI document."
+      - "Every generated language is inspected for Tape's topic append, replay, checkpoint, and administrative backup route scope."
   - id: tape-cli-interface-protocol-transport
     capability_id: http2-api-list
     claim_id: tape-http1-h2c-listener-contract

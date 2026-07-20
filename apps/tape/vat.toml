@@ -36,7 +36,7 @@ cmd = [
   "--test",
   "tape_vs_nats_jetstream",
   "--test",
-  "cli_contract",
+  "service_auth",
   "--no-run",
 ]
 
@@ -69,6 +69,6 @@ cmd = [
   "--compact",
   "--no-persist",
   "--meter-command",
-  "../../target/debug/meter test -- -p tape --test cli_contract -- --nocapture",
+  "../../target/debug/meter test -- -p tape --test service_auth -- --nocapture",
 ]
 timeout_s = 600

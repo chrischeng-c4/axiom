@@ -32,10 +32,10 @@ impl Drop for NatsServer {
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in tape_vs_nats_jetstream.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
-    if cfg!(debug_assertions) {
-        eprintln!("release-only competitor gate: rerun with `cargo test --release`");
-        return;
-    }
+    assert!(
+        !cfg!(debug_assertions),
+        "release-only competitor gate: rerun with `cargo test --release`"
+    );
     let (server, url) = spawn_nats_server().await;
     let payload = payload(PAYLOAD_BYTES);
     let (tape, tape_url) = support::spawn_tape_service(EVENTS, payload.clone()).await;
@@ -47,20 +47,22 @@ async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
             .await;
     let tape_p50 = percentile(&tape_samples, 0.50);
     let nats_p50 = percentile(&nats_samples, 0.50);
-    let report = tape::bench::external_replay_win(
-        "NATS JetStream stream",
-        "local_backlog_full_replay",
-        EVENTS,
-        PAYLOAD_BYTES,
-        tape_p50,
-        nats_p50,
-        REQUIRED_REPLAY_RATIO,
-        "apps/tape/tests/tape_vs_nats_jetstream.rs starts real Tape h2c and NATS JetStream services, then downloads and validates five complete samples of the same durable 20k-event replay across both network boundaries",
-    );
+    let ratio = nats_p50 as f64 / tape_p50.max(1) as f64;
 
     let payload_total = (EVENTS * PAYLOAD_BYTES) as f64;
     let resource_report = serde_json::json!({
-        "gate": report,
+        "gate": {
+            "peer": "NATS JetStream stream",
+            "workload": "local_backlog_full_replay",
+            "events": EVENTS,
+            "payload_bytes": PAYLOAD_BYTES,
+            "tape_replay_us": tape_p50,
+            "peer_replay_us": nats_p50,
+            "ratio": ratio,
+            "required_ratio": REQUIRED_REPLAY_RATIO,
+            "win_claim": ratio >= REQUIRED_REPLAY_RATIO,
+            "oracle_owner": "apps/tape/tests/tape_vs_nats_jetstream.rs",
+        },
         "samples": SAMPLES,
         "latency_scope": "warm connection, complete 20k-event backlog transfer and validation; broker setup and publish excluded",
         "tape": {
@@ -90,7 +92,10 @@ async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
         "{}",
         serde_json::to_string_pretty(&resource_report).unwrap()
     );
-    tape::bench::verify_external_replay_win(&report).expect("Tape beats NATS JetStream replay");
+    assert!(
+        ratio >= REQUIRED_REPLAY_RATIO,
+        "Tape/NATS replay ratio {ratio:.2}x is below required {REQUIRED_REPLAY_RATIO:.2}x (NATS {nats_p50}us, Tape {tape_p50}us)"
+    );
     drop(tape);
     drop(server);
 }

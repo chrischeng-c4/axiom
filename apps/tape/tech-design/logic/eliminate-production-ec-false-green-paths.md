@@ -134,6 +134,18 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: "Execute tape spec gen for TypeScript, Python, and Rust and inspect emitted route scope. generator gap: missing-generator:test:generated-client-journey (#2159)."
+  - path: apps/tape/src/openapi.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: ApiDoc
+    description: "Include the existing admin backup handler in the generated-client OpenAPI route inventory. generator gap: missing-generator:logic:tape-openapi-route-inventory (#2159)."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: openapi
+    description: "Include the existing admin backup endpoint in the offline OpenAPI document consumed by tape spec gen. generator gap: missing-generator:logic:tape-offline-openapi-route-inventory (#2159)."
   - path: apps/tape/tests/fixtures/competitor_feature_baseline.json
     action: create
     section: unit-test

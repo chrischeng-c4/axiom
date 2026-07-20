@@ -28,6 +28,7 @@ pub fn routes_json() -> String {
             {"method": "GET", "path": "/metrics", "purpose": "Prometheus metrics"},
             {"method": "GET", "path": "/openapi.json", "purpose": "machine OpenAPI"},
             {"method": "GET", "path": "/docs", "purpose": "Swagger UI"},
+            {"method": "GET", "path": "/admin/backup", "purpose": "admin-gated whole-journal snapshot"},
             {"method": "POST", "path": "/topics/{topic}/append", "purpose": "append event envelopes"},
             {"method": "GET", "path": "/topics/{topic}/replay", "purpose": "replay by offset or timestamp"},
             {"method": "GET", "path": "/topics/{topic}/replay/stream", "purpose": "compact read-only h2c bulk replay"},
@@ -82,6 +83,7 @@ The initial service contract is intentionally compact:
 - `POST /topics/{topic}/subscriptions/{subscription}/ack` declares explicit cursor advance.
 - `PUT /topics/{topic}/consumers/{consumer}/checkpoint` advances a replay cursor.
 - `GET /topics/{topic}/consumers/{consumer}/checkpoint` reads the replay cursor.
+- `GET /admin/backup` returns an admin-gated whole-journal snapshot.
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` are the standard service endpoints.
 
 Use `tape spec --format routes` for the route inventory and `tape spec --format
@@ -113,6 +115,21 @@ fn openapi() -> Value {
             "/metrics": {"get": {"summary": "Prometheus metrics", "responses": ok_text()}},
             "/openapi.json": {"get": {"summary": "OpenAPI document", "responses": ok_json()}},
             "/docs": {"get": {"summary": "Swagger UI", "responses": ok_text()}},
+            "/admin/backup": {
+                "get": {
+                    "summary": "Download an admin-gated whole-journal snapshot",
+                    "responses": {
+                        "200": {
+                            "description": "JournalSnapshot JSON containing the journal at the applied Raft index",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type": "object"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "/topics/{topic}/append": {
                 "post": {
                     "summary": "Append an event envelope to a topic journal",
