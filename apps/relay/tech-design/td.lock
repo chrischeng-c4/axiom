@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-20T09:35:37.656143+00:00"
-digest = "sha256:3fe098af7f3a085a6878944bab4ad9d576611793a5f0c0b1168d78eb96efcec3"
-source_digest = "sha256:3fe098af7f3a085a6878944bab4ad9d576611793a5f0c0b1168d78eb96efcec3"
-ir_digest = "sha256:dfe495542c710fee0b331d75c5b2cabc018a529afdb2b1abc6ab8a3afc0bb024"
+generated_at = "2026-07-20T09:44:31.021021+00:00"
+digest = "sha256:080df93baf3b574fbefdf75dc052b41541df95d79c151f974e1038e0cfa1b8b5"
+source_digest = "sha256:080df93baf3b574fbefdf75dc052b41541df95d79c151f974e1038e0cfa1b8b5"
+ir_digest = "sha256:45375619052c9b926f1a2809314496cd113492f5515ec772a35bf0acc3552c06"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -114,6 +114,12 @@ path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
 digest = "sha256:767b74003637cec03551a76d678afd684e1e68588e002b33bb7a9045f543ebe6"
 ir_digest = "sha256:ead43a27c9b20a4ffbad633f8b5abad0867c84aeb5666862604c488dd634f037"
 section_count = 4
+
+[[files]]
+path = "logic/replace-static-only-security-ec-with-negative-evidence.md"
+digest = "sha256:cbf609a7e85b03e6df936da80125329bdbaa62fa9647455fd989868aadd25a62"
+ir_digest = "sha256:514121a18e7261d4de5b1688b9d861f5bd48ea7df641cfa2e997cd1a6855bc1b"
+section_count = 3
 
 [[files]]
 path = "logic/replace-synthetic-performance-ec-with-a-measured-gate.md"
