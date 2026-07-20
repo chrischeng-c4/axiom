@@ -5096,8 +5096,7 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
                 && (claim_has_bounded_wi
                     || matches
                         .iter()
-                        .any(|issue| issue.issue_type != IssueType::Epic)
-                    || has_active_wi_ref(row) && matches.is_empty())
+                        .any(|issue| issue.issue_type != IssueType::Epic))
         {
             continue;
         }
@@ -7525,7 +7524,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
         assert!(body.contains("## Tracker WI Ref Lookups"));
         assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
-        assert!(!body.contains("## Candidate WI Drafts"));
+        assert!(body.contains("## Candidate WI Drafts"));
         assert!(body.contains("Complete the digest-bound review payload"));
         assert!(body.contains("`aw goal capability --project jet --non-interactive`"));
     }
