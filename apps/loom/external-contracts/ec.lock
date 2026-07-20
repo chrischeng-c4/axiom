@@ -1,31 +1,24 @@
-[project]
-name = "loom"
-cap_path = "README.md"
-label = "app:loom"
-
-[capability.profile]
-traits = ["long_running", "cli_facing", "network_exposed", "http2_api", "kubernetes_native", "primary_replicas", "stateful_storage"]
-
-[[workspaces]]
-name = "loom"
-paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p loom"
-codegen.profile = "rust/score-crate"
-
-# AW-EC-BEGIN
-[aw.ec.generated]
 version = 1
 project = "loom"
-generated_from_td_digest = "sha256:d9501506802d87a5d99b97e6c7cbecb9fd852b6cbe7fb0662013a3a4b47eeada"
+ir_kind = "ec"
+ec_path = "apps/loom/external-contracts"
+inventory_path = "apps/loom/aw.toml"
+generated_at = "2026-07-20T09:56:58.482869+00:00"
+ir_digest = "sha256:06fe2890d9bf09afd677ab95f9f9818d9134e4d93e47ed2b53a454633af89851"
+source_digest = "sha256:5cfe7891ce202f47815135fab4eaa44d03fd16bac0fb9c1aaeb81026e2474453"
+tool_contracts = []
 
-[[aw.ec.generated.cases]]
+[[sources]]
+path = "apps/loom/external-contracts/behavior/541.md"
+digest = "sha256:d37194680b6a48ad0b0d97f67496bc92da06474a64e8014185aecae93eaaf293"
+
+[[cases]]
 id = "loom-cli-interface-issue"
 capability_id = "cli-interface"
 claim_id = "loom-cli-convention-and-control-verbs"
 contract_id = "loom-cli-issue-verbs"
-category = "behavior"
-td_ref = "apps/loom/external-contracts/behavior/541.md#loom-cli-interface-issue"
+dimension = "behavior"
+source_ref = "apps/loom/external-contracts/behavior/541.md#loom-cli-interface-issue"
 test_path = "apps/loom/tests/behavior_loom_cli_interface_issue.rs"
 command = "cargo test -p loom --test cli_contract"
 required_for_production = true
@@ -42,4 +35,6 @@ assertions = [
     "loom issue search and view fail offline with no online feature error",
     "loom issue create runs offline in dry run mode emitting a pre-filled issue URL",
 ]
-# AW-EC-END
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:072e421ef84ddeeb9b9dac6244f77ebe6d59f073d55980df9c937396dce8df37"

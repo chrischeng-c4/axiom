@@ -46,6 +46,7 @@ worker -> relay lease/ack/heartbeat + keep input/result bytes
 | Long-Running Stability | #110 | planned | planned | none | not_ready | soak, crash recovery, and bounded resource gates |
 | Primary Replicas | #110 | planned | planned | none | not_ready | raft-backed primary/replica topology |
 | Security Hardening | #165 | planned | planned | none | not_ready | authn/authz, tenant isolation, audit events, and secret rotation |
+| Stateful Service Workload | #110 | implemented | passing | smoke | ready | projects the shared stateful-service workload baseline |
 
 ### CLI Interface
 
@@ -53,7 +54,7 @@ ID: cli-interface
 Type: RuntimeTool
 Root WI: #165
 Status: confirmed
-Surfaces: CLI: `loom llm`, `loom upgrade`, `loom issue`, `loom submit`, `loom status`, `loom worker`, and admin/debug verbs.
+Surfaces: CLI: `loom llm`, `loom upgrade`, `loom issue`, `loom controller`, `loom worker`, and admin/debug verbs.
 EC Dimensions: behavior: pending CLI convention gate - required standard verbs, workflow submit/status ergonomics, worker harness wiring, and offline agent docs
 Required Verification: smoke, conformance
 Promise:
@@ -64,7 +65,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| loom-cli-convention-and-control-verbs | epic | #165 | planned | planned | none | pending CLI convention gate |
+| loom-cli-convention-and-control-verbs | epic | #541 | planned | planned | none | pending CLI convention gate |
 
 ### HTTP/2 API List
 
@@ -313,3 +314,22 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | scheduler-throughput-and-dormant-axis-gate | epic | #127 | planned | planned | none | pending meter/vat benchmark gate |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #110
+Status: confirmed
+Surfaces: Raft: sharded workflow state primary/replica topology over `libs/raft-core` and `libs/raft-runtime`. K8s: dedicated StatefulSet/operator topology for workflow state under `apps/loom/k8s/`.
+EC Dimensions: behavior: `aw capability check --project loom --skip-issue-inventory` - the `stateful_storage` profile resolves its shared baseline; stability: raft failover, replica catch-up, snapshot restore, and committed-transition safety
+Required Verification: smoke
+Promise:
+Loom projects the shared stateful-service workload baseline without a duplicate service implementation. Its durable run store, stable StatefulSet identity, raft primary/replica topology, and snapshot/backup path are verified by the linked capability roots.
+Gate Inventory:
+- `aw capability check --project loom --skip-issue-inventory`
+- apps/loom/tests/integration/
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---|---|---|---|---|
+| stateful-service-workload-projection | change | #110 | implemented | passing | smoke | `aw capability check --project loom --skip-issue-inventory`; composes Workflow Orchestration, State Durability, Primary Replicas, and Kubernetes-Native Deployment without duplicating their claims |
