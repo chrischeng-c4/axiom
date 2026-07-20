@@ -3858,7 +3858,7 @@ impl Bundler {
         result
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
     fn generate_bundle(
         &self,
         modules: Vec<CompiledModule>,
