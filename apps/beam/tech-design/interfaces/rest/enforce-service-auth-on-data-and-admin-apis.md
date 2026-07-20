@@ -71,3 +71,42 @@ changes:
     impl_mode: hand-written
     anchor: service_end_to_end
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2150-verification
+requirements:
+  bearer_auth:
+    id: R1
+    text: "Use libs/service-auth for Bearer authentication with BEAM_AUTH and BEAM_TOKEN_REGISTRY_FILE configuration."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test security_hardening
+  collection_authz_and_admin_role:
+    id: R2
+    text: "Enforce collection-scoped authorization and a stricter admin role for backup/restore routes."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test security_hardening
+  request_limits:
+    id: R3
+    text: "Add request/body limits before snapshot decompression and batch ingestion."
+    kind: functional
+    risk: medium
+    verify: cargo test -p beam --test security_hardening
+  service_coverage:
+    id: R4
+    text: "Authenticated service coverage for existing endpoints using valid tokens."
+    kind: functional
+    risk: medium
+    verify: cargo test -p beam --test service
+---
+flowchart TD
+    r1[R1 bearer auth] --> cargo_test_p_beam_test_security_hardening[cargo test -p beam --test security_hardening]
+    r2[R2 collection authz and admin role] --> cargo_test_p_beam_test_security_hardening
+    r3[R3 request limits] --> cargo_test_p_beam_test_security_hardening
+    r4[R4 service coverage] --> cargo_test_p_beam_test_service[cargo test -p beam --test service]
+```
