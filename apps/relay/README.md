@@ -158,7 +158,7 @@ Gate Inventory:
 ID: competitor-performance
 Type: RuntimeTool
 Surfaces: Meter/Vat: `apps/relay/vat.toml#meter-perf` - isolated meter execution for the release-mode measured durable lifecycle gate.; Harness: `cargo run -p relay --release --example bench_compare -- --backend <target>` - durable-only closed-loop external broker comparison across relay, RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly.; Arena: `apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml` - advisory normalized ratio wrapper.; Rust test: `measured_performance` - machine-readable fsync-always local envelope with an independent parser.
-EC Dimensions: behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate -- --nocapture` - deterministic work-queue and decision-model conformance; efficiency: `cargo test --release -p relay --test measured_performance measured_durable_lifecycle_gate -- --exact --ignored --nocapture` - independently parsed 2,000-message durable envelope; stability: `RELAY_SOAK_AUTOSTART=1 bash apps/relay/scripts/soak.sh` - 60-second error, resource, and p99 plateau gate
+EC Dimensions: behavior: `bash apps/relay/scripts/ec-evidence.sh performance-behavior` - all named work-queue and decision-model tests with per-binary non-zero counts; efficiency: `bash apps/relay/scripts/ec-evidence.sh performance-efficiency` - exactly one independently parsed 2,000-message durable gate, one report marker, then Meter evidence; stability: `RELAY_SOAK_AUTOSTART=1 bash apps/relay/scripts/soak.sh` - 60-second error, resource, and p99 plateau gate
 Root WI: #2172
 Status: auditing
 Required Verification: dogfood
@@ -169,14 +169,14 @@ zero observations. Keep RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly
 comparisons as advisory dogfood until equivalent real-service calibration is
 promoted into a required production gate.
 Gate Inventory:
-- apps/relay/vat.toml; apps/relay/tests/measured_performance.rs; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs
+- apps/relay/vat.toml; apps/relay/scripts/ec-evidence.sh; apps/relay/tests/measured_performance.rs; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs
 - apps/relay/scripts/soak.sh; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | o-1-lease-cursor-throughput | epic | - | implemented | passing | conformance | apps/relay/tests/work_queue_throughput.rs |
 | normalized-win-ratchet-decision-model | epic | 125 | implemented | passing | conformance | apps/relay/tests/perf_gate.rs |
-| measured-durable-lifecycle-production-gate | change | #2172 | implemented | passing | dogfood | release-only child report plus independent parent parser; fixed 2,000-message/128-byte/batch-100 envelope |
+| measured-durable-lifecycle-production-gate | change | #2172 | implemented | passing | dogfood | release-only child report plus independent parent parser and outer zero-test/marker oracle; fixed 2,000-message/128-byte/batch-100 envelope |
 | vat-meter-throughput-gate | epic | 125 | implemented | passing | dogfood | `cd apps/relay && ../../target/debug/vat run meter-perf`; apps/relay/vat.toml#meter-perf |
 | external-broker-comparison | epic | 125 | implemented | passing | dogfood | 2026-07-17 real Relay/RabbitMQ/NATS bulk lifecycle calibration; apps/relay/docs/perf-gate.md; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
 
@@ -217,7 +217,7 @@ Gate Inventory:
 ID: security-hardening
 Type: SecurityTool
 Surfaces: HTTP: queue-scoped bearer RBAC with audited live registry rotation and bounded admission; peers: dedicated reloadable mTLS listener; K8s: read-only Secret projection, restricted pods, PDB and ingress NetworkPolicy.
-EC Dimensions: behavior: `cargo test -p relay --test auth --test service_admission -- --nocapture` - bearer 401/403, subject/stream RBAC, tokenless probes, and bounded 429 admission; security: `cargo test -p relay --test raft_peer_mtls --test direct_k8s_assets -- --nocapture` plus `cd apps/relay && ../../target/debug/vat run guard-security` - trusted/untrusted peer certificates, restricted pod/Secret/NetworkPolicy posture, and vat-isolated guard+dynamic evidence; stability: shared service-auth reload tests plus Relay live rotation and trusted peer replication retain last-known-good operation
+EC Dimensions: behavior: `bash apps/relay/scripts/ec-evidence.sh security-behavior` - fail-closed bearer 401/403, subject/stream RBAC, tokenless probes, and bounded 429 admission; security: `bash apps/relay/scripts/ec-evidence.sh security-boundaries` plus `cd apps/relay && ../../target/debug/vat run guard-security` - fail-closed trusted/untrusted peer certificates, restricted pod/Secret/NetworkPolicy posture, and vat-isolated guard+dynamic Meter evidence; stability: `bash apps/relay/scripts/ec-evidence.sh security-stability` - all shared reload cases plus exact Relay live rotation and trusted peer replication retain last-known-good operation
 Root WI: #2175
 Status: auditing
 Required Verification: conformance, negative
@@ -228,7 +228,7 @@ material validation, untrusted peer-certificate rejection, last-known-good
 credential rotation, and explicit negative gates for request limits and
 network policy before production readiness.
 Gate Inventory:
-- apps/relay/vat.toml; apps/relay/tests/auth.rs; apps/relay/tests/service_admission.rs
+- apps/relay/vat.toml; apps/relay/scripts/ec-evidence.sh; apps/relay/tests/auth.rs; apps/relay/tests/service_admission.rs
 - apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs
 - apps/relay/src/auth.rs; apps/relay/src/peer_tls.rs; libs/service-auth/src/reload.rs
 
@@ -237,7 +237,7 @@ Gate Inventory:
 | opaque-payload-boundary | epic | - | implemented | passing | smoke | apps/relay/tests/relay_core.rs; apps/relay/tests/worker_loop.rs |
 | bearer-auth-token-registry | epic | 1206 | implemented | passing | conformance | apps/relay/tests/auth.rs; apps/relay/src/auth.rs |
 | peer-tls-material-validation | epic | 1209 | implemented | passing | conformance | apps/relay/src/peer_tls.rs; apps/relay/HA.md |
-| guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && ../../target/debug/vat run guard-security`; static scan plus unfiltered auth/admission/peer-mTLS/K8s meter evidence |
+| guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && ../../target/debug/vat run guard-security`; static scan plus a self-testing named-suite/zero-count oracle and auth/admission/peer-mTLS/K8s/reload Meter evidence |
 | request-limit-and-malformed-frame-negative-tests | epic | - | implemented | passing | negative | apps/relay/tests/service_admission.rs plus HTTP/auth/consume negative coverage |
 | network-policy-and-peer-mtls-termination | epic | - | implemented | passing | conformance | trusted replication and attacker-CA rejection in apps/relay/tests/raft_peer_mtls.rs; restricted workload and policy assertions in apps/relay/tests/direct_k8s_assets.rs |
 | securitytool-negative-runtime-evidence | change | #2175 | implemented | passing | negative | behavior/security/stability EC cases and vat/guard dynamic dispatch close the independent false-green findings |

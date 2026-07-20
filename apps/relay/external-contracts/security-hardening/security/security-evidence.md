@@ -24,22 +24,24 @@ e2e_tests:
     claim_id: request-limit-and-malformed-frame-negative-tests
     contract_id: relay-auth-rbac-and-admission-behavior
     category: behavior
-    command: "cargo test -p relay --test auth --test service_admission -- --nocapture"
+    command: "bash apps/relay/scripts/ec-evidence.sh security-behavior"
     assertions:
       - "Required auth returns 401 for missing or unknown bearer tokens and 403 when a reader attempts publish or a subject-scoped reader crosses its grant; the streaming consume route enforces the same boundary."
       - "Valid subject writers/readers and wildcard administrators retain their intended publish, lease, ack, heartbeat, and batch behavior, while health, readiness, metrics, OpenAPI, and docs remain tokenless."
       - "A configured one-write admission budget allows the first publish, rejects the second with 429 and Retry-After: 60, and never rate-limits health probes."
+      - "The outer oracle requires all eight auth and two admission test names and independently rejects either suite when its executed count is zero."
 
   - id: relay-security-hardening-negative-peer-and-kubernetes-boundaries
     capability_id: security-hardening
     claim_id: network-policy-and-peer-mtls-termination
     contract_id: relay-untrusted-peer-and-restricted-workload-security
     category: security
-    command: "cargo test -p relay --test raft_peer_mtls --test direct_k8s_assets -- --nocapture"
+    command: "bash apps/relay/scripts/ec-evidence.sh security-boundaries"
     assertions:
       - "A client that trusts Relay's legitimate server CA but presents an identity signed by an attacker CA is rejected by the required-mTLS server handshake before HTTP or Raft routing."
       - "Peers signed by the trusted CA still elect, replicate, and converge over the authenticated listener."
       - "The direct StatefulSet is non-root with a read-only root filesystem and durable PVC; the production overlay projects credentials read-only, enables NetworkPolicy and observability components, and does not apply an unsafe voter HPA."
+      - "The outer oracle requires both named peer-mTLS tests and both named Kubernetes tests and rejects a zero-test result from either binary."
 
   - id: relay-security-hardening-guard-scan
     capability_id: security-hardening
@@ -50,7 +52,7 @@ e2e_tests:
     command: "cd apps/relay && ../../target/debug/vat run guard-security"
     assertions:
       - "guard scan over apps/relay reports no untriaged Docker, Kubernetes, or static security findings."
-      - "guard attaches meter evidence from the unfiltered auth, admission, peer-mTLS, and direct-Kubernetes test binaries; a missing binary, zero matching suite, or failed dynamic control makes the runner fail."
+      - "guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail."
       - "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout."
 
   - id: relay-security-hardening-rotation-and-peer-stability
@@ -58,10 +60,11 @@ e2e_tests:
     claim_id: bearer-auth-token-registry
     contract_id: relay-security-last-known-good-stability
     category: stability
-    command: "cargo test -p service-auth reload::tests -- --nocapture && cargo test -p relay --test auth relay_auth_adapter_rotates_the_shared_registry_without_restart -- --exact --nocapture && cargo test -p relay --test raft_peer_mtls trusted_relay_peers_replicate_messages_over_mtls -- --exact --nocapture"
+    command: "bash apps/relay/scripts/ec-evidence.sh security-stability"
     assertions:
       - "A valid registry rotation becomes visible without restarting Relay, invalid JSON/empty/read-failed rotations retain the last-known-good registry, and failure audit classes remain credential-free."
       - "The trusted three-peer required-mTLS group remains able to elect, replicate, converge, and shut down after the negative certificate-rejection case is present."
+      - "The outer oracle requires all five reload tests plus the exact Relay rotation and trusted-peer tests, and each focused invocation must execute at least one test."
 ```
 ## Tool Contract
 <!-- type: tool-contract lang: yaml -->
