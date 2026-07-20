@@ -154,6 +154,30 @@ pub fn scaffold_handwrite(
     Ok(ScaffoldOutcome::Inserted)
 }
 
+/// Read-only check for whether `anchor_symbol` can be located in
+/// `target_path`'s CURRENT on-disk content. Uses the same matching rule as
+/// [`scaffold_handwrite`]'s own anchor search, but never writes — callers
+/// use this to validate every hand-written target's anchor before any
+/// codegen entry in the same `td gen` pass has written anything, so a
+/// later-processed anchor failure cannot leave an earlier-processed target
+/// partially generated (#1807).
+///
+/// A non-existent `target_path` is treated as empty content (no anchor can
+/// match), matching [`scaffold_handwrite`]'s own behavior for a missing
+/// file.
+///
+/// @spec apps/agentic-workflow/tech-design/core/generate/handwrite-marker.md#logic
+pub fn anchor_present(target_path: &Path, anchor_symbol: &str) -> std::io::Result<bool> {
+    let original = if target_path.exists() {
+        std::fs::read_to_string(target_path)?
+    } else {
+        String::new()
+    };
+    Ok(original
+        .lines()
+        .any(|line| line_matches_anchor(line, anchor_symbol)))
+}
+
 /// Sentinel value used when `entry.tracker` is absent. Matches R3 / R10
 /// in `sdd-handwrite-marker#schema`.
 ///
