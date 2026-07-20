@@ -169,7 +169,6 @@ changes:
     impl_mode: hand-written
     description: Make the cumulative Workbench project test gate run every integration target.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
