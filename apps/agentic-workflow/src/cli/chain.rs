@@ -346,6 +346,12 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                instead of substituting a PROJECT placeholder",
     },
     EmitSite {
+        source: "run.rs:open_epic_envelope (unregistered project bootstrap)",
+        sample: "aw conf init --project-label app:workbench",
+        note: "#2182: a valid tracker project identity without a discoverable project config \
+               routes through the project-local configuration producer before atomization",
+    },
+    EmitSite {
         source: "run.rs:capability_run_command",
         sample: "aw goal capability work-item-planning --project jet",
         note: "#1899: canonical `aw goal capability <capability-id> --project <project>` \
@@ -523,6 +529,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         sunset_criterion: "",
     },
     // -- conf (core: aw.toml project registry the loop reads from) ------
+    VerbLifecycle {
+        path: "conf.init",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
     VerbLifecycle {
         path: "conf.check",
         class: VerbLifecycleClass::Core,

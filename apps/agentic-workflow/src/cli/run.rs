@@ -1436,7 +1436,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     }
 
     if issue.issue_type == IssueType::Epic {
-        open_epic_envelope(&issue)
+        open_epic_envelope(&project_root, &issue)
     } else {
         if issue.phase.is_none() && project_from_labels(&issue).is_none() {
             return blocked_envelope(
@@ -1485,14 +1485,15 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
 
 // An open epic can dispatch only after its tracker labels resolve a concrete
 // project identity. A missing identity is a HITL blocker with a runnable
-// inspection command; it must never leak a placeholder into next.command.
-// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R2 #R3
-fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
+// inspection command; an unregistered but valid identity is bootstrapped by
+// the configuration producer before atomization.
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R2 #R3 #R5
+fn open_epic_envelope(project_root: &Path, issue: &Issue) -> WorkflowEnvelope {
     let node = WorkflowNode {
         kind: "epic".to_string(),
         id: issue_ref(issue),
     };
-    let Some(project) = project_from_labels(issue) else {
+    let Some((project_label, project)) = project_identity_from_labels(issue) else {
         let issue_id = issue_cli_ref(issue);
         return blocked_envelope(
             node.clone(),
@@ -1506,6 +1507,58 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
             true,
         );
     };
+
+    match crate::cli::issues::resolve_project_label(project_root, &project) {
+        Err(_) => {
+            let command = format!("aw conf init --project-label {project_label}");
+            return WorkflowEnvelope {
+                action: "dispatch".to_string(),
+                root: node.clone(),
+                current: node,
+                completed: None,
+                completion: wi_completion(
+                    false,
+                    false,
+                    vec![format!(
+                        "epic project `{project}` must be registered before atomization"
+                    )],
+                ),
+                next: WorkflowNext {
+                    kind: "bootstrap_project".to_string(),
+                    command: command.clone(),
+                    reason: "tracker identity is valid but has no discoverable AW project config"
+                        .to_string(),
+                    payload_path: None,
+                },
+                invoke: WorkflowInvoke { command },
+                agent_prompt: "Run the project configuration producer, follow its emitted META-doc next command, then re-run this epic root."
+                    .to_string(),
+                requires_hitl: false,
+                artifact_quality_profile: None,
+                hitl_question: None,
+                persistence: None,
+            };
+        }
+        Ok(configured_label)
+            if configured_label
+                .split_once(':')
+                .map(|(_, configured_project)| configured_project)
+                != Some(project.as_str()) =>
+        {
+            let issue_id = issue_cli_ref(issue);
+            return blocked_envelope(
+                node.clone(),
+                node,
+                format!("aw wi show {issue_id}"),
+                format!(
+                    "open epic `{}` label `{project_label}` conflicts with configured project `{project}` label `{configured_label}`; reconcile the tracker or project config, then re-run `aw goal wi {issue_id}`",
+                    issue_ref(issue)
+                ),
+                true,
+            );
+        }
+        Ok(_) => {}
+    }
 
     let command = format!("aw wi atomize --project {project}");
     WorkflowEnvelope {
@@ -2812,16 +2865,27 @@ fn issue_cli_ref(issue: &Issue) -> String {
         .unwrap_or_else(|| issue.slug.clone())
 }
 
-// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R1 #R4
-fn project_from_labels(issue: &Issue) -> Option<String> {
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R1 #R4 #R5
+fn project_identity_from_labels(issue: &Issue) -> Option<(String, String)> {
     issue.labels.iter().find_map(|label| {
         label
             .strip_prefix("project:")
             .or_else(|| label.strip_prefix("app:"))
             .or_else(|| label.strip_prefix("lib:"))
-            .filter(|project| !project.is_empty() && !project.chars().any(char::is_whitespace))
-            .map(|project| project.to_string())
+            .filter(|project| {
+                !project.is_empty()
+                    && project != &"."
+                    && project != &".."
+                    && project
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            })
+            .map(|project| (label.to_string(), project.to_string()))
     })
+}
+
+fn project_from_labels(issue: &Issue) -> Option<String> {
+    project_identity_from_labels(issue).map(|(_, project)| project)
 }
 
 fn issue_is_self_hosting(issue: &Issue) -> bool {
@@ -3095,6 +3159,17 @@ mod tests {
             ship_commit: None,
             regen_verified_at: None,
         }
+    }
+
+    fn write_project_rows(root: &Path, rows: &[(&str, &str, &str)]) {
+        let mut body = String::new();
+        for (name, path, label) in rows {
+            body.push_str(&format!(
+                "[[projects]]\nname = {:?}\npath = {:?}\nlabel = {:?}\n\n[[projects.workspaces]]\nname = {:?}\npaths = [\"{}/**\"]\ntarget = \"schemas\"\ntest_cmd = \"true\"\n\n",
+                name, path, label, name, path
+            ));
+        }
+        std::fs::write(root.join("aw.toml"), body).unwrap();
     }
 
     fn assert_no_removed_wi_verbs(envelope: &WorkflowEnvelope) {
@@ -3475,6 +3550,8 @@ cap_path = "apps/jet/README.md"
 
     #[test]
     fn epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_project_rows(tmp.path(), &[("pgpool", "apps/pgpool", "project:pgpool")]);
         let mut issue = open_issue(IssueType::Epic, 1511);
         issue.labels = vec![
             "priority:p2".to_string(),
@@ -3487,7 +3564,7 @@ cap_path = "apps/jet/README.md"
         assert_eq!(project_from_labels(&issue).as_deref(), Some("pgpool"));
         assert_eq!(issue_ref(&issue), "#1511");
 
-        let envelope = open_epic_envelope(&issue);
+        let envelope = open_epic_envelope(tmp.path(), &issue);
         assert_eq!(envelope.action, "dispatch");
         assert_eq!(envelope.next.kind, "atomize");
         assert_eq!(envelope.next.command, "aw wi atomize --project pgpool");
@@ -3500,12 +3577,20 @@ cap_path = "apps/jet/README.md"
 
     #[test]
     fn epic_project_label_dispatch_preserves_app_and_lib_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_project_rows(
+            tmp.path(),
+            &[
+                ("mamba", "apps/mamba", "app:mamba"),
+                ("pg", "libs/pg", "lib:pg"),
+            ],
+        );
         for (label, project) in [("app:mamba", "mamba"), ("lib:pg", "pg")] {
             let mut issue = open_issue(IssueType::Epic, 1512);
             issue.labels = vec![label.to_string()];
 
             assert_eq!(project_from_labels(&issue).as_deref(), Some(project));
-            let envelope = open_epic_envelope(&issue);
+            let envelope = open_epic_envelope(tmp.path(), &issue);
             assert_eq!(
                 envelope.next.command,
                 format!("aw wi atomize --project {project}")
@@ -3519,6 +3604,7 @@ cap_path = "apps/jet/README.md"
 
     #[test]
     fn epic_project_label_dispatch_blocks_unresolved_or_empty_labels() {
+        let tmp = tempfile::tempdir().unwrap();
         for labels in [
             vec!["type:epic".to_string()],
             vec!["project:".to_string()],
@@ -3532,7 +3618,7 @@ cap_path = "apps/jet/README.md"
             issue.labels = labels;
 
             assert_eq!(project_from_labels(&issue), None);
-            let mut envelope = open_epic_envelope(&issue);
+            let mut envelope = open_epic_envelope(tmp.path(), &issue);
             ensure_hitl_question(&mut envelope, "aw goal wi 1513");
 
             assert_eq!(envelope.action, "blocked");
@@ -3547,6 +3633,34 @@ cap_path = "apps/jet/README.md"
             crate::cli::chain::validate_aw_command_string(&envelope.next.command)
                 .expect("unresolved epic remediation must remain chain-valid");
         }
+    }
+
+    #[test]
+    fn epic_project_label_dispatch_bootstraps_valid_unregistered_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            "[agentic_workflow.projects]\ndiscover = [\"apps/*/aw.toml\"]\n",
+        )
+        .unwrap();
+        let mut issue = open_issue(IssueType::Epic, 2171);
+        issue.labels = vec!["type:epic".to_string(), "app:workbench".to_string()];
+
+        assert_eq!(
+            project_identity_from_labels(&issue),
+            Some(("app:workbench".to_string(), "workbench".to_string()))
+        );
+        let envelope = open_epic_envelope(tmp.path(), &issue);
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "bootstrap_project");
+        assert_eq!(
+            envelope.next.command,
+            "aw conf init --project-label app:workbench"
+        );
+        assert_eq!(envelope.invoke.command, envelope.next.command);
+        assert!(!envelope.requires_hitl);
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("unregistered epic bootstrap command must parse against the real CLI");
     }
 
     #[test]

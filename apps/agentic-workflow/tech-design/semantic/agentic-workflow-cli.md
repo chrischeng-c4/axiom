@@ -25,7 +25,7 @@ capability_refs:
     gap: "aw-epic-project-label-dispatch"
     claim: "aw-epic-project-label-dispatch"
     coverage: full
-    rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
+    rationale: "The CLI semantic domain owns run.rs project-label resolution, registered epic atomize dispatch, greenfield project-local configuration bootstrap, and the unresolved-label HITL envelope (#1518, #2182)."
   - id: workflow-root-runner
     role: primary
     gap: self-hosting-root-runner-policy
@@ -1062,10 +1062,25 @@ semantic_domain:
           - name: "ConfArgs"
             kind: "struct"
             public: true
+          - name: "ConfCommand"
+            kind: "enum"
+            public: true
+          - name: "ConfInitArgs"
+            kind: "struct"
+            public: true
+          - name: "BootstrapProjectIdentity"
+            kind: "struct"
+            public: false
           - name: "run"
             kind: "function"
             public: true
           - name: "run_at_root"
+            kind: "function"
+            public: false
+          - name: "bootstrap_project_identity"
+            kind: "function"
+            public: false
+          - name: "run_project_init"
             kind: "function"
             public: false
           - name: "run_drift_check"
@@ -1379,6 +1394,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "project_from_labels"
+            kind: "function"
+            public: false
+          - name: "project_identity_from_labels"
             kind: "function"
             public: false
           - name: "issue_is_self_hosting"
@@ -3742,6 +3760,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #2182 adds `aw conf init --project-label <identity>` as the
+      idempotent greenfield producer for monorepo projects: it validates the
+      tracker identity, creates a discoverable project-local `aw.toml` with an
+      honest schemas-only bootstrap workspace, refuses conflicting existing
+      configuration, and emits `aw meta init --project <name>` as the next
+      command.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/update.rs"
     action: modify
@@ -3828,6 +3852,12 @@ changes:
       `PROJECT` placeholder. Focused tests cover the historical #1511 pgpool
       label shape, app/lib compatibility, invalid values, and real-CLI chain
       parsing.
+      Issue #2182 extends that routing for a valid identity absent from the
+      live project registry: the root emits `aw conf init --project-label
+      <identity>`, follows the configuration producer's META-doc handoff, and
+      only then emits atomization. Registered project behavior remains
+      byte-for-byte compatible, while unsafe label tokens are rejected before
+      entering a command string.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/run.rs"
     action: modify
@@ -3853,6 +3883,9 @@ changes:
       Issue #1518 registers `run.rs:open_epic_envelope` in EMIT_REGISTRY with
       `aw wi atomize --project pgpool`, so the exact epic handoff is parsed
       against the real clap tree by the chain-conformance suite.
+      Issue #2182 additionally registers `aw conf init --project-label
+      app:workbench` and classifies `conf.init` as a mutating core verb, so the
+      greenfield bootstrap branch is checked against the same live clap tree.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/production.rs"
     action: modify

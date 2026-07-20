@@ -13,6 +13,7 @@
 // Contract: the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool
 // Contract: app:mamba and lib:pg retain their existing atomize commands
 // Contract: missing, empty, and whitespace-only project labels return blocked/HITL remediation
+// Contract: a valid unregistered app:workbench identity emits aw conf init --project-label app:workbench
 // Contract: no tested envelope contains --project PROJECT
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
