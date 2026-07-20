@@ -807,7 +807,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 K8sCmd::Operator(operator) => {
                     match operator.cmd.unwrap_or(K8sOperatorCmd::Run) {
                         K8sOperatorCmd::Run => {
-                            beam::operator::run().await?;
+                            block_on(beam::operator::run())?;
                         }
                         K8sOperatorCmd::Render(render) => {
                             let body = render_operator_yaml(&render.namespace);
