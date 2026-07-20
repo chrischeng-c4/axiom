@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T09:51:23.166602+00:00"
-digest = "sha256:6fad9ce8c06531be0100d0f143cf8a6d18c81ba0500d84bc5e3477cd556f99ea"
-source_digest = "sha256:6fad9ce8c06531be0100d0f143cf8a6d18c81ba0500d84bc5e3477cd556f99ea"
-ir_digest = "sha256:4254bac0684e0166c8ccd521697c2c6831e56aa49c9460054a99a7f6d3aa58a5"
+generated_at = "2026-07-20T10:01:26.513363+00:00"
+digest = "sha256:35844daab10574f8809401e47771d0bdb2c57ee812812e4e4bdd1a1db8285639"
+source_digest = "sha256:35844daab10574f8809401e47771d0bdb2c57ee812812e4e4bdd1a1db8285639"
+ir_digest = "sha256:7ef37e1f637fc453203579ed398c2f4b79988c8db7d7fc7adb8ccf121fed2880"
 
 [[files]]
 path = "README.md"
@@ -15,8 +15,8 @@ section_count = 0
 
 [[files]]
 path = "interfaces/cli/scaffold-service-crate-and-standard-cli-shell.md"
-digest = "sha256:62a65156d6f474cf111d9c30eb23348b138783b099f01ef8739718ba48b24f88"
-ir_digest = "sha256:cc4161511b01a2129b91ba1310a1390a506d541e09271a8c9bea352e88a66c9a"
+digest = "sha256:df9a8c0b03bbb4ad5e678cdee37448cd98d89c0da4f712411b5877af69df3c02"
+ir_digest = "sha256:47584459ba2cc2f9e62072693907b4d3b9bd1398dd0be1b30a9ee18a5d3f375e"
 section_count = 2
 
 [[files]]
@@ -27,8 +27,8 @@ section_count = 4
 
 [[files]]
 path = "logic/converge-retired-paths-and-broken-evidence-references.md"
-digest = "sha256:dc3e9fe31df45a30d7de499d309180122ed5b45a6f199dd9887f0fdb33757bd8"
-ir_digest = "sha256:696bf7e80fd0ba97db22bc85a8c616355d0d6f12ce3201b66eb5b9a260e5a61a"
+digest = "sha256:ee7511fef4ce34aca86c8687c9d095d264992f2f575c4199b8a6be12d148a691"
+ir_digest = "sha256:cf1d301310d7c83c053821e5215f157f206a1b6a300feda13459c4acb4da23ca"
 section_count = 3
 
 [[files]]
