@@ -1,6 +1,6 @@
 ---
 id: aw-capability-alignment-wi-planning
-summary: "Add a human-confirmed capability anchor skill and extend `aw wi` planning with atomize, prioritize readiness lanes, and bounded-WI validation gates."
+summary: "Add a human-confirmed capability anchor, agent-backed digest-bound capability-plan review, and bounded WI planning/validation gates."
 fill_sections: [scenarios, state-machine, logic, cli, test-plan, changes]
 capability_refs:
   - id: workflow-root-runner
@@ -59,6 +59,8 @@ capability_refs:
     rationale: "This spec defines atomization and bounded WI planning flow."
 command_refs:
   - command: aw wi run
+  - command: aw wi plan
+  - command: aw wi plan-review
   - command: aw capability
   - command: aw capability apply-draft
   - command: aw capability check
@@ -201,6 +203,18 @@ scenarios:
       - "aw capability run emits action=blocked instead of invoking epicize again"
       - "next.kind is review_planning_artifact and next.payload_path points at the pending artifact"
       - "hitl_question.interaction.kind is user_question so the host captures the decision before tracker mutation"
+  - id: S10
+    title: "capability WI plan review is agent-first and digest-bound"
+    given: ["aw goal capability finds a required claim with no primary TD linkage"]
+    when: ["aw wi plan projects bounded claim candidates under an existing epic"]
+    then:
+      - "unconfigured/either and agent policies emit pending_agent_review with requires_hitl=false, a payload_path, an independent reviewer prompt, and an executable aw wi plan-review command"
+      - "explicit capability_plan_review_backing=human remains blocking and never fabricates approval"
+      - "accepted evidence is bound to the exact plan plus machine manifest digest and rejects the recorded author as same-agent reviewer"
+      - "needs_revision evidence publishes no work items and routes back to aw wi plan with concrete findings"
+      - "accepted review publishes only bounded, deduplicated claim WIs and records their parent epic reference"
+      - "the capability runner routes each published claim WI through EC-first TD/codegen lifecycle until primary TD evidence closes the claim"
+      - "legacy human-only plan artifacts without a manifest do not resurrect as blockers; rerunning aw wi plan produces the current review protocol"
 ```
 
 ## State Machine
@@ -217,7 +231,7 @@ stateDiagram-v2
     capability_candidate --> capability_candidate : human revises
     capability_confirmed --> root_running : aw capability run --project
     root_running --> epicized : aw wi epicize
-    epicized --> epic_review : agent/HITL review
+    epicized --> epic_review : digest-bound agent review (human only by opt-in)
     epic_review --> atomized : aw wi atomize
     epic_review --> epicized : revise or regenerate
     atomized --> prioritized : aw wi prioritize
@@ -243,7 +257,7 @@ nodes:
   root_run: { kind: process, label: "aw wi run / aw capability run selects project/capability/wi root and emits invoke.command" }
   wi_planning: { kind: process, label: "aw:wi routes gaps and required claims through planning operators" }
   epicize: { kind: process, label: "epicize roadmap-sized direction" }
-  epic_review: { kind: decision, label: "pending epic artifact reviewed?" }
+  epic_review: { kind: decision, label: "independent digest-bound plan review accepted?" }
   atomize: { kind: process, label: "atomize epic into atomic WI candidates" }
   prioritize: { kind: process, label: "prioritize readiness and dependency lanes" }
   validate: { kind: decision, label: "non-epic WI bounded and aligned?" }
@@ -428,9 +442,15 @@ commands:
     behavior: "upsert a reviewed EC dimension entry into the README field-style contract; efficiency backfill options are allowed only for the efficiency dimension and must provide both operating point and cube"
     mutates_tracker: false
   - path: [wi, plan]
-    behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
+    behavior: "read cap_path Markdown capability contracts, project required claims into bounded child WI candidates, and emit a digest-bound agent-first review payload; YAML/legacy tables require migration"
     persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan"
     mutates_tracker: false
+  - path: [wi, plan-review]
+    args:
+      - name: evidence-file
+        meaning: "independent agent or human review record bound to the exact plan plus manifest digest"
+    behavior: "validate review policy, reviewer independence, digest, checklist, and findings; accepted review publishes deduplicated bounded candidates, while needs_revision publishes nothing"
+    mutates_tracker: true
   - path: [wi, epicize]
     behavior: "group roadmap direction into epic or phase candidates"
   - path: [wi, atomize]
@@ -519,6 +539,11 @@ requirements:
     text: "aw:capability documents human confirmation, and aw capability/run emits structured hitl_question payloads for decision-gated capability work"
     risk: high
     verifymethod: review
+  capability_plan_agent_review:
+    id: AW-CAP-WI-10
+    text: "unconfigured capability-plan review is agent-first; accepted evidence is independent and digest-bound, needs_revision is non-publishing, and explicit human-only policy remains blocking"
+    risk: high
+    verifymethod: test
   claude_skill_sync:
     id: AW-CAP-WI-7
     text: "managed asset producers install aw-capability, aw-wi planning, and aw-standardize human skill names"
@@ -916,6 +941,31 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Feed required capability claims into aw wi plan candidates.
+  - path: apps/agentic-workflow/src/cli/issues.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
+  - path: apps/agentic-workflow/src/cli/capability.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Issue #2187: stop the capability loop at pending agent review and route published claim-specific WIs through their EC-first lifecycle before primary TD claim closure."
+  - path: apps/agentic-workflow/src/cli/run.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Issue #2187: expose capability-plan agent review as a non-HITL workflow action."
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Issue #2187: classify the mutating plan-review leaf and verify its emitted command is chain-valid."
+  - path: apps/agentic-workflow/src/cli/llm.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Issue #2187: document the agent-first review policy, explicit human-only opt-in, and accepted versus needs_revision publication semantics."
   - path: apps/jet/README.md
     action: modify
     section: changes

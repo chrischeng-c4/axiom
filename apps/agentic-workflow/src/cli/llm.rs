@@ -305,6 +305,13 @@ There is no WI review or arbitration phase. The implementation path is
 -> parent rollup`; capability is the META-doc goal ledger and `aw health` is
 read-only observation, not an authoring step.
 
+Capability-to-WI planning has one semantic approval boundary because it can
+publish tracker work: `aw wi plan` emits a digest-bound review payload and
+`aw wi plan-review --evidence-file <path>` consumes it. The default/either
+policy is independent-agent-first; `capability_plan_review_backing = "human"`
+is the explicit blocking human-only opt-in. Accepted review publishes only
+bounded, deduplicated claim WIs; `needs_revision` publishes nothing.
+
 For exact flags, run `aw goal wi --help`, `aw goal capability --help`, or
 `aw wi --help`.
 "#;
