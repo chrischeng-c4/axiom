@@ -1146,6 +1146,7 @@ fn poll_asyncio_future_state(awaitable: MbValue) -> Option<FutureState> {
 
 // ── asyncio-compatible Functions ──
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in async_task.rs is hand-written pending codegen support">
 /// asyncio.gather(*coros) — run multiple coroutines concurrently.
 pub fn mb_gather(coros: MbValue) -> MbValue {
     if let Some(ptr) = coros.as_ptr() {
@@ -1204,6 +1205,7 @@ pub fn mb_gather(coros: MbValue) -> MbValue {
     }
     MbValue::none()
 }
+// </HANDWRITE>
 
 /// asyncio.sleep(seconds) — cooperative sleep.
 pub fn mb_sleep(seconds: MbValue) -> MbValue {

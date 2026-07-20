@@ -172,6 +172,7 @@ fn stable_digest(bytes: &[u8]) -> u64 {
     })
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
 #[test]
 fn to_thread_gather_results() {
     let source = r#"
@@ -227,6 +228,7 @@ asyncio.run(main())
         stable_digest(mamba.stdout.as_bytes())
     );
 }
+// </HANDWRITE>
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StabilityPhase {
