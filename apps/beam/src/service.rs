@@ -94,7 +94,7 @@ impl CollectionState {
 /// Shared handler state: the registry plus the optional GPU context used to
 /// (re)build indexes. Cheap to clone (both fields are `Arc`-backed).
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     registry: Registry,
     gpu: Option<Arc<GpuContext>>,
 }

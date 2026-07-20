@@ -233,7 +233,7 @@ struct BenchArgs {
 
 /// `beam serve` flags.
 #[derive(Args)]
-struct ServeArgs {
+pub struct ServeArgs {
     /// Bind address. K8s passes 0.0.0.0.
     #[arg(long, env = "BEAM_HOST", default_value = "127.0.0.1")]
     host: String,
