@@ -1,7 +1,14 @@
 ---
 id: '2168'
-summary: (fill)
+summary: "Relaxes the RHS-normalization purity gate in jet's flat-region export-elision pipeline: rename is_pure_normalizable_export_rhs to shape-based is_shape_normalizable_export_rhs, invert from a 3-shape allow-list to a 3-check deny-list (top-level comma / chained assignment / await-yield), and rename the rhs_skipped_impure counters to rhs_skipped_shape, on the evaluation-position argument that the var __jx = <RHS>; <exports_obj>.key = __jx; rewrite never moves, duplicates, delays, or skips RHS evaluation -- unlocking the previously-rejected ComplexRhs bucket (536 keys / ~13.7KB, #2139 attribution, #2161 closing argument)."
 fill_sections: [logic, changes, unit-test, e2e-test]
+capability_refs:
+  - id: "bundler-production-build"
+    role: primary
+    gap: "rhs-normalization-shape-predicate"
+    claim: "rhs-normalization-shape-predicate"
+    coverage: partial
+    rationale: "Pins WI #2168's relaxation of the RHS-normalization purity gate in the flat-region export-elision pipeline (scope_hoist_opt.rs's is_pure_normalizable_export_rhs, machinery landed 4b517f8fa per #2161) from a 3-shape allow-list to a shape-based 3-check deny-list, unlocking the previously-rejected ComplexRhs bucket (536 keys / ~13.7KB, #2139 attribution) on the evaluation-position argument that the mechanism's textual hoist never moves/duplicates/delays/skips RHS evaluation -- inside the Bundler And Production Build work root (jet bundler/scope_hoist_opt.rs flat-region export-elision pipeline, epic #3782)."
 ---
 
 ## Logic
