@@ -105,10 +105,13 @@ pub(super) fn locate_in_crate_spec_root(spec_path: &Path) -> Option<(String, Str
         if !root_name.is_empty()
             && !root_name.starts_with('.')
             && !rel_parts.is_empty()
-            && rel_parts.first() != Some(&"specs")
         {
+            if rel_parts.first() == Some(&"specs") {
+                return None;
+            }
             return Some((root_name, rel_parts.join("/")));
         }
+        return None;
     }
 
     let root_idx = parts
