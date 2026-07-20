@@ -32,6 +32,7 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) {
 }
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2146" reason="unit-test section in service.rs is hand-written pending codegen support">
+// Verified with service-auth for WI 2150
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_end_to_end() {
     // Bind an ephemeral port; skip gracefully if the sandbox has no networking.
