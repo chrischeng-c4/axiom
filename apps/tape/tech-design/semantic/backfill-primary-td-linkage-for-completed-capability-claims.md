@@ -56,3 +56,15 @@ flowchart TD
   complete -->|no| revise_metadata[Revise linkage metadata only]
   revise_metadata --> structural_test
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/tests/capability_primary_linkage.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add a deterministic structural regression test for the exact 19 capability refs, including primary role and full coverage. generator gap: missing-generator:test:capability-td-linkage (#2157)."
+```
