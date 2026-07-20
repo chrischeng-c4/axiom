@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:5f79c0a3" tracker="pending-tracker" reason="Add a deterministic structural regression test for the exact 19 capability refs, including primary role and full coverage. generator gap: missing-generator:test:capability-td-linkage (#2157)."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:5f79c0a3" tracker="#2157" reason="Add a deterministic structural regression test for the exact 19 capability refs, including primary role and full coverage. generator gap: missing-generator:test:capability-td-linkage (#2157)."
 // @spec apps/tape/tech-design/semantic/backfill-primary-td-linkage-for-completed-capability-claims.md#unit-test
 
 const TD: &str = include_str!(
@@ -104,5 +104,4 @@ fn reconciliation_scope_is_metadata_only() {
     assert!(!changes.contains("path: apps/tape/scripts/"));
 }
 
-<!-- marker: missing-generator:unit-test:5f79c0a3 path: apps/tape/tests/capability_primary_linkage.rs reason: Add a deterministic structural regression test for the exact 19 capability refs, including primary role and full coverage. generator gap: missing-generator:test:capability-td-linkage (#2157). -->
 // HANDWRITE-END
