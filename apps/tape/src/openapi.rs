@@ -31,6 +31,7 @@ use utoipa::OpenApi;
         crate::server::subscription_ack,
         crate::server::retention_get,
         crate::server::retention_put,
+        crate::server::admin_backup,
     ),
     components(schemas(
         crate::TapeEvent,
@@ -76,6 +77,7 @@ mod tests {
             "/topics/{topic}/subscriptions/{name}/pull",
             "/topics/{topic}/subscriptions/{name}/ack",
             "/topics/{topic}/retention",
+            "/admin/backup",
         ] {
             assert!(doc.contains(path), "OpenAPI doc must list {path}");
         }
