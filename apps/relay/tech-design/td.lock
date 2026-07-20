@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-20T09:13:06.326977+00:00"
-digest = "sha256:f76e0986eecf920342f22c2e54fdfeb436e6546ccb871cd8de2a2825bd705aa2"
-source_digest = "sha256:f76e0986eecf920342f22c2e54fdfeb436e6546ccb871cd8de2a2825bd705aa2"
-ir_digest = "sha256:52e7f6cdcbd25e90bc9c079da0025aba2a23136cba652b23de800b52dd257486"
+generated_at = "2026-07-20T09:34:20.093228+00:00"
+digest = "sha256:efd193d35ba35476d5ba1978c2163a4ceef60315b4c559267f94d0c8bb0e0351"
+source_digest = "sha256:efd193d35ba35476d5ba1978c2163a4ceef60315b4c559267f94d0c8bb0e0351"
+ir_digest = "sha256:5a469a9ecccc6f2192cf4cec5c008e4dd14963b12df72f6b2b386aff8ebac2c1"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -117,8 +117,8 @@ section_count = 4
 
 [[files]]
 path = "logic/replace-synthetic-performance-ec-with-a-measured-gate.md"
-digest = "sha256:21c7a689b7ef2dbe537ca4b0bf1726a6883b2fa300b5efb0996c8a38beee9629"
-ir_digest = "sha256:2f2527da13406bea6160bf21aa4dddae8c66f34681c70a4d44420f344bb5f709"
+digest = "sha256:d1925dc26164998d4e5cdaa9494b682dcf00c436858d77aef5c8e080001d4615"
+ir_digest = "sha256:36a32edf5d3e620c51f4c38ebf3ccfba9632d457bb002171cbc62754fb2b4636"
 section_count = 3
 
 [[files]]
