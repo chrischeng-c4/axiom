@@ -378,6 +378,9 @@ EC Dimensions:
 | Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — declaration files per entry plus package types field (isolatedDeclarations) |
 | Publish And Private Registry | change | #172 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — build + metadata validate; in-process mock-registry publish/install round-trip |
 | Library CSS Cascade-Merge | change | #205 | implemented | verified | conformance | `cargo test -p jet --lib bundler::css_bundle` — cascade-ordered CSS merge across entries plus raw asset copy in library builds |
+| CJS Wildcard Re-Export Emission | change | #1839 | planned | none | smoke | `cargo test -p jet --test behavior_ec_1839 -- --ignored` — ESM `export * from` chains emit named CJS `module.exports` keys (EC case 1839; scaffold pending `aw ec gen`) |
+| CJS Renamed-Import Export Collision | change | #1840 | planned | none | smoke | `cargo test -p jet --test behavior_ec_1840 -- --ignored` — exported const still lands on `module.exports` when a renamed import shares its name (EC case 1840; scaffold pending `aw ec gen`) |
+| Mangle Multi-Byte UTF-8 Safety | change | #1784 | implemented | verified | smoke | `cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored` — `--lib` collision-rename never panics or corrupts multi-byte identifiers (fix landed; EC case jet-mangle-utf8-safety, scaffold pending `aw ec gen`) |
 
 ### Component Workbench (Stories)
 
