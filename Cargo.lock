@@ -12181,7 +12181,7 @@ dependencies = [
 
 [[package]]
 name = "service-executor"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "futures",
  "tokio",
