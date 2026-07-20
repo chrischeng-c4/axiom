@@ -65,7 +65,7 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !matches!(
         ext,
-        "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+        "rs" | "py" | "ts" | "tsx" | "md" | "html" | "toml" | "json" | "yaml" | "yml"
     ) && file_name != "Dockerfile"
     {
         return;
@@ -1200,7 +1200,7 @@ fn should_preserve_handwrite_markers(source_path: &str) -> bool {
     }
     !matches!(
         path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        "json" | "toml" | "yaml" | "yml"
+        "html" | "json" | "toml" | "yaml" | "yml"
     )
 }
 
@@ -1781,6 +1781,7 @@ pub fn existing() { 42; }\n\
     fn enumerate_worktree_markers_includes_config_artifact_files() {
         let tmp = tempfile::tempdir().unwrap();
         let files = [
+            "frontend/index.html",
             "frontend/package.json",
             "backend/pyproject.toml",
             "k8s/base/backend-deployment.yaml",
@@ -2080,6 +2081,23 @@ pub fn before() {}\n\
         assert!(out.contains("\"scripts\": {}"));
         assert!(out.starts_with("{\n"));
         assert!(out.ends_with("}\n"));
+
+        let html = format!(
+            "{}\n// TODO: hand-write content for `frontend/index.html`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:html\" reason=\"bootstrap document\""),
+            handwrite_end(),
+        );
+        let out = replace_block_body_for_path(
+            &html,
+            1,
+            3,
+            "<!doctype html><title>Workbench</title>",
+            "frontend/index.html",
+        )
+        .unwrap();
+        assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!out.contains(HANDWRITE_END_TOKEN));
+        assert_eq!(out, "<!doctype html><title>Workbench</title>\n");
     }
 
     #[test]
