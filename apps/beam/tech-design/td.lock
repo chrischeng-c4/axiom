@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T08:41:32.427566+00:00"
-digest = "sha256:6431a78c177f9729368c4cb049e2fded037e8e0eebf9695f07266e66bb01c918"
-source_digest = "sha256:6431a78c177f9729368c4cb049e2fded037e8e0eebf9695f07266e66bb01c918"
-ir_digest = "sha256:865fabb55e69c5d707025253e4e9660614739a4a734c466740d01593d546fce4"
+generated_at = "2026-07-20T08:41:56.912977+00:00"
+digest = "sha256:4987e3d24d062290f2487ae31ffc3f6bbf7d287382b137516d691af79ecc3575"
+source_digest = "sha256:4987e3d24d062290f2487ae31ffc3f6bbf7d287382b137516d691af79ecc3575"
+ir_digest = "sha256:256e6548e8a988563aa65b94ddc009ef9f688d81e4d3106df2f2ee7b5b1f509a"
 
 [[files]]
 path = "README.md"
@@ -27,6 +27,6 @@ section_count = 4
 
 [[files]]
 path = "semantic/correct-ddd-search-metric-and-candidate-identity-semantics.md"
-digest = "sha256:ceadd7438403946fb82adcf8ad0d9b609268c72f1cadb2efb3cb8d4072ea7bc3"
-ir_digest = "sha256:903d4e9d40767e8b0ff7be8dc8963f55889686cdf38f7d01e4ab8b881878b205"
+digest = "sha256:e219d538f42e6dad1138fda9a844ff1c2be91454d78326ad0797b850ef4a60d0"
+ir_digest = "sha256:636f39a0c7332fb14f4c8a32ad35a713f74616d587cc0f4fd0983e1ba8840f9b"
 section_count = 3
