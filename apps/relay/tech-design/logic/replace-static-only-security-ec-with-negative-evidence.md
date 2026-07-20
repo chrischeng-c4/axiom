@@ -96,36 +96,50 @@ changes:
 
 ```mermaid
 ---
-id: relay-security-negative-evidence-verification
+id: relay-security-tool-contract-verification
 requirements:
-  runtime_security_journeys_pass:
-    id: R3
-    text: "Bearer 401/403, subject RBAC, streaming authz, write admission, trusted and untrusted peer TLS, restricted pod, Secret projection, and NetworkPolicy evidence execute together."
+  agent_review_and_ec_verification_close:
+    id: R6
+    text: "AW structurally checks the revised SecurityTool dimensions, independent agent review accepts the digest, generated cases match sources, and every EC command verifies."
     kind: integration
     risk: high
-    verify: cargo test -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture
-  security_tool_dimensions_are_complete:
-    id: R1
-    text: "Relay security-hardening matches the Lumen SecurityTool baseline and supplies executable behavior, security, and stability cases."
-    kind: functional
-    risk: high
-    verify: aw ec check --project relay
-  untrusted_peer_is_rejected:
+    verify: aw ec check --project relay && aw ec gen --project relay --verify && aw ec verify --project relay
+  bearer_and_admission_rejections_execute:
     id: R2
-    text: "A client that trusts Relay's server CA but presents a certificate signed by an untrusted CA is rejected by the required-mTLS acceptor before any Raft request is handled."
+    text: "Missing and invalid tokens return 401, insufficient subject grants and streaming scope return 403, exhausted write admission returns 429 with Retry-After, and probes remain available."
     kind: negative
     risk: high
-    verify: cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture
-  vat_guard_attaches_dynamic_evidence:
-    id: R4
-    text: "The vat-isolated guard-security runner performs the static scan and attaches meter evidence from Relay's dynamic security suite, failing if those tests are missing or fail."
+    verify: cargo test -p relay --test auth --test service_admission -- --nocapture
+  deployment_security_posture_executes:
+    id: R3
+    text: "The direct and production Kubernetes assets prove restricted containers, persistent state, read-only projected credentials, opt-in NetworkPolicy, and no unsafe voter HPA."
+    kind: security
+    risk: high
+    verify: cargo test -p relay --test direct_k8s_assets -- --nocapture
+  guard_dispatch_includes_dynamic_suite:
+    id: R5
+    text: "Vat guard scans Relay and meter executes the unfiltered auth, admission, peer-mTLS, and K8s test binaries, so a missing or zero-case security surface cannot pass."
     kind: integration
     risk: high
     verify: cd apps/relay && ../../target/debug/vat run guard-security
+  rotation_and_peer_stability_execute:
+    id: R4
+    text: "Shared invalid registry reload retains the last-known-good snapshot, Relay valid rotation is live without restart, and trusted peer replication remains usable alongside the rejection path."
+    kind: stability
+    risk: high
+    verify: cargo test -p service-auth reload::tests -- --nocapture && cargo test -p relay --test auth relay_auth_adapter_rotates_the_shared_registry_without_restart -- --exact --nocapture && cargo test -p relay --test raft_peer_mtls -- --nocapture
+  untrusted_identity_fails_server_handshake:
+    id: R1
+    text: "The peer server rejects an attacker-CA client identity even when the client trusts the legitimate server, and the test observes a server-side TLS handshake error before routing."
+    kind: negative
+    risk: high
+    verify: cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture
 ---
 flowchart TD
-    r1[R1 security tool dimensions are complete] --> aw_ec_check_project_relay[aw ec check --project relay]
-    r2[R2 untrusted peer is rejected] --> cargo_test_p_relay_test_raft_peer_mtls_untrusted_relay_peer_certificate_is_rejected_exact_nocapture[cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture]
-    r3[R3 runtime security journeys pass] --> cargo_test_p_relay_test_auth_test_service_admission_test_raft_peer_mtls_test_direct_k8s_assets_nocapture[cargo test -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture]
-    r4[R4 vat guard attaches dynamic evidence] --> cd_apps_relay_target_debug_vat_run_guard_security[cd apps/relay && ../../target/debug/vat run guard-security]
+    r1[R1 untrusted identity fails server handshake] --> cargo_test_p_relay_test_raft_peer_mtls_untrusted_relay_peer_certificate_is_rejected_exact_nocapture[cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture]
+    r2[R2 bearer and admission rejections execute] --> cargo_test_p_relay_test_auth_test_service_admission_nocapture[cargo test -p relay --test auth --test service_admission -- --nocapture]
+    r3[R3 deployment security posture executes] --> cargo_test_p_relay_test_direct_k8s_assets_nocapture[cargo test -p relay --test direct_k8s_assets -- --nocapture]
+    r4[R4 rotation and peer stability execute] --> cargo_test_p_service_auth_reload_tests_nocapture_cargo_test_p_relay_test_auth_relay_auth_adapter_rotates_the_shared_registry_without_restart_exact_nocapture_cargo_test_p_relay_test_raft_peer_mtls_nocapture[cargo test -p service-auth reload::tests -- --nocapture && cargo test -p relay --test auth relay_auth_adapter_rotates_the_shared_registry_without_restart -- --exact --nocapture && cargo test -p relay --test raft_peer_mtls -- --nocapture]
+    r5[R5 guard dispatch includes dynamic suite] --> cd_apps_relay_target_debug_vat_run_guard_security[cd apps/relay && ../../target/debug/vat run guard-security]
+    r6[R6 agent review and ec verification close] --> aw_ec_check_project_relay_aw_ec_gen_project_relay_verify_aw_ec_verify_project_relay[aw ec check --project relay && aw ec gen --project relay --verify && aw ec verify --project relay]
 ```
