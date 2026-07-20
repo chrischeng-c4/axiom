@@ -297,6 +297,8 @@ pub fn terminate_journey_agent(
 }
 
 #[tauri::command]
+/// Render the active root through the complete production registry, including
+/// optional graph and derived-page compatibility views before generic fallbacks.
 pub fn render_journey_context(
     root: String,
     target: Option<String>,
