@@ -66,10 +66,22 @@ resize, Ctrl-C, child exit status, explicit termination, and abandoned-session
 cleanup. It does not store vendor sessions or derive context cwd from terminal
 text. The next child work item owns authoritative cwd-to-context synchronization.
 
+## Authoritative Active Cwd
+
+Active context follows explicit OSC 7 `file://localhost/...` control frames
+from the PTY stream. Workbench validates and canonicalizes each framed path,
+accepts only an existing local directory, and discloses OSC 7 as the update
+source. Ordinary prompt text, shell output, malformed or remote URIs, missing
+paths, and files never become cwd.
+
+Active cwd is ephemeral runtime context. It does not add, remove, rename, or
+reselect registered launch folders; those remain user-owned launch identity.
+
 ## Verification
 
 ```bash
 cargo test -p workbench --test desktop_launch_smoke -- --nocapture
 cargo test -p workbench --test folder_shell_journey -- --nocapture
 cargo test -p workbench --test pty_agent_adapters -- --nocapture
+cargo test -p workbench --test pty_cwd_context -- --nocapture
 ```

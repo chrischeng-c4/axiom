@@ -191,5 +191,4 @@ fn failed_transitions_never_mutate_context_or_launch_folders() {
     assert!(ActiveCwdContext::new(Path::new("/definitely/missing/workbench")).is_err());
 }
 
-<!-- marker: missing-generator:unit-test:1bead46d path: apps/workbench/tests/pty_cwd_context.rs reason: Prove real-PTY nested cwd transitions, fragmented telemetry, invalid transitions, prompt non-scraping, and folder-registry immutability. -->
 // HANDWRITE-END

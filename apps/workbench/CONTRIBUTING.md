@@ -56,6 +56,16 @@ It must use the real platform PTY and deterministic local shell fixture. Do not
 replace it with a PTY mock or make installed Claude Code, Codex, or AGY binaries
 mandatory in CI.
 
+The active cwd telemetry gate is:
+
+```bash
+cargo test -p workbench --test pty_cwd_context -- --nocapture
+```
+
+Only explicit OSC 7 file-URI frames may update active cwd. Never infer paths
+from prompts, `cd` text, ordinary terminal output, or renderer content, and
+never mutate the registered folder registry as a side effect of cwd telemetry.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

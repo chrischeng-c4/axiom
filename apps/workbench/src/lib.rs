@@ -11,6 +11,9 @@ use tauri::Manager;
 /// @spec apps/workbench/tech-design/logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md#logic
 pub mod folder_shell;
 
+/// @spec apps/workbench/tech-design/logic/synchronize-authoritative-pty-cwd-into-workbench-active-context.md#logic
+pub mod cwd_context;
+
 /// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#logic
 pub mod native_agent_pty;
 

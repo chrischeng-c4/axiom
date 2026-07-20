@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 pub use portable_pty::{ExitStatus, PtySize};
 
+use crate::cwd_context::{CWD_TELEMETRY_ENV, CWD_TELEMETRY_PROTOCOL};
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -215,6 +217,7 @@ impl PtyRuntime {
         builder.cwd(&command.cwd);
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
+        builder.env(CWD_TELEMETRY_ENV, CWD_TELEMETRY_PROTOCOL);
         let child = pair.slave.spawn_command(builder).map_err(|error| {
             PtyLaunchError::operation(
                 "child spawn",

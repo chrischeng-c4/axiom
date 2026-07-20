@@ -40,7 +40,11 @@ impl fmt::Display for CwdContextError {
                 write!(formatter, "{} is not an existing directory", path.display())
             }
             Self::CannotEncodeFileUri { path } => {
-                write!(formatter, "{} cannot be encoded as a local file URI", path.display())
+                write!(
+                    formatter,
+                    "{} cannot be encoded as a local file URI",
+                    path.display()
+                )
             }
         }
     }
@@ -190,9 +194,7 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, CwdContextError> {
     if canonical.is_dir() {
         Ok(canonical)
     } else {
-        Err(CwdContextError::InvalidDirectory {
-            path: canonical,
-        })
+        Err(CwdContextError::InvalidDirectory { path: canonical })
     }
 }
 
@@ -226,5 +228,4 @@ pub fn cwd_telemetry_frame(path: impl AsRef<Path>) -> Result<String, CwdContextE
     Ok(format!("\x1b]7;{uri}\x07"))
 }
 
-<!-- marker: missing-generator:logic:cbe7b900 path: apps/workbench/src/cwd_context.rs reason: Decode bounded OSC 7 frames and own validated ephemeral active-cwd context updates. -->
 // HANDWRITE-END
