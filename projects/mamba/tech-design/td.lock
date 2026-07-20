@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "projects/mamba/tech-design"
-generated_at = "2026-07-20T07:02:24.530522+00:00"
-digest = "sha256:85f077086d24376f1caba126a9f76e48a37c3bd5c08e0c7ec1e3e5856d28a21a"
-source_digest = "sha256:85f077086d24376f1caba126a9f76e48a37c3bd5c08e0c7ec1e3e5856d28a21a"
-ir_digest = "sha256:5cb8aca07f5c0180e38618d4131d394d1536eacb39513a38ff19a9f445c6e914"
+generated_at = "2026-07-20T08:28:41.073722+00:00"
+digest = "sha256:7fcf802b1ab774cac393096d945f8a9bb8d0726f9698c47847b653a8a7dff18f"
+source_digest = "sha256:7fcf802b1ab774cac393096d945f8a9bb8d0726f9698c47847b653a8a7dff18f"
+ir_digest = "sha256:b79a25e2088b8afe47d0b514133ad28ffbb5117a27527a5fd9b7f3007fe7cc16"
 
 [[files]]
 path = "README.md"
@@ -102,6 +102,12 @@ path = "logic/bool-keys-don-t-unify-with-int-numeric-keys-in-dict-set-true-1-f.m
 digest = "sha256:a3c842d031aa0555f17fb1f9956f4d69c437d93ba4d6bbdf1be9d05767db76e9"
 ir_digest = "sha256:faea15d8641b34cea30e2acade12160f0f575d877cdac65211a5afaf79c105de"
 section_count = 0
+
+[[files]]
+path = "logic/to-dict-key-leaks-str-variant-keys-on-build-globals-dict-path-le.md"
+digest = "sha256:87a486f18da18db94f921f89a60de4c29ee65fdfcdaffc532b8cf86abbaa47bd"
+ir_digest = "sha256:af5bd19bd0382ae0e2daa8eaa3a633b2047d4bd3c0729eefa3b55e78a42e076b"
+section_count = 3
 
 [[files]]
 path = "memory/ARCHITECTURE.md"
