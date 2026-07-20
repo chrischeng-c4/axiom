@@ -2194,7 +2194,7 @@ pub fn restore_module_sym_info(saved: (HashMap<i64, (String, SymTy)>, HashMap<St
     MODULE_FUNC_INFO.with(|m| *m.borrow_mut() = saved.1);
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in closure.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1979" reason="logic section in closure.rs is hand-written pending codegen support">
 /// Build a dict containing the current module's globals, drawing from
 /// MODULE_SYM_INFO + GLOBAL_ID_NAMESPACE + MODULE_FUNC_INFO. Skips dunder
 /// names except the standard CPython-visible ones.
@@ -2237,6 +2237,11 @@ pub fn build_globals_dict() -> MbValue {
         };
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, boxed);
+        // to_dict_key copies the Str content out; the dict never retains
+        // this key pointer, so release our fabricated key here or it leaks.
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
 
     let func_info = MODULE_FUNC_INFO.with(|m| m.borrow().clone());
@@ -2246,6 +2251,9 @@ pub fn build_globals_dict() -> MbValue {
         }
         let key = MbValue::from_ptr(super::rc::MbObject::new_str(name.clone()));
         dict_ops::mb_dict_setitem(dict, key, *fv);
+        unsafe {
+            super::rc::release_if_ptr(key);
+        }
     }
     dict
 }
