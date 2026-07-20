@@ -16,7 +16,7 @@ fn stdout_of(args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in cli_contract.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2147" reason="logic section in cli_contract.rs is hand-written pending codegen support">
 /// R1: `apps/beam` is a workspace member with BOTH a library and a binary
 /// target. Linking `beam::` here exercises the lib target; `CARGO_BIN_EXE_beam`
 /// existing (and running below) exercises the bin target.
