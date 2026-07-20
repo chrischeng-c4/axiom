@@ -53,7 +53,6 @@ flowchart TD
     ec_ok -->|yes| verified([scoped competitor parity verified])
     ec_ok -->|no| fail
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
