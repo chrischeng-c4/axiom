@@ -57,6 +57,16 @@ changes:
     section: logic
     impl_mode: hand-written
     description: Lock the selected Tauri 2 desktop-host dependency graph.
+  - path: README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Project the Workbench project row through aw meta; placeholder Brief publication remains tracked by AW bug 2207.
+  - path: apps/workbench/.gitignore
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Ignore Cargo output and Tauri-generated capability schemas while retaining authored application assets.
   - path: apps/workbench/Cargo.toml
     action: create
     section: logic
@@ -71,7 +81,12 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: Configure one local WebView window and disable release bundling for the initial host slice.
+    description: Configure one local WebView window, its application icon, and disabled release bundling for the initial host slice.
+  - path: apps/workbench/icons/icon.png
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Provide the RGBA application icon required by the real Tauri desktop host.
   - path: apps/workbench/ui/index.html
     action: create
     section: logic
@@ -96,7 +111,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Replace the skeleton Brief with the terminal-first product boundary and native-agent authority statement.
+    description: Add the terminal-first product boundary and native-agent authority statement outside the producer-owned meta skeleton; refs AW bug 2207.
   - path: apps/workbench/CAPABILITIES.md
     action: modify
     section: logic
