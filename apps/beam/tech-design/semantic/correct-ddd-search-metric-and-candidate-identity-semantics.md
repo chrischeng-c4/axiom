@@ -88,3 +88,35 @@ changes:
     anchor: "struct MockDistanceCalculator"
     description: "Update MockDistanceCalculator to be metric-aware, and add comprehensive negative/regression tests for dimension validation, metric ordering, and missing candidates."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: ddd-search-correctness-verification
+requirements:
+  boundary_validation:
+    id: R3
+    text: "Reject malformed query dimensions and truncated/extra vector bytes without panicking or fabricating results, returning typed errors."
+    kind: negative
+    risk: medium
+    verify: cargo test -p beam --test throughput_pipeline test_boundary_validation
+  identity_preservation:
+    id: R2
+    text: "Preserve a one-to-one association between resolved candidate ID, storage offset, decoded vector, and returned score. A missing middle candidate offset cannot shift a later score onto the wrong ID."
+    kind: regression
+    risk: high
+    verify: cargo test -p beam --test throughput_pipeline test_missing_candidate_offset
+  metric_aware_port:
+    id: R1
+    text: "Make the distance-calculation port explicitly metric-aware for L2, Dot, and Cosine."
+    kind: functional
+    risk: low
+    verify: cargo test -p beam --test throughput_pipeline test_metric_aware_port
+---
+flowchart TD
+    r1[R1 metric aware port] --> cargo_test_p_beam_test_throughput_pipeline_test_metric_aware_port[cargo test -p beam --test throughput_pipeline test_metric_aware_port]
+    r2[R2 identity preservation] --> cargo_test_p_beam_test_throughput_pipeline_test_missing_candidate_offset[cargo test -p beam --test throughput_pipeline test_missing_candidate_offset]
+    r3[R3 boundary validation] --> cargo_test_p_beam_test_throughput_pipeline_test_boundary_validation[cargo test -p beam --test throughput_pipeline test_boundary_validation]
+```
