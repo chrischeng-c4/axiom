@@ -137,7 +137,21 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !matches!(
         ext,
-        "rs" | "py" | "ts" | "tsx" | "md" | "html" | "toml" | "json" | "yaml" | "yml"
+        "rs" | "py"
+            | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "css"
+            | "scss"
+            | "md"
+            | "html"
+            | "toml"
+            | "json"
+            | "yaml"
+            | "yml"
     ) && file_name != "Dockerfile"
     {
         return;
@@ -472,7 +486,7 @@ fn parse_handwrite_begin_end(content: &str) -> Vec<BeginEndMarker> {
 // can pattern-match the body uniformly.
 fn strip_lead(line: &str) -> &str {
     let s = line.trim_start();
-    for prefix in ["///", "//!", "//", "# ", "#", "<!--"] {
+    for prefix in ["///", "//!", "//", "# ", "#", "<!--", "/*"] {
         if let Some(rest) = s.strip_prefix(prefix) {
             return rest.trim_start();
         }
@@ -2170,6 +2184,47 @@ pub fn before() {}\n\
         assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
         assert!(!out.contains(HANDWRITE_END_TOKEN));
         assert_eq!(out, "<!doctype html><title>Workbench</title>\n");
+    }
+
+    #[test]
+    fn css_and_javascript_markers_enumerate_and_css_fill_stays_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ui = tmp.path().join("apps/workbench/ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("shell.css"),
+            "/* HANDWRITE-BEGIN gap=\"missing-generator:css\" reason=\"shell styles\" */\n\
+             /* TODO: hand-write content for shell CSS. */\n\
+             /* HANDWRITE-END */\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ui.join("shell.js"),
+            "// HANDWRITE-BEGIN gap=\"missing-generator:js\" reason=\"shell behavior\"\n\
+             // TODO: hand-write content for shell JavaScript.\n\
+             // HANDWRITE-END\n",
+        )
+        .unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 2);
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:css"));
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:js"));
+
+        let css = std::fs::read_to_string(ui.join("shell.css")).unwrap();
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:css")
+            .unwrap();
+        let filled = apply_marker_payload(&css, marker, ":root { color: #fff; }", "2210").unwrap();
+        assert!(filled.contains("/* HANDWRITE-BEGIN"));
+        assert!(filled.contains("/* HANDWRITE-END */"));
+        assert!(filled.contains(":root { color: #fff; }"));
+        assert!(!filled.contains("// HANDWRITE"));
     }
 
     #[test]

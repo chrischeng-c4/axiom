@@ -1889,6 +1889,17 @@ fn scaffold_handwrite_file(entry: &ChangeEntry) -> String {
             reason = reason,
             path = entry.path,
         ),
+        "css" | "scss" => format!(
+            "/* {begin} gap=\"{gap}\" tracker=\"{tracker}\" reason=\"{reason}\" */\n\
+             /* TODO: hand-write content for `{path}`. */\n\
+             /* {end} */\n",
+            begin = HANDWRITE_BEGIN_TOKEN,
+            end = HANDWRITE_END_TOKEN,
+            gap = gap,
+            tracker = tracker,
+            reason = reason,
+            path = entry.path,
+        ),
         // .rs and friends — the default.
         _ => format!(
             "// {begin} gap=\"{gap}\" tracker=\"{tracker}\" reason=\"{reason}\"\n\
@@ -3457,6 +3468,9 @@ fn strip_handwrite_comment_lead(line: &str) -> &str {
     if let Some(rest) = s.strip_prefix('#') {
         return rest.trim_start();
     }
+    if let Some(rest) = s.strip_prefix("/*") {
+        return rest.trim_start();
+    }
     s
 }
 
@@ -4999,6 +5013,35 @@ changes:
         let body = scaffold_handwrite_file(&entry);
         assert!(body.contains("gap=\"phase-1-namespace-split\""));
         assert!(!body.contains("phase-1-namespace-split:"));
+    }
+
+    #[test]
+    fn test_scaffold_handwrite_css_uses_valid_block_comments() {
+        let entry = ChangeEntry {
+            path: "apps/workbench/ui/shell.css".to_string(),
+            action: "create".to_string(),
+            description: Some("style the shell".to_string()),
+            section_id: Some("logic".to_string()),
+            impl_mode: ImplMode::HandWritten,
+            replaces: vec![],
+            generates: Vec::new(),
+            exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
+            trait_impl: None,
+            handwrite_gap: Some("missing-generator:css".to_string()),
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let body = scaffold_handwrite_file(&entry);
+        assert!(body.starts_with("/* HANDWRITE-BEGIN"));
+        assert!(body.contains("/* TODO: hand-write content"));
+        assert!(body.trim_end().ends_with("/* HANDWRITE-END */"));
+        assert!(!body.lines().any(|line| line.starts_with("//")));
+        assert!(is_whole_file_handwrite_content(&body));
     }
 
     #[test]
