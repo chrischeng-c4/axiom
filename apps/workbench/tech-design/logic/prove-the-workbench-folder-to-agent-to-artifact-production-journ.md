@@ -137,3 +137,56 @@ changes:
     impl_mode: hand-written
     description: Configure the production external contract with agent-backed semantic review and the exact production_journey runner.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-production-journey-verification
+requirements:
+  agent_recovery:
+    id: R3
+    text: "An unavailable vendor binary returns an actionable recoverable state and a subsequent deterministic local session and context render still succeed."
+    kind: failure-recovery
+    risk: high
+    verify: tests/production_journey.rs::unavailable_agent_is_recoverable
+  artifact_context_and_provenance:
+    id: R2
+    text: "The resulting active cwd renders representative Markdown, Git, and configured AW artifacts with disclosed renderer, canonical provenance, and source navigation."
+    kind: integration
+    risk: high
+    verify: tests/production_journey.rs::real_pty_folder_cwd_and_artifact_journey
+  desktop_and_constrained_ui:
+    id: R4
+    text: "Jet proves the complete placeholder-free primary state at 1440x900 and 860x720 with retained screenshots and no horizontal clipping."
+    kind: visual-regression
+    risk: high
+    verify: tests/production_journey.rs::production_ui_quality_journey_passes
+  evidence_and_gate_integrity:
+    id: R6
+    text: "The v1 manifest identifies every assertion and retained artifact, and capability plus external contract reference the exact same production_journey Cargo command."
+    kind: contract
+    risk: high
+    verify: tests/production_journey.rs::retained_production_evidence_manifest_is_complete
+  keyboard_accessibility_and_navigation:
+    id: R5
+    text: "Agent selection, launch/retry, terminal input, context choice, and source navigation are keyboard operable with labelled controls, visible focus, readable text, live status, and reduced-motion support."
+    kind: accessibility
+    risk: high
+    verify: tests/production_journey.rs::production_ui_quality_journey_passes
+  real_pty_assembled_journey:
+    id: R1
+    text: "A registered canonical folder launches a deterministic process through the production real-PTY session, exchanges input, accepts resize, consumes explicit OSC7 cwd, exits cleanly, and retains a bounded transcript."
+    kind: e2e
+    risk: high
+    verify: tests/production_journey.rs::real_pty_folder_cwd_and_artifact_journey
+---
+flowchart TD
+    r1[R1 real pty assembled journey] --> tests_production_journey_rs_real_pty_folder_cwd_and_artifact_journey[tests/production_journey.rs::real_pty_folder_cwd_and_artifact_journey]
+    r2[R2 artifact context and provenance] --> tests_production_journey_rs_real_pty_folder_cwd_and_artifact_journey
+    r3[R3 agent recovery] --> tests_production_journey_rs_unavailable_agent_is_recoverable[tests/production_journey.rs::unavailable_agent_is_recoverable]
+    r4[R4 desktop and constrained ui] --> tests_production_journey_rs_production_ui_quality_journey_passes[tests/production_journey.rs::production_ui_quality_journey_passes]
+    r5[R5 keyboard accessibility and navigation] --> tests_production_journey_rs_production_ui_quality_journey_passes
+    r6[R6 evidence and gate integrity] --> tests_production_journey_rs_retained_production_evidence_manifest_is_complete[tests/production_journey.rs::retained_production_evidence_manifest_is_complete]
+```
