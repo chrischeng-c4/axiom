@@ -1,6 +1,6 @@
 [project]
 name = "relay"
-cap_path = "README.md"
+cap_path = "CAPABILITIES.md"
 label = "app:relay"
 
 [capability.profile]
