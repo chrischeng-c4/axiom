@@ -33,7 +33,7 @@ impl DistanceCalculator for WgpuDistanceEngine {
             }
             .into());
         }
-        if queries.len() % dim != 0 {
+        if !queries.len().is_multiple_of(dim) {
             return Err(crate::domain::ports::PipelineError::DimensionMismatch {
                 expected: dim,
                 got: queries.len(),
