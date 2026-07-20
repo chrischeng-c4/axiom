@@ -648,16 +648,26 @@ asyncio.run(main())
 
 #[test]
 fn build_globals_dict_key_leak_free() {
+    const NAME_COUNT: u32 = 20;
+    // build_globals_dict inserts one implicit `__name__` dunder, and the
+    // script's own `total` accumulator is itself a module-level global by
+    // the time the loop reads it back (confirmed empirically: len(globals())
+    // == ints + funcs + 2; the for-loop target `_` does not appear). Equal
+    // int/function counts mean a regression isolated to either the id_ns
+    // loop or the func_info loop alone still leaks NAME_COUNT keys/call, not
+    // just one — comfortably clear of noise.
+    const EXPECTED_LEN: u64 = NAME_COUNT as u64 * 2 + 2;
+
     let mut names_block = String::new();
-    for i in 0..20 {
+    for i in 0..NAME_COUNT {
         names_block.push_str(&format!("g{i} = {i}\n"));
+    }
+    for i in 0..NAME_COUNT {
+        names_block.push_str(&format!("def f{i}():\n    return {i}\n\n"));
     }
     let make_source = |iterations: u32| {
         format!(
             r#"{names_block}
-def helper():
-    return 0
-
 total = 0
 for _ in range({iterations}):
     total += len(globals())
@@ -665,17 +675,39 @@ print("DONE", total)
 "#
         )
     };
+    let parse_total = |run: &MeasuredRun| -> u64 {
+        run.stdout
+            .split_whitespace()
+            .last()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("could not parse DONE total from stdout: {}", run.stdout))
+    };
 
     let small = run_mamba_script(&make_source(100), EFFICIENCY_TIMEOUT);
     assert_success("build_globals_dict_key_leak_free (small)", &small);
-    assert!(small.stdout.contains("DONE"), "small run stdout: {}", small.stdout);
     let large = run_mamba_script(&make_source(50_000), EFFICIENCY_TIMEOUT);
     assert_success("build_globals_dict_key_leak_free (large)", &large);
-    assert!(large.stdout.contains("DONE"), "large run stdout: {}", large.stdout);
 
-    // Each globals() call fabricates one Str key per exposed name (21 here)
-    // inside build_globals_dict; an unreleased key leaks one heap allocation
-    // per name per call, so peak RSS grows roughly linearly with call count
+    // Guard against a vacuous pass: if build_globals_dict ever degenerated
+    // to an empty or wrong-count dict, there would be nothing left to leak
+    // and the RSS check below would trivially "pass" for the wrong reason.
+    // Pin the exact per-call key count so that failure mode is caught here.
+    let small_total = parse_total(&small);
+    let large_total = parse_total(&large);
+    assert_eq!(
+        small_total,
+        100 * EXPECTED_LEN,
+        "small run: unexpected globals() key count (build_globals_dict may be degenerate)"
+    );
+    assert_eq!(
+        large_total,
+        50_000 * EXPECTED_LEN,
+        "large run: unexpected globals() key count (build_globals_dict may be degenerate)"
+    );
+
+    // Each globals() call fabricates one Str key per exposed name inside
+    // build_globals_dict; an unreleased key leaks one heap allocation per
+    // name per call, so peak RSS grows roughly linearly with call count
     // instead of plateauing. Fixed slack (not a ratio) because both runs
     // share the same fixed interpreter-startup RSS floor — only true
     // per-call growth should show up in the delta.
@@ -690,9 +722,8 @@ print("DONE", total)
         rss_limit
     );
     println!(
-        "MAMBA-T1-BUILD-GLOBALS-DICT-KEY-LEAK-FREE names=21 iterations_small=100 iterations_large=50000 rss_small={} rss_large={}",
-        small.peak_rss_bytes,
-        large.peak_rss_bytes
+        "MAMBA-T1-BUILD-GLOBALS-DICT-KEY-LEAK-FREE names_per_call={} iterations_small=100 iterations_large=50000 rss_small={} rss_large={}",
+        EXPECTED_LEN, small.peak_rss_bytes, large.peak_rss_bytes
     );
 }
 // </HANDWRITE>
