@@ -37,6 +37,7 @@ FIFO by task creation order.
 | HTTP/2 API List | #766 | implemented | passing | conformance | ready | one HTTP/1.1+h2c service port, exact OpenAPI/docs/probes/metrics, queue/task/batch/dispatch/backup routes, and generated clients |
 | Kubernetes-Native Deployment | #766 | implemented | verified | dogfood | ready | layered base/overlays/components plus CRD/operator/instance, PDB/PVC/NetworkPolicy/observability, and disposable Kind lifecycle-recovery gate |
 | Primary Replicas | #766 | implemented | passing | conformance | ready | every mutation is Raft committed; replicas apply identical scheduler bytes with committed executor/epoch fencing and durable restart recovery |
+| Stateful Service Workload | #2170 | implemented | passing | conformance | ready | shared stateful-storage baseline composes Defer's Raft scheduler, snapshot/backup, authorization, and StatefulSet evidence without duplicating domain policy |
 | CLI Interface | #766 | implemented | passing | conformance | ready | `defer` service/spec/client/queue/task/dispatch/backup/k8s/dockerfile plus standard `llm`/`upgrade`/`issue` verbs |
 | Long-Running Stability | #766 | implemented | verified | dogfood | ready | lease-expiry/two-cycle failover gates, PVC recovery, and 60-second fixed-state HTTP/Raft error/RSS/FD/thread/p99 plateau soak |
 | Security Hardening | #766 | implemented | passing | conformance | ready | queue RBAC, audited live credential rotation, admission limits, signed targets, peer mTLS, restricted pods, NetworkPolicy, and secret projection |
@@ -298,3 +299,26 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | raft-backed-task-scheduler | epic | #766 | implemented | passing | conformance | three-voter failover, durable replay/snapshot recovery, and real peer mTLS |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #2170
+Status: auditing
+Surfaces: Shared mechanisms: `libs/raft-runtime`, `libs/service-backup`, `libs/service-auth`, and `libs/service-k8s`; Defer integration: Raft-backed scheduler state, admin snapshot backup, queue-scoped authorization, and operator-managed StatefulSet storage.
+EC Dimensions: behavior: `aw capability check --project defer --skip-issue-inventory` - the `stateful_storage` profile resolves its common workload baseline; stability and security remain owned by the linked Defer capability roots and their executable gates
+Required Verification: conformance
+Promise:
+Defer composes its stateful production workload from shared Raft, backup,
+authorization, and Kubernetes mechanisms while keeping delayed-task lifecycle,
+dispatch, rate-limit, failover, and recovery policy in the existing domain roots.
+This root is an integration map, not a second implementation of those contracts.
+Gate Inventory:
+- `aw capability check --project defer --skip-issue-inventory`
+- apps/defer/tests/direct_k8s_assets.rs; apps/defer/tests/raft_scheduler.rs; apps/defer/tests/service_auth.rs
+- apps/defer/src/raft.rs; apps/defer/src/bin/defer.rs; apps/defer/src/operator
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| defer-stateful-service-workload | change | #2170 | implemented | passing | conformance | Composes Primary Replicas, Kubernetes-Native Deployment, Security Hardening, Backup & Restore, and Long-Running Stability from shared libraries without duplicating Defer domain behavior. |
