@@ -31,6 +31,7 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) {
     panic!("server never became healthy");
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in service.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_end_to_end() {
     // Bind an ephemeral port; skip gracefully if the sandbox has no networking.
@@ -286,3 +287,4 @@ async fn service_end_to_end() {
 
     server.abort();
 }
+// </HANDWRITE>

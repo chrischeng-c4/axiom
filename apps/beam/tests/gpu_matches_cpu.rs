@@ -77,6 +77,7 @@ fn assert_parity(gpu: &GpuContext, metric: Metric) {
     eprintln!("  parity OK for metric {metric:?} (n={N}, dim={DIM}, k={K}, {N_QUERIES} queries)");
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in gpu_matches_cpu.rs is hand-written pending codegen support">
 #[test]
 fn gpu_matches_cpu_oracle() {
     let Some(gpu) = GpuContext::new() else {
@@ -90,3 +91,4 @@ fn gpu_matches_cpu_oracle() {
         assert_parity(&gpu, metric);
     }
 }
+// </HANDWRITE>
