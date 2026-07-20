@@ -157,6 +157,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-vector-competitor-performance-baseline | epic | #769 | planned | planned | none | pending competitor performance gate |
+| beam-production-overlap-pipeline | change | #2153 | planned | planned | none | pending high-throughput query serving pipeline |
 | four-pillar-throughput-saturation-ddd | change | #769 | planned | planned | none | pending throughput architecture |
 | competitive-throughput-ddd-zero-cost | change | #769 | planned | planned | none | pending throughput architecture |
 | competitive-throughput-gate-saturate-four-pillars | change | #769 | planned | planned | none | pending throughput architecture |
