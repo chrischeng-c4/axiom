@@ -94,18 +94,22 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: tombstone_completed_coroutine
   - path: projects/mamba/src/runtime/async_task.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: mb_gather
   - path: projects/mamba/tests/external_contracts/mamba_core_semantics_ec.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
+    anchor: to_thread_gather_results
   - path: projects/mamba/src/runtime/stdlib/asyncio_mod.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
+    anchor: test_to_thread_parallelizes_direct_function_pointer_calls
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
