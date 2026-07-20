@@ -22,6 +22,7 @@ metadata:
   labels:
     app.kubernetes.io/name: beam-operator
     app.kubernetes.io/part-of: beam
+# rules for beam-operator
 rules:
   - apiGroups: ["beam.dev"]
     resources: ["beams", "beams/status", "beams/finalizers"]
