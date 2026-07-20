@@ -3,9 +3,9 @@ project = "defer"
 ir_kind = "ec"
 ec_path = "apps/defer/external-contracts"
 inventory_path = "apps/defer/aw.toml"
-generated_at = "2026-07-20T21:38:54.574787+00:00"
-ir_digest = "sha256:b18293758657e5601da2ba0318cbea197600f120144f8eb94fa9703df74e2d93"
-source_digest = "sha256:97358d08eee90fb0211678a3bfa66a7f916ac3176d0cb83b45094c533d39e60e"
+generated_at = "2026-07-20T22:28:19.435300+00:00"
+ir_digest = "sha256:465f1fdb79d3e8c9f5a27af07150c661c444ffb5a2a42b1e28b41d5ad8cc1bcb"
+source_digest = "sha256:7722f4ac4b9d2ff243292c96c62c1bb19bfaa3baa63c4c4cf4fc26736f2ae1c1"
 tool_contracts = []
 
 [[sources]]
@@ -15,6 +15,10 @@ digest = "sha256:ca45612fb08f79035a9fd191b53c4224213ea32539acc5aad2d4e61acfd5ee0
 [[sources]]
 path = "apps/defer/external-contracts/behavior/2214.md"
 digest = "sha256:5b09614500d360e84a2f3397aa7e3922ffaf526d4778e17058a97db5e82f954a"
+
+[[sources]]
+path = "apps/defer/external-contracts/behavior/2215.md"
+digest = "sha256:6aca9910f334161b68aaff9876983e2f74bc8e00faa2fbb163adcdbd6eef9011"
 
 [[sources]]
 path = "apps/defer/external-contracts/behavior/766.md"
@@ -251,3 +255,149 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:0afc77c375b900afd3414d3188a8c0de78784d4823f45062747b29d405c73fb8"
+
+[[cases]]
+id = "defer-security-admission-boundary"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "bounded-write-admission-with-probe-exemption"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-admission-boundary"
+test_path = "apps/defer/tests/behavior_defer_security_admission_boundary.rs"
+command = "cargo test -p defer --test service_admission -- --nocapture"
+required_for_production = true
+assertions = [
+    "A configured one-write capacity allows the first queue mutation, rejects the second with HTTP 429 and Retry-After 60, and does not rate-limit the health probe.",
+    "When admission is not configured, two successive queue mutations remain accepted, proving that the rejection comes from the explicit shared policy rather than incidental handler state.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:86c2311baaab77b6a9b44621ac98ccb898d0611fd0e5a30736b174a527ebb5a2"
+
+[[cases]]
+id = "defer-security-auth-http-boundary"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "required-bearer-queue-rbac-and-tokenless-probes"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-auth-http-boundary"
+test_path = "apps/defer/tests/behavior_defer_security_auth_http_boundary.rs"
+command = "cargo test -p defer --test http_api -- --nocapture"
+required_for_production = true
+assertions = [
+    "With required auth, a missing bearer receives 401 on the queue surface, a jobs-only reader can read jobs but receives 403 on both jobs mutation and another tenant's queue, and a wildcard administrator can mutate both queues.",
+    "On that same required-auth h2c process, health, readiness, docs, OpenAPI, and metrics remain live without a token while unauthenticated task creation and admin backup receive 401 and a queue reader receives 403 on admin backup.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b3eaa41de75864dc2ee7c86d67821c0faba99202825639727fa33d5e35ae72e9"
+
+[[cases]]
+id = "defer-security-credential-rotation-stability"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "live-rotation-and-last-known-good-role-map"
+dimension = "stability"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-credential-rotation-stability"
+test_path = "apps/defer/tests/stability_defer_security_credential_rotation.rs"
+command = "cargo test -p defer --test service_auth -- --nocapture"
+required_for_production = true
+assertions = [
+    "A shipped defer serve process with required auth observes an atomic registry-file replacement through the production 15-second watcher cadence, invalidates the old bearer, and activates the new queue reader without restart.",
+    "Malformed replacement JSON is rejected while the last-known-good reader remains authenticated for read and denied for write.",
+    "The process-level rotation and denial emit credential_registry_reload and authorization_decision events through Defer's configured JSON tracing sink, and captured logs contain neither the old nor new bearer bytes.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:725fa7a404ade3ff640d70ea6325ba91f6bfff6efd48707b64a86ad553aff776"
+
+[[cases]]
+id = "defer-security-dispatch-fencing"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "stable-idempotency-fresh-attempt-and-lost-fence-boundary"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-dispatch-fencing"
+test_path = "apps/defer/tests/behavior_defer_security_dispatch_fencing.rs"
+command = "cargo test -p defer --test http_dispatch -- --nocapture"
+required_for_production = true
+assertions = [
+    "A retry keeps the stable queue/task idempotency key but receives a fresh attempt id, and an HTTP effect whose executor lost the committed fence reports LostOwnership instead of committing a stale success.",
+    "The shared executor still makes non-zero progress without exceeding its configured hard concurrency bound.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a78054933126a0cfff6ca7424aa82ca6c8bc44478bf973afa88560511f127a37"
+
+[[cases]]
+id = "defer-security-kubernetes-boundaries"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "restricted-server-operator-secret-and-network-policy-assets"
+dimension = "security"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-kubernetes-boundaries"
+test_path = "apps/defer/tests/security_defer_security_kubernetes_boundaries.rs"
+command = "cargo test -p defer --test direct_k8s_assets -- --nocapture"
+required_for_production = false
+assertions = [
+    "The direct StatefulSet and operator Deployment run non-root with RuntimeDefault seccomp, disallow privilege escalation, use read-only root filesystems, and drop all Linux capabilities; the StatefulSet retains its durable 10Gi PVC.",
+    "kubectl kustomize must successfully render the production overlay; the rendered graph contains the read-only token registry Secret projection, a ServiceMonitor, a 100Gi durable PVC, and no HorizontalPodAutoscaler.",
+    "The rendered NetworkPolicy selects only Defer server pods, declares ingress and egress policy types, and names the public HTTP 7141 and peer 7142 ports.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:42950dafc878940d90816e471d6216724c68a714abe57149e6092e0aa11bf2c7"
+
+[[cases]]
+id = "defer-security-peer-mtls"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "trusted-replication-and-attacker-ca-rejection"
+dimension = "security"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-peer-mtls"
+test_path = "apps/defer/tests/security_defer_security_peer_mtls.rs"
+command = "cargo test -p defer --test raft_peer_mtls -- --nocapture"
+required_for_production = false
+assertions = [
+    "Three Defer peers signed by the trusted CA elect a leader and replicate a scheduled task to every node over the required authenticated listener.",
+    "A client that trusts Defer's legitimate server CA but presents an identity signed by an attacker CA is rejected during the server mTLS handshake before HTTP or Raft routing.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6b14b81076ee59f560b5a9ed35298ad40d3258a10ccf03e5ef6bae6abb4f8d5c"
+
+[[cases]]
+id = "defer-security-shared-redacted-audit"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "shared-credential-reload-and-credential-free-audit"
+dimension = "security"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-shared-redacted-audit"
+test_path = "apps/defer/tests/security_defer_security_shared_redacted_audit.rs"
+command = "cargo test -p service-auth -- --nocapture"
+required_for_production = false
+assertions = [
+    "The shared mechanism used by Defer executes valid rotation, invalid and unreadable replacement preservation, file-watcher adoption, and typed authorization audit cases with non-zero tests.",
+    "Authentication, authorization, and reload events expose stable decision context and failure classes but their typed and serialized forms cannot contain bearer credential bytes.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a5ea8baa06af15fcd801cc3127531c909786ffb98edd4b5391648153a3d28280"
+
+[[cases]]
+id = "defer-security-target-signing"
+capability_id = "security-hardening"
+claim_id = "delayed-task-security-boundary"
+contract_id = "exact-length-delimited-hmac-and-negative-oracle"
+dimension = "security"
+source_ref = "apps/defer/external-contracts/behavior/2215.md#defer-security-target-signing"
+test_path = "apps/defer/tests/security_defer_security_target_signing.rs"
+command = "cargo test -p defer --test http_dispatch_signing -- --nocapture"
+required_for_production = false
+assertions = [
+    "An independent target-side oracle recomputes HMAC-SHA256 over the exact length-delimited idempotency key, fresh attempt id, target URL, timestamp, and received body bytes for both a retry and its success.",
+    "Changing any signed field or body byte, using the wrong key id, or using the wrong secret causes rejection; retry preserves the idempotency key while changing both attempt id and signature.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:008923edd175575826a1d1e3bb0081f70ad07284a63d6b152a176f12f46f9e4c"

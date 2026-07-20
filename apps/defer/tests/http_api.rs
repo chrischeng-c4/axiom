@@ -192,6 +192,18 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
     .to_string();
     let auth = AuthConfig::resolve("required", None, Some(&registry)).unwrap();
     let (auth_url, auth_server) = start(raft, auth).await;
+    for path in ["/healthz", "/readyz", "/docs", "/openapi.json", "/metrics"] {
+        assert_eq!(
+            client
+                .get(format!("{auth_url}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK,
+            "required-auth service must leave probe/spec route {path} tokenless"
+        );
+    }
     assert_eq!(
         client
             .get(format!("{auth_url}/v1/queues/jobs"))
@@ -210,6 +222,42 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             .unwrap()
             .status(),
         StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .post(format!("{auth_url}/v1/queues/jobs/tasks"))
+            .json(&serde_json::json!({
+                "task_id": "unauthenticated",
+                "target": {"url": "http://127.0.0.1/", "method": "POST", "headers": {}},
+                "payload": {},
+                "schedule_at": Utc::now(),
+                "priority": 10,
+                "max_attempts": 1
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .get(format!("{auth_url}/admin/backup"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .get(format!("{auth_url}/admin/backup"))
+            .bearer_auth("reader")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
     );
     assert_eq!(
         client
@@ -232,6 +280,28 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             .unwrap()
             .status(),
         StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .put(format!("{auth_url}/v1/queues/other-tenant"))
+            .bearer_auth("admin")
+            .json(&QueuePolicy::default())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .get(format!("{auth_url}/v1/queues/other-tenant"))
+            .bearer_auth("reader")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN,
+        "a queue-scoped credential must not cross a tenant boundary"
     );
 
     auth_server.abort();
