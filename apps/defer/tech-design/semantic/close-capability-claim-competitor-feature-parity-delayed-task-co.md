@@ -1,7 +1,14 @@
 ---
 id: '2216'
-summary: (fill)
+summary: Close Defer competitor parity with an exact Google Cloud Tasks-shaped managed HTTP push contract, real target and public API journeys, committed cross-replica queue limits, durable DeadLettered state, and generated EC evidence without copying unrelated worker-framework features.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: competitor-feature-parity
+    role: primary
+    gap: delayed-task-competitor-feature-matrix
+    claim: delayed-task-competitor-feature-matrix
+    coverage: full
+    rationale: "Maps every in-scope matrix row to a concrete runtime oracle while keeping category exclusions and performance-evidence boundaries explicit."
 ---
 
 ## Logic
