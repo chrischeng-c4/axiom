@@ -35,7 +35,7 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
 }
 
-// <HANDWRITE gap="missing-generator:gpu-batch-adapter" tracker="pending-tracker" reason="gpu-batch-adapter section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:gpu-batch-adapter" tracker="#2148" reason="gpu-batch-adapter section in mod.rs is hand-written pending codegen support">
 impl GpuContext {
     /// Acquire the primary GPU adapter (Metal on macOS) and open a device.
     /// Returns `None` if no adapter is present or the device request fails —
