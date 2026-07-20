@@ -6,15 +6,16 @@
   "folderSelectionPreserved": true,
   "unavailableAgentRecovered": true,
   "cycles": 12,
+  "contextCyclesVerified": 12,
   "lifecycleModes": [
     "interrupt",
     "terminate",
     "normal-exit"
   ],
   "noLeakedChildren": true,
-  "launchToReadyMaxMs": 138,
+  "launchToReadyMaxMs": 359,
   "launchToReadyLimitMs": 2000,
-  "peakRssKib": 14960,
+  "peakRssKib": 15104,
   "peakRssLimitKib": 524288,
   "peakTranscriptBytes": 210,
   "transcriptLimitBytes": 524288,
@@ -22,6 +23,7 @@
     "git": "git",
     "markdown": "markdown",
     "aw": "aw-typed",
-    "sourceNavigation": 2
+    "sourceNavigation": 2,
+    "verifiedAfterLifecycleCycle": 12
   }
 }

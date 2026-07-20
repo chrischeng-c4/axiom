@@ -465,40 +465,6 @@ done
                 .len(),
         );
 
-        if cycle == 0 {
-            let root_text = nested.to_string_lossy();
-            let git = invoke_json(
-                &webview,
-                "render_journey_context",
-                json!({"root": root_text, "target": null}),
-            )
-            .expect("Git context through production IPC");
-            let markdown = invoke_json(
-                &webview,
-                "render_journey_context",
-                json!({"root": root_text, "target": "README.md"}),
-            )
-            .expect("Markdown context through production IPC");
-            let typed = invoke_json(
-                &webview,
-                "render_journey_context",
-                json!({"root": root_text, "target": "tech-design.md"}),
-            )
-            .expect("AW context through production IPC");
-            assert_eq!(git["rendererId"], "git");
-            assert_eq!(markdown["rendererId"], "markdown");
-            assert_eq!(typed["rendererId"], "aw-typed");
-            assert!(typed["navigation"]
-                .as_array()
-                .is_some_and(|items| !items.is_empty()));
-            rendered_context = Some(json!({
-                "git": git["rendererId"],
-                "markdown": markdown["rendererId"],
-                "aw": typed["rendererId"],
-                "sourceNavigation": typed["navigation"].as_array().map(Vec::len),
-            }));
-        }
-
         let complete = match cycle % 3 {
             0 => {
                 invoke_json(&webview, "interrupt_journey_agent", json!({}))
@@ -527,6 +493,48 @@ done
             complete["transcript"].as_str().unwrap().len()
                 <= workbench::production_journey::MAX_TRANSCRIPT_BYTES
         );
+
+        let root_text = nested.to_string_lossy();
+        let git = invoke_json(
+            &webview,
+            "render_journey_context",
+            json!({"root": root_text, "target": null}),
+        )
+        .expect("Git context after production IPC lifecycle");
+        let markdown = invoke_json(
+            &webview,
+            "render_journey_context",
+            json!({"root": root_text, "target": "README.md"}),
+        )
+        .expect("Markdown context after production IPC lifecycle");
+        let typed = invoke_json(
+            &webview,
+            "render_journey_context",
+            json!({"root": root_text, "target": "tech-design.md"}),
+        )
+        .expect("AW context after production IPC lifecycle");
+        assert_eq!(
+            git["rendererId"], "git",
+            "Git context drifted in cycle {cycle}"
+        );
+        assert_eq!(
+            markdown["rendererId"], "markdown",
+            "Markdown context drifted in cycle {cycle}"
+        );
+        assert_eq!(
+            typed["rendererId"], "aw-typed",
+            "AW context drifted in cycle {cycle}"
+        );
+        assert!(typed["navigation"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+        rendered_context = Some(json!({
+            "git": git["rendererId"],
+            "markdown": markdown["rendererId"],
+            "aw": typed["rendererId"],
+            "sourceNavigation": typed["navigation"].as_array().map(Vec::len),
+            "verifiedAfterLifecycleCycle": cycle + 1,
+        }));
     }
 
     thread::sleep(Duration::from_millis(25));
@@ -557,6 +565,7 @@ done
         "folderSelectionPreserved": true,
         "unavailableAgentRecovered": true,
         "cycles": STABILITY_CYCLES,
+        "contextCyclesVerified": STABILITY_CYCLES,
         "lifecycleModes": ["interrupt", "terminate", "normal-exit"],
         "noLeakedChildren": true,
         "launchToReadyMaxMs": launch_to_ready_max_ms,
@@ -702,6 +711,8 @@ fn production_stability_cycles_are_leak_free() {
     )
     .expect("IPC evidence JSON");
     assert_eq!(evidence["cycles"], 12);
+    assert_eq!(evidence["contextCyclesVerified"], 12);
+    assert_eq!(evidence["context"]["verifiedAfterLifecycleCycle"], 12);
     assert_eq!(evidence["noLeakedChildren"], true);
     assert!(
         evidence["peakTranscriptBytes"].as_u64().unwrap()
@@ -734,6 +745,7 @@ fn retained_production_evidence_manifest_is_complete() {
         "markdownGitAwContext",
         "sourceNavigation",
         "placeholderFreePrimaryState",
+        "frontendIpcArguments",
         "keyboardAccessibility",
         "constrainedReadability",
         "unavailableAgentRecovery",

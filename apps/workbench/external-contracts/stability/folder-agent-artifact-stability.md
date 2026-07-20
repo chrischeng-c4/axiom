@@ -20,6 +20,6 @@ e2e_tests:
     assertions:
       - "Twelve consecutive production Tauri IPC sessions each complete real PTY launch, input, resize, and one of interrupt, terminate, or normal-exit lifecycle modes."
       - "Every child process id observed at launch is reaped and no longer alive after the cycle; the selected canonical folder remains unchanged."
-      - "Unavailable-agent recovery precedes a successful real launch, and repeated sessions retain Git, Markdown, and AW context behavior without leaked session state."
-      - "Every session transcript remains at or below the 524288-byte production bound, with measured peak and lifecycle modes retained in ipc-journey.json."
+      - "Unavailable-agent recovery precedes a successful real launch, and Git, Markdown, and AW context plus source navigation are rendered and asserted after every completed lifecycle cycle."
+      - "Every session transcript remains at or below the 524288-byte production bound, with measured peak, twelve context cycles, and lifecycle modes retained in ipc-journey.json."
 ```

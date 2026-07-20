@@ -30,6 +30,17 @@
         "desktop.png"
       ]
     },
+    "frontendIpcArguments": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png"
+      ],
+      "commands": [
+        "launch_journey_agent",
+        "send_journey_input",
+        "render_journey_context"
+      ]
+    },
     "keyboardAccessibility": {
       "passed": true,
       "artifacts": [

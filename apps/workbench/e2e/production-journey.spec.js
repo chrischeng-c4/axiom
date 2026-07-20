@@ -65,6 +65,12 @@ async function installBridge(page, { failNextLaunch = false } = {}) {
           if (command === "select_launch_folder") return clone(this.state);
           if (command === "choose_launch_folder") return clone(this.state);
           if (command === "launch_journey_agent") {
+            if (!["claude", "codex", "agy"].includes(args.agent)) {
+              throw new Error(`Unexpected production agent argument: ${args.agent}`);
+            }
+            if (args.cwd !== selectedPath) {
+              throw new Error(`Unexpected production launch cwd: ${args.cwd}`);
+            }
             if (this.failNextLaunch) {
               this.failNextLaunch = false;
               throw new Error(
@@ -82,6 +88,9 @@ async function installBridge(page, { failNextLaunch = false } = {}) {
           }
           if (command === "poll_journey_agent") return clone(this.session);
           if (command === "send_journey_input") {
+            if (typeof args.input !== "string" || !args.input.trim()) {
+              throw new Error(`Unexpected production terminal input: ${args.input}`);
+            }
             this.session.transcript += `› ${args.input}\ncontext rendered\n`;
             return clone(this.session);
           }
@@ -94,6 +103,12 @@ async function installBridge(page, { failNextLaunch = false } = {}) {
           }
           if (command === "render_journey_context") {
             const target = args.target ?? null;
+            if (![selectedPath, activeCwd].includes(args.root)) {
+              throw new Error(`Unexpected production context root: ${args.root}`);
+            }
+            if (![null, "README.md", "tech-design.md"].includes(target)) {
+              throw new Error(`Unexpected production context target: ${target}`);
+            }
             if (target === null) {
               return {
                 rendererId: "git",
@@ -208,6 +223,40 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
     for (const placeholder of ["TODO", "Lorem ipsum", "No renderer is active yet"]) {
       expect(bodyText.includes(placeholder)).toBe(false);
     }
+    const calls = await page.evaluate(() => window.__WORKBENCH_TEST_BRIDGE__.calls);
+    const selectedPath = "/Users/demo/axiom/app_workbench";
+    const activeCwd = `${selectedPath}/nested`;
+    expect(
+      calls.some(
+        (call) =>
+          call.command === "launch_journey_agent" &&
+          call.args.agent === "codex" &&
+          call.args.cwd === selectedPath,
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.command === "send_journey_input" &&
+          call.args.input === "show context",
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.command === "render_journey_context" &&
+          call.args.root === activeCwd &&
+          (call.args.target ?? null) === null,
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.command === "render_journey_context" &&
+          call.args.root === activeCwd &&
+          call.args.target === "tech-design.md",
+      ),
+    ).toBe(true);
 
     const screenshot = path.join(evidenceDir, "desktop.png");
     await page.screenshot({ path: screenshot });
@@ -233,6 +282,15 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
       manifest.assertions.placeholderFreePrimaryState = {
         passed: true,
         artifacts: ["desktop.png"],
+      };
+      manifest.assertions.frontendIpcArguments = {
+        passed: true,
+        artifacts: ["desktop.png"],
+        commands: [
+          "launch_journey_agent",
+          "send_journey_input",
+          "render_journey_context",
+        ],
       };
     });
   });
