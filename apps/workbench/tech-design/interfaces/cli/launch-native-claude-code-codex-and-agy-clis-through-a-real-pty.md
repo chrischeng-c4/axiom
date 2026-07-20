@@ -113,7 +113,6 @@ changes:
     impl_mode: hand-written
     description: Record the real PTY test command and the ban on replacing it with mocks or installed-vendor requirements.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
