@@ -9,34 +9,38 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: defer-stateful-workload-evidence-contract
-entry: root
+id: defer-stateful-workload-contract
+entry: profile
 nodes:
-  root:
+  profile:
     kind: start
-    label: "stateful-service-workload capability root"
+    label: "stateful_storage profile requires baseline"
   shared:
     kind: process
-    label: "Reference shared raft, backup, auth, and Kubernetes mechanisms"
-  local:
+    label: "Compose raft-runtime, service-backup, service-auth, and service-k8s"
+  domain:
     kind: process
-    label: "Reference Defer delayed-task lifecycle and existing service evidence"
-  validate:
+    label: "Reference delayed-task, dispatch, rate-limit, HA, and stability roots"
+  contract:
+    kind: process
+    label: "Publish one non-duplicative capability root"
+  verify:
     kind: terminal
-    label: "Capability validation reports no missing stateful baseline"
+    label: "AW capability check and targeted Defer evidence pass"
 edges:
-  - { from: root, to: shared }
-  - { from: root, to: local }
-  - { from: shared, to: validate }
-  - { from: local, to: validate }
+  - { from: profile, to: shared }
+  - { from: profile, to: domain }
+  - { from: shared, to: contract }
+  - { from: domain, to: contract }
+  - { from: contract, to: verify }
 ---
 flowchart TD
-    root[Stateful workload root] --> shared[shared library mechanisms]
-    root --> local[Defer domain evidence]
-    shared --> validate[capability check passes]
-    local --> validate
+    profile[stateful_storage profile] --> shared[shared mechanisms]
+    profile --> domain[Defer authoritative roots]
+    shared --> contract[stateful-service-workload]
+    domain --> contract
+    contract --> verify[capability and targeted gates]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
