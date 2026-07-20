@@ -341,6 +341,22 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
     c.wait_converged(3).await;
     c.wait_payloads(&[1, 2, 3]).await;
 
+    // Restart the original leader on the same durable raft directory. It must
+    // recover/catch up before another leader is removed.
+    c.start_node(leader, 1024);
+    c.wait_payloads(&[1, 2, 3]).await;
+
+    let second_leader = c.wait_leader().await;
+    c.kill(second_leader).await;
+    let third_leader = c.wait_leader().await;
+    assert_ne!(third_leader, second_leader);
+    let out = propose(c.raft(third_leader), 4).await;
+    match out {
+        tape::raft::TapeOutcome::Appended(event) => assert_eq!(event.payload["n"], 4),
+        _ => panic!("expected Appended outcome"),
+    }
+    c.wait_payloads(&[1, 2, 3, 4]).await;
+
     for (i, _) in c.live() {
         let got = c.payload_ns(i);
         for want in [1, 2, 3, 4] {

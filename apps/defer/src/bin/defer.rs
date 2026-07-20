@@ -510,7 +510,6 @@ fn llm(args: LlmArgs) -> Result<()> {
     Ok(())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2219" reason="Own the offline OpenAPI/routes projection and exact nine-operation route twin emitted from the Defer CLI.">
 fn spec(args: SpecArgs) -> Result<()> {
     let json = defer::openapi::openapi().to_pretty_json()?;
     if let Some(SpecSubcommand::Gen(args)) = args.gen {
@@ -556,9 +555,8 @@ fn spec(args: SpecArgs) -> Result<()> {
                 "routes": [
                     "PUT /v1/queues/{queue}", "GET /v1/queues/{queue}",
                     "POST /v1/queues/{queue}/control", "POST /v1/queues/{queue}/tasks",
-                    "POST /v1/queues/{queue}/tasks:batch",
                     "GET /v1/queues/{queue}/tasks/{task_id}", "DELETE /v1/queues/{queue}/tasks/{task_id}",
-                    "POST /v1/queues/{queue}/dispatch", "GET /admin/backup"
+                    "POST /v1/queues/{queue}/dispatch"
                 ]
             }))?
         ),
@@ -566,7 +564,6 @@ fn spec(args: SpecArgs) -> Result<()> {
     println!("next: done");
     Ok(())
 }
-// </HANDWRITE>
 
 async fn serve(args: ServeArgs) -> Result<()> {
     let log_format = match args.log_format {

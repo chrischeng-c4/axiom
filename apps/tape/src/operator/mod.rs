@@ -33,28 +33,4 @@ pub fn crd_yaml() -> String {
     service_k8s::crd::quote_yaml_1_1_boolean_like_strings(&yaml)
 }
 
-/// Kubernetes still accepts YAML 1.1 input, where bare `off` is a boolean.
-/// `serde_yaml` emits that Rust string as a plain scalar, so quote every
-/// schema default with that spelling before the manifest reaches the API
-/// server. The JSON CRD remains string-typed; this is serialization hygiene.
-fn quote_kubernetes_yaml_string_defaults(yaml: &str) -> String {
-    let trailing_newline = yaml.ends_with('\n');
-    let mut normalized = yaml
-        .lines()
-        .map(|line| {
-            if line.trim() == "default: off" {
-                let indent = &line[..line.len() - line.trim_start().len()];
-                format!(r#"{indent}default: "off""#)
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if trailing_newline {
-        normalized.push('\n');
-    }
-    normalized
-}
-
 // HANDWRITE-END

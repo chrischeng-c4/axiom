@@ -33,12 +33,6 @@ pub struct DeferSpec {
     pub tokens_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret_provider_class: Option<String>,
-    /// CSI driver name for the `tokensSecretProviderClass` projection.
-    /// Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed
-    /// Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE
-    /// instances must set that value (#2456).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tokens_secret_csi_driver: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_signing_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
