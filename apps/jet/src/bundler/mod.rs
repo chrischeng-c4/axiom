@@ -2889,6 +2889,18 @@ impl Bundler {
         let dce_fold_run_ns = std::sync::atomic::AtomicU64::new(0);
         let dce_require_gate_ns = std::sync::atomic::AtomicU64::new(0);
         let dce_require_run_ns = std::sync::atomic::AtomicU64::new(0);
+        // #2138 (beat-vite round 10) — `dce_require_run_ns` above still
+        // times every require-binding-DCE run, but as of this WI that run
+        // no longer always pays for its own analysis parse: when
+        // fold+syntax-DCE ran on this module too (`dce_fold_run_ns`'s
+        // branch), its validated tree is carried forward instead of being
+        // discarded, so `eliminate_unused_side_effect_free_require_bindings`
+        // can reuse it directly. `dce_require_tree_reused` counts how many
+        // of `require_dce_ran`'s runs took that reused-tree path (vs.
+        // parsing `after_dce` fresh, exactly as before this WI, when fold
+        // did not run) — the permanent, cheap parse-count proof requested
+        // by #2138, printed as a `define-dce-sub-laps` field.
+        let dce_require_tree_reused = std::sync::atomic::AtomicUsize::new(0);
 
         // #2140 (beat-vite round 9) — persistent-cache pure-hit-path
         // attribution: how much of each module's pre-transform work below
@@ -3229,6 +3241,17 @@ impl Bundler {
                                 fold_gate_start.elapsed().as_nanos() as u64,
                                 std::sync::atomic::Ordering::Relaxed,
                             );
+                            // #2138 — `fold_tree` carries the tree
+                            // `eliminate_static_conditionals_syntax_with_tree`
+                            // ends its round-trip loop with (only ever set
+                            // when fold actually ran) forward to the
+                            // require-binding-DCE gate below, so that pass
+                            // can reuse it instead of re-parsing `after_dce`
+                            // from scratch when it happens to be the exact
+                            // same text fold just finished validating. Stays
+                            // `None` on the gate-skipped path below (nothing
+                            // to fuse when fold never ran).
+                            let mut fold_tree: Option<tree_sitter::Tree> = None;
                             let after_dce = if force_run_all_gates
                                 || defines_changed
                                 || fold_probe_hit
@@ -3238,7 +3261,11 @@ impl Bundler {
                                 // syntax-DCE run.
                                 let fold_run_start = std::time::Instant::now();
                                 let after_fold = fold::fold_define_short_circuits(&after_define);
-                                let folded = dce::eliminate_static_conditionals_syntax(&after_fold);
+                                let (folded, tree) =
+                                    dce::eliminate_static_conditionals_syntax_with_tree(
+                                        &after_fold,
+                                    );
+                                fold_tree = tree;
                                 dce_fold_run_ns.fetch_add(
                                     fold_run_start.elapsed().as_nanos() as u64,
                                     std::sync::atomic::Ordering::Relaxed,
@@ -3273,13 +3300,28 @@ impl Bundler {
                             );
                             if force_run_all_gates || require_probe_hit {
                                 require_dce_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                // #2138 — count this run's reused-tree path
+                                // before consuming `fold_tree` below, purely
+                                // for the sub-lap proof; does not change
+                                // which branch `_with_tree` itself takes.
+                                if fold_tree.is_some() {
+                                    dce_require_tree_reused
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                }
                                 // #2135 — sub-lap (e): the actual
-                                // require-binding-DCE run.
+                                // require-binding-DCE run. #2138: reuses
+                                // `fold_tree` (when fold ran on this module)
+                                // instead of this pass's own from-scratch
+                                // analysis parse of `after_dce` — see
+                                // `eliminate_unused_side_effect_free_require_bindings_with_tree`'s
+                                // doc comment for why this is behavior-
+                                // identical to the un-fused call.
                                 let require_run_start = std::time::Instant::now();
                                 let result =
-                                    dce::eliminate_unused_side_effect_free_require_bindings(
+                                    dce::eliminate_unused_side_effect_free_require_bindings_with_tree(
                                         &after_dce,
                                         &side_effect_free_module_ids,
+                                        fold_tree.as_ref(),
                                     );
                                 dce_require_run_ns.fetch_add(
                                     require_run_start.elapsed().as_nanos() as u64,
@@ -3388,13 +3430,21 @@ impl Bundler {
             // above. Kept in the final commit (not scratch instrumentation)
             // — one more eprintln under the same flag, cheap and
             // future-proof for the next define_dce_tail investigation.
+            //
+            // #2138 (beat-vite round 10) — `require_parse_reused` is the
+            // permanent parse-count proof this WI adds: of `require_run`'s
+            // `require_dce_ran` executions (see the `pass-gates` line
+            // above), how many reused fold's already-validated tree instead
+            // of paying for their own from-scratch `parse_js` analysis call.
             eprintln!(
-                "[bundle-timing] define-dce-sub-laps: defines={:?} fold_gate={:?} fold_run={:?} require_gate={:?} require_run={:?}",
+                "[bundle-timing] define-dce-sub-laps: defines={:?} fold_gate={:?} fold_run={:?} require_gate={:?} require_run={:?} require_parse_reused={}/{}",
                 std::time::Duration::from_nanos(dce_defines_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_fold_gate_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_fold_run_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_require_gate_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_require_run_ns.load(Ordering::Relaxed)),
+                dce_require_tree_reused.load(Ordering::Relaxed),
+                require_dce_ran.load(Ordering::Relaxed),
             );
 
             // #2140 (beat-vite round 9) — persistent-cache pure-hit-path

@@ -74,9 +74,35 @@ pub fn eliminate_dead_code(source: &str) -> String {
 /// edit sequence and output as before.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
+    eliminate_static_conditionals_syntax_with_tree(source).0
+}
+
+/// #2138 (beat-vite round 10) — fused variant of
+/// [`eliminate_static_conditionals_syntax`] that also hands back the final
+/// validated tree paired with the returned text, so a caller about to run
+/// `eliminate_unused_side_effect_free_require_bindings` immediately
+/// afterward on that exact text (the `transform_modules` per-module tail's
+/// fold-then-require-DCE sequence) can reuse this tree instead of paying
+/// for that pass's own from-scratch analysis parse of byte-identical
+/// input. The loop body is unchanged from the un-fused version — every exit
+/// path already left `tree` as an error-free parse of the about-to-be-
+/// returned `result` (the initial no-edits break keeps the entry parse; a
+/// failed next-round reparse keeps the previous round's `result`/`tree`
+/// pair; a successful round advances both together) — so this only widens
+/// the return type, it does not change what is parsed or how many times.
+/// The tree is `None` only in the (practically unreachable, see
+/// `parse_js`'s doc comment) case where the very first `parse_js` call
+/// itself fails; every other path returns `Some`, though that tree may
+/// still carry a syntax error if `source` itself did not parse cleanly —
+/// callers must check `has_error()` before using it, exactly as
+/// [`eliminate_unused_side_effect_free_require_bindings_with_tree`] already
+/// does for its own parses.
+pub(crate) fn eliminate_static_conditionals_syntax_with_tree(
+    source: &str,
+) -> (String, Option<tree_sitter::Tree>) {
     let mut result = source.to_string();
     let Some(mut tree) = parse_js(&result) else {
-        return result;
+        return (result, None);
     };
 
     for _ in 0..8 {
@@ -97,7 +123,7 @@ pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
         tree = next_tree;
     }
 
-    result
+    (result, Some(tree))
 }
 
 /// Remove unused transformed import bindings only when every required module id
@@ -109,13 +135,47 @@ pub fn eliminate_unused_side_effect_free_require_bindings(
     source: &str,
     side_effect_free_module_ids: &HashSet<usize>,
 ) -> String {
+    eliminate_unused_side_effect_free_require_bindings_with_tree(
+        source,
+        side_effect_free_module_ids,
+        None,
+    )
+}
+
+/// #2138 (beat-vite round 10) — fused variant of
+/// [`eliminate_unused_side_effect_free_require_bindings`] that accepts an
+/// already-parsed, not-yet-error-checked tree for `source` (typically the
+/// tree [`eliminate_static_conditionals_syntax_with_tree`] just finished
+/// validating for this exact text, carried forward by the
+/// `transform_modules` per-module tail instead of being discarded) so this
+/// pass's own from-scratch analysis parse can be skipped whenever the
+/// caller already holds one for the identical input. `tree == None` falls
+/// back to parsing `source` here exactly as the un-fused function always
+/// did, so behavior — including the `has_error` bailout — is identical
+/// either way; only the parse *count* changes. The end-of-edit validation
+/// reparse of `out` below stays unconditional in both cases: it is the
+/// safety net over this pass's own edits, not the shared analysis input a
+/// supplied tree replaces, and #2138 explicitly keeps that net rather than
+/// trying to prove a carried-forward-tree equivalent for it.
+pub(crate) fn eliminate_unused_side_effect_free_require_bindings_with_tree(
+    source: &str,
+    side_effect_free_module_ids: &HashSet<usize>,
+    tree: Option<&tree_sitter::Tree>,
+) -> String {
     if side_effect_free_module_ids.is_empty() {
         return source.to_string();
     }
-    let Some(tree) = parse_js(source) else {
-        return source.to_string();
+    let owned_tree;
+    let root = match tree {
+        Some(t) => t.root_node(),
+        None => {
+            let Some(t) = parse_js(source) else {
+                return source.to_string();
+            };
+            owned_tree = t;
+            owned_tree.root_node()
+        }
     };
-    let root = tree.root_node();
     if root.has_error() {
         return source.to_string();
     }
@@ -2713,6 +2773,52 @@ module.exports["value"] = value;"#;
             eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
         assert!(output.contains("PropTypes"), "{}", output);
         assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    // #2138 — fold + require-binding-DCE fusion: fold's loop hands its final
+    // validated tree to require-binding-DCE instead of the latter
+    // re-parsing the same post-fold text from scratch. The fused path must
+    // produce byte-identical output to the unfused two-parse pipeline, and
+    // must actually receive a reusable tree (not silently fall back to a
+    // fresh parse) whenever fold's loop runs to completion on error-free
+    // input.
+    #[test]
+    fn test_fold_and_require_dce_fusion_matches_unfused_pipeline_and_reuses_tree() {
+        let input = r#"if ("production" !== "production") { console.log("dev branch"); }
+var Unused = require(7)["default"] || require(7);
+const value = 1;
+module.exports["value"] = value;"#;
+
+        // Unfused baseline: two fully independent parses.
+        let unfused_folded = eliminate_static_conditionals_syntax(input);
+        let unfused_final = eliminate_unused_side_effect_free_require_bindings(
+            &unfused_folded,
+            &HashSet::from([7usize]),
+        );
+
+        // Fused path: fold hands its validated tree straight to require-binding-DCE.
+        let (fused_folded, tree) = eliminate_static_conditionals_syntax_with_tree(input);
+        assert!(
+            tree.is_some(),
+            "fold must return a reusable tree when its loop completes on error-free input"
+        );
+        assert_eq!(
+            fused_folded, unfused_folded,
+            "exposing the tree must not change fold's own output"
+        );
+        let fused_final = eliminate_unused_side_effect_free_require_bindings_with_tree(
+            &fused_folded,
+            &HashSet::from([7usize]),
+            tree.as_ref(),
+        );
+
+        assert_eq!(
+            fused_final, unfused_final,
+            "fused (tree-reusing) pipeline must be byte-identical to the unfused two-parse pipeline"
+        );
+        assert!(!fused_final.contains("dev branch"), "{}", fused_final);
+        assert!(!fused_final.contains("Unused"), "{}", fused_final);
+        assert!(fused_final.contains("module.exports"), "{}", fused_final);
     }
 
     // #1995 — gate/pass agreement: whenever `could_contain_require_like_call`
