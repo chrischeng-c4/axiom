@@ -73,8 +73,19 @@ impl AliasResolver {
             entries.push((prefix, target_path));
         }
 
-        // Sort by descending prefix length so longest match wins.
-        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        // Sort by descending prefix length so longest match wins. Tie-break
+        // lexicographically on the prefix itself: equal-length prefixes would
+        // otherwise retain `HashMap`/iteration insertion order, which is
+        // randomized per-process — see GH #2156. This `Vec` feeds
+        // `ResolveOptions::alias`, which `persistent_cache::
+        // resolver_config_fingerprint` hashes in-order, so a nondeterministic
+        // equal-length tie flips the #2143 replay/#2141 resolution
+        // fingerprints across otherwise-identical processes. Equal-length
+        // prefixes are disjoint `starts_with` matchers (two distinct strings
+        // of the same length can never both be a prefix of one specifier), so
+        // this tie-break changes fingerprint stability only — never
+        // resolution semantics.
+        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
 
         Self { entries, base_url }
     }
@@ -418,6 +429,52 @@ mod tests {
         assert!(
             entries[0].0.len() >= entries[1].0.len(),
             "Entries should be sorted longest-prefix-first"
+        );
+    }
+
+    /// GH #2156 — equal-length alias prefixes have no natural order from
+    /// prefix length alone, so they must fall back to a deterministic
+    /// tie-break (lexicographic) rather than leaking the source `HashMap`'s
+    /// per-process-random iteration order. Reference-corpus repro shape:
+    /// `"next/navigation"` / `"zustand/vanilla"` are both 15 characters.
+    /// Two independently constructed `HashMap`s holding the same entries
+    /// (each `HashMap::new()` gets its own randomized hasher state, so
+    /// their iteration order is not guaranteed to match even within one
+    /// process) must still sort identically — this is what fed the
+    /// unstable `resolver_config_fingerprint`/`replay_config_fingerprint`
+    /// (#2141/#2143) the flip was traced to.
+    #[test]
+    fn alias_entries_equal_length_keys_sort_deterministically() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_root = dir.path();
+
+        let build = || {
+            let mut config_aliases = HashMap::new();
+            config_aliases.insert("next/navigation".to_string(), "./a/".to_string());
+            config_aliases.insert("zustand/vanilla".to_string(), "./b/".to_string());
+            config_aliases.insert("@/".to_string(), "./c/".to_string());
+            AliasResolver::load(project_root, &config_aliases).to_resolve_aliases()
+        };
+
+        let first = build();
+        let second = build();
+
+        assert_eq!(first.len(), 3);
+        assert_eq!(
+            first, second,
+            "equal-length alias keys must sort identically across independent \
+             constructions regardless of source-map iteration order: {first:?} vs {second:?}"
+        );
+
+        // Equal-length keys ("next/navigation", "zustand/vanilla" — both 15
+        // chars) must land in lexicographic order ahead of the shorter "@/".
+        assert_eq!(
+            first
+                .iter()
+                .map(|(prefix, _)| prefix.as_str())
+                .collect::<Vec<_>>(),
+            vec!["next/navigation", "zustand/vanilla", "@/"],
+            "equal-length keys must be lexicographically ordered: {first:?}"
         );
     }
 }

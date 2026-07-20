@@ -39,6 +39,15 @@
 //! section-independence coverage for both new sections is unit-level only
 //! (`persistent_cache.rs`'s `resolution_*`/`analysis_*` tests), same
 //! reuse-not-duplicate-harness intent as #2140.
+//!
+//! GH #2156 adds one more #2143 replay test: the base `mui-visual` fixture
+//! declares no aliases at all, so none of the tests above ever exercised
+//! `ResolveOptions::alias` with an equal-length-prefix tie — exactly the
+//! gap that let the alias-ordering replay-blocker (equal-length alias keys
+//! sorting in `HashMap`-random order, flipping `resolver_config_fingerprint`
+//! / `replay_config_fingerprint` across otherwise-identical processes) ship
+//! unnoticed. `write_equal_length_alias_config` writes a jet.toml with such
+//! a tie onto a fixture copy before the first build.
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::hash_map::DefaultHasher;
@@ -375,6 +384,26 @@ fn bump_mtime(path: &Path) -> Result<()> {
     let new_time = std::time::SystemTime::now() + std::time::Duration::from_secs(60 * 60 * 24);
     file.set_modified(new_time)
         .with_context(|| format!("set_modified {}", path.display()))
+}
+
+/// GH #2156 — writes a `jet.toml` declaring two alias entries whose keys
+/// have exactly the same length (`"aaa/bbbb"`/`"ccc/dddd"`, both 8
+/// characters — the WI's reference-corpus repro shape; the real corpus hit
+/// this with `"next/navigation"`/`"zustand/vanilla"`, both 15). Neither key
+/// is imported anywhere in the fixture; they exist solely to populate
+/// `ResolveOptions::alias` with an equal-length tie, which is what
+/// `resolver::alias::AliasResolver::load`'s longest-prefix sort previously
+/// left in the source `HashMap`'s per-process-random iteration order (GH
+/// #2156) — and `resolver_config_fingerprint`/`replay_config_fingerprint`
+/// hash `ResolveOptions::alias` in-order, so the tie flipped both across
+/// otherwise-identical processes.
+fn write_equal_length_alias_config(fixture: &Path) -> Result<()> {
+    let jet_toml = fixture.join("jet.toml");
+    fs::write(
+        &jet_toml,
+        "[alias]\n\"aaa/bbbb\" = \"./src/\"\n\"ccc/dddd\" = \"./src/\"\n",
+    )
+    .with_context(|| format!("write {}", jet_toml.display()))
 }
 
 const BUILD_ARGS: [&str; 3] = ["build", "--sourcemap", "none"];
@@ -1360,6 +1389,84 @@ fn persistent_cache_replay_resolution_shadow_guard_forces_full_build() -> Result
     eprintln!(
         "[transform_cache] replay resolution-shadow guard: outcome={}",
         rebuild_timing.outcome,
+    );
+    Ok(())
+}
+
+/// GH #2156 — the #2143 replay-blocker repro, minimized onto this harness's
+/// established fixture: a jet.toml with at least two equal-length alias
+/// keys (`aaa/bbbb`/`ccc/dddd`) must not defeat replay determinism.
+/// `resolver::alias::AliasResolver::load`'s longest-prefix sort had no
+/// tie-break for equal-length keys, so it fell through to the source
+/// `HashMap`'s per-process-random iteration order — `resolver_config_
+/// fingerprint` (and therefore `replay_config_fingerprint`, which folds it
+/// in) hashes `ResolveOptions::alias` in that order, so consecutive
+/// unchanged builds (each a fresh process, and therefore a fresh `HashMap`
+/// random seed) could flip between `replayed` and
+/// `full-build(config-changed)` at roughly a coin-flip rate. The base
+/// `mui-visual` fixture has no aliases at all, so none of the other tests
+/// in this file exercise this path — this test writes a jet.toml onto a
+/// fixture copy before the first build (`write_equal_length_alias_config`).
+#[test]
+fn persistent_cache_replay_equal_length_alias_keys_replay_deterministically() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+    write_equal_length_alias_config(&fixture).context("write equal-length alias jet.toml")?;
+
+    clean_dist_dir(&fixture);
+    let baseline = require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_stderr = String::from_utf8_lossy(&baseline.stderr).into_owned();
+    let baseline_replay = parse_replay_timing_line(&baseline_stderr).ok_or_else(|| {
+        anyhow!("baseline build did not print a replay timing line\nstderr={baseline_stderr}")
+    })?;
+    assert_eq!(
+        baseline_replay.outcome, "full-build(no-manifest)",
+        "the very first build (no prior store) must always fall back to a \
+         full build; stderr={baseline_stderr}"
+    );
+
+    // Deliberately no `clean_dist_dir` before either rebuild below (same
+    // reasoning as `persistent_cache_replay_unchanged_rebuild_is_replayed_
+    // and_byte_identical`): a correct replay must leave dist/ alone. The WI
+    // asks for BOTH of two further unchanged builds to replay — each is a
+    // fresh `jet` process (a fresh `HashMap` random seed for the alias map
+    // GH #2156 traced the flip to), so two independent launches raise
+    // confidence past a lucky one-shot pass.
+    let rebuild_1 = require_success(run_jet(&fixture, BUILD_ARGS)?, "unchanged rebuild #1")?;
+    let rebuild_1_stderr = String::from_utf8_lossy(&rebuild_1.stderr).into_owned();
+    let rebuild_1_timing = parse_replay_timing_line(&rebuild_1_stderr).ok_or_else(|| {
+        anyhow!(
+            "unchanged rebuild #1 did not print a replay timing line\n\
+             stderr={rebuild_1_stderr}"
+        )
+    })?;
+    assert_eq!(
+        rebuild_1_timing.outcome, "replayed",
+        "unchanged rebuild #1 with equal-length alias keys must replay \
+         deterministically, not flip to a config-changed full build; \
+         stderr={rebuild_1_stderr}"
+    );
+
+    let rebuild_2 = require_success(run_jet(&fixture, BUILD_ARGS)?, "unchanged rebuild #2")?;
+    let rebuild_2_stderr = String::from_utf8_lossy(&rebuild_2.stderr).into_owned();
+    let rebuild_2_timing = parse_replay_timing_line(&rebuild_2_stderr).ok_or_else(|| {
+        anyhow!(
+            "unchanged rebuild #2 did not print a replay timing line\n\
+             stderr={rebuild_2_stderr}"
+        )
+    })?;
+    assert_eq!(
+        rebuild_2_timing.outcome, "replayed",
+        "unchanged rebuild #2 with equal-length alias keys must replay \
+         deterministically, not flip to a config-changed full build; \
+         stderr={rebuild_2_stderr}"
+    );
+
+    eprintln!(
+        "[transform_cache] replay equal-length alias keys: baseline outcome={} \
+         rebuild #1 outcome={} rebuild #2 outcome={}",
+        baseline_replay.outcome, rebuild_1_timing.outcome, rebuild_2_timing.outcome,
     );
     Ok(())
 }
