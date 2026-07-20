@@ -50,9 +50,8 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Add the field-style stateful-service-workload contract and one work root; reference current shared-library paths and existing Defer domain evidence without duplicating their policies.
+    description: Add one stateful-service-workload index entry and field-style root that composes current shared mechanisms with existing Defer evidence; do not change runtime behavior.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
