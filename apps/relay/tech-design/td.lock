@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-20T13:27:52.909397+00:00"
-digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
-source_digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
-ir_digest = "sha256:37b722c3f4e97bb624fb2b7a1cbce0fc7f096249d29e917c03dc9ced3067e9d7"
+generated_at = "2026-07-20T08:39:43.074710+00:00"
+digest = "sha256:2924ddad4de89dfea6cb8f512d00c22d1593772bbc9430f73f2152ed14d1db7f"
+source_digest = "sha256:2924ddad4de89dfea6cb8f512d00c22d1593772bbc9430f73f2152ed14d1db7f"
+ir_digest = "sha256:ea6606ba31ef958a13815a5a4c4d8da8f4373662d994fab696016e86201c4d47"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
