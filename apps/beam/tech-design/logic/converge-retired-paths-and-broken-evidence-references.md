@@ -96,3 +96,35 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: converge-retired-paths-verification
+requirements:
+  r1_relocate_evidence:
+    id: R1
+    text: "Relocate retained Beam benchmark evidence to semantic paths under apps/beam/."
+    kind: functional
+    risk: low
+    verify: cargo test -p beam
+  r2_remove_aw_artifact:
+    id: R2
+    text: "Remove the Beam-owned retired repo-root .aw/ artifact."
+    kind: functional
+    risk: low
+    verify: cargo test -p beam
+  r3_update_references:
+    id: R3
+    text: "Update README, CLI topics, TD references, and EC references to canonical existing paths."
+    kind: functional
+    risk: low
+    verify: cargo test -p beam --test cli_contract
+---
+flowchart TD
+    r1[R1 r1 relocate evidence] --> cargo_test_p_beam[cargo test -p beam]
+    r2[R2 r2 remove aw artifact] --> cargo_test_p_beam
+    r3[R3 r3 update references] --> cargo_test_p_beam_test_cli_contract[cargo test -p beam --test cli_contract]
+```
