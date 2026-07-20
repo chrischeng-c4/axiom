@@ -233,4 +233,41 @@ async fn untrusted_defer_peer_certificate_is_rejected() {
     );
 }
 // </HANDWRITE>
+
+// <HANDWRITE gap="missing-generator:e2e-test:defer-untrusted-server-mtls" tracker="#2215" reason="Prove the client side of required peer mTLS also rejects an attacker-CA server while the presented Defer client identity remains legitimately trusted.">
+#[tokio::test]
+async fn untrusted_defer_server_certificate_is_rejected() {
+    let trusted_ca = authority();
+    let attacker_ca = authority();
+    // The server trusts the legitimate Defer client identity, so the only
+    // failing direction is its own identity signed by the attacker CA.
+    let server_material = material_with_trust(&attacker_ca, &trusted_ca);
+    let client_material = material(&trusted_ca);
+    let server_transport = PeerTransport::from_config(&server_material.config).unwrap();
+    let client_transport = PeerTransport::from_config(&client_material.config).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let (_server_result, client_result) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(
+            async {
+                let (stream, _) = listener.accept().await.unwrap();
+                server_transport.accept(stream).await
+            },
+            async {
+                let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+                client_transport.connect(stream, "localhost").await
+            }
+        )
+    })
+    .await
+    .expect("untrusted server handshake must terminate");
+
+    let error = client_result.expect_err("required mTLS must reject attacker-CA server identity");
+    assert!(
+        error.to_string().contains("peer TLS client handshake"),
+        "unexpected rejection: {error:#}"
+    );
+}
+// </HANDWRITE>
 // HANDWRITE-END
