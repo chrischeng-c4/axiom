@@ -298,6 +298,21 @@ fn execute_with_binary_version(
 ) -> Result<MetaCommandOutput> {
     let mut changes = Vec::new();
     let mut projection_findings = Vec::new();
+    // #2186: materialize scoped project skeletons before the repository
+    // Projects table reads their `## Brief` sections. This keeps `meta init`
+    // bootstrap-safe while leaving `check` read-only.
+    for project in &scope.projects {
+        reconcile_layer(
+            root,
+            &project.path,
+            &project.name,
+            MetaDocLayer::Project,
+            mode,
+            scope_args.force_stale,
+            &mut changes,
+            &mut projection_findings,
+        )?;
+    }
     reconcile_layer(
         root,
         root,
@@ -313,18 +328,6 @@ fn execute_with_binary_version(
             root,
             root,
             root_name(root),
-            MetaDocLayer::Project,
-            mode,
-            scope_args.force_stale,
-            &mut changes,
-            &mut projection_findings,
-        )?;
-    }
-    for project in &scope.projects {
-        reconcile_layer(
-            root,
-            &project.path,
-            &project.name,
             MetaDocLayer::Project,
             mode,
             scope_args.force_stale,
@@ -1033,6 +1036,52 @@ mod tests {
         assert_eq!(
             output.next.unwrap().command,
             "aw meta check --project-path apps/demo"
+        );
+    }
+
+    #[test]
+    fn meta_init_bootstraps_configured_project_before_repo_table_projection() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("apps/workbench");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            temp.path().join("aw.toml"),
+            "[agentic_workflow.projects]\ndiscover = [\"apps/*/aw.toml\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("aw.toml"),
+            "[project]\nname = \"workbench\"\ncap_path = \"CAPABILITIES.md\"\nlabel = \"app:workbench\"\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("README.md"),
+            format!(
+                "# Demo\n\n{}\n{}\n",
+                doc_mirror::PROJECTS_TABLE_START,
+                doc_mirror::PROJECTS_TABLE_END
+            ),
+        )
+        .unwrap();
+        let args = MetaScopeArgs {
+            projects: vec!["workbench".to_string()],
+            project_paths: Vec::new(),
+            repository_product: false,
+            force_stale: false,
+        };
+
+        let scope = resolve_scope(temp.path(), &args).unwrap();
+        let output = execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+
+        assert!(output.findings.is_empty(), "{:#?}", output.findings);
+        assert!(project.join("README.md").is_file());
+        assert!(project.join("CONTRIBUTING.md").is_file());
+        assert!(project.join("CAPABILITIES.md").is_file());
+        let root_readme = fs::read_to_string(temp.path().join("README.md")).unwrap();
+        assert!(root_readme.contains("[workbench](apps/workbench/README.md)"));
+        assert_eq!(
+            output.next.unwrap().command,
+            "aw meta check --project workbench"
         );
     }
 

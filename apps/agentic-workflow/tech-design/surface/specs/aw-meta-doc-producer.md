@@ -22,11 +22,14 @@ id: aw-meta-doc-producer-scenarios
 scenarios:
   - id: S1
     title: initialize a fresh repository and project
+    given:
+      - "a configured project-local aw.toml may exist before its README.md"
     when:
       - "an agent runs aw meta init with a project path or configured project"
     then:
       - "repo AGENTS.md, CLAUDE.md, README.md, and CONTRIBUTING.md skeletons exist"
       - "project README.md, CONTRIBUTING.md, and CAPABILITIES.md skeletons exist"
+      - "scoped project skeletons exist before the repo Projects table reads their Brief sections (#2186)"
       - "stdout names an executable aw meta check command"
   - id: S2
     title: synchronize marker-owned blocks without touching human bytes
@@ -173,6 +176,7 @@ id: aw-meta-doc-producer-loop
 entry: scope
 nodes:
   scope: { kind: start, label: "Resolve repo/product/project scope" }
+  project_first: { kind: process, label: "Reconcile scoped project skeletons before repo projections" }
   registry: { kind: process, label: "Walk one META_DOC_PRODUCERS registry" }
   existing: { kind: decision, label: "Managed marker pair exists?" }
   reconcile: { kind: process, label: "Render and replace only owned marker span" }
@@ -183,7 +187,8 @@ nodes:
   validate: { kind: process, label: "Run ownership matrix validation" }
   next: { kind: terminal, label: "Emit executable next or done terminal" }
 edges:
-  - { from: scope, to: registry }
+  - { from: scope, to: project_first }
+  - { from: project_first, to: registry }
   - { from: registry, to: existing }
   - { from: existing, to: reconcile, label: "yes" }
   - { from: existing, to: skeleton, label: "no and required" }
@@ -197,7 +202,8 @@ edges:
   - { from: validate, to: next }
 ---
 flowchart TD
-    scope([Resolve repo/product/project scope]) --> registry[Walk one META_DOC_PRODUCERS registry]
+    scope([Resolve repo/product/project scope]) --> project_first[Reconcile scoped project skeletons before repo projections]
+    project_first --> registry[Walk one META_DOC_PRODUCERS registry]
     registry --> existing{Managed marker pair exists?}
     existing -->|yes| reconcile[Render and replace only owned marker span]
     existing -->|no and required| skeleton[Create or append canonical skeleton block]
@@ -224,7 +230,7 @@ evidence:
 requirementDiagram
   requirement fresh_init {
     id: UT1
-    text: "fresh repo and project fixtures receive all layer skeletons"
+    text: "fresh path-selected and configured projects receive all layer skeletons before the repo Projects table reads their Brief sections (#2186)"
     risk: high
     verifymethod: test
   }
@@ -287,7 +293,7 @@ changes:
     action: create
     section: logic
     impl_mode: codegen
-    description: Register and implement the init/sync/check producer engine, marker-preserving reconciliation, structured output, and focused fixtures.
+    description: Register and implement the init/sync/check producer engine, reconcile scoped project skeletons before repo table projections (#2186), preserve marker-owned regions, emit structured output, and cover greenfield configured projects.
   - path: apps/agentic-workflow/src/cli/commands.rs
     action: modify
     section: logic
