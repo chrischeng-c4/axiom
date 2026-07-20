@@ -9,47 +9,58 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: relay-measured-performance-applicability
-entry: rejected
+id: relay-measured-performance-contract
+entry: parent
 nodes:
-  rejected:
+  parent:
     kind: start
-    label: "Independent EC review rejects synthetic performance oracle"
-  boundary:
+    label: "Parent oracle starts current test binary in report-only child mode"
+  child:
+    kind: process
+    label: "Child creates temp durable Relay with FsyncPolicy Always"
+  publish:
+    kind: process
+    label: "Publish 2000 messages in 100-message batches and record elapsed samples"
+  drain:
+    kind: process
+    label: "Lease and ack every message in 100-message batches and record elapsed samples"
+  report:
+    kind: process
+    label: "Emit one RELAY_PERF_JSON report with counts samples throughput p95 and errors"
+  parse:
     kind: decision
-    label: "Does remediation change Relay domain semantics?"
-  exclude_domain:
+    label: "Parent finds and parses exactly one complete report"
+  reject:
     kind: terminal
-    label: "Stop and create a separate domain WI"
-  measure:
-    kind: process
-    label: "Measure existing durable publish then lease and ack lifecycle"
-  oracle:
-    kind: process
-    label: "Parse machine report independently and enforce pinned floors"
-  ec:
-    kind: process
-    label: "Bind behavior efficiency stability cases through vat and meter"
-  done:
+    label: "FAIL missing malformed zero-sample incomplete or error report"
+  thresholds:
+    kind: decision
+    label: "Observed publish and lease-ack throughput >= pinned floors and p95 <= ceiling"
+  pass:
     kind: terminal
-    label: "Performance EC cannot pass with missing or zero observations"
+    label: "PASS measured workload-specific envelope"
 edges:
-  - { from: rejected, to: boundary }
-  - { from: boundary, to: exclude_domain, label: "yes" }
-  - { from: boundary, to: measure, label: "no" }
-  - { from: measure, to: oracle }
-  - { from: oracle, to: ec }
-  - { from: ec, to: done }
+  - { from: parent, to: child }
+  - { from: child, to: publish }
+  - { from: publish, to: drain }
+  - { from: drain, to: report }
+  - { from: report, to: parse }
+  - { from: parse, to: reject, label: "invalid" }
+  - { from: parse, to: thresholds, label: "valid" }
+  - { from: thresholds, to: reject, label: "outside envelope" }
+  - { from: thresholds, to: pass, label: "inside envelope" }
 ---
 flowchart TD
-    rejected[rejected synthetic EC] --> boundary{domain semantics change?}
-    boundary -->|yes| exclude_domain[separate domain WI]
-    boundary -->|no| measure[measure durable lifecycle]
-    measure --> oracle[independent parsed oracle]
-    oracle --> ec[behavior efficiency stability EC]
-    ec --> done[fail closed evidence]
+    parent[parent independent oracle] --> child[durable fsync-always child]
+    child --> publish[2000 batched publishes]
+    publish --> drain[lease and ack all]
+    drain --> report[RELAY_PERF_JSON observations]
+    report --> parse{complete non-zero report?}
+    parse -->|no| reject[FAIL closed]
+    parse -->|yes| thresholds{pinned floors pass?}
+    thresholds -->|no| reject
+    thresholds -->|yes| pass[PASS]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
