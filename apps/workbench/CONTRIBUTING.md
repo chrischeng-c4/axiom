@@ -78,6 +78,18 @@ failures must produce a navigable fallback or allow the next compatible
 renderer to run. Git probes and rendering commands must keep optional locks
 disabled, and Markdown must not pass raw HTML or unsafe link targets through.
 
+The optional AW typed renderer gate is:
+
+```bash
+cargo test -p workbench --test aw_typed_renderer -- --nocapture
+```
+
+Keep TD, EC, capability, and WI fixtures separate and byte-identical across
+open, navigation, refresh, and close. The adapter may read `aw.toml` only as a
+local activation signal; it must not invoke AW/GitHub, perform approvals or
+lifecycle transitions, write repository state, or prevent generic Markdown
+fallback when activation or typed structure is absent.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

@@ -32,6 +32,7 @@ Gate Inventory:
 - verified: `cargo test -p workbench --test pty_agent_adapters -- --nocapture`
 - verified: `cargo test -p workbench --test pty_cwd_context -- --nocapture`
 - verified: `cargo test -p workbench --test generic_context_renderers -- --nocapture`
+- verified: `cargo test -p workbench --test aw_typed_renderer -- --nocapture`
 - planned: `cargo test -p workbench --test production_journey -- --nocapture`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -41,7 +42,7 @@ Gate Inventory:
 | native-agent-pty | change | #2193 | complete | verified | prototype | `pty_agent_adapters` real-shell fixture |
 | authoritative-cwd-context | change | #2194 | complete | verified | prototype | `pty_cwd_context` OSC 7 real-PTY fixture |
 | generic-context-renderers | change | #2195 | complete | verified | prototype | `generic_context_renderers` non-AW Git fixture |
-| optional-aw-typed-renderer | change | #2196 | planned | planned | none | `aw_typed_renderer` |
+| optional-aw-typed-renderer | change | #2196 | complete | verified | prototype | `aw_typed_renderer` four-kind fixtures and byte identity |
 | context-provenance | change | #2198 | planned | planned | none | `context_provenance` |
 | optional-graph-adapter | change | #2199 | planned | planned | none | `graph_context_adapter` |
 | optional-derived-page-adapter | change | #2200 | planned | planned | none | `derived_page_context_adapter` |

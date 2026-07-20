@@ -170,9 +170,7 @@ fn parse_artifact(source: &str) -> Option<AwArtifactModel> {
 
 fn detect_kind(source: &str) -> Option<AwArtifactKind> {
     let lower = source.to_ascii_lowercase();
-    if source.starts_with("---\n")
-        && (lower.contains("\nfill_sections:") || lower.contains("\nkind: tech-design"))
-    {
+    if lower.contains("\nfill_sections:") || lower.contains("\nkind: tech-design") {
         return Some(AwArtifactKind::TechDesign);
     }
     if lower.contains("kind: external-contract")
@@ -199,7 +197,7 @@ fn detect_kind(source: &str) -> Option<AwArtifactKind> {
 }
 
 fn parse_frontmatter(source: &str) -> Vec<(String, String)> {
-    let mut lines = source.lines();
+    let mut lines = source.lines().skip_while(|line| *line != "---");
     if lines.next() != Some("---") {
         return Vec::new();
     }
@@ -217,7 +215,10 @@ fn parse_sections(source: &str) -> Vec<ParsedSection> {
         .lines()
         .enumerate()
         .filter_map(|(index, line)| {
-            let hashes = line.chars().take_while(|character| *character == '#').count();
+            let hashes = line
+                .chars()
+                .take_while(|character| *character == '#')
+                .count();
             if hashes == 0 || hashes > 6 || !line[hashes..].starts_with(' ') {
                 return None;
             }
@@ -300,7 +301,8 @@ fn parse_relationships(source: &str) -> Vec<String> {
         }
     }
     for word in source.split_whitespace() {
-        let word = word.trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '#');
+        let word = word
+            .trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '#');
         if issue_reference(word) {
             relationships.insert(word.to_owned());
         }
@@ -318,9 +320,9 @@ fn backtick_tokens(source: &str) -> Vec<String> {
 }
 
 fn issue_reference(value: &str) -> bool {
-    value
-        .strip_prefix('#')
-        .is_some_and(|number| !number.is_empty() && number.chars().all(|character| character.is_ascii_digit()))
+    value.strip_prefix('#').is_some_and(|number| {
+        !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+    })
 }
 
 fn render_model(model: &AwArtifactModel, source: &str) -> String {

@@ -81,7 +81,7 @@ impl ContextRenderer for MarkdownRenderer {
     }
 }
 
-fn safe_markdown_html(markdown: &str) -> String {
+pub(crate) fn safe_markdown_html(markdown: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);

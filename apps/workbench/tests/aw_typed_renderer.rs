@@ -88,9 +88,8 @@ fn renders_commands_assertions_mermaid_and_relationships() {
     let fixture = Fixture::configured();
     let registry = RendererRegistry::generic_with_optional_aw();
 
-    let td = registry.render(
-        &ContextRequest::file(&fixture.root, "tech-design.md").expect("TD request"),
-    );
+    let td = registry
+        .render(&ContextRequest::file(&fixture.root, "tech-design.md").expect("TD request"));
     assert!(td.body_html.contains("Frontmatter"));
     assert!(td.body_html.contains("fill_sections"));
     assert!(td.body_html.contains("data-language=\"mermaid\""));
@@ -98,9 +97,8 @@ fn renders_commands_assertions_mermaid_and_relationships() {
     assert!(td.body_html.contains("external-contract.md"));
     assert!(td.body_html.contains("#2196"));
 
-    let ec = registry.render(
-        &ContextRequest::file(&fixture.root, "external-contract.md").expect("EC request"),
-    );
+    let ec = registry
+        .render(&ContextRequest::file(&fixture.root, "external-contract.md").expect("EC request"));
     assert!(ec.body_html.contains("response_ok"));
     assert!(ec.body_html.contains("aw ec verify"));
     assert!(ec.body_html.contains("tech-design.md"));
@@ -110,9 +108,8 @@ fn renders_commands_assertions_mermaid_and_relationships() {
     );
     assert!(capability.body_html.contains("#2196"));
 
-    let work_item = registry.render(
-        &ContextRequest::file(&fixture.root, "work-item.md").expect("WI request"),
-    );
+    let work_item =
+        registry.render(&ContextRequest::file(&fixture.root, "work-item.md").expect("WI request"));
     assert!(work_item.body_html.contains("tech-design.md"));
 }
 
@@ -141,9 +138,8 @@ fn missing_aw_configuration_uses_generic_markdown() {
     let fixture = Fixture::without_configuration();
     assert!(!fixture.root.join("aw.toml").exists());
     let before = fs::read(fixture.root.join("tech-design.md")).expect("before bytes");
-    let document = RendererRegistry::generic_with_optional_aw().render(
-        &ContextRequest::file(&fixture.root, "tech-design.md").expect("TD request"),
-    );
+    let document = RendererRegistry::generic_with_optional_aw()
+        .render(&ContextRequest::file(&fixture.root, "tech-design.md").expect("TD request"));
     assert_eq!(document.renderer_id, "markdown");
     assert_eq!(document.kind, ContextDocumentKind::Markdown);
     assert_eq!(

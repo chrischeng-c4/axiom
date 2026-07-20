@@ -1,4 +1,5 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:6fd8b17e" tracker="pending-tracker" reason="Define renderer requests, structured documents, deterministic registry selection, error isolation, fallback, and path confinement."
+pub mod aw;
 pub mod git;
 pub mod markdown;
 
@@ -9,6 +10,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+pub use aw::{AwArtifactKind, AwTypedRenderer};
 pub use git::GitRenderer;
 pub use markdown::MarkdownRenderer;
 
@@ -91,6 +93,7 @@ impl ContextRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextDocumentKind {
+    AwTyped,
     Markdown,
     Git,
     Fallback,
@@ -165,6 +168,14 @@ impl RendererRegistry {
 
     pub fn generic() -> Self {
         let mut registry = Self::new();
+        registry.register(MarkdownRenderer::new());
+        registry.register(GitRenderer::new());
+        registry
+    }
+
+    pub fn generic_with_optional_aw() -> Self {
+        let mut registry = Self::new();
+        registry.register(AwTypedRenderer::new());
         registry.register(MarkdownRenderer::new());
         registry.register(GitRenderer::new());
         registry

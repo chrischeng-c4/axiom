@@ -92,6 +92,20 @@ their output, and exposes changed paths for source navigation. Both operate on
 ordinary repositories without `aw.toml`, remain confined to the selected root,
 and have no dependency on PTY or cwd runtime state.
 
+## Optional AW Typed Context
+
+When the selected root contains an `aw.toml`, Workbench can opt into a
+higher-priority, read-only renderer for structurally recognized TD, EC,
+capability, and WI Markdown. It exposes frontmatter, typed sections, Mermaid,
+commands, assertions, explicit artifact relationships, and source-line labels;
+all values are escaped and the underlying Markdown remains the canonical
+repository source.
+
+The adapter never invokes `aw`, GitHub, approval, or lifecycle commands. Open,
+navigate, refresh, and close are bounded reads with no retained mutable handle.
+If configuration or typed structure is absent, the same file continues through
+the generic Markdown renderer; parse failures are isolated by the registry.
+
 ## Verification
 
 ```bash
@@ -100,4 +114,5 @@ cargo test -p workbench --test folder_shell_journey -- --nocapture
 cargo test -p workbench --test pty_agent_adapters -- --nocapture
 cargo test -p workbench --test pty_cwd_context -- --nocapture
 cargo test -p workbench --test generic_context_renderers -- --nocapture
+cargo test -p workbench --test aw_typed_renderer -- --nocapture
 ```
