@@ -50,6 +50,7 @@ pub mod backup;
 pub mod domain;
 pub mod infrastructure;
 pub mod application;
+pub mod operator;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =
