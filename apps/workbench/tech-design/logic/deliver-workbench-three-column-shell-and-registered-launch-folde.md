@@ -77,3 +77,96 @@ UI module for Jet E2E execution. Production always selects the Tauri invoke
 bridge. The journey records rendered desktop and constrained-width PNG
 evidence, interaction results, focus order, landmark/readability assertions,
 and the future launch path without spawning any agent process.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: Cargo.lock
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Lock the Tauri dialog plugin and its native directory-picker dependency graph.
+  - path: apps/workbench/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the dialog plugin and test-only temporary-directory support.
+  - path: apps/workbench/src/folder_shell.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Own canonical launch-folder identity, selected-id persistence, native folder registration, and future launch-path resolution.
+  - path: apps/workbench/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run
+    description: Install folder-shell state, dialog integration, and bounded Tauri commands in the existing desktop builder.
+  - path: apps/workbench/tauri.conf.json
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Expose the local Tauri invoke bridge and retain a constrained-desktop minimum window contract.
+  - path: apps/workbench/ui/index.html
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Replace the bootstrap document with accessible launch-folder, terminal-preparation, and context landmarks plus functional states.
+  - path: apps/workbench/ui/shell.css
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define the desktop and constrained-width three-column visual system, compact rail, focus, status, and readability states.
+  - path: apps/workbench/ui/shell.js
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Drive Tauri or deterministic test bridge commands, folder selection, collapse, keyboard navigation, and actionable errors.
+  - path: apps/workbench/e2e/folder-shell.spec.js
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Exercise the rendered shell through Jet at desktop and constrained widths and retain screenshot and interaction evidence.
+  - path: apps/workbench/tests/folder_shell_journey.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove registry persistence, selection, future launch path, absence of child launch, UI contract, and the Jet E2E evidence gate.
+  - path: apps/workbench/evidence/folder-shell/2192/desktop.png
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Retain the rendered 1440 by 900 primary-state viewport evidence.
+  - path: apps/workbench/evidence/folder-shell/2192/constrained.png
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Retain the rendered 860 by 720 constrained-desktop viewport evidence.
+  - path: apps/workbench/evidence/folder-shell/2192/journey.json
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Retain machine-readable interaction, focus, accessibility, and no-child-process evidence from the Jet journey.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document registered launch folders, three-column shell behavior, and the boundary from terminal cwd and agent launch.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Advance the three-column-folder-shell work root with its implementation and retained evidence gate.
+  - path: apps/workbench/CONTRIBUTING.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Record the folder-shell journey command and escalated headless-browser requirement.
+  - path: apps/workbench/aw.toml
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Make the cumulative Workbench project test gate run every integration target.
+```
