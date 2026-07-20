@@ -125,11 +125,7 @@ pub fn render_operator_yaml(namespace: &str) -> String {
 fn replace_operator_namespace(input: &str, namespace: &str) -> String {
     let mut out = String::new();
     for line in input.lines() {
-        if line.contains("namespace: beam-system") {
-            out.push_str(&line.replace("beam-system", namespace));
-        } else if line.contains("name: beam-system") {
-            out.push_str(&line.replace("beam-system", namespace));
-        } else if line.contains("beam-system") {
+        if line.contains("beam-system") {
             out.push_str(&line.replace("beam-system", namespace));
         } else {
             out.push_str(line);

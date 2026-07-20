@@ -36,15 +36,57 @@ impl DistanceCalculator for MockDistanceCalculator {
         queries: &[f32],
         targets: &[f32],
         dim: usize,
+        metric: beam::collection::Metric,
     ) -> anyhow::Result<Vec<f32>> {
+        if dim == 0 {
+            return Err(beam::domain::ports::PipelineError::DimensionMismatch {
+                expected: dim,
+                got: queries.len(),
+            }
+            .into());
+        }
+        if queries.len() != dim {
+            return Err(beam::domain::ports::PipelineError::DimensionMismatch {
+                expected: dim,
+                got: queries.len(),
+            }
+            .into());
+        }
+        if !targets.len().is_multiple_of(dim) {
+            return Err(beam::domain::ports::PipelineError::VectorCountMismatch {
+                expected: targets.len() / dim,
+                got: targets.len(),
+            }
+            .into());
+        }
+
         let num_targets = targets.len() / dim;
         let mut scores = Vec::with_capacity(num_targets);
+
+        let q = match metric {
+            beam::collection::Metric::Cosine => beam::collection::l2_normalize(queries),
+            _ => queries.to_vec(),
+        };
+
         for i in 0..num_targets {
             let target_vector = &targets[i * dim..(i + 1) * dim];
-            let mut score = 0.0;
-            for j in 0..dim {
-                score += queries[j] * target_vector[j]; // simple dot product mock
-            }
+            let score = match metric {
+                beam::collection::Metric::L2 => {
+                    let mut dist = 0.0;
+                    for j in 0..dim {
+                        let diff = q[j] - target_vector[j];
+                        dist += diff * diff;
+                    }
+                    dist
+                }
+                beam::collection::Metric::Dot | beam::collection::Metric::Cosine => {
+                    let mut dot = 0.0;
+                    for j in 0..dim {
+                        dot += q[j] * target_vector[j];
+                    }
+                    dot
+                }
+            };
             scores.push(score);
         }
         Ok(scores)
@@ -150,4 +192,139 @@ async fn test_r2_r3_infrastructure_and_e2e_pipeline() {
 
     // Cleanup the temporary database file
     let _ = std::fs::remove_file(file_path);
+}
+
+#[tokio::test]
+async fn test_metric_aware_port() {
+    // Verify L2, Dot, and Cosine calculations and top-k sorting
+    let mut collection_l2 = Collection::new("l2_coll".to_string(), 3, beam::collection::Metric::L2);
+    collection_l2.payload.offsets.insert("vector_0".to_string(), 0);
+    collection_l2.payload.offsets.insert("vector_1".to_string(), 12);
+    
+    struct SpecificVectorRepository;
+    impl VectorRepository for SpecificVectorRepository {
+        async fn fetch_async(&self, offsets: &[u64], _vector_bytes: usize) -> anyhow::Result<Vec<u8>> {
+            let mut result = Vec::new();
+            for &offset in offsets {
+                if offset == 0 {
+                    result.extend_from_slice(&1.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                } else if offset == 12 {
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                    result.extend_from_slice(&1.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                }
+            }
+            Ok(result)
+        }
+    }
+
+    let scheduler = PipelineScheduler::new(SpecificVectorRepository, MockDistanceCalculator);
+
+    let batch = QueryBatch {
+        id: "b_l2".to_string(),
+        queries: vec![vec![0.8, 0.6, 0.0]],
+        k: 2,
+    };
+    let res_l2 = scheduler.execute_batch(&collection_l2, &batch).await.unwrap();
+    assert_eq!(res_l2[0][0].0, "vector_0");
+    assert!((res_l2[0][0].1 - 0.40).abs() < 1e-5);
+    assert_eq!(res_l2[0][1].0, "vector_1");
+    assert!((res_l2[0][1].1 - 0.80).abs() < 1e-5);
+
+    let mut collection_dot = Collection::new("dot_coll".to_string(), 3, beam::collection::Metric::Dot);
+    collection_dot.payload.offsets.insert("vector_0".to_string(), 0);
+    collection_dot.payload.offsets.insert("vector_1".to_string(), 12);
+    let res_dot = scheduler.execute_batch(&collection_dot, &batch).await.unwrap();
+    assert_eq!(res_dot[0][0].0, "vector_0");
+    assert!((res_dot[0][0].1 - 0.8).abs() < 1e-5);
+    assert_eq!(res_dot[0][1].0, "vector_1");
+    assert!((res_dot[0][1].1 - 0.6).abs() < 1e-5);
+}
+
+#[tokio::test]
+async fn test_missing_candidate_offset() {
+    let mut collection = Collection::new("coll".to_string(), 3, beam::collection::Metric::Dot);
+    collection.payload.offsets.insert("vector_0".to_string(), 0);
+    collection.payload.offsets.insert("vector_2".to_string(), 24);
+
+    struct SpecificVectorRepository;
+    impl VectorRepository for SpecificVectorRepository {
+        async fn fetch_async(&self, offsets: &[u64], _vector_bytes: usize) -> anyhow::Result<Vec<u8>> {
+            let mut result = Vec::new();
+            for &offset in offsets {
+                if offset == 0 {
+                    result.extend_from_slice(&1.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                } else if offset == 24 {
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                    result.extend_from_slice(&0.0f32.to_le_bytes());
+                    result.extend_from_slice(&2.0f32.to_le_bytes());
+                }
+            }
+            Ok(result)
+        }
+    }
+
+    let scheduler = PipelineScheduler::new(SpecificVectorRepository, MockDistanceCalculator);
+
+    let batch = QueryBatch {
+        id: "b".to_string(),
+        queries: vec![vec![1.0, 1.0, 1.0]],
+        k: 3,
+    };
+
+    let res = scheduler.execute_batch(&collection, &batch).await.unwrap();
+    let query_results = &res[0];
+    assert_eq!(query_results.len(), 2);
+    assert_eq!(query_results[0].0, "vector_2");
+    assert_eq!(query_results[0].1, 2.0);
+    assert_eq!(query_results[1].0, "vector_0");
+    assert_eq!(query_results[1].1, 1.0);
+}
+
+#[tokio::test]
+async fn test_boundary_validation() {
+    let mut collection = Collection::new("coll".to_string(), 3, beam::collection::Metric::Dot);
+    collection.payload.offsets.insert("vector_0".to_string(), 0);
+
+    let scheduler = PipelineScheduler::new(MockVectorRepository, MockDistanceCalculator);
+
+    // 1. Dimension mismatch
+    let batch_wrong_dim = QueryBatch {
+        id: "b1".to_string(),
+        queries: vec![vec![1.0, 1.0]],
+        k: 1,
+    };
+    let err = scheduler.execute_batch(&collection, &batch_wrong_dim).await.unwrap_err();
+    assert!(err.to_string().contains("Dimension mismatch"));
+
+    // 2. Alignment mismatch
+    struct MisalignedVectorRepository;
+    impl VectorRepository for MisalignedVectorRepository {
+        async fn fetch_async(&self, _offsets: &[u64], _vector_bytes: usize) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![0; 5])
+        }
+    }
+    let scheduler_misaligned = PipelineScheduler::new(MisalignedVectorRepository, MockDistanceCalculator);
+    let batch = QueryBatch {
+        id: "b2".to_string(),
+        queries: vec![vec![1.0, 1.0, 1.0]],
+        k: 1,
+    };
+    let err = scheduler_misaligned.execute_batch(&collection, &batch).await.unwrap_err();
+    assert!(err.to_string().contains("Byte alignment mismatch"));
+
+    // 3. Vector count mismatch
+    struct ShortVectorRepository;
+    impl VectorRepository for ShortVectorRepository {
+        async fn fetch_async(&self, _offsets: &[u64], _vector_bytes: usize) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![0; 0])
+        }
+    }
+    let scheduler_short = PipelineScheduler::new(ShortVectorRepository, MockDistanceCalculator);
+    let err = scheduler_short.execute_batch(&collection, &batch).await.unwrap_err();
+    assert!(err.to_string().contains("Vector count mismatch"));
 }

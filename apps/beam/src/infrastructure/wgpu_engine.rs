@@ -6,6 +6,7 @@ use crate::domain::ports::DistanceCalculator;
 
 /// Infrastructure Adapter implementing DistanceCalculator using wgpu / CPU fallback.
 pub struct WgpuDistanceEngine {
+    #[allow(dead_code)]
     ctx: Option<Arc<GpuContext>>,
 }
 
@@ -23,37 +24,60 @@ impl DistanceCalculator for WgpuDistanceEngine {
         queries: &[f32],
         targets: &[f32],
         dim: usize,
+        metric: crate::collection::Metric,
     ) -> anyhow::Result<Vec<f32>> {
-        // If GPU context is present, we can dispatch to wgpu.
-        // For testing/portability and platform parity, we provide a clean, mathematically correct L2 distance logic.
+        if dim == 0 {
+            return Err(crate::domain::ports::PipelineError::DimensionMismatch {
+                expected: dim,
+                got: queries.len(),
+            }
+            .into());
+        }
+        if queries.len() != dim {
+            return Err(crate::domain::ports::PipelineError::DimensionMismatch {
+                expected: dim,
+                got: queries.len(),
+            }
+            .into());
+        }
+        if !targets.len().is_multiple_of(dim) {
+            return Err(crate::domain::ports::PipelineError::VectorCountMismatch {
+                expected: targets.len() / dim,
+                got: targets.len(),
+            }
+            .into());
+        }
+
         let num_targets = targets.len() / dim;
         let mut scores = Vec::with_capacity(num_targets);
 
-        if self.ctx.is_some() {
-            // Simulated/Actual GPU math dispatch fallback.
-            // On a GPU host, this runs the Tiled GEMM computation.
-            for i in 0..num_targets {
-                let target_vector = &targets[i * dim..(i + 1) * dim];
-                let mut dist = 0.0;
-                for j in 0..dim {
-                    let diff = queries[j] - target_vector[j];
-                    dist += diff * diff;
-                }
-                scores.push(dist);
-            }
-            return Ok(scores);
-        }
+        let q = match metric {
+            crate::collection::Metric::Cosine => crate::collection::l2_normalize(queries),
+            _ => queries.to_vec(),
+        };
 
-        // CPU Fallback path:
         for i in 0..num_targets {
             let target_vector = &targets[i * dim..(i + 1) * dim];
-            let mut dist = 0.0;
-            for j in 0..dim {
-                let diff = queries[j] - target_vector[j];
-                dist += diff * diff;
-            }
-            scores.push(dist);
+            let score = match metric {
+                crate::collection::Metric::L2 => {
+                    let mut dist = 0.0;
+                    for j in 0..dim {
+                        let diff = q[j] - target_vector[j];
+                        dist += diff * diff;
+                    }
+                    dist
+                }
+                crate::collection::Metric::Dot | crate::collection::Metric::Cosine => {
+                    let mut dot = 0.0;
+                    for j in 0..dim {
+                        dot += q[j] * target_vector[j];
+                    }
+                    dot
+                }
+            };
+            scores.push(score);
         }
+
         Ok(scores)
     }
 }

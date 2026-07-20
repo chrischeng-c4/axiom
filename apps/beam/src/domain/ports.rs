@@ -9,6 +9,20 @@ pub trait VectorRepository: Send + Sync {
     fn fetch_async(&self, offsets: &[u64], vector_bytes: usize) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
 
+use crate::collection::Metric;
+
+#[derive(Debug, thiserror::Error)]
+pub enum PipelineError {
+    #[error("Dimension mismatch: expected {expected}, got {got}")]
+    DimensionMismatch { expected: usize, got: usize },
+    #[error("Byte alignment mismatch: raw bytes length {length} is not a multiple of {dim} * 4")]
+    ByteAlignmentMismatch { length: usize, dim: usize },
+    #[error("Vector count mismatch: expected {expected}, got {got}")]
+    VectorCountMismatch { expected: usize, got: usize },
+    #[error("Score count mismatch: expected {expected}, got {got}")]
+    ScoreCountMismatch { expected: usize, got: usize },
+}
+
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in ports.rs is hand-written pending codegen support">
 /// Hexagonal port for batched vector distance calculation.
 pub trait DistanceCalculator: Send + Sync {
@@ -19,6 +33,7 @@ pub trait DistanceCalculator: Send + Sync {
         queries: &[f32],
         targets: &[f32],
         dim: usize,
+        metric: Metric,
     ) -> impl Future<Output = anyhow::Result<Vec<f32>>> + Send;
 }
 // </HANDWRITE>

@@ -42,6 +42,12 @@ impl HnswNavigator {
     }
 }
 
+impl Default for HnswNavigator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Domain Entity representing the cold payload mappings on the NVMe disk.
 pub struct ColdPayload {
     /// Mapping from external ID to NVMe file offset.
@@ -60,5 +66,11 @@ impl ColdPayload {
         ids.iter()
             .filter_map(|id| self.offsets.get(id).copied())
             .collect()
+    }
+}
+
+impl Default for ColdPayload {
+    fn default() -> Self {
+        Self::new()
     }
 }

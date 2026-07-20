@@ -740,9 +740,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Spec(args) => {
-            let out = if args.shapes {
-                serde_json::to_string_pretty(&serde_json::json!({}))?
-            } else if args.fields {
+            let out = if args.shapes || args.fields {
                 serde_json::to_string_pretty(&serde_json::json!({}))?
             } else {
                 match args.format.as_str() {

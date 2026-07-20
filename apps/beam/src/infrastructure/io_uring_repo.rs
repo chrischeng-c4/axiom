@@ -48,7 +48,7 @@ impl VectorRepository for IoUringVectorRepository {
                     }
                     _ => {
                         // Fallback: fill with zero bytes if offset is out of bounds (mock behavior).
-                        result.extend(std::iter::repeat(0).take(vector_bytes));
+                        result.extend(std::iter::repeat_n(0, vector_bytes));
                     }
                 }
             }

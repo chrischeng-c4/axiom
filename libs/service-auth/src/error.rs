@@ -27,8 +27,9 @@ struct ErrorBody {
 /// - [`AuthError::Forbidden`] → `403 Forbidden` — a valid principal that lacks
 ///   the needed authorization. The string carries the human-readable reason; a
 ///   service decides per-resource policy and supplies the message.
-#[derive(Debug, Clone)]
+///
 /// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-error-rs.md#source
+#[derive(Debug, Clone)]
 pub enum AuthError {
     Unauthenticated,
     Forbidden(String),
