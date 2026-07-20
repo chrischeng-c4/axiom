@@ -1941,10 +1941,19 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
         }
     }
 
-    let payload_path = args
-        .evidence_file
-        .unwrap_or_else(|| ec_review_payload_path(&ctx));
-    ensure_ec_review_payload(&ctx, &manifest, &payload_path)?;
+    // #1799: an explicit `--evidence-file` names caller-supplied evidence —
+    // it must be read as-is and never auto-initialized or rewritten before
+    // evaluation. Only the workspace-owned payload path (no
+    // `--evidence-file`) is eligible for template scaffolding, and even
+    // then only when nothing exists there yet.
+    let payload_path = match args.evidence_file {
+        Some(path) => path,
+        None => {
+            let path = ec_review_payload_path(&ctx);
+            ensure_ec_review_payload(&ctx, &manifest, &path)?;
+            path
+        }
+    };
     let mut record = read_ec_review_record(&payload_path)?;
 
     if record.decision == EcReviewDecision::Pending {
@@ -2241,20 +2250,17 @@ fn ec_review_payload_template(ctx: &EcProjectContext, manifest: &EcManifest) -> 
     }
 }
 
+/// #1799: initialize the workspace review payload only when nothing exists
+/// there yet. A populated payload (any decision, any digest) is caller
+/// evidence and must never be overwritten by this scaffold step — a stale
+/// digest is reported to the caller by `validate_ec_review_payload`, not
+/// silently reset to a blank pending template.
 fn ensure_ec_review_payload(
     ctx: &EcProjectContext,
     manifest: &EcManifest,
     payload_path: &Path,
 ) -> Result<()> {
-    let rewrite = match read_ec_review_record(payload_path) {
-        Ok(record) => {
-            record.version != EC_REVIEW_VERSION
-                || record.project != ctx.project
-                || record.source_digest != manifest.generated_from_td_digest
-        }
-        Err(_) => true,
-    };
-    if payload_path.exists() && !rewrite {
+    if payload_path.exists() {
         return Ok(());
     }
     write_ec_review_record(payload_path, &ec_review_payload_template(ctx, manifest))
@@ -7113,6 +7119,247 @@ e2e_tests:
         let error = validate_ec_review_payload(&ctx, &manifest, &record)
             .expect_err("stale review evidence must be rejected");
         assert!(error.to_string().contains("stale"));
+    }
+
+    // #1799 regression fixtures/helpers below: guards the process-wide cwd
+    // while `run_review` drives `crate::find_project_root()` (cwd-derived,
+    // not a parameter). Serializes through the crate-wide
+    // `shell_env::CWD_LOCK`, matching `cli/cb.rs`'s `CwdGuard` and
+    // `cli/mod.rs`'s `find_project_root` tests so parallel `cargo test`
+    // runs don't race a concurrently-running cwd mutation in another
+    // module. Restores the previous cwd on drop, including on panic
+    // unwind.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn enter(dir: &Path) -> Self {
+            let lock = crate::cli::shell_env::CWD_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let prev = std::env::current_dir().expect("read current directory");
+            std::env::set_current_dir(dir).expect("switch cwd for #1799 run_review regression");
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    // A markdown EC contract whose one case is fully mapped (capability_id/
+    // claim_id set, a real non-false-green command, no evaluators) so
+    // `ec_semantic_review_findings` is empty and `run_review` proceeds past
+    // the automatic-structural-findings branch straight to evidence
+    // evaluation — isolating "does an existing populated payload survive a
+    // rerun" from unrelated structural-content gates.
+    fn write_clean_required_ec_case(tmp: &TempDir, ctx: &EcProjectContext) {
+        fs::create_dir_all(ctx.ec_root.join("behavior")).unwrap();
+        fs::write(
+            ctx.ec_root.join("behavior/payload-regression.md"),
+            r#"
+## Payload Regression
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: payload-regression
+    capability_id: demo
+    claim_id: payload-regression
+    command: "test -f aw.toml"
+```
+"#,
+        )
+        .unwrap();
+        let _ = tmp; // keep the TempDir alive for the caller's duration
+    }
+
+    fn fully_populated_accepted_record(
+        ctx: &EcProjectContext,
+        manifest: &EcManifest,
+    ) -> EcReviewRecord {
+        let mut record = ec_review_payload_template(ctx, manifest);
+        record.decision = EcReviewDecision::Accepted;
+        record.reviewer_kind = "human".to_string();
+        record.reviewed_by = "human-reviewer".to_string();
+        record.summary =
+            "Manually populated semantic review: all required dimensions covered, no findings."
+                .to_string();
+        record.checklist = EcReviewChecklist {
+            capability_claim_coverage: true,
+            required_dimensions: true,
+            assertions_specific: true,
+            oracle_independent: true,
+            loopholes_checked: true,
+            false_green_risk_checked: true,
+        };
+        record
+    }
+
+    // #1799 regression: rerunning `aw ec review` (no `--evidence-file`) over
+    // an already-populated, fully accepted workspace payload must evaluate
+    // that payload as submitted, not silently reset it to the blank pending
+    // template before evaluation. Before the fix, `ensure_ec_review_payload`
+    // unconditionally overwrote any payload whose `source_digest` did not
+    // match the freshly computed manifest digest; that reset happened
+    // *before* the file was ever read, so the accepted decision, identity,
+    // summary, and checklist a human had just filled in vanished with no
+    // error. The fixed `run_review` only reports staleness via
+    // `validate_ec_review_payload`'s explicit "is stale" error, and the
+    // payload bytes on disk are untouched either way.
+    #[test]
+    fn ec_review_rerun_without_evidence_file_evaluates_existing_payload_not_reset() {
+        let (tmp, ctx) = write_demo_repo();
+        write_clean_required_ec_case(&tmp, &ctx);
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let mut record = fully_populated_accepted_record(&ctx, &manifest);
+        // Deliberately stale relative to the manifest just computed above —
+        // this is exactly the condition that used to trigger
+        // `ensure_ec_review_payload`'s unconditional rewrite-to-pending.
+        record.source_digest = "sha256:already-reviewed-stale-digest".to_string();
+        let payload_path = ec_review_payload_path(&ctx);
+        write_ec_review_record(&payload_path, &record).unwrap();
+        let original_bytes = fs::read_to_string(&payload_path).unwrap();
+
+        let guard = CwdGuard::enter(tmp.path());
+        let error = run_review(
+            &ctx.project,
+            EcReviewArgs {
+                evidence_file: None,
+                json: true,
+                wi: None,
+            },
+        )
+        .expect_err("a genuinely stale digest must still be reported, not silently reset");
+        drop(guard);
+
+        assert!(
+            error.to_string().contains("stale"),
+            "expected the stale-evidence error, got: {error}"
+        );
+        let after_bytes = fs::read_to_string(&payload_path).unwrap();
+        assert_eq!(
+            after_bytes, original_bytes,
+            "the populated payload must not be rewritten before evaluation"
+        );
+        let after_record: EcReviewRecord = serde_json::from_str(&after_bytes).unwrap();
+        assert_eq!(after_record.decision, EcReviewDecision::Accepted);
+        assert_eq!(after_record.reviewed_by, "human-reviewer");
+    }
+
+    // #1799 regression: an explicit `--evidence-file <path>` names
+    // caller-supplied evidence and must never be auto-initialized or
+    // rewritten before `run_review` reads it — reproducing the issue's
+    // second repro step ("Passing that populated file through
+    // `--evidence-file <path>` is also overwritten to pending").
+    #[test]
+    fn ec_review_evidence_file_is_evaluated_not_reset() {
+        let (tmp, ctx) = write_demo_repo();
+        write_clean_required_ec_case(&tmp, &ctx);
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let mut record = fully_populated_accepted_record(&ctx, &manifest);
+        record.source_digest = "sha256:already-reviewed-stale-digest".to_string();
+        let evidence_path = tmp.path().join("external-evidence.json");
+        write_ec_review_record(&evidence_path, &record).unwrap();
+        let original_bytes = fs::read_to_string(&evidence_path).unwrap();
+
+        let guard = CwdGuard::enter(tmp.path());
+        let error = run_review(
+            &ctx.project,
+            EcReviewArgs {
+                evidence_file: Some(evidence_path.clone()),
+                json: true,
+                wi: None,
+            },
+        )
+        .expect_err("a genuinely stale --evidence-file digest must still be reported");
+        drop(guard);
+
+        assert!(
+            error.to_string().contains("stale"),
+            "expected the stale-evidence error, got: {error}"
+        );
+        let after_bytes = fs::read_to_string(&evidence_path).unwrap();
+        assert_eq!(
+            after_bytes, original_bytes,
+            "an explicit --evidence-file payload must never be rewritten before evaluation"
+        );
+        let after_record: EcReviewRecord = serde_json::from_str(&after_bytes).unwrap();
+        assert_eq!(after_record.decision, EcReviewDecision::Accepted);
+    }
+
+    // #1799 regression: a populated, fully current (matching digest)
+    // workspace payload is evaluated end-to-end on rerun — the acceptance
+    // path is actually reached (not short-circuited back to a pending
+    // status), and the durable review record committed to `ec-review.json`
+    // carries the submitted identity/summary, proving the submitted
+    // evidence — not a blank template — was what got evaluated.
+    #[test]
+    fn ec_review_rerun_without_evidence_file_reaches_acceptance_for_current_payload() {
+        let (tmp, ctx) = write_demo_repo();
+        write_clean_required_ec_case(&tmp, &ctx);
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let record = fully_populated_accepted_record(&ctx, &manifest);
+        let payload_path = ec_review_payload_path(&ctx);
+        write_ec_review_record(&payload_path, &record).unwrap();
+
+        let guard = CwdGuard::enter(tmp.path());
+        run_review(
+            &ctx.project,
+            EcReviewArgs {
+                evidence_file: None,
+                json: true,
+                wi: None,
+            },
+        )
+        .expect("a current, fully accepted payload must be evaluated to acceptance");
+        drop(guard);
+
+        let committed: EcReviewRecord =
+            serde_json::from_str(&fs::read_to_string(ec_review_path(&ctx)).unwrap()).unwrap();
+        assert_eq!(committed.decision, EcReviewDecision::Accepted);
+        assert_eq!(committed.reviewed_by, "human-reviewer");
+        assert_eq!(
+            committed.summary,
+            "Manually populated semantic review: all required dimensions covered, no findings."
+        );
+    }
+
+    // #1799 regression: `ensure_ec_review_payload` itself must only ever
+    // scaffold a payload when nothing exists at the target path yet — it
+    // must never rewrite an existing file's content, whatever its
+    // version/project/digest fields say. This is the exact function whose
+    // unconditional rewrite-on-mismatch condition caused the issue.
+    #[test]
+    fn ensure_ec_review_payload_never_rewrites_an_existing_payload() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let tmp2 = tempfile::tempdir().unwrap();
+        let payload_path = tmp2.path().join("payload.json");
+
+        let mut stale_record = fully_populated_accepted_record(&ctx, &manifest);
+        stale_record.version = EC_REVIEW_VERSION.wrapping_add(1); // version mismatch
+        stale_record.project = "not-the-project".to_string(); // project mismatch
+        stale_record.source_digest = "sha256:stale".to_string(); // digest mismatch
+        write_ec_review_record(&payload_path, &stale_record).unwrap();
+        let before = fs::read_to_string(&payload_path).unwrap();
+
+        ensure_ec_review_payload(&ctx, &manifest, &payload_path)
+            .expect("scaffolding an already-existing payload must succeed as a no-op");
+
+        let after = fs::read_to_string(&payload_path).unwrap();
+        assert_eq!(
+            before, after,
+            "an existing payload must never be rewritten, even with mismatched version/project/digest"
+        );
     }
 
     // AC2: explicit `ec_review_backing = "human"` (opt-in blocking human-only
