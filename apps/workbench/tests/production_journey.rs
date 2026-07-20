@@ -2,13 +2,23 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
 };
 
-use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use serde_json::{json, Value};
+#[cfg(unix)]
+use tauri::{
+    ipc::{CallbackFn, InvokeBody},
+    test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY},
+    webview::InvokeRequest,
+    WebviewWindow, WebviewWindowBuilder,
+};
 use workbench::{
     context::{
         provenance::{
@@ -17,11 +27,13 @@ use workbench::{
         },
         ContextDocumentKind,
     },
-    folder_shell::ShellState,
+    folder_shell::{FolderShellStore, ShellState},
     native_agent_pty::{
         AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySize,
     },
-    production_journey::{render_journey_context, JourneySession, JourneySnapshot},
+    production_journey::{
+        render_journey_context, JourneySession, JourneySnapshot, ProductionJourneyStore,
+    },
 };
 
 const PRODUCTION_COMMAND: &str = "cargo test -p workbench --test production_journey -- --nocapture";
@@ -245,6 +257,364 @@ fn ensure_ui_evidence() -> Result<(), String> {
 }
 
 #[cfg(unix)]
+fn invoke_json(
+    webview: &WebviewWindow<MockRuntime>,
+    command: &str,
+    body: Value,
+) -> Result<Value, String> {
+    get_ipc_response(
+        webview,
+        InvokeRequest {
+            cmd: command.into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: "tauri://localhost"
+                .parse()
+                .expect("valid local Tauri origin"),
+            body: InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_owned(),
+        },
+    )
+    .map(|body| body.deserialize::<Value>().expect("command JSON response"))
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(unix)]
+fn poll_ipc_until(
+    webview: &WebviewWindow<MockRuntime>,
+    predicate: impl Fn(&Value) -> bool,
+    message: &str,
+) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut latest =
+        invoke_json(webview, "poll_journey_agent", json!({})).expect("poll production IPC journey");
+    while Instant::now() < deadline {
+        if predicate(&latest) {
+            return latest;
+        }
+        thread::sleep(Duration::from_millis(10));
+        latest = invoke_json(webview, "poll_journey_agent", json!({}))
+            .expect("poll production IPC journey");
+    }
+    panic!("{message}: {latest}");
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(unix)]
+fn peak_rss_kib() -> u64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    assert_eq!(result, 0, "getrusage must expose peak RSS");
+    let raw = unsafe { usage.assume_init() }.ru_maxrss.max(0) as u64;
+    if cfg!(target_os = "macos") {
+        raw / 1024
+    } else {
+        raw
+    }
+}
+
+#[cfg(unix)]
+fn exercise_production_ipc_boundary() {
+    const STABILITY_CYCLES: usize = 12;
+    const MAX_LAUNCH_TO_READY_MS: u128 = 2_000;
+    const MAX_PEAK_RSS_KIB: u64 = 512 * 1024;
+
+    let fixture = tempfile::tempdir().expect("production IPC fixture");
+    let root = fixture
+        .path()
+        .canonicalize()
+        .expect("canonical IPC fixture");
+    let nested = root.join("nested");
+    let binaries = root.join("bin");
+    fs::create_dir_all(&nested).expect("nested IPC cwd");
+    fs::create_dir_all(&binaries).expect("deterministic agent bin directory");
+    fs::write(nested.join("aw.toml"), "[project]\nname = \"fixture\"\n").expect("AW activation");
+    fs::write(
+        nested.join("README.md"),
+        "# Workbench IPC fixture\n\nCanonical Markdown context.\n",
+    )
+    .expect("Markdown IPC fixture");
+    fs::write(
+        nested.join("tech-design.md"),
+        "---\nid: ipc-td\nfill_sections: [logic]\n---\n\n# IPC Tech design\n\n## Logic\n\nCanonical source.\n",
+    )
+    .expect("typed IPC fixture");
+    run_git(&root, &["init", "--quiet"]);
+    run_git(
+        &root,
+        &["config", "user.email", "workbench@example.invalid"],
+    );
+    run_git(&root, &["config", "user.name", "Workbench Test"]);
+    run_git(&root, &["add", "."]);
+    run_git(&root, &["commit", "--quiet", "-m", "ipc baseline"]);
+    fs::write(
+        nested.join("README.md"),
+        "# Workbench IPC fixture\n\nRead-only modified Markdown context.\n",
+    )
+    .expect("modified IPC Markdown");
+
+    let agent = binaries.join("claude");
+    fs::write(
+        &agent,
+        r##"#!/bin/sh
+cd "$PWD/nested" || exit 91
+printf '\033]7;file://localhost%s\007' "$PWD"
+printf 'READY:%s\n' "$PWD"
+trap 'printf "INTERRUPTED\n"; exit 130' INT
+while IFS= read -r line; do
+  if [ "$line" = "__exit__" ]; then exit 0; fi
+  printf 'ECHO:%s\n' "$line"
+  stty size
+done
+"##,
+    )
+    .expect("deterministic agent executable");
+    let mut permissions = fs::metadata(&agent).expect("agent metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&agent, permissions).expect("executable agent fixture");
+
+    let mut shell = ShellState::default();
+    let registered = shell.register_path(&root).expect("register IPC folder");
+    shell.select(&registered.id).expect("select IPC folder");
+    let app = workbench::configure_builder(
+        mock_builder(),
+        FolderShellStore::with_state(shell),
+        ProductionJourneyStore::with_runtime(PtyRuntime::with_search_path(binaries.as_os_str())),
+    )
+    .build(mock_context(noop_assets()))
+    .expect("build production Tauri IPC app");
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("build production IPC webview");
+
+    let selected = invoke_json(&webview, "selected_launch_path", json!({}))
+        .expect("selected path through production IPC");
+    assert_eq!(selected, json!(root.to_string_lossy()));
+    let unavailable = invoke_json(
+        &webview,
+        "launch_journey_agent",
+        json!({"agent": "agy", "cwd": root.to_string_lossy()}),
+    )
+    .expect_err("missing AGY must be recoverable through production IPC");
+    assert!(unavailable.contains("agy is unavailable"), "{unavailable}");
+
+    let mut child_pids = Vec::new();
+    let mut launch_to_ready_max_ms = 0_u128;
+    let mut peak_transcript_bytes = 0_usize;
+    let mut rendered_context = None;
+    for cycle in 0..STABILITY_CYCLES {
+        let started = Instant::now();
+        let launched = invoke_json(
+            &webview,
+            "launch_journey_agent",
+            json!({"agent": "claude", "cwd": root.to_string_lossy()}),
+        )
+        .expect("launch deterministic agent through production IPC");
+        let pid = launched["processId"]
+            .as_u64()
+            .expect("production snapshot exposes child pid") as u32;
+        child_pids.push(pid);
+        let ready = poll_ipc_until(
+            &webview,
+            |snapshot| {
+                snapshot["cwdSource"] == "OSC 7"
+                    && snapshot["transcript"]
+                        .as_str()
+                        .is_some_and(|value| value.contains("READY:"))
+            },
+            "production IPC launch never became ready",
+        );
+        launch_to_ready_max_ms = launch_to_ready_max_ms.max(started.elapsed().as_millis());
+        assert_eq!(Path::new(ready["activeCwd"].as_str().unwrap()), nested);
+
+        invoke_json(
+            &webview,
+            "resize_journey_agent",
+            json!({"rows": 42, "cols": 132}),
+        )
+        .expect("resize through production IPC");
+        invoke_json(
+            &webview,
+            "send_journey_input",
+            json!({"input": format!("cycle-{cycle}")}),
+        )
+        .expect("send through production IPC");
+        let echoed = poll_ipc_until(
+            &webview,
+            |snapshot| {
+                snapshot["transcript"].as_str().is_some_and(|value| {
+                    value.contains(&format!("ECHO:cycle-{cycle}")) && value.contains("42 132")
+                })
+            },
+            "production IPC input/resize round trip failed",
+        );
+        peak_transcript_bytes = peak_transcript_bytes.max(
+            echoed["transcript"]
+                .as_str()
+                .expect("transcript string")
+                .len(),
+        );
+
+        if cycle == 0 {
+            let root_text = nested.to_string_lossy();
+            let git = invoke_json(
+                &webview,
+                "render_journey_context",
+                json!({"root": root_text, "target": null}),
+            )
+            .expect("Git context through production IPC");
+            let markdown = invoke_json(
+                &webview,
+                "render_journey_context",
+                json!({"root": root_text, "target": "README.md"}),
+            )
+            .expect("Markdown context through production IPC");
+            let typed = invoke_json(
+                &webview,
+                "render_journey_context",
+                json!({"root": root_text, "target": "tech-design.md"}),
+            )
+            .expect("AW context through production IPC");
+            assert_eq!(git["rendererId"], "git");
+            assert_eq!(markdown["rendererId"], "markdown");
+            assert_eq!(typed["rendererId"], "aw-typed");
+            assert!(typed["navigation"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()));
+            rendered_context = Some(json!({
+                "git": git["rendererId"],
+                "markdown": markdown["rendererId"],
+                "aw": typed["rendererId"],
+                "sourceNavigation": typed["navigation"].as_array().map(Vec::len),
+            }));
+        }
+
+        let complete = match cycle % 3 {
+            0 => {
+                invoke_json(&webview, "interrupt_journey_agent", json!({}))
+                    .expect("interrupt through production IPC");
+                poll_ipc_until(
+                    &webview,
+                    |snapshot| snapshot["running"] == false,
+                    "interrupted production IPC child did not exit",
+                )
+            }
+            1 => invoke_json(&webview, "terminate_journey_agent", json!({}))
+                .expect("terminate through production IPC"),
+            _ => {
+                invoke_json(&webview, "send_journey_input", json!({"input": "__exit__"}))
+                    .expect("normal exit through production IPC");
+                poll_ipc_until(
+                    &webview,
+                    |snapshot| snapshot["running"] == false,
+                    "normally exiting production IPC child did not exit",
+                )
+            }
+        };
+        assert_eq!(complete["running"], false);
+        assert_eq!(complete["processId"], Value::Null);
+        assert!(
+            complete["transcript"].as_str().unwrap().len()
+                <= workbench::production_journey::MAX_TRANSCRIPT_BYTES
+        );
+    }
+
+    thread::sleep(Duration::from_millis(25));
+    assert!(
+        child_pids.iter().all(|pid| !process_is_alive(*pid)),
+        "production IPC leaked a child process: {child_pids:?}"
+    );
+    let selected_after = invoke_json(&webview, "selected_launch_path", json!({}))
+        .expect("selected path after stability cycles");
+    assert_eq!(selected_after, json!(root.to_string_lossy()));
+
+    let peak_rss_kib = peak_rss_kib();
+    assert!(
+        launch_to_ready_max_ms <= MAX_LAUNCH_TO_READY_MS,
+        "launch-to-ready {launch_to_ready_max_ms}ms exceeded {MAX_LAUNCH_TO_READY_MS}ms"
+    );
+    assert!(
+        peak_rss_kib <= MAX_PEAK_RSS_KIB,
+        "peak RSS {peak_rss_kib} KiB exceeded {MAX_PEAK_RSS_KIB} KiB"
+    );
+    assert!(peak_transcript_bytes <= workbench::production_journey::MAX_TRANSCRIPT_BYTES);
+
+    let evidence = json!({
+        "schemaVersion": "workbench.production-ipc.evidence.v1",
+        "generatedBy": PRODUCTION_COMMAND,
+        "boundary": "browser IPC request -> production configure_builder handler -> real PTY -> renderer registry",
+        "deterministicSubstitute": "agent executable only",
+        "folderSelectionPreserved": true,
+        "unavailableAgentRecovered": true,
+        "cycles": STABILITY_CYCLES,
+        "lifecycleModes": ["interrupt", "terminate", "normal-exit"],
+        "noLeakedChildren": true,
+        "launchToReadyMaxMs": launch_to_ready_max_ms,
+        "launchToReadyLimitMs": MAX_LAUNCH_TO_READY_MS,
+        "peakRssKib": peak_rss_kib,
+        "peakRssLimitKib": MAX_PEAK_RSS_KIB,
+        "peakTranscriptBytes": peak_transcript_bytes,
+        "transcriptLimitBytes": workbench::production_journey::MAX_TRANSCRIPT_BYTES,
+        "context": rendered_context.expect("production context evidence"),
+    });
+    fs::write(
+        evidence_root().join("ipc-journey.json"),
+        serde_json::to_vec_pretty(&evidence).expect("IPC evidence JSON"),
+    )
+    .expect("production IPC evidence");
+}
+
+#[cfg(unix)]
+fn ensure_production_ipc_evidence() -> Result<(), String> {
+    static RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+    RESULT
+        .get_or_init(|| {
+            exercise_production_ipc_boundary();
+            Ok(())
+        })
+        .clone()
+}
+
+#[cfg(unix)]
+fn merge_ipc_manifest() {
+    let path = evidence_root().join("manifest.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&path).expect("production UI manifest"))
+            .expect("production manifest JSON");
+    manifest["artifacts"]["ipcJourney"] = json!({
+        "path": "ipc-journey.json",
+        "mediaType": "application/json"
+    });
+    manifest["assertions"]["productionTauriIpc"] = json!({
+        "passed": true,
+        "artifacts": ["ipc-journey.json", "pty-transcript.txt", "context-summary.json"]
+    });
+    manifest["assertions"]["efficiencyLimits"] = json!({
+        "passed": true,
+        "artifacts": ["ipc-journey.json"]
+    });
+    manifest["assertions"]["stabilityCycles"] = json!({
+        "passed": true,
+        "artifacts": ["ipc-journey.json"]
+    });
+    fs::write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+    )
+    .expect("merge production IPC manifest assertions");
+}
+
+#[cfg(unix)]
 #[test]
 fn real_pty_folder_cwd_and_artifact_journey() {
     let snapshot = exercise_real_journey(true);
@@ -291,9 +661,65 @@ fn production_ui_quality_journey_passes() {
 
 #[cfg(unix)]
 #[test]
+fn production_tauri_ipc_bridge_journey_passes() {
+    ensure_production_ipc_evidence().unwrap_or_else(|error| panic!("{error}"));
+    let evidence: Value = serde_json::from_slice(
+        &fs::read(evidence_root().join("ipc-journey.json")).expect("IPC evidence"),
+    )
+    .expect("IPC evidence JSON");
+    assert_eq!(evidence["deterministicSubstitute"], "agent executable only");
+    assert_eq!(evidence["folderSelectionPreserved"], true);
+    assert_eq!(evidence["unavailableAgentRecovered"], true);
+    assert_eq!(evidence["noLeakedChildren"], true);
+    assert_eq!(evidence["context"]["git"], "git");
+    assert_eq!(evidence["context"]["markdown"], "markdown");
+    assert_eq!(evidence["context"]["aw"], "aw-typed");
+}
+
+#[cfg(unix)]
+#[test]
+fn production_efficiency_limits_hold() {
+    ensure_production_ipc_evidence().unwrap_or_else(|error| panic!("{error}"));
+    let evidence: Value = serde_json::from_slice(
+        &fs::read(evidence_root().join("ipc-journey.json")).expect("IPC evidence"),
+    )
+    .expect("IPC evidence JSON");
+    assert!(
+        evidence["launchToReadyMaxMs"].as_u64().unwrap()
+            <= evidence["launchToReadyLimitMs"].as_u64().unwrap()
+    );
+    assert!(
+        evidence["peakRssKib"].as_u64().unwrap() <= evidence["peakRssLimitKib"].as_u64().unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn production_stability_cycles_are_leak_free() {
+    ensure_production_ipc_evidence().unwrap_or_else(|error| panic!("{error}"));
+    let evidence: Value = serde_json::from_slice(
+        &fs::read(evidence_root().join("ipc-journey.json")).expect("IPC evidence"),
+    )
+    .expect("IPC evidence JSON");
+    assert_eq!(evidence["cycles"], 12);
+    assert_eq!(evidence["noLeakedChildren"], true);
+    assert!(
+        evidence["peakTranscriptBytes"].as_u64().unwrap()
+            <= evidence["transcriptLimitBytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        evidence["lifecycleModes"],
+        json!(["interrupt", "terminate", "normal-exit"])
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn retained_production_evidence_manifest_is_complete() {
     exercise_real_journey(true);
     ensure_ui_evidence().unwrap_or_else(|error| panic!("{error}"));
+    ensure_production_ipc_evidence().unwrap_or_else(|error| panic!("{error}"));
+    merge_ipc_manifest();
     let evidence = evidence_root();
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(evidence.join("manifest.json")).unwrap()).unwrap();
@@ -311,6 +737,9 @@ fn retained_production_evidence_manifest_is_complete() {
         "keyboardAccessibility",
         "constrainedReadability",
         "unavailableAgentRecovery",
+        "productionTauriIpc",
+        "efficiencyLimits",
+        "stabilityCycles",
     ] {
         assert_eq!(manifest["assertions"][assertion]["passed"], true);
         assert!(manifest["assertions"][assertion]["artifacts"]
@@ -322,6 +751,7 @@ fn retained_production_evidence_manifest_is_complete() {
         "constrained.png",
         "pty-transcript.txt",
         "context-summary.json",
+        "ipc-journey.json",
     ] {
         assert!(evidence.join(artifact).is_file(), "missing {artifact}");
     }

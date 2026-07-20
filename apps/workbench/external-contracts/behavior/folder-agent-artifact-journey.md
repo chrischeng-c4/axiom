@@ -19,10 +19,9 @@ e2e_tests:
     category: behavior
     command: "cargo test -p workbench --test production_journey -- --nocapture"
     assertions:
-      - "A canonical registered folder launches a deterministic process through the same real PTY session used by native Claude Code, Codex, and AGY adapters."
-      - "Explicit OSC 7 telemetry updates active cwd before representative Markdown, Git, and configured AW context is rendered with source navigation and disclosed provenance."
-      - "Unavailable agents recover without losing folder selection or read-only context."
-      - "Desktop and constrained primary states are keyboard operable, readable, accessible, and placeholder free."
-      - "apps/workbench/evidence/production-journey/v1/manifest.json identifies every assertion and retained artifact."
+      - "The production configure_builder Tauri IPC handler resolves a canonical registered folder and launches a deterministic agent executable through the same real PTY command boundary used by Claude Code, Codex, and AGY; only the executable is substituted."
+      - "The composed IPC journey sends input, resizes, interrupts, terminates, observes OSC 7 cwd, and renders Git, Markdown, and configured AW context with canonical source navigation."
+      - "Unavailable-agent errors cross the production IPC boundary without losing the selected folder, and a subsequent available agent launch succeeds."
+      - "Jet verifies the production frontend command names, argument mapping, keyboard operation, readable desktop and constrained layouts, and placeholder-free primary state."
+      - "apps/workbench/evidence/production-journey/v1/manifest.json binds these assertions to ipc-journey.json, the PTY transcript, context summary, and screenshots."
 ```
-<!-- HANDWRITE-END -->

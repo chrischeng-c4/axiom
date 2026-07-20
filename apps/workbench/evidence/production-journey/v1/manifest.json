@@ -56,6 +56,26 @@
         "desktop.png",
         "context-summary.json"
       ]
+    },
+    "productionTauriIpc": {
+      "passed": true,
+      "artifacts": [
+        "ipc-journey.json",
+        "pty-transcript.txt",
+        "context-summary.json"
+      ]
+    },
+    "efficiencyLimits": {
+      "passed": true,
+      "artifacts": [
+        "ipc-journey.json"
+      ]
+    },
+    "stabilityCycles": {
+      "passed": true,
+      "artifacts": [
+        "ipc-journey.json"
+      ]
     }
   },
   "artifacts": {
@@ -77,6 +97,10 @@
     },
     "contextSummary": {
       "path": "context-summary.json",
+      "mediaType": "application/json"
+    },
+    "ipcJourney": {
+      "path": "ipc-journey.json",
       "mediaType": "application/json"
     }
   }

@@ -9,7 +9,7 @@ use std::{
     thread,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::{
@@ -23,11 +23,12 @@ use crate::{
 
 pub const MAX_TRANSCRIPT_BYTES: usize = 512 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JourneySnapshot {
     pub agent: String,
     pub running: bool,
+    pub process_id: Option<u32>,
     pub exit_code: Option<u32>,
     pub active_cwd: String,
     pub cwd_source: String,
@@ -145,6 +146,7 @@ impl JourneySession {
         JourneySnapshot {
             agent: self.agent_label.clone(),
             running: self.exit_code.is_none(),
+            process_id: self.pty.process_id(),
             exit_code: self.exit_code,
             active_cwd: self.active_cwd.current().display().to_string(),
             cwd_source: if self.cwd_from_osc7 {
@@ -175,12 +177,30 @@ impl JourneySession {
     }
 }
 
-#[derive(Default)]
 pub struct ProductionJourneyStore {
+    runtime: PtyRuntime,
     session: Mutex<Option<JourneySession>>,
 }
 
+impl Default for ProductionJourneyStore {
+    fn default() -> Self {
+        Self::with_runtime(PtyRuntime::default())
+    }
+}
+
 impl ProductionJourneyStore {
+    /// Construct the production command store with an explicit PTY resolver.
+    ///
+    /// The desktop host uses the process PATH. External-contract tests inject
+    /// only a deterministic agent executable while retaining the real PTY and
+    /// Tauri command boundary.
+    pub fn with_runtime(runtime: PtyRuntime) -> Self {
+        Self {
+            runtime,
+            session: Mutex::new(None),
+        }
+    }
+
     fn with_session<T>(
         &self,
         action: impl FnOnce(&mut JourneySession) -> PtyResult<T>,
@@ -205,7 +225,7 @@ pub fn launch_journey_agent(
     let kind = parse_agent_kind(&agent)?;
     let command = AgentLaunchCommand::for_kind(kind, PathBuf::from(cwd));
     let session = JourneySession::spawn_agent(
-        &PtyRuntime::default(),
+        &store.runtime,
         &command,
         PtySize {
             rows: 28,

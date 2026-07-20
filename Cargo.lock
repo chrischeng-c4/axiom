@@ -17870,6 +17870,7 @@ dependencies = [
 name = "workbench"
 version = "0.4.9"
 dependencies = [
+ "libc",
  "portable-pty",
  "pulldown-cmark",
  "serde",

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "workbench.production-ipc.evidence.v1",
+  "generatedBy": "cargo test -p workbench --test production_journey -- --nocapture",
+  "boundary": "browser IPC request -> production configure_builder handler -> real PTY -> renderer registry",
+  "deterministicSubstitute": "agent executable only",
+  "folderSelectionPreserved": true,
+  "unavailableAgentRecovered": true,
+  "cycles": 12,
+  "lifecycleModes": [
+    "interrupt",
+    "terminate",
+    "normal-exit"
+  ],
+  "noLeakedChildren": true,
+  "launchToReadyMaxMs": 138,
+  "launchToReadyLimitMs": 2000,
+  "peakRssKib": 14960,
+  "peakRssLimitKib": 524288,
+  "peakTranscriptBytes": 210,
+  "transcriptLimitBytes": 524288,
+  "context": {
+    "git": "git",
+    "markdown": "markdown",
+    "aw": "aw-typed",
+    "sourceNavigation": 2
+  }
+}

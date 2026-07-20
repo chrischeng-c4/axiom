@@ -20,7 +20,7 @@ Type: RuntimeTool
 Root WI: #2171
 Status: confirmed
 Surfaces: Native desktop host, registered launch folders, real agent PTY, active cwd, context renderer registry, provenance, and production evidence.
-EC Dimensions: behavior: folder-agent-artifact-journey
+EC Dimensions: behavior: folder-agent-artifact-journey; efficiency: folder-agent-artifact-efficiency; stability: folder-agent-artifact-stability
 Required Verification: smoke, integration, e2e
 Promise:
 Workbench launches Claude Code, Codex, or AGY through its native CLI in a real

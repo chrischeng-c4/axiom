@@ -143,6 +143,13 @@ manifest maps the real-PTY transcript, context summary, desktop and constrained
 screenshots, accessibility assertions, recovery, and source-navigation proof
 to the same Cargo command used by the capability and external contract.
 
+The same gate drives browser-shaped requests through the exact production
+Tauri IPC handler and a real PTY, substituting only a deterministic agent
+executable. It retains twelve interrupt/terminate/normal-exit cycles, leaked
+child checks, a 512 KiB transcript ceiling, a 2-second launch-to-OSC7-ready
+limit, and a 512 MiB peak-RSS limit in `ipc-journey.json`. These behavior,
+efficiency, and stability measurements are all required release contracts.
+
 ## Verification
 
 ```bash

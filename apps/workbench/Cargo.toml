@@ -29,6 +29,8 @@ tauri-plugin-dialog = "2"
 url.workspace = true
 
 [dev-dependencies]
+libc = "0.2"
+tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 
 [features]

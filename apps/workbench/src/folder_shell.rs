@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 
 const STATE_FILE: &str = "folder-shell.json";
@@ -54,6 +54,18 @@ struct PersistedShellState {
 #[derive(Debug, Default)]
 pub struct FolderShellStore {
     state: Mutex<ShellState>,
+}
+
+impl FolderShellStore {
+    /// Construct the command store from an already validated registry snapshot.
+    ///
+    /// Production uses `Default`; the production-boundary test injects a
+    /// canonical registered folder without replacing the Tauri IPC handler.
+    pub fn with_state(state: ShellState) -> Self {
+        Self {
+            state: Mutex::new(state),
+        }
+    }
 }
 
 impl ShellState {
@@ -183,7 +195,7 @@ fn stable_folder_id(path: &str) -> String {
     format!("folder-{hash:016x}")
 }
 
-fn state_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn state_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|directory| directory.join(STATE_FILE))
@@ -192,8 +204,8 @@ fn state_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Load the durable folder registry for the WebView.
 #[tauri::command]
-pub fn load_shell_state(
-    app: AppHandle,
+pub fn load_shell_state<R: Runtime>(
+    app: AppHandle<R>,
     store: State<'_, FolderShellStore>,
 ) -> Result<ShellState, String> {
     let loaded = ShellState::load_from(&state_path(&app)?)?;
@@ -208,8 +220,8 @@ pub fn load_shell_state(
 ///
 /// Cancellation is represented by `Ok(None)` and never changes selection.
 #[tauri::command]
-pub async fn choose_launch_folder(
-    app: AppHandle,
+pub async fn choose_launch_folder<R: Runtime>(
+    app: AppHandle<R>,
     store: State<'_, FolderShellStore>,
 ) -> Result<Option<ShellState>, String> {
     let Some(file_path) = app
@@ -241,9 +253,9 @@ pub async fn choose_launch_folder(
 
 /// Persist a registered folder selection.
 #[tauri::command]
-pub fn select_launch_folder(
+pub fn select_launch_folder<R: Runtime>(
     folder_id: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     store: State<'_, FolderShellStore>,
 ) -> Result<ShellState, String> {
     let current = store

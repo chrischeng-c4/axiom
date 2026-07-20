@@ -118,6 +118,14 @@ placeholder-only primary state, and reduced-motion behavior. Capability and EC
 must keep the exact command above; do not replace it with mocks or temporary
 evidence.
 
+The production boundary leg must use the shared `configure_builder` Tauri IPC
+handler and a real platform PTY; only the deterministic agent executable may be
+substituted. It must retain at least twelve lifecycle cycles spanning
+interrupt, terminate, and normal exit, prove that observed child pids are
+reaped, keep every transcript at or below 524288 bytes, and enforce launch to
+OSC7-ready at no more than 2000 ms and peak RSS at no more than 524288 KiB.
+The measured values belong in the versioned `ipc-journey.json` evidence.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.
