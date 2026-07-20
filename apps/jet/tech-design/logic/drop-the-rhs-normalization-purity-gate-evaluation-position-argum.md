@@ -231,7 +231,6 @@ flowchart TD
     r9[R9 rename consistency combined pipeline normalized counter] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalizes_then_elides_an_arrow_function_export[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalizes_then_elides_an_arrow_function_export]
     r10[R10 rename consistency combined pipeline kept key counters] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalized_then_still_kept_key_is_fine[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalized_then_still_kept_key_is_fine]
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
