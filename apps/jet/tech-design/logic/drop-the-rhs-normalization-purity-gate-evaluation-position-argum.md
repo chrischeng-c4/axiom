@@ -151,7 +151,6 @@ changes:
     impl_mode: hand-written
     anchor: combined_pipeline_normalized_then_still_kept_key_is_fine
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
