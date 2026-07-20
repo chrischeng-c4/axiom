@@ -22,7 +22,7 @@ nodes:
   masked_today: { kind: process, label: "Every existing fixture passes callback=None, an immortal/no-op MbValue for retain_if_ptr/release_if_ptr, so the missing retain is currently invisible: two owning map slots, one retained reference, but retain/release are both no-ops on None" }
   bug: { kind: terminal, label: "BUG: the first REAL (heap-allocated) callback passed to weakref.ref or weakref.proxy ends up with two owning slots (__callback__ and _callback) backed by only one retained unit; when the ReferenceType/ProxyType instance is torn down, release_contained_values calls release_if_ptr on BOTH slots -- one release too many -- double release / use-after-free on the callback object (#1989)" }
   fix_retain: { kind: process, label: "FIX: insert unsafe { super::super::rc::retain_if_ptr(callback); } between the two fields.insert calls in BOTH mb_weakref_ref and mb_weakref_proxy, mirroring the file's existing retain_if_ptr(existing) convention already at weakref_mod.rs:1341" }
-  fix_verified: { kind: terminal, label: "Rust unit tests assert the callback's rc is exactly 2 immediately after either constructor call (one per stored slot) and exactly back to the caller's original 1 after the produced instance is fully released -- no under- or over-release. CPython-style real-callback fixtures for weakref.ref and weakref.proxy exercise the same path end-to-end through the compiled mamba binary with zero signal exits." }
+  fix_verified: { kind: terminal, label: "Rust unit tests assert the callback's rc is exactly 2 immediately after either constructor call (one per stored slot) and exactly back to the caller's original 1 after the produced instance is fully released -- no under- or over-release." }
 edges:
   - { from: discovery, to: sibling_compare }
   - { from: sibling_compare, to: icf_risk }
@@ -48,10 +48,9 @@ flowchart TD
     G --> H
     H --> I["BUG: the first REAL heap-allocated callback ends up with\ntwo owning slots backed by only one retained unit; tearing\ndown the ReferenceType/ProxyType instance calls\nrelease_if_ptr on BOTH slots -- one release too many --\ndouble release / use-after-free on the callback (#1989)"]
     I --> J["FIX: insert unsafe { super::super::rc::retain_if_ptr(callback); }\nbetween the two fields.insert calls in BOTH mb_weakref_ref\nand mb_weakref_proxy, mirroring the existing\nretain_if_ptr(existing) convention at weakref_mod.rs:1341"]
-    D --> K["Rust unit tests assert callback rc == 2 right after\nconstruction (one per stored slot) and rc == 1 again\n(caller's original unit) after the produced instance is\nfully released; real-callback CPython fixtures for ref\nand proxy run end-to-end through the compiled binary\nwith zero signal exits"]
+    D --> K["Rust unit tests assert callback rc == 2 right after\nconstruction (one per stored slot) and rc == 1 again\n(caller's original unit) after the produced instance is\nfully released"]
     J --> K
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
