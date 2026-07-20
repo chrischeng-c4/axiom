@@ -4583,7 +4583,9 @@ changes:
       separation, checklist, findings, and exact plan/manifest digest before
       idempotently publishing bounded claim WIs. Default/either policy is
       agent-first; explicit human-only policy remains blocking and
-      `needs_revision` publishes nothing.
+      `needs_revision` publishes nothing. Closed or missing doc-stored WI refs
+      remain advisory reconciliation evidence and do not suppress a bounded
+      replacement candidate for an otherwise unverified claim.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability.rs"
     action: modify

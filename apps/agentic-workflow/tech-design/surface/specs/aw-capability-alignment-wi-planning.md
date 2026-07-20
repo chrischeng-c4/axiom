@@ -211,6 +211,7 @@ scenarios:
       - "unconfigured/either and agent policies emit pending_agent_review with requires_hitl=false, a payload_path, an independent reviewer prompt, and an executable aw wi plan-review command"
       - "explicit capability_plan_review_backing=human remains blocking and never fabricates approval"
       - "accepted evidence is bound to the exact plan plus machine manifest digest and rejects the recorded author as same-agent reviewer"
+      - "closed, missing, or otherwise stale doc-stored WI refs remain reconciliation evidence but never suppress a bounded replacement WI for an unverified claim"
       - "needs_revision evidence publishes no work items and routes back to aw wi plan with concrete findings"
       - "accepted review publishes only bounded, deduplicated claim WIs and records their parent epic reference"
       - "the capability runner routes each published claim WI through EC-first TD/codegen lifecycle until primary TD evidence closes the claim"
@@ -945,7 +946,7 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
+    description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, keep stale doc-stored WI refs advisory, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
   - path: apps/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli
