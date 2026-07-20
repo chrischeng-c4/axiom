@@ -60,7 +60,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: dispatch_proxy
+    anchor: register
   - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
     action: modify
     section: logic
