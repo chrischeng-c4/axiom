@@ -26,6 +26,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
+use anyhow::Context;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -54,13 +55,13 @@ type Registry = Arc<RwLock<HashMap<String, CollectionState>>>;
 /// [`GpuFlatIndex`] rebuilt from it on every mutation. `gpu_index` is `None` on a
 /// GPU-less host or while the collection is physically empty; query then uses the
 /// CPU flat oracle.
-struct CollectionState {
-    collection: Collection,
-    gpu_index: Option<GpuFlatIndex>,
+pub struct CollectionState {
+    pub collection: Collection,
+    pub gpu_index: Option<GpuFlatIndex>,
 }
 
 impl CollectionState {
-    fn new(collection: Collection) -> Self {
+    pub fn new(collection: Collection) -> Self {
         Self {
             collection,
             gpu_index: None,
@@ -70,7 +71,7 @@ impl CollectionState {
     /// Rebuild the GPU flat index from the current collection when a GPU is
     /// present and the collection holds physical rows (a GPU buffer must be
     /// non-empty). Called after every mutation so the index reflects the store.
-    fn rebuild(&mut self, gpu: &Option<Arc<GpuContext>>) {
+    pub fn rebuild(&mut self, gpu: &Option<Arc<GpuContext>>) {
         self.gpu_index = match gpu {
             Some(ctx) if self.collection.capacity() > 0 => {
                 Some(GpuFlatIndex::new(ctx, &self.collection))
@@ -91,13 +92,30 @@ impl CollectionState {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
 /// Shared handler state: the registry plus the optional GPU context used to
 /// (re)build indexes. Cheap to clone (both fields are `Arc`-backed).
 #[derive(Clone)]
 pub struct AppState {
-    registry: Registry,
-    gpu: Option<Arc<GpuContext>>,
+    pub registry: Registry,
+    pub gpu: Option<Arc<GpuContext>>,
+    pub data_dir: Option<std::path::PathBuf>,
+}
+
+fn persist_collection(state: &AppState, name: &str, col: &Collection) {
+    if let Some(ref dir) = state.data_dir {
+        let path = dir.join(format!("{}.bin", name));
+        if let Err(e) = col.save(&path) {
+            eprintln!("Failed to persist collection `{}`: {e}", name);
+        }
+    }
+}
+
+fn delete_collection_file(state: &AppState, name: &str) {
+    if let Some(ref dir) = state.data_dir {
+        let path = dir.join(format!("{}.bin", name));
+        let _ = std::fs::remove_file(&path);
+    }
 }
 // </HANDWRITE>
 
@@ -323,6 +341,9 @@ async fn create_collection(
     }
     let mut cs = CollectionState::new(Collection::new(req.name.clone(), req.dim, metric));
     cs.rebuild(&state.gpu);
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection">
+    persist_collection(&state, &req.name, &cs.collection);
+    // </HANDWRITE>
     registry.insert(req.name.clone(), cs);
 
     Ok((
@@ -372,6 +393,9 @@ async fn drop_collection(
 ) -> Result<Response, ApiErr> {
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.remove(&name).is_some() {
+        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="delete collection file">
+        delete_collection_file(&state, &name);
+        // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "dropped": name }))).into_response())
     } else {
         Err(not_found_err(format!("collection `{name}` not found")))
@@ -427,6 +451,9 @@ async fn upsert_vectors(
             .map_err(|e| bad_request_err(e.to_string()))?;
     }
     cs.rebuild(&state.gpu);
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection after upsert">
+    persist_collection(&state, &name, &cs.collection);
+    // </HANDWRITE>
 
     Ok((StatusCode::OK, Json(json!({ "upserted": count }))).into_response())
 }
@@ -455,6 +482,9 @@ async fn delete_vector(
         .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
     if cs.collection.delete(&id) {
         cs.rebuild(&state.gpu);
+        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection after delete">
+        persist_collection(&state, &name, &cs.collection);
+        // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "deleted": id }))).into_response())
     } else {
         Err(not_found_err(format!(
@@ -573,11 +603,24 @@ async fn admin_restore(
 
     let mut registry = state.registry.write().expect("registry lock poisoned");
     registry.clear();
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="clean and persist collections on restore">
+    if let Some(ref dir) = state.data_dir {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("bin") {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+    }
     for (name, col) in snap.collections {
         let mut cs = CollectionState::new(col);
         cs.rebuild(&state.gpu);
+        persist_collection(&state, &name, &cs.collection);
         registry.insert(name, cs);
     }
+    // </HANDWRITE>
 
     Ok((StatusCode::OK, Json(json!({ "status": "restored" }))).into_response())
 }
@@ -633,13 +676,21 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 // -- Assembly + serve ------------------------------------------------------
 
-/// Build the application router over a fresh empty registry, wiring the given
-/// GPU context (queries use the GPU flat path when it is `Some`). Public so tests
-/// can mount the same routes on an ephemeral listener.
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="router with state and data_dir support">
 pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
+    let registry = Arc::new(RwLock::new(HashMap::new()));
+    router_with_state(registry, gpu, None)
+}
+
+pub fn router_with_state(
+    registry: Registry,
+    gpu: Option<Arc<GpuContext>>,
+    data_dir: Option<std::path::PathBuf>,
+) -> Router {
     let state = AppState {
-        registry: Arc::new(RwLock::new(HashMap::new())),
+        registry,
         gpu,
+        data_dir,
     };
     let data_plane = Router::new()
         .route(
@@ -667,6 +718,7 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
 
     probes.merge(data_plane).layer(service_http::trace_layer())
 }
+// </HANDWRITE>
 
 /// Serve `app` on an already-bound `listener` (HTTP/1.1 + h2c on one port) until
 /// `shutdown` resolves. Thin delegation to the shared [`service_http::serve`] transport so
@@ -681,10 +733,10 @@ pub async fn serve_on(
     service_http::serve(listener, app, shutdown).await;
 }
 
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="serve with data_dir recovery support">
 /// Run the vector-database service: acquire the GPU (if any), bind `addr`, print
-/// the bound address, and serve the REST API until Ctrl-C / SIGTERM. `addr` is
-/// `host:port`; port `0` picks an ephemeral port (the bound one is printed).
-pub async fn serve(addr: &str) -> anyhow::Result<()> {
+/// the bound address, load registry from data_dir if configured, and serve the REST API until Ctrl-C / SIGTERM.
+pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let gpu = GpuContext::new().map(Arc::new);
     match &gpu {
         Some(ctx) => {
@@ -694,6 +746,29 @@ pub async fn serve(addr: &str) -> anyhow::Result<()> {
         None => println!("beam: no GPU adapter — queries use the CPU flat oracle"),
     }
 
+    let mut registry_map = HashMap::new();
+    if let Some(ref dir) = data_dir {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("create data dir {}", dir.display()))?;
+        let entries = std::fs::read_dir(dir)
+            .with_context(|| format!("read data dir {}", dir.display()))?;
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("bin") {
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                let col = Collection::load(&path)
+                    .with_context(|| format!("failed to load collection from {}", path.display()))?;
+                let mut cs = CollectionState::new(col);
+                cs.rebuild(&gpu);
+                registry_map.insert(name, cs);
+            }
+        }
+        println!("beam: loaded {} collection(s) from {}", registry_map.len(), dir.display());
+    }
+
+    let registry = Arc::new(RwLock::new(registry_map));
+
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| anyhow::anyhow!("failed to bind {addr}: {e}"))?;
@@ -701,6 +776,7 @@ pub async fn serve(addr: &str) -> anyhow::Result<()> {
     println!("beam serving on http://{bound}");
 
     let shutdown = service_http::wait_shutdown_signal();
-    serve_on(listener, router(gpu), shutdown).await;
+    serve_on(listener, router_with_state(registry, gpu, data_dir), shutdown).await;
     Ok(())
 }
+// </HANDWRITE>
