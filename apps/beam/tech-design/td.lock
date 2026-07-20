@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T14:03:42.867197+00:00"
-digest = "sha256:c801e5f8ff829c247d9794cceca715fbca529a205a658d82754e20595c9d721a"
-source_digest = "sha256:c801e5f8ff829c247d9794cceca715fbca529a205a658d82754e20595c9d721a"
-ir_digest = "sha256:47bf00541e615610bdf5ff51a8b425587309f728fddba8521455886c1afc1692"
+generated_at = "2026-07-20T14:26:20.960419+00:00"
+digest = "sha256:6664dd51fb8f5a576c530c17dfe7e268a4f6e84600cd3e368b3eca7aafb31a6d"
+source_digest = "sha256:6664dd51fb8f5a576c530c17dfe7e268a4f6e84600cd3e368b3eca7aafb31a6d"
+ir_digest = "sha256:853a116ed3d12e3d79683b6402ee718c4eaf37d5feca58db06355419b1e303c3"
 
 [[files]]
 path = "README.md"
@@ -35,6 +35,12 @@ section_count = 4
 path = "logic/converge-retired-paths-and-broken-evidence-references.md"
 digest = "sha256:ee7511fef4ce34aca86c8687c9d095d264992f2f575c4199b8a6be12d148a691"
 ir_digest = "sha256:cf1d301310d7c83c053821e5215f157f206a1b6a300feda13459c4acb4da23ca"
+section_count = 3
+
+[[files]]
+path = "logic/implement-error-honest-asynchronous-nvme-vector-repository.md"
+digest = "sha256:a76535955dcce9103aef65eaa7c900e0cdb020d2ea1b62253967edd0dd094efe"
+ir_digest = "sha256:00341f61309ecb0832af69a34df5184155ee85541f097f2447615a3639b8dbdb"
 section_count = 3
 
 [[files]]
