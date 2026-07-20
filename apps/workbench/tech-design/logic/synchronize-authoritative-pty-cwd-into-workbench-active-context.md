@@ -98,7 +98,6 @@ changes:
     impl_mode: hand-written
     description: Record the real PTY cwd-context test and forbid prompt or ordinary-output path scraping.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
