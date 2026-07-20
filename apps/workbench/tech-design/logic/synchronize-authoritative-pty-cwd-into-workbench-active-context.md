@@ -104,3 +104,49 @@ changes:
     impl_mode: hand-written
     description: Record the real PTY cwd-context test and forbid prompt or ordinary-output path scraping.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-authoritative-cwd-context-verification
+requirements:
+  bounded_stream_decoder:
+    id: R5
+    text: "The streaming decoder accepts BEL and ST terminators across arbitrary byte chunks and bounds retained incomplete control data."
+    kind: regression
+    risk: medium
+    verify: tests/pty_cwd_context.rs::decoder_is_fragment_safe_and_never_scrapes_ordinary_output
+  failed_transitions_preserve_state:
+    id: R4
+    text: "Malformed, remote-host, missing, and non-directory telemetry plus failed shell cd operations leave both active cwd and the registered launch-folder snapshot unchanged."
+    kind: failure-recovery
+    risk: high
+    verify: tests/pty_cwd_context.rs::failed_transitions_never_mutate_context_or_launch_folders
+  ordinary_output_is_never_cwd:
+    id: R2
+    text: "Prompt text, cd-like output, filesystem-looking strings, and OSC-like incomplete bytes never update cwd unless they form a valid complete OSC 7 frame."
+    kind: boundary
+    risk: high
+    verify: tests/pty_cwd_context.rs::decoder_is_fragment_safe_and_never_scrapes_ordinary_output
+  real_pty_osc7_transition:
+    id: R1
+    text: "A real PTY shell fixture changes into a nested directory, emits the explicit OSC 7 file-URI frame, and updates active context to the canonical nested path."
+    kind: integration
+    risk: high
+    verify: tests/pty_cwd_context.rs::real_pty_updates_active_context_from_osc7
+  successful_validated_updates:
+    id: R3
+    text: "Only a local file URI that percent-decodes, canonicalizes, and names an existing directory changes active context; duplicates are idempotent and disclose OSC 7 as their source."
+    kind: functional
+    risk: high
+    verify: tests/pty_cwd_context.rs::decoder_validates_local_existing_directories
+---
+flowchart TD
+    r1[R1 real pty osc7 transition] --> tests_pty_cwd_context_rs_real_pty_updates_active_context_from_osc7[tests/pty_cwd_context.rs::real_pty_updates_active_context_from_osc7]
+    r2[R2 ordinary output is never cwd] --> tests_pty_cwd_context_rs_decoder_is_fragment_safe_and_never_scrapes_ordinary_output[tests/pty_cwd_context.rs::decoder_is_fragment_safe_and_never_scrapes_ordinary_output]
+    r5[R5 bounded stream decoder] --> tests_pty_cwd_context_rs_decoder_is_fragment_safe_and_never_scrapes_ordinary_output
+    r3[R3 successful validated updates] --> tests_pty_cwd_context_rs_decoder_validates_local_existing_directories[tests/pty_cwd_context.rs::decoder_validates_local_existing_directories]
+    r4[R4 failed transitions preserve state] --> tests_pty_cwd_context_rs_failed_transitions_never_mutate_context_or_launch_folders[tests/pty_cwd_context.rs::failed_transitions_never_mutate_context_or_launch_folders]
+```
