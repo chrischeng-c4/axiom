@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T19:05:52.003348+00:00"
-digest = "sha256:6a6b9bbc0ef2b3b65b7c2678a17f4cb6ca5ee80ff4d1447c6bc1e629fbdb9d92"
-source_digest = "sha256:6a6b9bbc0ef2b3b65b7c2678a17f4cb6ca5ee80ff4d1447c6bc1e629fbdb9d92"
-ir_digest = "sha256:2db9b9377f864e8953e7e14d2c1576be618143df1720be5fd5669733b958a672"
+generated_at = "2026-07-20T19:20:52.030601+00:00"
+digest = "sha256:d21387616aafeaeef3d222b4503deb8ef2e76a7a7e887b96533af9363ca91a97"
+source_digest = "sha256:d21387616aafeaeef3d222b4503deb8ef2e76a7a7e887b96533af9363ca91a97"
+ir_digest = "sha256:6f2edf058e2acffdea4c7db64d979413863beccabbeda354b162f7dc29ee7322"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -35,6 +35,12 @@ section_count = 3
 path = "logic/preserve-canonical-provenance-for-extracted-and-inferred-workben.md"
 digest = "sha256:82664bfe94b2dc499ad71eee9a9688b588be4caba4b3ffe58cd47d65fa67d96d"
 ir_digest = "sha256:d394e408c482ee644dddebffc33feff817dc4f4f4a7324ee60647323179f588b"
+section_count = 3
+
+[[files]]
+path = "logic/prove-the-workbench-folder-to-agent-to-artifact-production-journ.md"
+digest = "sha256:6fd349e4570976be682f463e3d66ca92211f4e026492d1d6eb9f4310d33ff7c1"
+ir_digest = "sha256:9b0f5167f6483485cfba178d55ef87e87cd1ae2e97150daabe3bd16fbd908fbc"
 section_count = 3
 
 [[files]]
