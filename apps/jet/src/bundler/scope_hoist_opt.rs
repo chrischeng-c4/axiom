@@ -8007,7 +8007,7 @@ mod rhs_normalization_tests {
 
     // ── convert_and_elide_flat_region: full-pipeline integration ───────
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalizes_then_elides_an_arrow_function_export() {
         let code = concat!(
