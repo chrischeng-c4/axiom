@@ -206,6 +206,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | batch-ingest-compaction-rebuild | epic | #769 | planned | planned | none | pending ingest/rebuild conformance gate |
+| beam-async-cold-vector-repository | change | #2151 | planned | planned | none | pending honest NVMe repository |
 
 ### Vector Query API
 
