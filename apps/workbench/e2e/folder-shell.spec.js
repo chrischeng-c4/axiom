@@ -188,7 +188,7 @@ describe("Workbench registered launch-folder shell", () => {
       await page.evaluate(() => document.activeElement?.dataset.folderId),
     ).toBe("folder-two");
     const focusOrder = ["collapse-folders", "folder-two"];
-    for (let step = 0; step < 4 && !focusOrder.includes("add-folder"); step += 1) {
+    for (let step = 0; step < 16 && !focusOrder.includes("add-folder"); step += 1) {
       await page.keyboard.press("Tab");
       focusOrder.push(
         await page.evaluate(

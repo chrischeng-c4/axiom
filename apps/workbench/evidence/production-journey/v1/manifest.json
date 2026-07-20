@@ -2,6 +2,82 @@
   "schemaVersion": "workbench.production-journey.evidence.v1",
   "workItem": 2201,
   "command": "cargo test -p workbench --test production_journey -- --nocapture",
-  "assertions": {},
-  "artifacts": {}
+  "assertions": {
+    "folderAgentCwd": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png",
+        "pty-transcript.txt"
+      ]
+    },
+    "markdownGitAwContext": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png",
+        "context-summary.json"
+      ]
+    },
+    "sourceNavigation": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png",
+        "context-summary.json"
+      ]
+    },
+    "placeholderFreePrimaryState": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png"
+      ]
+    },
+    "keyboardAccessibility": {
+      "passed": true,
+      "artifacts": [
+        "constrained.png"
+      ],
+      "details": {
+        "noHorizontalOverflow": true,
+        "labelledControls": true,
+        "liveStatus": true,
+        "bodyFontPx": 16,
+        "focusedOutlinePx": 2,
+        "reducedMotionRule": true
+      }
+    },
+    "constrainedReadability": {
+      "passed": true,
+      "artifacts": [
+        "constrained.png"
+      ]
+    },
+    "unavailableAgentRecovery": {
+      "passed": true,
+      "artifacts": [
+        "desktop.png",
+        "context-summary.json"
+      ]
+    }
+  },
+  "artifacts": {
+    "desktop": {
+      "path": "desktop.png",
+      "mediaType": "image/png",
+      "width": 1440,
+      "height": 900
+    },
+    "constrained": {
+      "path": "constrained.png",
+      "mediaType": "image/png",
+      "width": 860,
+      "height": 720
+    },
+    "ptyTranscript": {
+      "path": "pty-transcript.txt",
+      "mediaType": "text/plain"
+    },
+    "contextSummary": {
+      "path": "context-summary.json",
+      "mediaType": "application/json"
+    }
+  }
 }

@@ -12,18 +12,19 @@ use serde_json::json;
 use workbench::{
     context::{
         provenance::{
-            ContextProvenanceItem, ProviderIdentity, ProvenanceAuthority, SourceLocation,
+            ContextProvenanceItem, ProvenanceAuthority, ProviderIdentity, SourceLocation,
             SourcePosition, SourceSpan,
         },
         ContextDocumentKind,
     },
     folder_shell::ShellState,
-    native_agent_pty::{AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySize},
+    native_agent_pty::{
+        AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySize,
+    },
     production_journey::{render_journey_context, JourneySession, JourneySnapshot},
 };
 
-const PRODUCTION_COMMAND: &str =
-    "cargo test -p workbench --test production_journey -- --nocapture";
+const PRODUCTION_COMMAND: &str = "cargo test -p workbench --test production_journey -- --nocapture";
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -77,8 +78,7 @@ fn exercise_real_journey(write_evidence: bool) -> JourneySnapshot {
     let fixture = tempfile::tempdir().expect("production fixture");
     let nested = fixture.path().join("nested");
     fs::create_dir(&nested).expect("nested cwd");
-    fs::write(nested.join("aw.toml"), "[project]\nname = \"fixture\"\n")
-        .expect("AW activation");
+    fs::write(nested.join("aw.toml"), "[project]\nname = \"fixture\"\n").expect("AW activation");
     fs::write(nested.join("README.md"), "# Baseline\n").expect("baseline Markdown");
     fs::write(
         nested.join("tech-design.md"),
@@ -102,11 +102,18 @@ fn exercise_real_journey(write_evidence: bool) -> JourneySnapshot {
     let td_before = fs::read(nested.join("tech-design.md")).expect("before TD");
 
     let mut folders = ShellState::default();
-    let selected = folders.register_path(fixture.path()).expect("register root");
+    let selected = folders
+        .register_path(fixture.path())
+        .expect("register root");
     folders.select(&selected.id).expect("select root");
     assert_eq!(
         folders.selected_launch_path(),
-        fixture.path().canonicalize().ok().and_then(|path| path.to_str().map(str::to_owned)).as_deref()
+        fixture
+            .path()
+            .canonicalize()
+            .ok()
+            .and_then(|path| path.to_str().map(str::to_owned))
+            .as_deref()
     );
 
     let script = concat!(
@@ -126,7 +133,9 @@ fn exercise_real_journey(write_evidence: bool) -> JourneySnapshot {
     let mut session = JourneySession::spawn_command("Fixture agent", &command, size())
         .expect("real production PTY");
     session.resize(42, 132).expect("resize production PTY");
-    let ready = poll_until(&mut session, |snapshot| snapshot.transcript.contains("READY:"));
+    let ready = poll_until(&mut session, |snapshot| {
+        snapshot.transcript.contains("READY:")
+    });
     assert_eq!(ready.cwd_source, "OSC 7");
     assert_eq!(
         Path::new(&ready.active_cwd),
@@ -146,8 +155,8 @@ fn exercise_real_journey(write_evidence: bool) -> JourneySnapshot {
     let markdown = render_journey_context(nested_text.clone(), Some("README.md".to_owned()))
         .expect("Markdown context");
     let git = render_journey_context(nested_text.clone(), None).expect("Git context");
-    let typed = render_journey_context(nested_text, Some("tech-design.md".to_owned()))
-        .expect("AW context");
+    let typed =
+        render_journey_context(nested_text, Some("tech-design.md".to_owned())).expect("AW context");
     assert_eq!(markdown.kind, ContextDocumentKind::Markdown);
     assert_eq!(git.kind, ContextDocumentKind::Git);
     assert_eq!(typed.kind, ContextDocumentKind::AwTyped);
@@ -257,8 +266,7 @@ fn unavailable_agent_is_recoverable() {
         Ok(_) => panic!("AGY unexpectedly resolved in empty search path"),
     }
 
-    fs::write(cwd.path().join("README.md"), "# Recovery context\n")
-        .expect("recovery Markdown");
+    fs::write(cwd.path().join("README.md"), "# Recovery context\n").expect("recovery Markdown");
     let command = PtyCommand::new("/bin/sh", cwd.path()).args(["-c", "printf 'RECOVERED\\n'"]);
     let mut recovered =
         JourneySession::spawn_command("Recovery fixture", &command, size()).expect("retry PTY");
@@ -337,6 +345,9 @@ fn assert_png_dimensions(path: &Path, width: u32, height: u32) {
     let bytes = fs::read(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), width);
-    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), height);
+    assert_eq!(
+        u32::from_be_bytes(bytes[20..24].try_into().unwrap()),
+        height
+    );
 }
 // HANDWRITE-END

@@ -101,18 +101,21 @@ pub enum ContextDocumentKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextNavigation {
     pub label: String,
     pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextProvenance {
     pub root: PathBuf,
     pub sources: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextDocument {
     pub renderer_id: String,
     pub kind: ContextDocumentKind,

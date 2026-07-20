@@ -10,6 +10,7 @@
     <title>Workbench</title>
     <link rel="stylesheet" href="shell.css" />
     <script src="shell.js" defer></script>
+    <script src="journey.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#terminal-region">Skip to terminal region</a>
@@ -104,7 +105,8 @@
           <h3 id="terminal-empty-title">Choose where your agent will launch</h3>
           <p>
             Workbench passes the selected canonical path to the native agent
-            boundary. Terminal cwd and the agent process begin in later slices.
+            boundary. After selection you can launch a native agent and inspect
+            canonical project context without leaving this workspace.
           </p>
           <button id="empty-add-folder" class="secondary-action" type="button">
             Add a launch folder
@@ -112,22 +114,56 @@
         </section>
 
         <section id="terminal-ready" class="terminal-ready" hidden aria-labelledby="ready-title">
+          <h3 id="ready-title" class="sr-only">Native agent session</h3>
           <div class="terminal-chrome" aria-hidden="true">
             <span class="chrome-dot red"></span>
             <span class="chrome-dot amber"></span>
             <span class="chrome-dot green"></span>
-            <span class="terminal-label">launch boundary</span>
+            <span class="terminal-label">native PTY · local process</span>
           </div>
-          <div class="terminal-copy">
-            <p class="prompt-line">
-              <span class="prompt-mark">›</span>
-              <span id="terminal-path">No launch folder selected</span>
-            </p>
-            <h3 id="ready-title">Folder ready</h3>
-            <p>
-              Native agent launch is intentionally not part of this slice.
-              Your selected folder is ready for the upcoming PTY boundary.
-            </p>
+          <div class="terminal-workspace">
+            <div class="journey-toolbar">
+              <fieldset id="agent-options" class="agent-options">
+                <legend>Native agent</legend>
+                <label><input type="radio" name="agent" value="claude" checked />Claude Code</label>
+                <label><input type="radio" name="agent" value="codex" />Codex</label>
+                <label><input type="radio" name="agent" value="agy" />AGY</label>
+              </fieldset>
+              <div class="session-actions">
+                <button id="start-agent" class="primary-action compact-action" type="button">
+                  Start agent
+                </button>
+                <button id="stop-agent" class="quiet-action" type="button" disabled>
+                  Stop
+                </button>
+              </div>
+            </div>
+            <div class="session-meta">
+              <span><strong>Launch</strong><span id="terminal-path">No launch folder selected</span></span>
+              <span><strong>Active cwd</strong><span id="active-cwd">No active cwd</span></span>
+              <span><strong>Source</strong><span id="cwd-source">Launch folder</span></span>
+            </div>
+            <pre
+              id="terminal-transcript"
+              class="terminal-transcript"
+              tabindex="0"
+              aria-label="Native agent terminal transcript"
+              aria-live="polite"
+            >Session output will appear here.</pre>
+            <form id="terminal-form" class="terminal-input-row">
+              <label for="terminal-input" class="sr-only">Send input to native agent</label>
+              <span class="prompt-mark" aria-hidden="true">›</span>
+              <input
+                id="terminal-input"
+                name="terminal-input"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Send input to the active native agent"
+                disabled
+              />
+              <button id="send-terminal-input" type="submit" disabled>Send</button>
+            </form>
           </div>
         </section>
       </main>
@@ -147,8 +183,8 @@
           </div>
           <h3>Context follows the folder</h3>
           <p>
-            Select a launch folder to bind future Markdown, Git, and optional
-            typed renderers to one explicit source root.
+            Select a launch folder to bind Markdown, Git, and optional typed
+            renderers to one explicit source root.
           </p>
         </div>
 
@@ -160,10 +196,24 @@
               <strong id="context-folder-name">Folder</strong>
             </div>
           </div>
-          <p class="context-note">
-            No renderer is active yet. The selected path is authoritative;
-            derived context will always disclose its source.
+          <div id="context-tabs" class="context-tabs" role="tablist" aria-label="Context source">
+            <button type="button" role="tab" data-context-target="workspace" aria-selected="true">
+              Git
+            </button>
+            <button type="button" role="tab" data-context-target="README.md" aria-selected="false" tabindex="-1">
+              Markdown
+            </button>
+            <button type="button" role="tab" data-context-target="tech-design.md" aria-selected="false" tabindex="-1">
+              AW typed
+            </button>
+          </div>
+          <p id="context-provenance" class="context-provenance">
+            No canonical source root selected
           </p>
+          <div id="context-document" class="context-document" aria-live="polite">
+            Select a folder to inspect canonical context.
+          </div>
+          <div id="source-links" class="source-links" role="navigation" aria-label="Canonical source navigation"></div>
         </div>
 
         <div class="context-footer">
@@ -174,6 +224,7 @@
       </aside>
     </div>
 
+    <div id="journey-status" class="journey-status" role="status" aria-live="polite"></div>
     <div id="shell-status" class="shell-status" role="status" aria-live="polite"></div>
 
     <template id="folder-item-template">

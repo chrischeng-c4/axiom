@@ -102,6 +102,22 @@ canonical regular file below the selected root may produce navigation; missing
 or invalid inputs stay visible and non-authoritative. The provenance core must
 not execute providers, AW, GitHub, verification commands, or repository writes.
 
+The release-grade assembled journey gate is:
+
+```bash
+cargo test -p workbench --test production_journey -- --nocapture
+```
+
+This gate must use the real platform PTY with a deterministic local shell and
+the same production session type used by native agents. It also runs Jet to
+retain 1440x900 and 860x720 screenshots, keyboard/focus and accessibility
+proof, unavailable-agent recovery, source navigation, transcript, context
+summary, and a complete v1 manifest. UI controls require visible focus,
+minimum 44px targets, 16px readable body text, no horizontal clipping, no
+placeholder-only primary state, and reduced-motion behavior. Capability and EC
+must keep the exact command above; do not replace it with mocks or temporary
+evidence.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

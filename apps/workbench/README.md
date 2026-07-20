@@ -34,18 +34,18 @@ placing optional, read-only project context beside the terminal.
 ## Desktop Stack
 
 The native host is Rust plus Tauri 2. Its bootstrap proves one local WebView
-window and a bounded ready/shutdown lifecycle; the registered-folder slice adds
-the three-column shell without starting an agent process. Native agent PTY, cwd
-synchronization, and context renderers remain separate child work items under
-[#2171](https://github.com/chrischeng-c4/axiom/issues/2171).
+window and a bounded ready/shutdown lifecycle. The assembled three-column shell
+keeps registered-folder identity, native PTY sessions, active cwd telemetry,
+and read-only context in separate modules joined by the production journey
+under [#2171](https://github.com/chrischeng-c4/axiom/issues/2171).
 
 ## Registered Launch Folders
 
 The left navigation registers real local directories through the native folder
 picker. Workbench persists only canonical folder identity and the selected id;
 the compact navigation state stays transient. Selection exposes one canonical
-path to the future agent-launch boundary but does not set terminal cwd or start
-a process.
+path to the native agent-launch boundary; registration itself never sets
+terminal cwd or starts a process.
 
 The shell keeps three explicit landmarks visible: launch folders, terminal
 preparation, and read-only context. Empty, cancelled-picker, invalid-path, and
@@ -64,7 +64,8 @@ allocation so another agent can be selected immediately.
 The runtime uses a real native pseudo-terminal for input, output, terminal
 resize, Ctrl-C, child exit status, explicit termination, and abandoned-session
 cleanup. It does not store vendor sessions or derive context cwd from terminal
-text. The next child work item owns authoritative cwd-to-context synchronization.
+text. The production journey composes this runtime with authoritative
+cwd-to-context synchronization without adding vendor session ownership.
 
 ## Authoritative Active Cwd
 
@@ -120,6 +121,28 @@ input location, including unavailable inputs. The model is serializable and
 provider-neutral; resolving it performs metadata/canonicalization reads only.
 Repository source and executable verification evidence remain canonical.
 
+## Production Journey
+
+The assembled desktop path now starts with a registered canonical folder,
+launches the selected Claude Code, Codex, or AGY binary through the real native
+PTY, streams bounded terminal output, accepts input/resize/interrupt/terminate,
+and updates active cwd only from OSC 7. Missing agent binaries stay recoverable:
+the folder and read-only context remain available while another agent is
+selected.
+
+The center pane exposes agent choice, active cwd and telemetry source, terminal
+transcript, input, and lifecycle controls. The context pane switches between
+Git, Markdown, and configured AW typed views with renderer identity,
+provenance, warnings, and canonical source navigation. Controls use visible
+focus and 44px targets; the constrained desktop layout retains readable,
+placeholder-free primary state and respects reduced motion.
+
+Release evidence is retained under
+[`evidence/production-journey/v1`](evidence/production-journey/v1/). Its
+manifest maps the real-PTY transcript, context summary, desktop and constrained
+screenshots, accessibility assertions, recovery, and source-navigation proof
+to the same Cargo command used by the capability and external contract.
+
 ## Verification
 
 ```bash
@@ -130,4 +153,5 @@ cargo test -p workbench --test pty_cwd_context -- --nocapture
 cargo test -p workbench --test generic_context_renderers -- --nocapture
 cargo test -p workbench --test aw_typed_renderer -- --nocapture
 cargo test -p workbench --test context_provenance -- --nocapture
+cargo test -p workbench --test production_journey -- --nocapture
 ```

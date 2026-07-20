@@ -28,6 +28,10 @@
     "focusOrder": [
       "collapse-folders",
       "folder-two",
+      "input",
+      "start-agent",
+      "terminal-transcript",
+      "button",
       "body",
       "a",
       "collapse-folders",

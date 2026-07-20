@@ -20,7 +20,7 @@ Type: RuntimeTool
 Root WI: #2171
 Status: confirmed
 Surfaces: Native desktop host, registered launch folders, real agent PTY, active cwd, context renderer registry, provenance, and production evidence.
-EC Dimensions: behavior: pending folder-to-agent-to-artifact journey
+EC Dimensions: behavior: folder-agent-artifact-journey
 Required Verification: smoke, integration, e2e
 Promise:
 Workbench launches Claude Code, Codex, or AGY through its native CLI in a real
@@ -34,7 +34,7 @@ Gate Inventory:
 - verified: `cargo test -p workbench --test generic_context_renderers -- --nocapture`
 - verified: `cargo test -p workbench --test aw_typed_renderer -- --nocapture`
 - verified: `cargo test -p workbench --test context_provenance -- --nocapture`
-- planned: `cargo test -p workbench --test production_journey -- --nocapture`
+- verified: `cargo test -p workbench --test production_journey -- --nocapture`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -48,4 +48,4 @@ Gate Inventory:
 | context-provenance | change | #2198 | complete | verified | prototype | duplicate contract satisfied by #2197 and `context_provenance` |
 | optional-graph-adapter | change | #2199 | planned | planned | none | `graph_context_adapter` |
 | optional-derived-page-adapter | change | #2200 | planned | planned | none | `derived_page_context_adapter` |
-| production-journey | change | #2201 | planned | planned | none | `production_journey` |
+| production-journey | change | #2201 | complete | verified | production | `production_journey` plus `evidence/production-journey/v1/manifest.json` |

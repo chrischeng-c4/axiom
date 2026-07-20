@@ -22,6 +22,11 @@ pub mod native_agent_pty;
 /// @spec apps/workbench/tech-design/logic/add-workbench-context-renderer-registry-with-markdown-and-git-re.md#logic
 pub mod context;
 
+/// Complete desktop session boundary assembled from folder, PTY, cwd, and context slices.
+///
+/// @spec apps/workbench/tech-design/logic/prove-the-workbench-folder-to-agent-to-artifact-production-journ.md#logic
+pub mod production_journey;
+
 /// Marker emitted only after the configured native window exists.
 pub const HOST_READY_MARKER: &str = "WORKBENCH_HOST_READY";
 
@@ -35,11 +40,19 @@ pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(folder_shell::FolderShellStore::default())
+        .manage(production_journey::ProductionJourneyStore::default())
         .invoke_handler(tauri::generate_handler![
             folder_shell::load_shell_state,
             folder_shell::choose_launch_folder,
             folder_shell::select_launch_folder,
             folder_shell::selected_launch_path,
+            production_journey::launch_journey_agent,
+            production_journey::poll_journey_agent,
+            production_journey::send_journey_input,
+            production_journey::resize_journey_agent,
+            production_journey::interrupt_journey_agent,
+            production_journey::terminate_journey_agent,
+            production_journey::render_journey_context,
         ])
         .setup(|app| {
             if app.get_webview_window("main").is_none() {

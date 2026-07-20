@@ -171,7 +171,7 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openProduction(page);
 
-    await page.check('input[name="agent"][value="codex"]');
+    await page.click('input[name="agent"][value="codex"]');
     await page.click("#start-agent");
     await waitUntil(
       page,
@@ -181,7 +181,8 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
     expect(await page.locator("#active-cwd").innerText()).toBe(
       "/Users/demo/axiom/app_workbench/nested",
     );
-    await page.fill("#terminal-input", "show context");
+    await page.click("#terminal-input");
+    await page.keyboard.type("show context");
     await page.click("#send-terminal-input");
     await waitUntil(
       page,
@@ -190,17 +191,19 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
     );
 
     await page.click('[data-context-target="workspace"]');
-    expect(await page.locator("#context-document").innerText()).toContain(
-      "Git working tree",
-    );
+    expect(
+      (await page.locator("#context-document").innerText()).includes(
+        "Git working tree",
+      ),
+    ).toBe(true);
     await page.click('[data-context-target="tech-design.md"]');
-    expect(await page.locator("#context-document").innerText()).toContain(
-      "Tech design",
-    );
-    expect(await page.locator("#context-provenance").innerText()).toContain(
-      "aw-typed",
-    );
-    expect(await page.locator("#source-links button").count()).toBeGreaterThan(0);
+    expect(
+      (await page.locator("#context-document").innerText()).includes("Tech design"),
+    ).toBe(true);
+    expect(
+      (await page.locator("#context-provenance").innerText()).includes("aw-typed"),
+    ).toBe(true);
+    expect((await page.locator("#source-links button").count()) > 0).toBe(true);
     const bodyText = await page.locator("body").innerText();
     for (const placeholder of ["TODO", "Lorem ipsum", "No renderer is active yet"]) {
       expect(bodyText.includes(placeholder)).toBe(false);
@@ -239,7 +242,9 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
   }) => {
     await page.setViewportSize({ width: 860, height: 720 });
     await openProduction(page);
-    await page.focus('input[name="agent"][value="claude"]');
+    await page.evaluate(() =>
+      document.querySelector('input[name="agent"][value="claude"]')?.focus(),
+    );
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Tab");
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("start-agent");
@@ -249,7 +254,9 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
       () => document.querySelector("#terminal-transcript")?.textContent.includes("fixture ready"),
       "keyboard launch failed",
     );
-    await page.focus('[data-context-target="workspace"]');
+    await page.evaluate(() =>
+      document.querySelector('[data-context-target="workspace"]')?.focus(),
+    );
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Enter");
     await waitUntil(
@@ -267,30 +274,21 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
               element.labels?.length ||
               element.textContent?.trim(),
           ),
+      ),
       liveStatus: document.querySelector("#journey-status")?.getAttribute("role") === "status",
       bodyFontPx: Number.parseFloat(getComputedStyle(document.body).fontSize),
-      focusVisibleRule: [...document.styleSheets].some((sheet) => {
-        try {
-          return [...sheet.cssRules].some((rule) => rule.cssText.includes(":focus-visible"));
-        } catch (_) {
-          return false;
-        }
-      }),
-      reducedMotionRule: [...document.styleSheets].some((sheet) => {
-        try {
-          return [...sheet.cssRules].some((rule) =>
-            rule.cssText.includes("prefers-reduced-motion"),
-          );
-        } catch (_) {
-          return false;
-        }
-      }),
+      focusedOutlinePx: Number.parseFloat(
+        getComputedStyle(document.activeElement).outlineWidth,
+      ),
     }));
+    accessibility.reducedMotionRule = fs
+      .readFileSync(path.join(projectRoot, "apps/workbench/ui/shell.css"), "utf8")
+      .includes("@media (prefers-reduced-motion: reduce)");
     expect(accessibility.noHorizontalOverflow).toBe(true);
     expect(accessibility.labelledControls).toBe(true);
     expect(accessibility.liveStatus).toBe(true);
-    expect(accessibility.bodyFontPx).toBeGreaterThanOrEqual(16);
-    expect(accessibility.focusVisibleRule).toBe(true);
+    expect(accessibility.bodyFontPx >= 16).toBe(true);
+    expect(accessibility.focusedOutlinePx >= 2).toBe(true);
     expect(accessibility.reducedMotionRule).toBe(true);
 
     const screenshot = path.join(evidenceDir, "constrained.png");
@@ -317,7 +315,7 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
   test("recovers from an unavailable agent without losing context", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 760 });
     await openProduction(page, { failNextLaunch: true });
-    await page.check('input[name="agent"][value="agy"]');
+    await page.click('input[name="agent"][value="agy"]');
     await page.click("#start-agent");
     await waitUntil(
       page,
@@ -325,7 +323,7 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
       "unavailable agent error was not announced",
     );
     expect(await page.locator("#start-agent").isEnabled()).toBe(true);
-    await page.check('input[name="agent"][value="claude"]');
+    await page.click('input[name="agent"][value="claude"]');
     await page.click("#start-agent");
     await waitUntil(
       page,
@@ -333,9 +331,11 @@ describe("Workbench folder-to-agent-to-artifact production journey", () => {
       "retry with another agent failed",
     );
     await page.click('[data-context-target="README.md"]');
-    expect(await page.locator("#context-document").innerText()).toContain(
-      "Workbench fixture",
-    );
+    expect(
+      (await page.locator("#context-document").innerText()).includes(
+        "Workbench fixture",
+      ),
+    ).toBe(true);
     updateManifest((manifest) => {
       manifest.assertions.unavailableAgentRecovery = {
         passed: true,
