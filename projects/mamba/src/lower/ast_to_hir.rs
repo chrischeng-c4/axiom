@@ -10046,11 +10046,31 @@ impl<'a> AstLowerer<'a> {
                         .collect()
                 };
 
+                // #1977: Evaluate outermost iterable immediately in the parent scope.
+                let outer_iter = self.lower_expr(&generators[0].iter)?;
+
+                let param_name = ".0".to_string();
+                let _param_sym = self.define_local(&param_name, any_ty);
+                let param = ast::Param {
+                    name: param_name.clone(),
+                    ty: Spanned::new(ast::TypeExpr::Named("Any".to_string()), expr.span),
+                    default: None,
+                    kind: ast::ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: false,
+                    span: expr.span,
+                };
+
+                let mut mutated_generators = generators.to_vec();
+                if let Some(first_gen) = mutated_generators.first_mut() {
+                    first_gen.iter = Spanned::new(ast::Expr::Ident(param_name.clone()), first_gen.iter.span);
+                }
+
                 let fn_name = format!("__mamba_genexpr_{}", self.next_local_sym);
                 let fn_sym = self.define_local(&fn_name, any_ty);
                 let body = genexpr_body_from_comprehensions(
                     element,
-                    generators,
+                    &mutated_generators,
                     &walrus_targets,
                     self.in_function_body,
                     expr.span,
@@ -10061,7 +10081,7 @@ impl<'a> AstLowerer<'a> {
                     self.forced_global_names.insert(target.clone(), *sym);
                 }
                 if let Some(mut func) =
-                    self.lower_fn(fn_sym, &fn_name, &[], &return_ty, &body, expr.span)
+                    self.lower_fn(fn_sym, &fn_name, &[param], &return_ty, &body, expr.span)
                 {
                     self.forced_global_names = saved_forced_global_names;
                     if !module_walrus_target_syms.is_empty() {
@@ -10079,7 +10099,7 @@ impl<'a> AstLowerer<'a> {
                     self.result.functions.push(func);
                     return Some(HirExpr::Call {
                         func: Box::new(HirExpr::Var(fn_sym, any_ty)),
-                        args: Vec::new(),
+                        args: vec![outer_iter],
                         ty: int_ty,
                     });
                 }
