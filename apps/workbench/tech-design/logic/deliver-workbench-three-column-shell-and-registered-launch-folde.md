@@ -77,7 +77,6 @@ UI module for Jet E2E execution. Production always selects the Tauri invoke
 bridge. The journey records rendered desktop and constrained-width PNG
 evidence, interaction results, focus order, landmark/readability assertions,
 and the future launch path without spawning any agent process.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
