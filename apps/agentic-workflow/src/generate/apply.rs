@@ -746,7 +746,7 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
-            if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+            if target_path.exists() && !is_rust_source(&target_path) {
                 apply_diagnostic!(
                     "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
                     entry.path,
@@ -2798,7 +2798,7 @@ fn validate_handwrite_anchors_before_write(
 
         // Tracked existing non-Rust target: no Rust marker scaffold, so no
         // anchor to validate.
-        if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+        if target_path.exists() && !is_rust_source(&target_path) {
             continue;
         }
 
@@ -7145,6 +7145,64 @@ changes:
             .iter()
             .any(|file| { file.path == PathBuf::from("docs/capability.md") && file.processed }));
         assert_eq!(std::fs::read_to_string(&target).unwrap(), before);
+    }
+
+    #[test]
+    fn hand_written_existing_non_rust_create_targets_skip_rust_anchor_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let config_target = root.join("config/.gitignore");
+        let icon_target = root.join("icons/icon.png");
+        std::fs::create_dir_all(config_target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(icon_target.parent().unwrap()).unwrap();
+        let config_before = b"/gen/schemas\n".to_vec();
+        let icon_before = b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        std::fs::write(&config_target, &config_before).unwrap();
+        std::fs::write(&icon_target, &icon_before).unwrap();
+
+        let spec_path = root.join("tech-design/logic/create-assets.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: create-assets
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: config/.gitignore
+    action: create
+    impl_mode: hand-written
+    section: logic
+  - path: icons/icon.png
+    action: create
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        for target in ["config/.gitignore", "icons/icon.png"] {
+            assert!(report.files.iter().any(|file| {
+                file.path == PathBuf::from(target) && file.processed && !file.updated
+            }));
+        }
+        assert_eq!(std::fs::read(&config_target).unwrap(), config_before);
+        assert_eq!(std::fs::read(&icon_target).unwrap(), icon_before);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.
