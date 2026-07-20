@@ -12,7 +12,7 @@ traits = ["long_running", "cli_facing", "competitive_replacement", "network_expo
 name = "beam"
 paths = ["**"]
 target = "rust"
-test_cmd = "cargo test -p beam --lib --bins"
+test_cmd = "env BEAM_REQUIRED_GATES=1 cargo test -p beam"
 codegen.profile = "rust/score-crate"
 
 # AW-EC-BEGIN
