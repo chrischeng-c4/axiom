@@ -23,7 +23,7 @@ pub enum PipelineError {
     ScoreCountMismatch { expected: usize, got: usize },
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in ports.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2145" reason="logic section in ports.rs is hand-written pending codegen support">
 /// Hexagonal port for batched vector distance calculation.
 pub trait DistanceCalculator: Send + Sync {
     /// Asynchronously calculate distance metrics between a batch of queries and target candidate vectors on GPU.
