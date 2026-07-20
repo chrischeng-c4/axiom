@@ -43,7 +43,6 @@ flowchart TD
     apply_resources --> publish_status[Update status and observedGeneration]
     publish_status --> done
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
