@@ -78,3 +78,35 @@ changes:
     impl_mode: hand-written
     anchor: tests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: mamba-weakref-callback-retain-and-icf-guard-fix-verification
+requirements:
+  icf_guard_parity:
+    id: R1
+    text: "dispatch_proxy calls crate::icf_guard!() as its first statement, matching dispatch_ref, so the two extern \"C\" trampolines cannot be identical-code-folded into one symbol."
+    kind: regression
+    risk: medium
+    verify: cargo test -p mamba --release weakref_mod::tests::test_dispatch_proxy_invokes_icf_guard_and_matches_direct_call
+  proxy_double_store_retain:
+    id: R3
+    text: "mb_weakref_proxy's wrapper-creation branch retains callback once between the __callback__ and _callback field inserts, so a ProxyType/CallableProxyType instance holding a real heap-allocated callback has rc==2 right after construction and rc==1 again after the instance is fully released (no double-release/use-after-free)."
+    kind: regression
+    risk: high
+    verify: cargo test -p mamba --release weakref_mod::tests::test_proxy_real_callback_retained_for_each_stored_slot
+  ref_double_store_retain:
+    id: R2
+    text: "mb_weakref_ref retains callback once between the __callback__ and _callback field inserts, so a ReferenceType instance holding a real heap-allocated callback has rc==2 right after construction and rc==1 again after the instance is fully released (no double-release/use-after-free)."
+    kind: regression
+    risk: high
+    verify: cargo test -p mamba --release weakref_mod::tests::test_ref_real_callback_retained_for_each_stored_slot
+---
+flowchart TD
+    r1[R1 icf guard parity] --> cargo_test_p_mamba_release_weakref_mod_tests_test_dispatch_proxy_invokes_icf_guard_and_matches_direct_call[cargo test -p mamba --release weakref_mod::tests::test_dispatch_proxy_invokes_icf_guard_and_matches_direct_call]
+    r2[R2 ref double store retain] --> cargo_test_p_mamba_release_weakref_mod_tests_test_ref_real_callback_retained_for_each_stored_slot[cargo test -p mamba --release weakref_mod::tests::test_ref_real_callback_retained_for_each_stored_slot]
+    r3[R3 proxy double store retain] --> cargo_test_p_mamba_release_weakref_mod_tests_test_proxy_real_callback_retained_for_each_stored_slot[cargo test -p mamba --release weakref_mod::tests::test_proxy_real_callback_retained_for_each_stored_slot]
+```
