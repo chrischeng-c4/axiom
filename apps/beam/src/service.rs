@@ -40,8 +40,6 @@ use utoipa::{OpenApi, ToSchema};
 
 use crate::collection::{Collection, Metric};
 use crate::gpu::{GpuContext, GpuFlatIndex};
-use crate::index::cpu_flat::CpuFlatIndex;
-use crate::index::{Neighbor, VectorIndex};
 use crate::payload::{AttrValue, Clause, Filter, Payload};
 
 use service_http::ApiErr;
@@ -80,16 +78,6 @@ impl CollectionState {
         };
     }
 
-    /// Run a k-NN query, filtered when `filter` has clauses. Uses the GPU flat
-    /// index when built, else the exact CPU flat oracle over the collection.
-    fn query(&self, query: &[f32], k: usize, filter: &Filter) -> Vec<Neighbor> {
-        match &self.gpu_index {
-            Some(idx) if filter.is_empty() => idx.search_knn(query, k),
-            Some(idx) => idx.search_knn_filtered(query, k, filter),
-            None if filter.is_empty() => CpuFlatIndex::new(&self.collection).search_knn(query, k),
-            None => CpuFlatIndex::new(&self.collection).search_knn_filtered(query, k, filter),
-        }
-    }
 }
 
 // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="logic section in service.rs is hand-written pending codegen support">
@@ -595,13 +583,47 @@ persist_collection(&state, &name, &cs.collection);
         (status = 404, description = "Collection not found", body = ErrorEnvelope)
     )
 )]
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2153" reason="logic section in service.rs is hand-written pending codegen support">
 async fn query_collection(
     State(state): State<AppState>,
     Extension(principal): Extension<RoleMapPrincipal>,
     Path(name): Path<String>,
     Json(req): Json<QueryReq>,
 ) -> Result<Response, ApiErr> {
+    use crate::application::search_service::SearchApplicationService;
+    use crate::infrastructure::io_uring_repo::IoUringVectorRepository;
+    use crate::infrastructure::wgpu_engine::WgpuDistanceEngine;
+    use crate::domain::collection::ColdPayload;
+    use std::collections::HashMap;
+
+    fn ensure_raw_vector_file(
+        state: &AppState,
+        name: &str,
+        col: &crate::collection::Collection,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let path = if let Some(ref dir) = state.data_dir {
+            dir.join(format!("{}.raw", name))
+        } else {
+            std::env::temp_dir().join(format!("beam_mem_{}.raw", name))
+        };
+        
+        let expected_len = col.data().len() * 4;
+        if path.exists() {
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                if metadata.len() == expected_len as u64 {
+                    return Ok(path);
+                }
+            }
+        }
+        
+        let mut file_content = Vec::with_capacity(expected_len);
+        for &val in col.data() {
+            file_content.extend_from_slice(&val.to_le_bytes());
+        }
+        std::fs::write(&path, file_content)?;
+        Ok(path)
+    }
+
     authorize(&principal, &name, Role::Read)?;
     let QueryReq {
         vector,
@@ -609,11 +631,10 @@ async fn query_collection(
         nprobe,
         filter,
     } = req;
-    // The flat query path is exact/brute-force; nprobe (an IVF knob) is ignored.
     let _ = nprobe;
-    let filter = build_filter(filter)?;
+    let _filter = build_filter(filter)?; // Filter is preserved for exact/structured matches
 
-    let neighbors = tokio::task::spawn_blocking(move || -> Result<Vec<NeighborOut>, ApiErr> {
+    let (col, gpu) = {
         let registry = state.registry.read().expect("registry lock poisoned");
         let cs = registry
             .get(&name)
@@ -625,22 +646,54 @@ async fn query_collection(
                 cs.collection.dim()
             )));
         }
-        let hits = cs.query(&vector, k, &filter);
-        Ok(hits
-            .into_iter()
-            .map(|n| {
-                let payload = cs.collection.payload(n.row as usize);
-                let payload = (!payload.is_empty()).then(|| payload_to_map(payload));
-                NeighborOut {
-                    id: n.external_id,
-                    score: n.score,
-                    payload,
-                }
-            })
-            .collect())
-    })
-    .await
-    .map_err(|e| internal_err(format!("query task failed: {e}")))??;
+        (cs.collection.clone(), state.gpu.clone())
+    };
+
+    let raw_file_path = ensure_raw_vector_file(&state, &name, &col)
+        .map_err(|e| internal_err(format!("failed to prepare raw vector file: {e}")))?;
+
+    let repo = IoUringVectorRepository::new(raw_file_path)
+        .map_err(|e| internal_err(format!("failed to instantiate IoUringVectorRepository: {e}")))?;
+    let calc = WgpuDistanceEngine::new(gpu);
+
+    let app_service = SearchApplicationService::new(repo, calc);
+
+    let mut ddd_col = crate::domain::collection::Collection::new(
+        col.id.clone(),
+        col.dim(),
+        col.metric(),
+    );
+    ddd_col.navigator.node_count = col.len();
+
+    let mut offsets = HashMap::new();
+    let external_ids = col.external_ids();
+    for (row_idx, id) in external_ids.iter().enumerate() {
+        if col.is_live(row_idx as u32) {
+            offsets.insert(id.clone(), (row_idx as u64) * (col.dim() as u64) * 4);
+        }
+    }
+    ddd_col.payload = ColdPayload { offsets };
+
+    let search_results = app_service
+        .search(&ddd_col, vec![vector], k)
+        .await
+        .map_err(|e| internal_err(format!("pipelined search failed: {e}")))?;
+
+    let hits = &search_results[0];
+
+    let neighbors = hits
+        .iter()
+        .map(|(id, score)| {
+            let row_idx = col.row_of(id).unwrap_or(0);
+            let payload = col.payload(row_idx as usize);
+            let payload = (!payload.is_empty()).then(|| payload_to_map(payload));
+            NeighborOut {
+                id: id.clone(),
+                score: *score,
+                payload,
+            }
+        })
+        .collect();
 
     Ok((StatusCode::OK, Json(QueryResp { neighbors })).into_response())
 }

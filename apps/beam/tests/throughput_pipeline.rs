@@ -129,7 +129,7 @@ async fn test_r1_domain_isolation() {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in throughput_pipeline.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2153" reason="logic section in throughput_pipeline.rs is hand-written pending codegen support">
 #[tokio::test]
 async fn test_r2_r3_infrastructure_and_e2e_pipeline() {
     // Set up a temporary path for the direct I/O mock file

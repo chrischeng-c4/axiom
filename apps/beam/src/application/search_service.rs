@@ -1,15 +1,14 @@
-//! Application Layer Search Service.
-
+// SPEC-MANAGED: apps/beam/tech-design/interfaces/rest/wire-the-high-throughput-pipeline-into-production-query-serving.md#changes
 use crate::domain::collection::Collection;
 use crate::domain::ports::{DistanceCalculator, VectorRepository};
 use crate::domain::scheduler::{PipelineScheduler, QueryBatch};
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in search_service.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2153" reason="logic section in search_service.rs is hand-written pending codegen support">
 /// Application Service mapping inbound search requests to the Domain Scheduler.
 pub struct SearchApplicationService<R, C>
 where
-    R: VectorRepository,
-    C: DistanceCalculator,
+    R: VectorRepository + 'static,
+    C: DistanceCalculator + 'static,
 {
     scheduler: PipelineScheduler<R, C>,
 }
@@ -17,8 +16,8 @@ where
 
 impl<R, C> SearchApplicationService<R, C>
 where
-    R: VectorRepository,
-    C: DistanceCalculator,
+    R: VectorRepository + 'static,
+    C: DistanceCalculator + 'static,
 {
     /// Create a new SearchApplicationService.
     pub fn new(repo: R, calc: C) -> Self {
