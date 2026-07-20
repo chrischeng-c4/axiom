@@ -66,13 +66,13 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "pub trait DistanceCalculator"
+    anchor: "DistanceCalculator"
     description: "Make compute_batched metric-aware by adding a metric parameter to the port interface."
   - path: apps/beam/src/domain/scheduler.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "pub struct PipelineScheduler"
+    anchor: "PipelineScheduler"
     description: "Validate query dimension, alignment, decoded count, and score count; preserve 1-to-1 mapping of candidate ID and offset."
   - path: apps/beam/src/infrastructure/wgpu_engine.rs
     action: modify
@@ -84,7 +84,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "struct MockDistanceCalculator"
+    anchor: "MockDistanceCalculator"
     description: "Update MockDistanceCalculator to be metric-aware, and add comprehensive negative/regression tests for dimension validation, metric ordering, and missing candidates."
 ```
 ## Unit Test
