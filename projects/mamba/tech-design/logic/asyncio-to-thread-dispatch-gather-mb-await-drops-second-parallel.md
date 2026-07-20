@@ -93,3 +93,77 @@ changes:
     impl_mode: hand-written
     anchor: test_to_thread_parallelizes_direct_function_pointer_calls
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 1841-verification
+requirements:
+  AC1:
+    id: AC1
+    text: ">=2 concurrent to_thread calls return every distinct expected value exactly once in gather input order across >=5 focused repetitions."
+    kind: functional
+    risk: high
+    verify: to_thread_gather_results (5/5 rounds observed this session, byte-identical to a real CPython 3.12 control run)
+  AC2:
+    id: AC2
+    text: "100-round, 8-worker stress varies completion order with zero missing/None/duplicate/stale/wrong result, crash, panic, timeout, or deadlock; thread count returns to bounded post-quiescence baseline."
+    kind: regression
+    risk: high
+    verify: to_thread_gather_stability (100/100 rounds observed this session, zero anomalies)
+  AC3:
+    id: AC3
+    text: "The two-window soak RSS rule in MAMBA-T1-FT-GATHER-STABILITY passes and exposes retained-state growth."
+    kind: regression
+    risk: medium
+    verify: to_thread_gather_stability (RSS two-window soak assertion within the same stability test)
+  AC4:
+    id: AC4
+    text: "On a host with >=4 logical CPUs, the efficiency gate proves >=1.50x wall-clock speedup and process CPU/wall >=1.50 while staying inside peak-RSS bound; unsupported hosts are explicit blockers, not silent passes."
+    kind: performance
+    risk: medium
+    verify: to_thread_gather_efficiency (observed speedup=3.756x, cpu/wall=3.688 on a 10-logical-CPU host this session)
+  AC5:
+    id: AC5
+    text: "Focused ECs, owning async/runtime regression tests, full regression, and aw td code-check pass from clean committed state."
+    kind: regression
+    risk: high
+    verify: test_to_thread_parallelizes_direct_function_pointer_calls plus full cargo test -p mamba suite and aw td code-check
+  R1:
+    id: R1
+    text: "Every concurrently completed to_thread result reaches the matching asyncio.gather slot exactly once and in gather input order."
+    kind: functional
+    risk: high
+    verify: to_thread_gather_results (MAMBA-T1-FT-GATHER-RESULTS, cargo test -p mamba --test mamba_core_semantics_ec -- to_thread_gather_results --exact)
+  R2:
+    id: R2
+    text: "The fix is race-, deadlock-, and leak-free under repeated completion-order variation."
+    kind: regression
+    risk: high
+    verify: to_thread_gather_stability (MAMBA-T1-FT-GATHER-STABILITY, cargo test -p mamba --test mamba_core_semantics_ec -- to_thread_gather_stability --exact)
+  R2_LEAK:
+    id: R2-LEAK
+    text: "mb_gather tombstones the per-coroutine COROUTINES/TASKS bookkeeping it allocates via mb_create_task after reading gathered results, so repeated gather calls do not grow the process-global registries (R2 leak-free scope, secondary hardening item, not the R1 drop symptom)."
+    kind: regression
+    risk: low
+    verify: test_to_thread_parallelizes_direct_function_pointer_calls (new COROUTINES/TASKS pre/post-gather size assertion)
+  R3:
+    id: R3
+    text: "Result correctness preserves the existing required multicore CPU and RSS envelope; serial fallback is not an acceptable repair."
+    kind: performance
+    risk: medium
+    verify: to_thread_gather_efficiency (MAMBA-T1-FT-GATHER-EFFICIENCY, cargo test -p mamba --release --test mamba_core_semantics_ec -- to_thread_gather_efficiency --exact)
+---
+flowchart TD
+    ac1[AC1 AC1] --> to_thread_gather_results_5_5_rounds_observed_this_session_byte_identical_to_a_real_cpython_3_12_control_run[to_thread_gather_results (5/5 rounds observed this session, byte-identical to a real CPython 3.12 control run)]
+    r1[R1 R1] --> to_thread_gather_results_mamba_t1_ft_gather_results_cargo_test_p_mamba_test_mamba_core_semantics_ec_to_thread_gather_results_exact[to_thread_gather_results (MAMBA-T1-FT-GATHER-RESULTS, cargo test -p mamba --test mamba_core_semantics_ec -- to_thread_gather_results --exact)]
+    ac2[AC2 AC2] --> to_thread_gather_stability_100_100_rounds_observed_this_session_zero_anomalies[to_thread_gather_stability (100/100 rounds observed this session, zero anomalies)]
+    r2[R2 R2] --> to_thread_gather_stability_mamba_t1_ft_gather_stability_cargo_test_p_mamba_test_mamba_core_semantics_ec_to_thread_gather_stability_exact[to_thread_gather_stability (MAMBA-T1-FT-GATHER-STABILITY, cargo test -p mamba --test mamba_core_semantics_ec -- to_thread_gather_stability --exact)]
+    ac3[AC3 AC3] --> to_thread_gather_stability_rss_two_window_soak_assertion_within_the_same_stability_test[to_thread_gather_stability (RSS two-window soak assertion within the same stability test)]
+    r3[R3 R3] --> to_thread_gather_efficiency_mamba_t1_ft_gather_efficiency_cargo_test_p_mamba_release_test_mamba_core_semantics_ec_to_thread_gather_efficiency_exact[to_thread_gather_efficiency (MAMBA-T1-FT-GATHER-EFFICIENCY, cargo test -p mamba --release --test mamba_core_semantics_ec -- to_thread_gather_efficiency --exact)]
+    ac4[AC4 AC4] --> to_thread_gather_efficiency_observed_speedup_3_756x_cpu_wall_3_688_on_a_10_logical_cpu_host_this_session[to_thread_gather_efficiency (observed speedup=3.756x, cpu/wall=3.688 on a 10-logical-CPU host this session)]
+    ac5[AC5 AC5] --> test_to_thread_parallelizes_direct_function_pointer_calls_plus_full_cargo_test_p_mamba_suite_and_aw_td_code_check[test_to_thread_parallelizes_direct_function_pointer_calls plus full cargo test -p mamba suite and aw td code-check]
+    r2_leak[R2-LEAK R2 LEAK] --> test_to_thread_parallelizes_direct_function_pointer_calls_new_coroutines_tasks_pre_post_gather_size_assertion[test_to_thread_parallelizes_direct_function_pointer_calls (new COROUTINES/TASKS pre/post-gather size assertion)]
+```
