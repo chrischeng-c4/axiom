@@ -91,7 +91,6 @@ changes:
     anchor: prod_profile_renders_the_connected_security_boundary
     reason: "Own direct and rendered Kubernetes security assertions for restricted workloads, read-only Secret projection, NetworkPolicy, observability, durable storage, and voter-safe no-HPA topology."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
