@@ -1,6 +1,16 @@
 ---
 id: '2153'
-summary: (fill)
+summary: >
+  Wire the high-throughput query serving pipeline into the production query serving path,
+  implementing bounded concurrent batching that overlaps NVMe candidate fetches with GPU compute.
+capability_refs:
+  - id: "competitor-performance"
+    role: primary
+    claim: "beam-production-overlap-pipeline"
+    coverage: full
+    rationale: >
+      Consolidates query serving paths under one production DDD pipeline, implementing
+      overlapped stages with backpressure and concurrent query batching.
 fill_sections: [logic, changes, unit-test]
 ---
 
