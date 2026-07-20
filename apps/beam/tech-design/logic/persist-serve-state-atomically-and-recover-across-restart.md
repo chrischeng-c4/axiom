@@ -1,6 +1,15 @@
 ---
 id: '2149'
-summary: (fill)
+summary: >
+  Persist serve state atomically using libs/storage-durable atomic replace and fsync,
+  and recover the last committed valid snapshot across process restart, rejecting corrupt states.
+capability_refs:
+  - id: "stateful-service-workload"
+    role: primary
+    claim: "beam-single-node-durable-state"
+    coverage: full
+    rationale: >
+      Implements atomic persistence of the serve state and recovery across restarts using storage-durable.
 fill_sections: [logic, changes, unit-test]
 ---
 
