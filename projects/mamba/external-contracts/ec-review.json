@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": "mamba",
+  "source_digest": "sha256:939f94b54453e19ca75676125cba65a79425da2cc377a43396cefc35a34f8c43",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer",
+  "reviewed_at": "2026-07-20T06:44:18.285227+00:00",
+  "summary": "Independent semantic arbitration of the three #1841 to_thread/gather ECs (behavior MAMBA-T1-FT-GATHER-RESULTS, stability MAMBA-T1-FT-GATHER-STABILITY, efficiency MAMBA-T1-FT-GATHER-EFFICIENCY) at source_digest sha256:939f94b54453e19ca75676125cba65a79425da2cc377a43396cefc35a34f8c43. I did not author these ECs. Judged the commands by the harness they run (tests/external_contracts/mamba_core_semantics_ec.rs, wired as [[test]] name=mamba_core_semantics_ec), not their names. All three cases exercise the public Mamba asyncio surface by spawning `mamba run` on a compiled Python program and bind claim parallel-to-thread-gather-preserves-every-result under capability mamba-core-semantics (RuntimeTool; declared EC dimensions behavior/efficiency/stability). Coverage: behavior=AC1 (2 workers x 5 reps, alternating first/second work size so both completion orders occur, exact ordered gather equality); stability=AC2+AC3 (100 rounds x 8 workers with rotating per-worker work sizes, per-round distinct-set + order equality, ROUND_OK collected into an exact 0..100 BTreeSet with duplicate-round rejection so aggregate pass counts cannot satisfy the gate, OS `ps` thread count <= baseline+1 after a 250ms post-soak quiescence, two-window peak-RSS leak bound window2 <= 1.10*window1 + 8MiB); efficiency=AC4 (OS-rusage wall speedup >= 1.50x and process cpu/wall >= 1.50 which defeats serial-fallback and cooperative-single-loop gaming, parallel RSS <= 1.25*serial + 16MiB, and an unsupported <4-CPU host panics RED rather than silently passing). Oracle independence: correctness is judged by byte-for-byte equality of Mamba stdout against a CPython 3.12 control program (python3.12 confirmed present, 3.12.11) plus in-program serial recomputation of cpu_work, neither of which is the to_thread/gather dispatch path under test nor `aw ec` itself; stability/efficiency oracles are OS-level (`ps`, wait4 rusage, Instant wall). False-green: the exact WI bug (dropped second parallel result -> None gather slot) fails all three cases (behavior gathered==expected + not-None + CPython stdout mismatch; stability per-round equality + len(set)==8 + missing round evidence; efficiency parallel.stdout==serial.stdout), and the generated ec_mamba_t1_*.rs wrappers additionally carry the #694-class guard that panics if the cargo command passes while executing 0 tests. All six checklist axes hold; findings empty; accepted. NOTE: this is an agent verdict (reviewer_kind=agent) submitted under dispatch-authorized agent-backed mode; it is arbitration input for the post-completion human batch audit, not human-backed acceptance. The working tree is currently dirty (envelope clean=false; Cargo.toml + harness uncommitted) — orthogonal to EC semantic soundness and resolved by AC5 `aw td code-check` from a clean committed state at landing.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": []
+}

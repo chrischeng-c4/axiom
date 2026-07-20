@@ -3,9 +3,9 @@ project = "mamba"
 ir_kind = "ec"
 ec_path = "projects/mamba/external-contracts"
 inventory_path = "projects/mamba/aw.toml"
-generated_at = "2026-07-19T08:09:26.401364+00:00"
+generated_at = "2026-07-20T06:46:40.215026+00:00"
 ir_digest = "sha256:efdd5e9070e4bcd61f35d51a627141fa348755d16de5bf67383976509f66bffc"
-source_digest = "sha256:33c297f1c14849acfa1eccbd8fef6adc7f5e7cbaefe9a7854dd74efd003362fd"
+source_digest = "sha256:1afecb439bf2be4cab29ab86dee1a61c23c9f727b3475a4fc7016b38fb94605a"
 tool_contracts = []
 
 [[sources]]
@@ -87,6 +87,10 @@ digest = "sha256:7f67be0d15fc82a45618e5be7dde20845d25b2e426482fcd4c2648d940a6d9c
 [[sources]]
 path = "projects/mamba/external-contracts/strings.md"
 digest = "sha256:a3640002cb96d8c61939aa115bebb8110f6203a134b80e723e6b2c88d2bc0a14"
+
+[[sources]]
+path = "projects/mamba/external-contracts/third-party.md"
+digest = "sha256:920955b215c125b178b66280861a4ea50427e488a90d13870fa5ec59208722ef"
 
 [[sources]]
 path = "projects/mamba/external-contracts/type-system.md"
