@@ -109,7 +109,7 @@ where
                 }));
             }
 
-            if raw_bytes.is_empty() {
+            if offsets.is_empty() {
                 results.push(Vec::new());
                 continue;
             }
