@@ -3777,7 +3777,7 @@ fn is_pure_normalizable_export_rhs(expr: &str) -> bool {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// `function` [name] `(` params `)` `{` body `}`, consuming `expr` in full.
 /// `async`/generator forms fall outside the v1 ladder: an `async` prefix
 /// means `expr` never starts with the literal text `"function"`, and a
