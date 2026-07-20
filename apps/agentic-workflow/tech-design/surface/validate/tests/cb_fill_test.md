@@ -76,6 +76,7 @@ fn marker(source_path: &str) -> agentic_workflow::cli::cb_fill::HandwriteMarkerE
         end_line: 3,
         reason: "test marker".to_string(),
         spec_ref: None,
+        adopt_existing: false,
     }
 }
 
@@ -200,6 +201,7 @@ fn test_brief_mode_marker_list_present() {
         end_line: 5,
         reason: "test".into(),
         spec_ref: None,
+        adopt_existing: false,
     };
     let v = serde_json::to_value(&entry).unwrap();
     assert!(v.get("id").is_some());

@@ -45,7 +45,9 @@ use std::path::Path;
 use std::process::Command;
 
 use agentic_workflow::issues::types::{td_phase, IssueType};
-use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+use agentic_workflow::issues::{
+    Issue, IssueBackend, IssueState, LocalBackend, AW_FIXTURE_LOCAL_BACKEND_ENV,
+};
 
 /// AC2's "bounded tick count" — exhausting this many ticks without reaching
 /// the expected terminal state is a livelock failure, not a slow pass.
@@ -79,7 +81,19 @@ fn init_seed_repo(git: &Path, root: &Path) {
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw/issues/open")).unwrap();
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    std::fs::write(root.join("aw.toml"), "").unwrap();
+    // #1921: `aw td claim`/`aw td code-check` are internal lifecycle verbs
+    // that still use `LocalBackend` directly for issue storage, but they run
+    // behind `guard_issue_mutation`'s workflow-lock check, which resolves
+    // the configured issue backend unconditionally. Declare the sanctioned
+    // #1348 local-fixture platform block (paired with
+    // `AW_FIXTURE_LOCAL_BACKEND=1` on every spawned `aw` command below) so
+    // this fully offline sandbox can resolve a backend at all, instead of
+    // hard-erroring with "must configure [agentic_workflow.repo_platform]".
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
     Command::new(git)
         .arg("-C")
         .arg(root)
@@ -285,7 +299,10 @@ async fn chain_liveness_claim_never_lands_on_deadlock_phase() {
 
     for tick in 0..MAX_LIVENESS_TICKS {
         let mut cmd = Command::new(&aw_bin);
-        cmd.arg("td").arg("claim").arg(slug);
+        cmd.arg("td")
+            .arg("claim")
+            .arg(slug)
+            .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1");
         if tick == 0 {
             cmd.arg("--from-path").arg(&spec_path);
         } else {
@@ -356,6 +373,7 @@ async fn chain_liveness_code_check_terminates_within_tick_budget() {
             .arg("td")
             .arg("code-check")
             .arg(slug)
+            .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
             .unwrap_or_else(|e| panic!("tick {tick}: run aw td code-check: {e}"));
@@ -420,6 +438,7 @@ async fn chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_
             .arg("td")
             .arg("code-check")
             .arg(slug)
+            .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
             .unwrap_or_else(|e| panic!("tick {tick}: run aw td code-check: {e}"));
@@ -452,6 +471,7 @@ async fn chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_
             .arg("td")
             .arg("code-check")
             .arg(slug)
+            .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
             .unwrap_or_else(|e| panic!("second pass tick {tick}: run aw td code-check: {e}"));

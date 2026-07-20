@@ -6965,6 +6965,15 @@ fn choose_next_action(
     }
 
     for item in &report.capabilities {
+        // #1921: a Retired capability's synthesized/placeholder root gap
+        // (e.g. `aw capability migrate`'s default "planned/planned" work-root
+        // row for a capability with no declared work-root table) must never
+        // demand an active WI -- retired capabilities are deliberately inert,
+        // matching the existing Retired skip already applied to the
+        // candidate-type-assignment loop above.
+        if item.status == CapabilityStatus::Retired {
+            continue;
+        }
         for gap in &item.gaps {
             if matches!(
                 gap.status,

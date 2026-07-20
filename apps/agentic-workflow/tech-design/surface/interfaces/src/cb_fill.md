@@ -118,6 +118,11 @@ pub struct HandwriteMarkerEntry {
     /// Optional `@spec` reference associated with this block.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spec_ref: Option<String>,
+    /// True only for an XML marker generator-scaffolded around a real,
+    /// pre-existing implementation. Its fill payload adopts that body instead
+    /// of replacing it with a generic placeholder.
+    #[serde(skip)]
+    pub adopt_existing: bool,
 }
 
 // Extract every unfilled HANDWRITE marker from a single file's content,

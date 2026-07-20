@@ -174,28 +174,20 @@ fn commit_td_init(git: &Path, root: &Path, slug: &str) {
     );
 }
 
-/// aw.toml with one resolvable project row and deliberately NO
+/// aw.toml with one resolvable project row, deliberately NO
 /// `[aw.ec.generated]` table — the "no EC inventory configured" advisory
 /// path (matches `td_no_merge_test.rs::write_858_ec_configured_aw_toml`'s
 /// sibling shape minus the `[aw.ec.generated]` block), so the fixture loop
-/// completes without any external EC runner.
+/// completes without any external EC runner — plus
+/// `[agentic_workflow.issue_platform] type = "local"` (#1921): every
+/// mutating `aw td`/`aw wi` verb runs behind `guard_issue_mutation`'s
+/// workflow-lock check, which resolves the configured issue backend
+/// unconditionally (not just the runner-driven `aw wi run` / `aw goal wi`
+/// entry point #1348 originally covered), so this fully offline sandbox
+/// needs a resolvable `local` backend too. Paired with
+/// `AW_FIXTURE_LOCAL_BACKEND=1` on every spawned `aw` command
+/// (`follow_envelopes`'s `extra_envs`) — the sanctioned #1348 escape hatch.
 fn write_fixture_aw_toml(root: &Path, project: &str) {
-    std::fs::write(
-        root.join("aw.toml"),
-        format!(
-            "[[projects]]\nname = \"{project}\"\npath = \".\"\n\n\
-             [[projects.workspaces]]\nname = \"{project}\"\npaths = [\"**\"]\ntarget = \"rust\"\n"
-        ),
-    )
-    .unwrap();
-}
-
-/// Same project row as `write_fixture_aw_toml`, plus
-/// `[agentic_workflow.issue_platform] type = "local"` — the config shape
-/// `issues::resolve_default_backend` needs to resolve a `LocalBackend` for
-/// `aw wi run` under the fixture-only `AW_FIXTURE_LOCAL_BACKEND` escape
-/// hatch (#1348).
-fn write_fixture_aw_toml_with_local_issue_platform(root: &Path, project: &str) {
     std::fs::write(
         root.join("aw.toml"),
         format!(
@@ -205,6 +197,42 @@ fn write_fixture_aw_toml_with_local_issue_platform(root: &Path, project: &str) {
         ),
     )
     .unwrap();
+}
+
+/// #1921 R4 regression guard: a freshly `write_fixture_aw_toml`-scaffolded
+/// fixture project must resolve a `local` issue backend under the
+/// sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` escape hatch -- a fast,
+/// in-process check colocated with the scaffolding helper it protects, so a
+/// future change to either the scaffolded `aw.toml` shape or
+/// `resolve_default_backend`'s accepted config shape fails here first
+/// instead of only surfacing through a slow real-binary e2e hop three test
+/// files deep (the exact way #1921's `[agentic_workflow.repo_platform]`
+/// mandate silently broke all seven tests in this module's history).
+#[test]
+fn write_fixture_aw_toml_resolves_local_backend_under_fixture_env() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_fixture_aw_toml(tmp.path(), "demo");
+
+    let prev = std::env::var(issues::AW_FIXTURE_LOCAL_BACKEND_ENV).ok();
+    std::env::set_var(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1");
+    let resolved = issues::resolve_default_backend(tmp.path());
+    match &prev {
+        Some(v) => std::env::set_var(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, v),
+        None => std::env::remove_var(issues::AW_FIXTURE_LOCAL_BACKEND_ENV),
+    }
+
+    let (kind, repo, host) = resolved.unwrap_or_else(|e| {
+        panic!(
+            "write_fixture_aw_toml's scaffolded aw.toml must resolve a backend under \
+             AW_FIXTURE_LOCAL_BACKEND=1, got: {e:#}"
+        )
+    });
+    assert_eq!(
+        kind, "local",
+        "fixture scaffolding must resolve the local backend"
+    );
+    assert_eq!(repo, None);
+    assert_eq!(host, None);
 }
 
 const DEMO_SPEC_REL: &str = ".aw/tech-design/specs/demo.md";
@@ -713,7 +741,8 @@ async fn fixture_loop_drives_cb_genned_wi_to_terminal_done() {
     seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let hops = follow_envelopes(&aw_bin, root, &["td", "fill", slug], &[])
+    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let hops = follow_envelopes(&aw_bin, root, &["td", "fill", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
 
     // Real trace: fill(brief) -> fill --apply marker-a -> fill --apply
@@ -791,7 +820,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
     let root = tmp.path();
     let slug = "fixture-loop-wi-run-demo";
     init_seed_repo(&git, root);
-    write_fixture_aw_toml_with_local_issue_platform(root, "demo");
+    write_fixture_aw_toml(root, "demo");
     write_capability_healthy_readme(root, "demo");
     write_fixture_changes_spec(
         root,
@@ -817,7 +846,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
     let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
 
     // Hop 1: open WI -> internal fill/code-check chain -> terminal closed WI.
-    let first = follow_envelopes(&aw_bin, root, &["wi", "run", slug], extra_envs)
+    let first = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
     let first_last = first.last().expect("at least one hop");
     assert_eq!(
@@ -837,7 +866,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
 
     // Hop 2: closed WI -> closed parent epic -> capability rollup ->
     // completion.workflow_complete == true.
-    let second = follow_envelopes(&aw_bin, root, &["wi", "run", slug], extra_envs)
+    let second = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
     assert!(
         second.len() >= 3,
@@ -878,7 +907,8 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
     seed_open_issue_at_phase_with_project(root, slug, td_phase::TD_CREATED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let err = follow_envelopes(&aw_bin, root, &["td", "code-check", slug], &[])
+    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let err = follow_envelopes(&aw_bin, root, &["td", "code-check", slug], extra_envs)
         .expect_err("an unresolvable start phase must break the very first hop, not succeed");
 
     assert_eq!(
