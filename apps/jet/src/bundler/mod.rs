@@ -3858,7 +3858,7 @@ impl Bundler {
         result
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
     fn generate_bundle(
         &self,
         modules: Vec<CompiledModule>,
@@ -3987,7 +3987,7 @@ impl Bundler {
                     lap("fn_decl_conversion");
                     if timing {
                         eprintln!(
-                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_impure={}",
+                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_shape={}",
                             elision_stats.modules,
                             elision_stats.elided_keys,
                             elision_stats.kept,
@@ -3998,7 +3998,7 @@ impl Bundler {
                             elision_stats.kept_barrel_glue,
                             elision_stats.kept_other,
                             elision_stats.rhs_normalized,
-                            elision_stats.rhs_skipped_impure,
+                            elision_stats.rhs_skipped_shape,
                         );
                     }
                     lap("export_elision");
@@ -4062,9 +4062,9 @@ impl Bundler {
             preload_hints: Vec::new(),
         })
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
     /// Multi-chunk bundle generation for `--splitting`.
     ///
     /// Partitions `modules` into an entry chunk plus async/shared chunks via
@@ -4313,7 +4313,7 @@ impl Bundler {
                 lap("fn_decl_conversion");
                 if timing {
                     eprintln!(
-                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_impure={}",
+                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_shape={}",
                         elision_stats.modules,
                         elision_stats.elided_keys,
                         elision_stats.kept,
@@ -4324,7 +4324,7 @@ impl Bundler {
                         elision_stats.kept_barrel_glue,
                         elision_stats.kept_other,
                         elision_stats.rhs_normalized,
-                        elision_stats.rhs_skipped_impure,
+                        elision_stats.rhs_skipped_shape,
                     );
                 }
                 lap("export_elision");
@@ -4405,7 +4405,7 @@ impl Bundler {
 
         Ok(Some((entry_code, chunks, preload_hints)))
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 }
 
 /// Build code-splitting edges from the module graph: one `SplitEdgeId` per

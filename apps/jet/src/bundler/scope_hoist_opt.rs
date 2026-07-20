@@ -3625,15 +3625,21 @@ pub struct ExportElisionStats {
     /// in one of the `kept_*` buckets above) — this field only reports how
     /// many keys were normalized on the way there, regardless of outcome.
     pub rhs_normalized: usize,
-    /// #2161: candidate export assignments with a non-identifier RHS that
-    /// [`is_pure_normalizable_export_rhs`] declined to normalize — the RHS
-    /// shape falls outside the v1 purity ladder (a member chain, a call
-    /// expression, or any other shape not provably side-effect-free to
-    /// hoist). These are exactly the assignments that also surface under
+    /// #2161/#2168: candidate export assignments with a non-identifier RHS
+    /// that [`is_shape_normalizable_export_rhs`] declined to normalize --
+    /// renamed from `rhs_skipped_impure` (#2168) because a STATEMENT SHAPE
+    /// (top-level comma, chained assignment, or top-level `await`/`yield`),
+    /// not RHS purity, is now the exclusion criterion: the evaluation-
+    /// position argument (see [`is_shape_normalizable_export_rhs`]'s doc
+    /// comment) established that hoisting a single-assignment export RHS
+    /// never moves/duplicates/delays/skips its evaluation regardless of
+    /// what the RHS computes, so only shapes that are a *different
+    /// statement* than a single assignment remain excluded. These are
+    /// exactly the assignments that also surface under
     /// `ExportKeepReason::ComplexRhs` (`kept_other`) once elision itself
     /// runs, so this counter doesn't add a new dump tag of its own — see
     /// [`normalize_pure_export_rhs_unvalidated`].
-    pub rhs_skipped_impure: usize,
+    pub rhs_skipped_shape: usize,
 }
 // </HANDWRITE>
 
@@ -3752,145 +3758,65 @@ fn mark_export_key_kept(
 
 /// Per-call counters for [`normalize_pure_export_rhs_unvalidated`] (#2161),
 /// merged into the caller's `ExportElisionStats::rhs_normalized` /
-/// `ExportElisionStats::rhs_skipped_impure` once the combined pipeline's
+/// `ExportElisionStats::rhs_skipped_shape` once the combined pipeline's
 /// output is chosen (see `convert_and_elide_flat_region`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct RhsNormalizationStats {
     normalized: usize,
-    skipped_impure: usize,
+    skipped_shape: usize,
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
-/// The v1 purity ladder for hoisting a non-identifier export RHS into a
-/// synthetic `var` binding (#2161): arrow functions, function expressions,
-/// and the same bare-literal shapes [`is_inlineable_literal_export_expr`]
-/// already treats as side-effect-free elsewhere in this file. Member
-/// chains and call expressions are deliberately excluded from v1 — a
-/// member read can trigger a getter and a call can have arbitrary side
-/// effects, so evaluating either any earlier than the original assignment
-/// site (which is what hoisting into an unconditionally-evaluated `var`
-/// initializer does) is not provably safe.
-fn is_pure_normalizable_export_rhs(expr: &str) -> bool {
-    is_inlineable_literal_export_expr(expr)
-        || is_bare_function_expression(expr)
-        || is_bare_arrow_function_expression(expr)
+/// The shape-based deny-list for hoisting a non-identifier export RHS into
+/// a synthetic `var` binding (#2161; relaxed #2168 -- renamed from
+/// `is_pure_normalizable_export_rhs`, which was a 3-shape allow-list of
+/// bare literals / function expressions / arrow functions).
+///
+/// The evaluation-position argument (#2161's close-out, quoted verbatim --
+/// this is the design's correctness core): "this normalization never
+/// moves, duplicates, or delays RHS evaluation — the RHS still evaluates
+/// exactly once, at exactly the same statement position, in the same order
+/// (`exports.k = f();` → `var __jx = f(); exports.k = __jx;`). Purity
+/// gates are required only for transforms that can reorder/duplicate/skip
+/// evaluation; this one cannot." `expr` is spliced verbatim into the `var`
+/// initializer at the exact position it already occupied, so it evaluates
+/// exactly once, synchronously, in original source order, with the same
+/// `this` (`undefined`, since neither position is a call/member-expression
+/// receiver) -- true no matter what `expr` computes or how many side
+/// effects it has. v1's allow-list of "provably pure" shapes was solving a
+/// problem this transform does not have; every RHS *value* shape is safe
+/// to hoist.
+///
+/// What is NOT safe is changing the *statement shape*:
+/// [`contains_top_level_comma`] (a sequence expression would silently
+/// become a second `var` declarator, a different `Expression` boundary
+/// than a `var` initializer accepts), [`contains_top_level_assignment_operator`]
+/// (a chained assignment such as `exports.a = exports.b = X` is a
+/// different statement shape, not just a different RHS value -- WI #2168
+/// Scope), and [`contains_top_level_await_or_yield_keyword`] (defensive:
+/// flat-region export-assignment statements are never themselves inside an
+/// async-function/generator body, so this is believed structurally
+/// unreachable on real input, but excluded rather than assumed). Every
+/// other RHS -- call results, member chains, `new` expressions,
+/// conditionals, template/object/array literals, async/generator function
+/// expressions -- normalizes.
+fn is_shape_normalizable_export_rhs(expr: &str) -> bool {
+    !contains_top_level_comma(expr)
+        && !contains_top_level_assignment_operator(expr)
+        && !contains_top_level_await_or_yield_keyword(expr)
 }
 // </HANDWRITE>
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
-/// `function` [name] `(` params `)` `{` body `}`, consuming `expr` in full.
-/// `async`/generator forms fall outside the v1 ladder: an `async` prefix
-/// means `expr` never starts with the literal text `"function"`, and a
-/// generator's `*` (with or without a separating space before it) fails
-/// either the post-`function` keyword-boundary check or the "next non-name
-/// byte must be `(`" check below, so both are rejected without a dedicated
-/// check for either.
-fn is_bare_function_expression(expr: &str) -> bool {
-    let b = expr.as_bytes();
-    if !expr.starts_with("function") {
-        return false;
-    }
-    match b.get("function".len()) {
-        Some(c) if c.is_ascii_whitespace() || *c == b'(' => {}
-        _ => return false,
-    }
-    let mut i = "function".len();
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i < b.len() && is_id_start_byte(b[i]) {
-        i += 1;
-        while i < b.len() && is_id_cont_byte(b[i]) {
-            i += 1;
-        }
-        while i < b.len() && b[i].is_ascii_whitespace() {
-            i += 1;
-        }
-    }
-    if b.get(i) != Some(&b'(') {
-        return false;
-    }
-    let Some(after_params) = skip_code_balanced(b, i, b'(', b')') else {
-        return false;
-    };
-    let mut j = after_params;
-    while j < b.len() && b[j].is_ascii_whitespace() {
-        j += 1;
-    }
-    if b.get(j) != Some(&b'{') {
-        return false;
-    }
-    skip_code_balanced(b, j, b'{', b'}') == Some(b.len())
-}
-
 // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
-/// `<params> => <body>`, consuming `expr` in full, where `<params>` is a
-/// bare identifier or a parenthesized parameter list and `<body>` is a
-/// block or a bare expression. `async` arrows are out of the v1 ladder
-/// (#2161), mirroring the function-expression restriction above.
-fn is_bare_arrow_function_expression(expr: &str) -> bool {
-    if expr.starts_with("async")
-        && matches!(expr.as_bytes().get(5), Some(c) if c.is_ascii_whitespace() || *c == b'(')
-    {
-        return false;
-    }
-    let b = expr.as_bytes();
-    if b.is_empty() {
-        return false;
-    }
-    let after_params = if b[0] == b'(' {
-        let Some(end) = skip_code_balanced(b, 0, b'(', b')') else {
-            return false;
-        };
-        end
-    } else {
-        let mut i = 0;
-        while i < b.len() && is_id_cont_byte(b[i]) {
-            i += 1;
-        }
-        if i == 0 || !is_js_identifier(&expr[..i]) {
-            return false;
-        }
-        i
-    };
-    let mut i = after_params;
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if !expr[i..].starts_with("=>") {
-        return false;
-    }
-    i += 2;
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= b.len() {
-        return false;
-    }
-    if b[i] == b'{' {
-        skip_code_balanced(b, i, b'{', b'}') == Some(b.len())
-    } else {
-        // Expression body: the body's own *content* needs no further
-        // purity check here (constructing the arrow function never
-        // evaluates it), but a depth-0 comma would mean `expr` isn't a
-        // single AssignmentExpression — seeing `<arrow>, <more>` here means
-        // the *original* statement was a comma-operator sequence
-        // expression (a legal RHS for a plain assignment statement), which
-        // would silently become a second `var` declarator (a different
-        // program, and likely a parse error) if hoisted verbatim into a
-        // `var` initializer. Reject rather than risk it — the reparse
-        // guard in `convert_and_elide_flat_region` would catch a mistake
-        // here anyway, but this keeps the common case out of that fallback
-        // path.
-        !contains_top_level_comma(&expr[i..])
-    }
-}
-
 // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Whether `s` contains a depth-0 (unparenthesized/unbracketed) comma.
 /// Mirrors [`find_direct_export_assignment_semicolon`]'s depth-tracking
-/// scan style; see [`is_bare_arrow_function_expression`]'s expression-body
-/// case for why this matters.
+/// scan style; see [`is_shape_normalizable_export_rhs`] for why this
+/// matters: a top-level comma means `s` isn't a single AssignmentExpression
+/// (it's a sequence expression), which would silently become a second
+/// `var` declarator (a different program) if hoisted verbatim into a `var`
+/// initializer.
 fn contains_top_level_comma(s: &str) -> bool {
     let b = s.as_bytes();
     let mut i = 0;
@@ -3933,13 +3859,168 @@ fn contains_top_level_comma(s: &str) -> bool {
     }
     false
 }
+
+/// Whether `s` contains a depth-0 (unparenthesized/unbracketed) bare `=` or
+/// compound-assign operator (`+=`, `-=`, `*=`, `/=`, `%=`, `**=`, `<<=`,
+/// `>>=`, `>>>=`, `&=`, `|=`, `^=`, `&&=`, `||=`, `??=`), while excluding
+/// the comparison/arrow operators that also contain an `=` byte (`==`,
+/// `===`, `!=`, `!==`, `<=`, `>=`, `=>`). Mirrors [`contains_top_level_comma`]'s
+/// depth-tracking scan style; see [`is_shape_normalizable_export_rhs`] for
+/// why this matters -- rejects a chained-assignment export RHS such as
+/// `exports.a = exports.b = X`, where `collect_direct_export_assignments`
+/// captures the inner `exports.b = X` as the outer statement's `expr`:
+/// hoisting that verbatim into a `var` initializer would collapse two
+/// assignments into one declarator, a different STATEMENT SHAPE than the
+/// mechanism's proven single-assignment claim covers (WI #2168 Scope).
+fn contains_top_level_assignment_operator(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let (mut paren, mut bracket, mut brace) = (0usize, 0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next;
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'(' => paren += 1,
+            b')' => paren = paren.saturating_sub(1),
+            b'[' => bracket += 1,
+            b']' => bracket = bracket.saturating_sub(1),
+            b'{' => brace += 1,
+            b'}' => brace = brace.saturating_sub(1),
+            b'=' if paren == 0 && bracket == 0 && brace == 0 => {
+                if b.get(i + 1) == Some(&b'=') {
+                    // `==` / `===` (also consumes the trailing `=`s of
+                    // `!==`, reached via its second byte): a comparison
+                    // run, never an assignment. Skip the whole run of `=`
+                    // bytes.
+                    i += 1;
+                    while b.get(i) == Some(&b'=') {
+                        i += 1;
+                    }
+                    continue;
+                }
+                if b.get(i + 1) == Some(&b'>') {
+                    i += 2; // `=>` arrow.
+                    continue;
+                }
+                let excluded_as_comparison = match i.checked_sub(1).and_then(|p| b.get(p)) {
+                    Some(b'!') => true,                      // `!=`
+                    Some(b'<') => i < 2 || b[i - 2] != b'<', // `<=`, not `<<=`
+                    Some(b'>') => {
+                        // `>=` vs `>>=` / `>>>=`: count the run of `>`
+                        // bytes immediately before this `=`. Exactly one
+                        // is the comparison operator; two or three is a
+                        // compound (unsigned) right-shift-assign.
+                        let mut k = i;
+                        let mut gt_run = 0usize;
+                        while k > 0 && b[k - 1] == b'>' {
+                            gt_run += 1;
+                            k -= 1;
+                        }
+                        gt_run == 1
+                    }
+                    _ => false,
+                };
+                if !excluded_as_comparison {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Whether `s` contains a depth-0 (unparenthesized/unbracketed) whole-word
+/// `await` or `yield` keyword token (word boundaries via [`is_id_cont_byte`],
+/// mirroring the identifier-scanning pattern used elsewhere in this file).
+/// Mirrors [`contains_top_level_comma`]'s depth-tracking scan style; see
+/// [`is_shape_normalizable_export_rhs`] for why this matters -- defensive
+/// only: flat-region export-assignment statements are never themselves
+/// inside an async-function/generator body, so a depth-0 `await`/`yield`
+/// in an export RHS is believed structurally unreachable on real input
+/// (WI #2168), but excluded rather than assumed.
+fn contains_top_level_await_or_yield_keyword(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let (mut paren, mut bracket, mut brace) = (0usize, 0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next;
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'(' => paren += 1,
+            b')' => paren = paren.saturating_sub(1),
+            b'[' => bracket += 1,
+            b']' => bracket = bracket.saturating_sub(1),
+            b'{' => brace += 1,
+            b'}' => brace = brace.saturating_sub(1),
+            _ if paren == 0 && bracket == 0 && brace == 0 && is_id_start_byte(b[i]) => {
+                let start = i;
+                i += 1;
+                while i < b.len() && is_id_cont_byte(b[i]) {
+                    i += 1;
+                }
+                if matches!(&s[start..i], "await" | "yield") {
+                    return true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
 // </HANDWRITE>
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Rewrites `<exports_obj>.key = <RHS>;` to
 /// `var __jx_<m>_<key> = <RHS>; <exports_obj>.key = __jx_<m>_<key>;` for
-/// every flat-region export assignment whose RHS is a non-identifier but
-/// provably pure shape (#2161, see [`is_pure_normalizable_export_rhs`]).
+/// every flat-region export assignment whose RHS is a non-identifier and
+/// shape-normalizable (#2161, relaxed #2168, see
+/// [`is_shape_normalizable_export_rhs`]).
 ///
 /// Purely a textual rewrite over the same
 /// [`collect_direct_export_assignments`] shape
@@ -3974,8 +4055,8 @@ fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizatio
         if is_js_identifier(&assignment.expr) {
             continue; // already elision-eligible; nothing to normalize.
         }
-        if !is_pure_normalizable_export_rhs(&assignment.expr) {
-            stats.skipped_impure += 1;
+        if !is_shape_normalizable_export_rhs(&assignment.expr) {
+            stats.skipped_shape += 1;
             continue;
         }
         let synthetic = format!("__jx_{module_id}_{key}");
@@ -7573,7 +7654,7 @@ pub fn convert_and_elide_flat_region(
     }
     if super::dce::js_parses_without_errors(&after_elision) {
         elision_stats.rhs_normalized = normalize_stats.normalized;
-        elision_stats.rhs_skipped_impure = normalize_stats.skipped_impure;
+        elision_stats.rhs_skipped_shape = normalize_stats.skipped_shape;
         return (after_elision, conv_stats, elision_stats);
     }
 
@@ -7856,21 +7937,21 @@ mod convert_and_elide_flat_region_tests {
 mod rhs_normalization_tests {
     use super::*;
 
-    // ── is_pure_normalizable_export_rhs: the v1 purity ladder ──────────
+    // ── is_shape_normalizable_export_rhs: the shape-based deny-list ────
 
     #[test]
     fn purity_ladder_accepts_block_bodied_arrow_function() {
-        assert!(is_pure_normalizable_export_rhs("() => { return 1; }"));
+        assert!(is_shape_normalizable_export_rhs("() => { return 1; }"));
     }
 
     #[test]
     fn purity_ladder_accepts_expression_bodied_arrow_function_with_paren_params() {
-        assert!(is_pure_normalizable_export_rhs("(a, b) => a + b"));
+        assert!(is_shape_normalizable_export_rhs("(a, b) => a + b"));
     }
 
     #[test]
     fn purity_ladder_accepts_single_identifier_param_arrow_function() {
-        assert!(is_pure_normalizable_export_rhs("x => x * 2"));
+        assert!(is_shape_normalizable_export_rhs("x => x * 2"));
     }
 
     #[test]
@@ -7878,58 +7959,136 @@ mod rhs_normalization_tests {
         // The nested arrow lives entirely inside the (balanced) parameter
         // list; constructing the outer arrow is side-effect-free regardless
         // of what a parameter default's own expression looks like.
-        assert!(is_pure_normalizable_export_rhs("(fn = () => {}) => fn()"));
+        assert!(is_shape_normalizable_export_rhs("(fn = () => {}) => fn()"));
     }
 
     #[test]
     fn purity_ladder_accepts_anonymous_function_expression() {
-        assert!(is_pure_normalizable_export_rhs("function () { return 1; }"));
+        assert!(is_shape_normalizable_export_rhs(
+            "function () { return 1; }"
+        ));
     }
 
     #[test]
     fn purity_ladder_accepts_named_function_expression() {
-        assert!(is_pure_normalizable_export_rhs(
+        assert!(is_shape_normalizable_export_rhs(
             "function Foo() { return 1; }"
         ));
     }
 
     #[test]
     fn purity_ladder_accepts_bare_literals() {
-        assert!(is_pure_normalizable_export_rhs("\"hello\""));
-        assert!(is_pure_normalizable_export_rhs("42"));
-        assert!(is_pure_normalizable_export_rhs("true"));
-        assert!(is_pure_normalizable_export_rhs("null"));
+        assert!(is_shape_normalizable_export_rhs("\"hello\""));
+        assert!(is_shape_normalizable_export_rhs("42"));
+        assert!(is_shape_normalizable_export_rhs("true"));
+        assert!(is_shape_normalizable_export_rhs("null"));
     }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
-    fn purity_ladder_rejects_member_chains() {
-        // v1 ladder explicitly excludes member reads: a getter could fire.
-        assert!(!is_pure_normalizable_export_rhs("a.b.c"));
-        assert!(!is_pure_normalizable_export_rhs("_r(3).css"));
+    fn purity_ladder_accepts_member_chains() {
+        // #2168: member reads are no longer purity-gated out -- the
+        // evaluation-position argument holds regardless of what the RHS
+        // computes (a getter firing is no different from any other RHS
+        // side effect; hoisting doesn't change when it fires).
+        assert!(is_shape_normalizable_export_rhs("a.b.c"));
+        assert!(is_shape_normalizable_export_rhs("obj[computed].prop"));
+
+        let code = concat!("var _m1={exports:{}};", "_m1.exports[\"k\"]=a.b.c;");
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1, "{stats:?}");
+        assert_eq!(stats.skipped_shape, 0, "{stats:?}");
+        assert!(
+            out.contains("var __jx_1_k = a.b.c;"),
+            "synthetic declarator missing: {out}"
+        );
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     #[test]
-    fn purity_ladder_rejects_call_expressions() {
-        // v1 ladder explicitly excludes calls: arbitrary side effects.
-        assert!(!is_pure_normalizable_export_rhs("createSvgIcon(x, y)"));
-        assert!(!is_pure_normalizable_export_rhs("(() => {})()"));
+    fn purity_ladder_accepts_call_expressions() {
+        // #2168: call/new-expression RHS shapes are no longer purity-gated
+        // out -- neither shape contains a top-level comma, bare assignment
+        // operator, or await/yield keyword, so both pass all three
+        // exclusion checks.
+        assert!(is_shape_normalizable_export_rhs("createSvgIcon(x, y)"));
+        assert!(is_shape_normalizable_export_rhs("(() => {})()"));
+        assert!(is_shape_normalizable_export_rhs("new Foo(x)"));
     }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
-    fn purity_ladder_rejects_async_and_generator_functions() {
-        // Out of the v1 ladder -- see is_bare_function_expression /
-        // is_bare_arrow_function_expression's doc comments for exactly
-        // which check rejects each shape.
-        assert!(!is_pure_normalizable_export_rhs("async () => {}"));
-        assert!(!is_pure_normalizable_export_rhs("async x => x"));
-        assert!(!is_pure_normalizable_export_rhs("async function () {}"));
-        assert!(!is_pure_normalizable_export_rhs("function* () {}"));
-        assert!(!is_pure_normalizable_export_rhs("function *named() {}"));
+    fn purity_ladder_accepts_conditional_template_object_and_array_expressions() {
+        // #2168: the remaining accept-matrix shapes -- a conditional RHS
+        // has no depth-0 comma/assignment/await-yield token at all; a
+        // template literal's `${...}` holes are skipped as one opaque unit
+        // by the same scan_template_literal_expr_ranges depth-tracking the
+        // comma/assignment/await-yield checks all share; an object/array
+        // literal's top-level commas sit inside the outer `{}`/`[]` depth,
+        // not at depth 0.
+        assert!(is_shape_normalizable_export_rhs("a ? b : c"));
+        assert!(is_shape_normalizable_export_rhs("`${a}-${b}`"));
+        assert!(is_shape_normalizable_export_rhs("{ a: 1, b: 2 }"));
+        assert!(is_shape_normalizable_export_rhs("[1, 2, 3]"));
+
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"cond\"]=x?y:z;",
+            "_m1.exports[\"tmpl\"]=`${a}-${b}`;",
+            "_m1.exports[\"obj\"]={a:1,b:2};",
+            "_m1.exports[\"arr\"]=[1,2,3];",
+        );
+        let (_out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(
+            stats.normalized, 4,
+            "conditional/template/object/array RHS all normalize: {stats:?}"
+        );
+        assert_eq!(stats.skipped_shape, 0, "{stats:?}");
     }
-// </HANDWRITE>
+
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    #[test]
+    fn purity_ladder_accepts_async_and_generator_functions() {
+        // #2168: constructing the function VALUE has no top-level
+        // await/yield token -- any await/yield inside the function body is
+        // at brace depth 1, not depth 0 -- so
+        // contains_top_level_await_or_yield_keyword correctly returns
+        // false and these shapes normalize like any other
+        // function-expression/arrow-function RHS.
+        assert!(is_shape_normalizable_export_rhs("async () => {}"));
+        assert!(is_shape_normalizable_export_rhs("async x => x"));
+        assert!(is_shape_normalizable_export_rhs("async function () {}"));
+        assert!(is_shape_normalizable_export_rhs("function* () {}"));
+        assert!(is_shape_normalizable_export_rhs("function *named() {}"));
+    }
+    // </HANDWRITE>
+
+    #[test]
+    fn purity_ladder_rejects_chained_assignment_target() {
+        // A chained-assignment export RHS (e.g. `exports.a = exports.b =
+        // X;`, where collect_direct_export_assignments captures the inner
+        // `exports.b = X` as the outer statement's expr) is a different
+        // STATEMENT SHAPE, not just a different RHS value (WI #2168
+        // Scope) -- hoisting it verbatim into a `var` initializer would
+        // collapse two assignments into one declarator.
+        assert!(!is_shape_normalizable_export_rhs("exports.b = X"));
+        assert!(!is_shape_normalizable_export_rhs("_m1.exports[\"b\"] = 1"));
+
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "_m1.exports[\"a\"]=_m1.exports[\"b\"]=1;",
+        );
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1, "only f normalizes: {stats:?}");
+        assert_eq!(
+            stats.skipped_shape, 1,
+            "chained-assignment target a is excluded: {stats:?}"
+        );
+        assert!(
+            out.contains("_m1.exports[\"a\"]=_m1.exports[\"b\"]=1;"),
+            "chained assignment left byte-identical: {out}"
+        );
+    }
 
     #[test]
     fn purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body() {
@@ -7941,20 +8100,23 @@ mod rhs_normalization_tests {
         // -- `var` initializers parse as `AssignmentExpression`, not
         // `Expression`, so a top-level comma there means something
         // different. Must be rejected outright, not left to the reparse
-        // guard to catch.
-        assert!(!is_pure_normalizable_export_rhs("(a) => a, sideEffect()"));
-        assert!(!is_pure_normalizable_export_rhs("x => x, sideEffect()"));
+        // guard to catch. #2168: contains_top_level_comma now runs
+        // unconditionally on every candidate (previously only reachable
+        // inside the deleted is_bare_arrow_function_expression's
+        // expression-body branch), so this exclusion is unchanged.
+        assert!(!is_shape_normalizable_export_rhs("(a) => a, sideEffect()"));
+        assert!(!is_shape_normalizable_export_rhs("x => x, sideEffect()"));
     }
 
     // ── normalize_pure_export_rhs_unvalidated: the textual rewrite ─────
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn normalize_rewrites_arrow_function_export_to_synthetic_var() {
         let code = concat!("var _m1={exports:{}};", "_m1.exports[\"f\"]=()=>{};",);
         let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
         assert_eq!(stats.normalized, 1);
-        assert_eq!(stats.skipped_impure, 0);
+        assert_eq!(stats.skipped_shape, 0);
         assert!(
             out.contains("var __jx_1_f = ()=>{};"),
             "synthetic declarator missing: {out}"
@@ -7965,25 +8127,55 @@ mod rhs_normalization_tests {
         );
         assert!(super::super::dce::js_parses_without_errors(&out));
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
-    fn normalize_counts_skipped_impure_candidates() {
+    fn normalize_preserves_self_referencing_read_before_write_evaluation_order() {
+        // The evaluation-position argument's own regression proof: the
+        // rewrite reads the PRE-mutation value of exports.k as wrap's
+        // argument (the var initializer evaluates before the following
+        // assignment statement executes), byte-for-byte preserving the
+        // original single-statement's evaluation order -- the rewrite
+        // never moves, duplicates, delays, or skips RHS evaluation
+        // relative to the original `exports.k = wrap(exports.k);`
+        // statement.
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"k\"]=wrap(_m1.exports[\"k\"]);",
+        );
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1, "{stats:?}");
+        assert!(
+            out.contains("var __jx_1_k = wrap(_m1.exports[\"k\"]);"),
+            "synthetic initializer must read the pre-mutation value verbatim: {out}"
+        );
+        assert!(
+            out.contains("_m1.exports.k = __jx_1_k;"),
+            "the write happens only in the following statement: {out}"
+        );
+        assert!(super::super::dce::js_parses_without_errors(&out));
+    }
+
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    #[test]
+    fn normalize_counts_skipped_shape_candidates() {
         let code = concat!(
             "var _m1={exports:{}};",
             "_m1.exports[\"f\"]=()=>{};",
-            "_m1.exports[\"g\"]=createSvgIcon(x,y);",
-            "_m1.exports[\"h\"]=_r(2).css;",
+            "_m1.exports[\"g\"]=(a)=>a,sideEffect();",
+            "_m1.exports[\"h\"]=_m1.exports[\"i\"]=1;",
         );
         let (_out, stats) = normalize_pure_export_rhs_unvalidated(code);
-        assert_eq!(stats.normalized, 1, "only f is a pure shape: {stats:?}");
         assert_eq!(
-            stats.skipped_impure, 2,
-            "g (call) and h (member chain) are impure: {stats:?}"
+            stats.normalized, 1,
+            "only f is a single-assignment shape: {stats:?}"
+        );
+        assert_eq!(
+            stats.skipped_shape, 2,
+            "g (top-level comma) and h (chained-assignment target) are excluded shapes: {stats:?}"
         );
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     #[test]
     fn normalize_leaves_identifier_rhs_untouched() {
@@ -8007,7 +8199,7 @@ mod rhs_normalization_tests {
 
     // ── convert_and_elide_flat_region: full-pipeline integration ───────
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalizes_then_elides_an_arrow_function_export() {
         let code = concat!(
@@ -8017,7 +8209,7 @@ mod rhs_normalization_tests {
         );
         let (out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
         assert_eq!(elision_stats.rhs_normalized, 1, "{elision_stats:?}");
-        assert_eq!(elision_stats.rhs_skipped_impure, 0, "{elision_stats:?}");
+        assert_eq!(elision_stats.rhs_skipped_shape, 0, "{elision_stats:?}");
         assert_eq!(elision_stats.elided_keys, 1, "{elision_stats:?}");
         assert!(
             !out.contains("_m1.exports"),
@@ -8029,9 +8221,9 @@ mod rhs_normalization_tests {
         );
         assert!(super::super::dce::js_parses_without_errors(&out));
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalized_then_still_kept_key_is_fine() {
         // A normalizable RHS on a namespace-escaped module still gets
@@ -8057,6 +8249,10 @@ mod rhs_normalization_tests {
         let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
         assert_eq!(elision_stats.rhs_normalized, 2, "{elision_stats:?}");
         assert_eq!(
+            elision_stats.rhs_skipped_shape, 0,
+            "both f and g are single-assignment shapes: {elision_stats:?}"
+        );
+        assert_eq!(
             elision_stats.elided_keys, 1,
             "only module 3's g elides: {elision_stats:?}"
         );
@@ -8065,7 +8261,7 @@ mod rhs_normalization_tests {
             "module 1's f is namespace-escaped: {elision_stats:?}"
         );
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     #[test]
     fn jet_no_rhs_normalize_hatch_disables_normalization_only() {
@@ -8185,22 +8381,26 @@ mod rhs_normalization_tests {
         );
     }
 
-    // ── Counters: ExportElisionStats::rhs_normalized / rhs_skipped_impure ──
+    // ── Counters: ExportElisionStats::rhs_normalized / rhs_skipped_shape ──
 
     #[test]
     fn export_elision_stats_rhs_counters_default_to_zero() {
         let stats = ExportElisionStats::default();
         assert_eq!(stats.rhs_normalized, 0);
-        assert_eq!(stats.rhs_skipped_impure, 0);
+        assert_eq!(stats.rhs_skipped_shape, 0);
     }
 
     #[test]
     fn export_elision_stats_rhs_counters_are_independent_of_kept_and_elided_totals() {
-        // rhs_normalized/rhs_skipped_impure are not summands of `kept` or
+        // rhs_normalized/rhs_skipped_shape are not summands of `kept` or
         // `elided_keys` -- they report how many candidates were fed into
         // normalization, regardless of the outcome elision assigns them
         // afterward. This mixed fixture (one normalized+elided, one
-        // normalized+kept, one impure+kept) exercises all three states.
+        // normalized+kept, one shape-excluded+kept) exercises all three
+        // states. #2168: h's RHS was `createSvgIcon(x,y)` (a call
+        // expression) pre-#2168 -- now normalizable, so it no longer
+        // exercises the skipped bucket; swapped for a chained-assignment
+        // target, still excluded post-#2168 (WI #2168 Scope).
         let code = concat!(
             "var _m1={exports:{}};",
             "_m1.exports[\"f\"]=()=>{};",
@@ -8209,17 +8409,17 @@ mod rhs_normalization_tests {
             "_m3.exports[\"g\"]=()=>{};",
             "var _m9_g=_r(3)[\"g\"];",
             "var _m4={exports:{}};",
-            "_m4.exports[\"h\"]=createSvgIcon(x,y);",
+            "_m4.exports[\"h\"]=_m4.exports[\"z\"]=1;",
             "var _m9_h=_r(4)[\"h\"];",
         );
         let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
         assert_eq!(
             elision_stats.rhs_normalized, 2,
-            "f and g are pure shapes: {elision_stats:?}"
+            "f and g are single-assignment shapes: {elision_stats:?}"
         );
         assert_eq!(
-            elision_stats.rhs_skipped_impure, 1,
-            "h is a call expression: {elision_stats:?}"
+            elision_stats.rhs_skipped_shape, 1,
+            "h is a chained-assignment target: {elision_stats:?}"
         );
         assert_eq!(elision_stats.elided_keys, 1, "only g: {elision_stats:?}");
     }
