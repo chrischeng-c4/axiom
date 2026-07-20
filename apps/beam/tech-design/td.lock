@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T15:08:33.825043+00:00"
-digest = "sha256:14e1bce2295695c5eaf8a48f7e1292a7b2d87c3eccff871dc1260536f93fb7b2"
-source_digest = "sha256:14e1bce2295695c5eaf8a48f7e1292a7b2d87c3eccff871dc1260536f93fb7b2"
-ir_digest = "sha256:982e694bf042740463792d2ab4f8f0f44cf07afd8cea6df3001e946db3b5b92d"
+generated_at = "2026-07-20T15:08:56.951547+00:00"
+digest = "sha256:b35a6d2a48f64c6da3e1e8ea8bb0312e8f01a90922921e44df0929384ed4f4db"
+source_digest = "sha256:b35a6d2a48f64c6da3e1e8ea8bb0312e8f01a90922921e44df0929384ed4f4db"
+ir_digest = "sha256:d4f365b2a6f7efa3a727e55ef136ef1fa747673d7dc9617ee899ff6ade2143ff"
 
 [[files]]
 path = "README.md"
@@ -27,8 +27,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/wire-the-high-throughput-pipeline-into-production-query-serving.md"
-digest = "sha256:940a211dd92684bec6452bcc610bedc14a6bdf9cace0159437ff9442d9697986"
-ir_digest = "sha256:1d20c9996e98f15a5ebc34bfeb85ae13b36470c82ffd8661b88255463aa80b6b"
+digest = "sha256:07fef08476078d4387eb702d32959645a2fcc224f4997f4f0d67fe7e8c6f5a49"
+ir_digest = "sha256:f610e42d7bb715106b358d0dcc626d046510a9fb228d98549511c12415c15559"
 section_count = 3
 
 [[files]]
