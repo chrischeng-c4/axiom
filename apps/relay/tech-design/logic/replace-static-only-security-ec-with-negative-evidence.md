@@ -77,3 +77,42 @@ changes:
     impl_mode: hand-written
     description: Make guard-security attach meter evidence from auth, admission, peer-mTLS, and direct K8s tests rather than relay_core.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-security-negative-evidence-verification
+requirements:
+  runtime_security_journeys_pass:
+    id: R3
+    text: "Bearer 401/403, subject RBAC, streaming authz, write admission, trusted and untrusted peer TLS, restricted pod, Secret projection, and NetworkPolicy evidence execute together."
+    kind: integration
+    risk: high
+    verify: cargo test -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture
+  security_tool_dimensions_are_complete:
+    id: R1
+    text: "Relay security-hardening matches the Lumen SecurityTool baseline and supplies executable behavior, security, and stability cases."
+    kind: functional
+    risk: high
+    verify: aw ec check --project relay
+  untrusted_peer_is_rejected:
+    id: R2
+    text: "A client that trusts Relay's server CA but presents a certificate signed by an untrusted CA is rejected by the required-mTLS acceptor before any Raft request is handled."
+    kind: negative
+    risk: high
+    verify: cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture
+  vat_guard_attaches_dynamic_evidence:
+    id: R4
+    text: "The vat-isolated guard-security runner performs the static scan and attaches meter evidence from Relay's dynamic security suite, failing if those tests are missing or fail."
+    kind: integration
+    risk: high
+    verify: cd apps/relay && ../../target/debug/vat run guard-security
+---
+flowchart TD
+    r1[R1 security tool dimensions are complete] --> aw_ec_check_project_relay[aw ec check --project relay]
+    r2[R2 untrusted peer is rejected] --> cargo_test_p_relay_test_raft_peer_mtls_untrusted_relay_peer_certificate_is_rejected_exact_nocapture[cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture]
+    r3[R3 runtime security journeys pass] --> cargo_test_p_relay_test_auth_test_service_admission_test_raft_peer_mtls_test_direct_k8s_assets_nocapture[cargo test -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture]
+    r4[R4 vat guard attaches dynamic evidence] --> cd_apps_relay_target_debug_vat_run_guard_security[cd apps/relay && ../../target/debug/vat run guard-security]
+```
