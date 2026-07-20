@@ -137,3 +137,56 @@ changes:
     impl_mode: hand-written
     description: "Compile and meter the real Tape bearer-auth integration journey in the guard runner. generator gap: missing-generator:vat:ec-runner-reconciliation (#2159)."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-production-ec-independent-oracles-verification
+requirements:
+  external_competitor_baseline:
+    id: R4
+    text: "Feature parity consumes a versioned fixture with pinned official upstream provenance and compares Tape behavior against that oracle."
+    kind: regression
+    risk: high
+    verify: cargo test -p tape --test competitor_feature_parity -- --nocapture
+  generated_client_journey:
+    id: R3
+    text: "A non-zero integration test emits TypeScript, Python, and Rust clients and checks Tape's public route scope."
+    kind: functional
+    risk: high
+    verify: cargo test -p tape --test spec_generated_clients -- --nocapture
+  local_performance_oracle:
+    id: R1
+    text: "The local gate independently applies the EC-owned 1,000-event workload and fixed 5,000/50,000/5,000-us limits."
+    kind: regression
+    risk: high
+    verify: cargo test -p tape --test tape_perf_gate -- --nocapture
+  real_peer_performance_oracles:
+    id: R2
+    text: "Release NATS and Kafka gates fail closed and independently require a peer/Tape p50 ratio of at least 1.5."
+    kind: functional
+    risk: high
+    verify: cargo test --release -p tape --test tape_vs_nats_jetstream --test tape_vs_kafka -- --nocapture
+  security_runner_alignment:
+    id: R5
+    text: "Guard and meter evidence executes the real Tape service_auth journey and access-control assertions do not overclaim unexecuted audit behavior."
+    kind: security
+    risk: high
+    verify: cd apps/tape && ../../target/debug/vat run guard-security
+  terminal_ec_verification:
+    id: R6
+    text: "All EC sources are represented, independently agent-reviewed, generated, and verified before TD completion."
+    kind: regression
+    risk: high
+    verify: aw ec gen --project tape --verify
+---
+flowchart TD
+    r1[R1 local performance oracle] --> cargo_test_p_tape_test_tape_perf_gate_nocapture[cargo test -p tape --test tape_perf_gate -- --nocapture]
+    r2[R2 real peer performance oracles] --> cargo_test_release_p_tape_test_tape_vs_nats_jetstream_test_tape_vs_kafka_nocapture[cargo test --release -p tape --test tape_vs_nats_jetstream --test tape_vs_kafka -- --nocapture]
+    r3[R3 generated client journey] --> cargo_test_p_tape_test_spec_generated_clients_nocapture[cargo test -p tape --test spec_generated_clients -- --nocapture]
+    r4[R4 external competitor baseline] --> cargo_test_p_tape_test_competitor_feature_parity_nocapture[cargo test -p tape --test competitor_feature_parity -- --nocapture]
+    r5[R5 security runner alignment] --> cd_apps_tape_target_debug_vat_run_guard_security[cd apps/tape && ../../target/debug/vat run guard-security]
+    r6[R6 terminal ec verification] --> aw_ec_gen_project_tape_verify[aw ec gen --project tape --verify]
+```
