@@ -8,7 +8,7 @@
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in build.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2147" reason="logic section in build.rs is hand-written pending codegen support">
 fn main() {
     // Re-run when HEAD moves so the stamped sha stays current. The workspace
     // `.git` lives 2 levels up from apps/beam/; in a linked worktree `.git`
