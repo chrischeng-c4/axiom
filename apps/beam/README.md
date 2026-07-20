@@ -221,6 +221,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | vector-query-recall-latency-contract | epic | #769 | planned | planned | none | pending vector query and GPU query gates |
+| beam-ddd-search-correctness | change | #2145 | planned | planned | none | pending ddd search correctness |
 
 ### HTTP/2 API List
 
