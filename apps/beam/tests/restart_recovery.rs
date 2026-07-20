@@ -35,7 +35,7 @@ async fn test_restart_recovery_and_reject_corrupt() {
         registry.clone(),
         gpu.clone(),
         Some(data_dir.clone()),
-        Arc::new(beam::service::StaticRoleMapVerifier::open()),
+        Arc::new(service_auth::StaticRoleMapVerifier::open()),
     );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -107,7 +107,7 @@ async fn test_restart_recovery_and_reject_corrupt() {
         registry2.clone(),
         gpu.clone(),
         Some(data_dir.clone()),
-        Arc::new(beam::service::StaticRoleMapVerifier::open()),
+        Arc::new(service_auth::StaticRoleMapVerifier::open()),
     );
 
     let (shutdown_tx2, shutdown_rx2) = tokio::sync::oneshot::channel::<()>();
