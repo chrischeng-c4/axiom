@@ -70,7 +70,6 @@ changes:
     impl_mode: hand-written
     anchor: service_end_to_end
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
