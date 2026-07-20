@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T15:34:19.485752+00:00"
-digest = "sha256:834a6da616ffb914307fd8a72e968a094305fe5ceddd5b917962605283aa9d98"
-source_digest = "sha256:834a6da616ffb914307fd8a72e968a094305fe5ceddd5b917962605283aa9d98"
-ir_digest = "sha256:819dcbb4d87b5e9f1a52c04137c0671b60dd8f3b47524afdae4c40cebc597f64"
+generated_at = "2026-07-20T16:01:34.133972+00:00"
+digest = "sha256:2df9f063f5dd7bd5f86bf7aa74d92adda399d6bddbf1578eab45404a52d203eb"
+source_digest = "sha256:2df9f063f5dd7bd5f86bf7aa74d92adda399d6bddbf1578eab45404a52d203eb"
+ir_digest = "sha256:fa6022c6a0403924965470f14516f9c54d34c3f4507b4556377d1e4f3afc1e95"
 
 [[files]]
 path = "README.md"
@@ -53,6 +53,12 @@ section_count = 3
 path = "logic/implement-real-metric-aware-wgpu-distance-adapter.md"
 digest = "sha256:f9bb723245f36f00fe8e3af016253a03c8a2dba9e8e61ec1a7fbbd898e10c294"
 ir_digest = "sha256:2f61b8ee1fc894ff8108bd1eccd9947d3757072984df911df59557fb7d46659a"
+section_count = 3
+
+[[files]]
+path = "logic/make-competitor-performance-ec-runners-executable-and-re-review.md"
+digest = "sha256:67f00e0f5c0c52949fbcb215fea6bbabbb00ed24af01de062502f4a4f7a399d9"
+ir_digest = "sha256:0cfcdc8bcbd0aa7d41f6cc1f943566268382e956a7825bbc42e022b1f6fd4b0b"
 section_count = 3
 
 [[files]]
