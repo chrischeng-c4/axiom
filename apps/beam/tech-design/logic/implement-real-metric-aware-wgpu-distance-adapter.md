@@ -51,7 +51,6 @@ changes:
     section: adapter-tests
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
