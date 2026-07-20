@@ -58,12 +58,22 @@ dump_diagnostics() {
 
 cleanup() {
   local ec=$?
+  local clusters
   trap - EXIT INT TERM
   if [[ "$ec" -ne 0 ]]; then
     dump_diagnostics
   fi
   if [[ "$CLUSTER_CREATED" == "1" && "${DEFER_KEEP_CLUSTER:-0}" != "1" ]]; then
-    kind delete cluster --name "$CLUSTER_NAME" >/dev/null 2>&1 || true
+    if ! kind delete cluster --name "$CLUSTER_NAME"; then
+      echo "!! failed to delete Kind cluster $CLUSTER_NAME" >&2
+      (( ec != 0 )) || ec=1
+    elif ! clusters="$(kind get clusters)"; then
+      echo "!! could not verify deletion of Kind cluster $CLUSTER_NAME" >&2
+      (( ec != 0 )) || ec=1
+    elif grep -Fxq "$CLUSTER_NAME" <<<"$clusters"; then
+      echo "!! Kind cluster $CLUSTER_NAME still exists after deletion" >&2
+      (( ec != 0 )) || ec=1
+    fi
   elif [[ "$CLUSTER_CREATED" == "1" ]]; then
     echo ">> preserving Kind cluster $CLUSTER_NAME (DEFER_KEEP_CLUSTER=1)"
   fi
@@ -204,7 +214,14 @@ spec:
 EOF
   wait_for_statefulset
   kubectl -n "$NAMESPACE" rollout status statefulset/"$DEFER_NAME" --timeout=240s
-  kubectl -n "$NAMESPACE" get pvc data-"${DEFER_NAME}"-0 >/dev/null
+  kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Bound \
+    pvc/data-"${DEFER_NAME}"-0 --timeout=120s
+  kubectl -n "$NAMESPACE" get pvc data-"${DEFER_NAME}"-0 -o json |
+    jq -e '
+      .status.phase == "Bound"
+      and .spec.resources.requests.storage == "1Gi"
+      and .status.capacity.storage == "1Gi"
+    ' >/dev/null
 }
 
 expose_api() {

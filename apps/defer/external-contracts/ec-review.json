@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "defer",
-  "source_digest": "sha256:1751e39aee1710e9400f5b58c8f5d6dd25089ac42c4fe0d8253678409f30395f",
+  "source_digest": "sha256:fe3a83cd9312ed2021f4022aec1ce66555fb9d96be201ca7691b87dab39f96e0",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2213-revision-2",
-  "reviewed_at": "2026-07-20T20:42:33.499327+00:00",
-  "summary": "Accepted after independent re-review. The revised behavior oracle observes exact task/queue/issue subgrammars, traps HTTP(S)/ALL proxy connections for offline llm, requires the exact five TypeScript artifacts and Defer task client methods, and checks every render exit status before content. Separate release-mode efficiency and stability cases close the RuntimeTool dimension ceiling with non-zero work, exact generated artifacts, hard latency/time/FD thresholds, deterministic output, and temporary-state cleanup. Independent execution passed behavior 5/5, efficiency 20 operations at 4.923ms median and 6.112ms p99 with zero errors, and stability 256 CLI operations plus 16 codegen rounds in 1379ms with FD 4 -> 4 and zero errors.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2214-final",
+  "reviewed_at": "2026-07-20T21:32:36.863895+00:00",
+  "summary": "Accepted after final independent review. The EC covers the delayed-task stability claim through concrete behavior, efficiency, live-soak, and operator/PVC recovery cases. The executable oracles require non-zero work, exact numeric thresholds, durable state transitions, repeated Raft failover, an exact Bound 1Gi PVC request and reported capacity, post-replacement mutations, and fail-closed Kind cleanup with cluster absence verification. Empty, skipped, partial, or degenerate implementations cannot satisfy the combined gates.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/defer/external-contracts/behavior/2213.md"
+  "target_path": "apps/defer/external-contracts/behavior/2214.md"
 }
