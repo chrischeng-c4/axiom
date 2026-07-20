@@ -56,3 +56,25 @@ flowchart TD
     L --> M["FIX: add unsafe { super::rc::release_if_ptr(key); }\nimmediately after each dict_ops::mb_dict_setitem(dict, key, ...)\ncall in BOTH of build_globals_dict's loops (closure.rs:2238,\n2247) -- safe because to_dict_key's Str arm already copied\nevery byte it needs; nothing depends on the original pointer\nsurviving past the setitem call"]
     M --> N["Repeated build_globals_dict() calls (globals() in a loop)\nplateau in RSS/leak-count instead of growing; dict/module\nlib filters stay green and the conformance tail stays\nat-or-below baseline (#1979 AC1/AC2)"]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/closure.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: build_globals_dict
+  - path: projects/mamba/src/runtime/dict_ops.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: to_dict_key
+  - path: projects/mamba/tests/external_contracts/mamba_core_semantics_ec.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: to_thread_gather_stability
+```
