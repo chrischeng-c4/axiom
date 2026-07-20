@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:9232a7aa" tracker="pending-tracker" reason="Activate the optional renderer in the deterministic fixture without invoking AW."
+// TODO: hand-write content for `apps/workbench/tests/fixtures/aw-context/aw.toml`.
+// HANDWRITE-END
