@@ -222,6 +222,7 @@ echo "   tasks_window: ${TASK_A} -> ${TASK_B}"
 echo "   p99_window:   ${P99_A}ms -> ${P99_B}ms"
 echo "   retry_window: ${RETRY_START} -> ${RETRY_A} -> ${RETRY_B}"
 
+(( TOTAL_OPS > 0 )) || { echo "!! Defer soak observed zero measured operations" >&2; exit 1; }
 (( ERR_COUNT == 0 )) || { echo "!! Defer soak errors observed" >&2; exit 1; }
 (( RETRY_A > RETRY_START && RETRY_B > RETRY_A )) || {
   echo "!! Defer retry scheduler made no progress in one or both steady windows (${RETRY_START} -> ${RETRY_A} -> ${RETRY_B})" >&2
