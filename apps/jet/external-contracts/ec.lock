@@ -3,130 +3,276 @@ project = "jet"
 ir_kind = "ec"
 ec_path = "apps/jet/external-contracts"
 inventory_path = "apps/jet/aw.toml"
-generated_at = "2026-07-02T02:46:03.293645+00:00"
-ir_digest = "sha256:3ba0842d18487da26f55bff2c99d9b64507bd36cb6828531f30ea38fbd6518a2"
-source_digest = "sha256:d8da5fd87cd26b79f214fcafeb393f46d0adc266a0d46d84064b5e6d9c34cb4e"
+generated_at = "2026-07-20T09:39:46.797787+00:00"
+ir_digest = "sha256:912a4ee9051bd4b5de0363ed12cabaa5c3127960bfcd9c2254b67937de0497b8"
+source_digest = "sha256:b1634de9e0730ed12a2384e6e84628d66596e483e9ec6b8fe4ae757b5f480e37"
 tool_contracts = []
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md"
-digest = "sha256:22c2a514a609d8bc148a64e03ca60b23e52f77ae34e08f6125f0323479846503"
+path = "apps/jet/external-contracts/behavior/1784.md"
+digest = "sha256:d0208d5468c0942b21aa34474abf49bdff56485e15116bd374321fa78abe7d8a"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-browser-observation-bundle.md"
-digest = "sha256:c572867c42c6a79dbbbf6cc63f91b511910d14ab7d691bf7b0056de1b48fcc02"
+path = "apps/jet/external-contracts/behavior/1839.md"
+digest = "sha256:850fcccac3f21365df6ba0205237413adb17b9fb7bf7e7a9f82d9428fdad9840"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
-digest = "sha256:fcabccc303d1be801ef1642adf040d4c65e92de6bf5bb8e02a5bb8e495bf44a9"
+path = "apps/jet/external-contracts/behavior/1840.md"
+digest = "sha256:3d72e0fc939a7033ce354680c86beec43c02fb98385915470bd4c758b9ff730f"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md"
-digest = "sha256:406e5b5920f146aaf609c7997f311435eee6a07ecedcef38002fe44579992fdc"
+path = "apps/jet/external-contracts/behavior/antd-visual-table-dom-wasm-parity.md"
+digest = "sha256:c16d0d86353417ccfc46b71f75e9e5346fcdae047c141c43abf3f814d345422c"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md"
-digest = "sha256:7ac09c8171ef15fdc09e28edea5f8c8801905035b8353c81e119c36783e47d0f"
+path = "apps/jet/external-contracts/behavior/asset-sourcemap-negative-paths.md"
+digest = "sha256:3e7e4eade75febadedce2fa3c839fa1006414b673873966d7868cfa0fce5c518"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md"
-digest = "sha256:4b2acfd0a47449d9bd006b6a08ba15e9b823f32e9d9b7ebadc4fa177cfe967be"
+path = "apps/jet/external-contracts/behavior/browser-trace-parity-readiness.md"
+digest = "sha256:52bdfd0b1cd3ae691c643cab5e993171a4b36afd70f37a0ebe3572d3bd8794ea"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md"
-digest = "sha256:77f62f13d7efe8cc4310586f316cf57660ce0dd4ac5caada9aaeb54f93fc95de"
+path = "apps/jet/external-contracts/behavior/built-in-ts-test-runtime.md"
+digest = "sha256:c69262b91cfc61c79bea1c9cfb72a036c2c99db3409907bc94e066f29f94608d"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md"
-digest = "sha256:f15de30e0468feca8c7778d97c7f99206ecb120bc31ffb4c19a71a3d95199d6d"
+path = "apps/jet/external-contracts/behavior/component-workbench-readiness.md"
+digest = "sha256:08eef59dce787dbbd084f934e92d688779dd4bfc998fd4663506c4164e51bb74"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md"
-digest = "sha256:f0abbda105f61e86c4244529c493f1996a9c9e8256cc2ffa4d69b8831e467788"
+path = "apps/jet/external-contracts/behavior/counter-dom-wasm-parity-after-click.md"
+digest = "sha256:dfda3967ae2c3321d49aab4417fbf2d672ba467e814c59b02f6175c47b03be1f"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md"
-digest = "sha256:e8b4769b0bc49551fd9eb6924010f53484ec357ba075f21e8bb27b00fa598f68"
+path = "apps/jet/external-contracts/behavior/csf-story-discovery.md"
+digest = "sha256:77260bc2cd3d0820fb729f19cbf04106d82e2297ad49fc6c5d8e3e54075cbdc1"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/remove-optional-esbuild-from-phase-3-production-build-gate.md"
-digest = "sha256:144f0b4e787c8a1d0f5d3a24b6003ef999d153a0b6dec41330de5e226ed74cc8"
+path = "apps/jet/external-contracts/behavior/csf2-template-bind-re-exports.md"
+digest = "sha256:f1da6b5d1455ae566bdb8c1821e7bf7d24a2c5e91f103dce9bedbe14b467d651"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/logic/scss-sass-compilation-in-the-build-lib-css-pipeline.md"
-digest = "sha256:b05546741bd511ba100418aa031968996893b27f6095df4a6f00c36843110d0e"
+path = "apps/jet/external-contracts/behavior/dev-server-cli-contract.md"
+digest = "sha256:93e4e1043446c4607a7a776e78b639b01c4eeb61696d551af7cf1fe5b8f45f6b"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3778.md"
-digest = "sha256:232bae6b32bbd4c912dd1e7ab66f8f8f5fedd1c8e59f91dad32da42ad2bba295"
+path = "apps/jet/external-contracts/behavior/dev-server-local-serving-hmr.md"
+digest = "sha256:5121f88f48be44a1af34a3bec4433be844507e09434894b5d5dbf851554935ce"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3779.md"
-digest = "sha256:2b426c956653053bed0a5c4510fe8c6194e11b0192c415b2af178073f0c959d8"
+path = "apps/jet/external-contracts/behavior/dev-server-proxy-contract.md"
+digest = "sha256:24ee6161b3702c21035a2731afcd880502bba4c698f1fcaa48e0ab1ef4b96500"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3780.md"
-digest = "sha256:498d78e60f0f00e2ceb8e8a35354ef8a866e677e3cd5aecd061a82b49ca65e3a"
+path = "apps/jet/external-contracts/behavior/dev-server-replacement-readiness.md"
+digest = "sha256:46c7ae41b3d16ddbae6db3b5e01ee264440be95d988c41c75069df9e442cbf7c"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3781.md"
-digest = "sha256:b551a653c1b1b94a7a6c8d51b9c971df09c160f83e13679e0e60e6930112c1c0"
+path = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-parity.md"
+digest = "sha256:0b09ffc2a5cdc163e71e92799e26d626ac2b9235bd811c7f27e8626478873427"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3782.md"
-digest = "sha256:44d3a0da651a53ddd206bbbd38c4a3de84709783fa00762ff5653561b5da33fe"
+path = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-regression.md"
+digest = "sha256:0375ceec44ad07095e6bd88fc7f87ca4ec798ff0257c92313d0679965d347abc"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3784.md"
-digest = "sha256:0e45006eb7e4b186201c7eba71adcc21b390b206b293856dd773b7ff1fe3fc85"
+path = "apps/jet/external-contracts/behavior/dom-renderer-controlled-textarea-parity.md"
+digest = "sha256:38b61f6c487e8305dd156b6a2ce07b8e5b99485da27670d6db935f42edc87e84"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3785.md"
-digest = "sha256:6b2a6adf1b706a422d374ee824e47ddee849e2f482aa337ebd0c23198e498597"
+path = "apps/jet/external-contracts/behavior/full-jet-health-after-unit-repair.md"
+digest = "sha256:0fb0bc05fdd3bfbf51f84c106c0fd7fe249782f32541d5325e3ee9aa0477f182"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3786.md"
-digest = "sha256:5fe21aa94d70119fdc8f9dab82b8823aaccbbadd3b51ca2c5f609901bcf212a0"
+path = "apps/jet/external-contracts/behavior/full-toolchain-dogfood-flow.md"
+digest = "sha256:a0ab3ca3592deb42be06204e3caa9761ba95613e4e9237950209ade4017013b4"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3941.md"
-digest = "sha256:d6a8ea38370987717edb5e4bbebb083c6016af1f00da1a642d7a0ff88709a5ef"
+path = "apps/jet/external-contracts/behavior/generic-cross-file-prop-controls.md"
+digest = "sha256:1e90c181c25b6cc3c9dbcf15f82988190b230c1e9cb4b6439ab5387912d305a6"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3943.md"
-digest = "sha256:677718da2a5a322ebfac30cba5becccacb09547e4d2bc9f93cd0e6beb95221ff"
+path = "apps/jet/external-contracts/behavior/hook-state-preserving-refresh.md"
+digest = "sha256:de72c1ee2f2a55e3113c465e9394d2596c7b0d7b8b67af3efc4f3b063e0f2630"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3944.md"
-digest = "sha256:5afccf4df1b663c994c03c85b3d7b7302da3d33caf286ba3f24cbce9b6083123"
+path = "apps/jet/external-contracts/behavior/library-dom-wasm-parity.md"
+digest = "sha256:17f3a4e252024c44615d202fcbb59a29c4449f0828ecba00b9d7475b5e6e8a7b"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3945.md"
-digest = "sha256:b78c06cff8ee1d6a65e533761db8cfc1d2ec0d4c38505b87b24c9106e1678f1d"
+path = "apps/jet/external-contracts/behavior/library-wasm-lowering-fixtures.md"
+digest = "sha256:cb75f14c5a8e8661d3a6ba29df7d51c8c4cadebc905551b6a6b30f3a248c947a"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3958.md"
-digest = "sha256:625e0ad0fa99134ba2625bbf15ca5e519657354739c157f3c5659d0d42fa1550"
+path = "apps/jet/external-contracts/behavior/live-wasm-capture-after-click.md"
+digest = "sha256:33f9d979a699fef22b18e7c55662d69c9b005474e1b2002a03fbbf6e181a1379"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/3972.md"
-digest = "sha256:58898c239da8ff83e09a3dca74ccaf83c17862766621e9c274c55d2ad6dca2b7"
+path = "apps/jet/external-contracts/behavior/mui-visual-table-dom-wasm-parity.md"
+digest = "sha256:0984708bfaa5db2ca30c1c5e40065316c1e5a6c2dceac2fbaee44e7047bb2952"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/4004.md"
-digest = "sha256:5c35a083cc77506c17423ac97869a7628d06c74bc97f89c1b8a4dc0f3da4f0b0"
+path = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-canvas-paint-parity.md"
+digest = "sha256:73eea8bbf4dc6944ba354eaeddaeaaa256add785b5c787eb617e88f1ad56548a"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/4015.md"
-digest = "sha256:456f9f6d8a1eac90cc14858a39946005afc41ccd74c4acbcf895653f07b8c990"
+path = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-layout-parity.md"
+digest = "sha256:de18861aca2978958b01d7a1289e4468f3136c160cb206f5d9cffb8bb2cfd17f"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/specs/4072.md"
-digest = "sha256:b67d6a9ca68de8479897532b78809d647208df1bd8aa2c88a9c1bbd8f62f022b"
+path = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-parity.md"
+digest = "sha256:862a93db5df6ef000069c3f90b6ada0ef265230347800130c82292e52b89ed44"
 
 [[sources]]
-path = ".aw/tech-design/projects/jet/validate/complete-package-management-replacement-gate-before-build.md"
-digest = "sha256:a5d3011162a7669612b9b1e468c3b8e0291d0a3d0298e2dbb5436ad550a66f7d"
+path = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-screenshot-pixel-parity.md"
+digest = "sha256:9572cd76e056c07afc93e9ca804074cd2365c54afd79514e685b038b78785390"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/native-test-runner-core.md"
+digest = "sha256:d5dce87a177303cf3765b3cbcab44ebe8ca98b959c4ed9129c42644cd8b5edbd"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/nx-graph-parity.md"
+digest = "sha256:9ac1410895025e5dbe0d99085d04c6ddb5000576cd43aadaab19dc7921006b30"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/package-manager-lockfile-parity.md"
+digest = "sha256:aa3f7b230ecfe73037ab68a215580f70c3949bb88ae4c75cb884db5f10916c29"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/package-manager-registry-integrity.md"
+digest = "sha256:7c7a149eb4ed04d4c84d206d13c8a6fef1f3167b0092339a20e8c104260ca6f5"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/package-manager-workspace-parity.md"
+digest = "sha256:ddd136760dc527403c9cfd6db0c759399b3e0e67180090d63cd49f2e5c6ddf84"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/package-phase-gate.md"
+digest = "sha256:15434ea36f7ede070f03d1d508043fd1f8a1464681e43f50b61a379e3cae5fee"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/phase-3-build-gate.md"
+digest = "sha256:f961109c62ccb2f19f1dd55270f915e9c70eb1bdf43dcaab70698f58b388a488"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/prebundle-importmap-parity.md"
+digest = "sha256:d495606334d19c011ac7aec9da3c6898ae32c9e3a4837e634fef464148ef772d"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/product-flow-e2e-readiness.md"
+digest = "sha256:b4598d3b4f9571b625f724cbb6173e2826b8e86e872aa5bd042d3ccd390959a4"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/product-flow-e2e-review.md"
+digest = "sha256:e940ab60069e660bdac6b24eced9421dffddbdc7739c0c64c07dda06978530ae"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/production-bundle-output-parity.md"
+digest = "sha256:321ee459be7342571f81d2994ad55b083ece3c6b413e2aa3caf5bcec0c0ede4c"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/production-replacement-readiness.md"
+digest = "sha256:25c504963961af3d40be1be714e7681af336dbd55a0c7aff76d7d18ef67a3607"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/react-refresh-state-preserved.md"
+digest = "sha256:24d9ae7ce7fb214f5f26b57db0857a45255f79545ed45ccc4947cf4caf6bc73d"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/reporter-artifacts.md"
+digest = "sha256:daa827fa363c06815302707cbc70d0c87af98bb7165dde49a2312bd60d0860e2"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/scss-sass-compilation.md"
+digest = "sha256:4e821b507118c5102052caee35142c6a55e1efde7c6020ac56cb779ffb52a186"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stack-aware-openapi-codegen.md"
+digest = "sha256:7d0da05dfb1ab494448c745bdee861490a75cead08cc3ad9ae3d1cdb776a868d"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stories-bare-import-resolution.md"
+digest = "sha256:4efbf4759c016ee4666ebb012bbd2c0442990651d2c58fa7aba2d13896e43c23"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stories-controls-panel.md"
+digest = "sha256:d0d12b6f896c6ceaaba7a9f40132f0e8a02b4fa1f25880ef23c7ea9b1a8dcdc8"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stories-dev-manager.md"
+digest = "sha256:5f8a78a497347dda0fdb3aae9ef3126ac86bb5290e3870119ba930be9474261b"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stories-preview-hmr.md"
+digest = "sha256:b82106fefee86a3202a3e676aeff1d34544e76b964d81e1e950f1570fd12cd90"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/stories-static-export.md"
+digest = "sha256:ff4e6a18d854a8ba54402b74beb6f834b7e54c7a0d1bab5fb505016e86435f4c"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/task-runner-graph-cache.md"
+digest = "sha256:9ff879317fb9a42bff04e89334ced042d824c54a9ed2ef856cf78de73069285d"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/trace-evidence-artifacts.md"
+digest = "sha256:ca5ac5f558ef1146e9dd22a282647fe35b0aba40866aa17a719e4d2575ef1d1e"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/trace-replay-evidence.md"
+digest = "sha256:445aa86595f1e581847fd71a0486537973ec559d9ec8450ce44b9d3767908170"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/transform-resolver-parity.md"
+digest = "sha256:7ae38525ad24ac4243650e2e207a8c42a669d2827e0d9fb01092c79751a687c6"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/webgpu-large-table-smoke.md"
+digest = "sha256:29eb0b9d205b714db65e49af48ac20ea1e2a785c5cc7983bf4923442dc86efbe"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/webgpu-wasm-build-default.md"
+digest = "sha256:b08b13cbf3624e82e5272889bb13dce52f23c54a20d98b09d5adea3d19aa0b78"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/workspace-package-selection.md"
+digest = "sha256:06cc43627e8b5d4c600bfcf3a7ffa86205f567d4de53770bc52ab976ad57ceb6"
+
+[[sources]]
+path = "apps/jet/external-contracts/behavior/workspace-task-runner-readiness.md"
+digest = "sha256:eaf4b984c04c588da3795df65da9e648c081f91e896eca2e463ca929b2cbeb93"
+
+[[cases]]
+id = "1839"
+capability_id = "bundler-production-build"
+claim_id = "1839"
+contract_id = "1839"
+dimension = "behavior"
+source_ref = "apps/jet/external-contracts/behavior/1839.md#1839"
+test_path = "apps/jet/tests/behavior_ec_1839.rs"
+command = "cargo test -p jet --test behavior_ec_1839 -- --ignored"
+required_for_production = true
+assertions = ["A CommonJS artifact produced from export * from '<module>' exposes every named source export through module.exports while excluding default."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:26b80dca5a58d5c420a3239ffcc6519dc8bd2343ec3544e75168c110a56231ea"
+
+[[cases]]
+id = "1840"
+capability_id = "bundler-production-build"
+claim_id = "1840"
+contract_id = "1840"
+dimension = "behavior"
+source_ref = "apps/jet/external-contracts/behavior/1840.md#1840"
+test_path = "apps/jet/tests/behavior_ec_1840.rs"
+command = "cargo test -p jet --test behavior_ec_1840 -- --ignored"
+required_for_production = true
+assertions = ["A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:65ef0bb846b546aff817c19f657822a0a6cf9ec0223e90e48e82a5a886a8922b"
 
 [[cases]]
 id = "antd-visual-table-dom-wasm-parity"
@@ -134,14 +280,14 @@ capability_id = "browser-trace-parity"
 claim_id = "antd-visual-table-dom-wasm-parity"
 contract_id = "antd-visual-table-dom-wasm-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#antd-visual-table-dom-wasm-parity"
+source_ref = "apps/jet/external-contracts/behavior/antd-visual-table-dom-wasm-parity.md#antd-visual-table-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_antd_visual_table_dom_wasm_parity.rs"
 command = "cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Ant Design visual-table rendering stays equivalent between React DOM and Jet WASM."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:074c972367e9bb7d63a683946228b54e2810b3ed07b5834a60d047e1eca84536"
+digest = "sha256:c6d8dcbcf8a4ff2d682a813a12b3fdaca059758a7fa6903de3de2e770f627909"
 
 [[cases]]
 id = "asset-sourcemap-negative-paths"
@@ -149,14 +295,14 @@ capability_id = "bundler-production-build"
 claim_id = "asset-sourcemap-negative-paths"
 contract_id = "asset-sourcemap-negative-paths"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3782.md#asset-sourcemap-negative-paths"
+source_ref = "apps/jet/external-contracts/behavior/asset-sourcemap-negative-paths.md#asset-sourcemap-negative-paths"
 test_path = "apps/jet/tests/behavior_asset_sourcemap_negative_paths.rs"
 command = "cargo test -p jet --lib asset -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Invalid asset source-map inputs report a safe failure without producing malformed output."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cfc3794002b08ef11a9f64c1c0f29c28e7436eb1e85e8f52faf8da2e1f7e3adb"
+digest = "sha256:80c34ef8645268594b9aab2e25ccb9db509a52019ca7312e06797d0d02b7f777"
 
 [[cases]]
 id = "browser-trace-parity-readiness"
@@ -164,14 +310,14 @@ capability_id = "browser-trace-parity"
 claim_id = "browser-trace-parity-readiness"
 contract_id = "browser-trace-parity-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#browser-trace-parity-readiness"
+source_ref = "apps/jet/external-contracts/behavior/browser-trace-parity-readiness.md#browser-trace-parity-readiness"
 test_path = "apps/jet/tests/behavior_browser_trace_parity_readiness.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase browser"
 required_for_production = true
-assertions = []
+assertions = ["The browser verification phase produces the required trace and parity evidence."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:23c003ade9394877400c8c1d13a4e7d5dfb2c1705ca9ba6f1fc95c70c3cb2f2e"
+digest = "sha256:2a1b6f6a16b71f513caf9cf8db61b57229365ff2b308bf0defe8f4a2510b428d"
 
 [[cases]]
 id = "built-in-ts-test-runtime"
@@ -179,14 +325,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "built-in-ts-test-runtime"
 contract_id = "built-in-ts-test-runtime"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3785.md#built-in-ts-test-runtime"
+source_ref = "apps/jet/external-contracts/behavior/built-in-ts-test-runtime.md#built-in-ts-test-runtime"
 test_path = "apps/jet/tests/behavior_built_in_ts_test_runtime.rs"
 command = "cargo test -p jet --lib test_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet built-in TypeScript test runtime executes supported TypeScript tests with expected results."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c6c48c1872fbe40b76456ae01e7fde3e183fa22da1ccd0e92844ff8bb4d2a1e5"
+digest = "sha256:c9d59c06dc2b94f4b0955ee5165afacbc6e12546b67e336c2526fe617380ac27"
 
 [[cases]]
 id = "component-workbench-readiness"
@@ -194,14 +340,14 @@ capability_id = "component-workbench"
 claim_id = "component-workbench-readiness"
 contract_id = "component-workbench-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#component-workbench-readiness"
+source_ref = "apps/jet/external-contracts/behavior/component-workbench-readiness.md#component-workbench-readiness"
 test_path = "apps/jet/tests/behavior_component_workbench_readiness.rs"
 command = "cargo test -p jet --test stories_build -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["The component workbench builds a usable static story surface with required manager and preview behavior."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6c6e5a21642e362f813b9d517e64ff89a551d1a4c49bccd416855996d58afcdf"
+digest = "sha256:c2c2d6f1230e898ae2f825dc7c5ccf31c34d3a5cba4f29385c38c4fb731ffcf6"
 
 [[cases]]
 id = "counter-dom-wasm-parity-after-click"
@@ -209,7 +355,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "counter-dom-wasm-parity-after-click"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3941.md#counter-dom-wasm-parity-after-click"
+source_ref = "apps/jet/external-contracts/behavior/counter-dom-wasm-parity-after-click.md#counter-dom-wasm-parity-after-click"
 test_path = "apps/jet/tests/behavior_counter_dom_wasm_parity_after_click.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance counter_demo_matches_react_dom_oracle_initial_and_after_click -- --nocapture"
 required_for_production = true
@@ -221,7 +367,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:52bdeca41fc7cf4af98ead7050d7bfdfc1b5fe8f548a1c7e4c97795d5631e715"
+digest = "sha256:ec6fb755c35fa8dc79f5ace29abad5a30c1bd6a99980dbcf51b30570af9cc8f5"
 
 [[cases]]
 id = "csf-story-discovery"
@@ -229,14 +375,14 @@ capability_id = "component-workbench"
 claim_id = "csf-story-discovery"
 contract_id = "csf-story-discovery"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md#csf-story-discovery"
+source_ref = "apps/jet/external-contracts/behavior/csf-story-discovery.md#csf-story-discovery"
 test_path = "apps/jet/tests/behavior_csf_story_discovery.rs"
 command = "cargo test -p jet --test csf_discovery -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["CSF story modules are discovered and parsed into a usable story index."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b3163ae5a33c6368b248a09b6f10d6383db993cda66f02c6e26107bf70a5216c"
+digest = "sha256:c3fb75238f9527dd6cde6e368bc60056f15d8d019872765837725b3e252baa85"
 
 [[cases]]
 id = "csf2-template-bind-re-exports"
@@ -244,14 +390,14 @@ capability_id = "component-workbench"
 claim_id = "csf2-template-bind-re-exports"
 contract_id = "csf2-template-bind-re-exports"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md#csf2-template-bind-re-exports"
+source_ref = "apps/jet/external-contracts/behavior/csf2-template-bind-re-exports.md#csf2-template-bind-re-exports"
 test_path = "apps/jet/tests/behavior_csf2_template_bind_re_exports.rs"
 command = "cargo test -p jet --test csf_discovery -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["CSF2 Template.bind stories and re-exported stories remain discoverable with their bound args."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1a34d4c54cd011b05b5f6c9a0b7b421790980fe57461f3e4309383bab84a9549"
+digest = "sha256:1e12093d861e3ea0014a30d5d42fa907a9994b5042f8333be8cbd32ebab68936"
 
 [[cases]]
 id = "dev-server-cli-contract"
@@ -259,14 +405,14 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-cli-contract"
 contract_id = "dev-server-cli-contract"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-cli-contract"
+source_ref = "apps/jet/external-contracts/behavior/dev-server-cli-contract.md#dev-server-cli-contract"
 test_path = "apps/jet/tests/behavior_dev_server_cli_contract.rs"
 command = "cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev-server command accepts the supported CLI contract and rejects invalid invocations."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cf8d072c8f7064976095d3f7e39b2d6b1fadd655ca5f2aec3fc2c3e20c7e0feb"
+digest = "sha256:7a7a0a80ef1d2b0d4ae5910c236993600a1e0a2e5d54d65edfe0358606ebf676"
 
 [[cases]]
 id = "dev-server-local-serving-hmr"
@@ -274,14 +420,14 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-local-serving-hmr"
 contract_id = "dev-server-local-serving-hmr"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-local-serving-hmr"
+source_ref = "apps/jet/external-contracts/behavior/dev-server-local-serving-hmr.md#dev-server-local-serving-hmr"
 test_path = "apps/jet/tests/behavior_dev_server_local_serving_hmr.rs"
 command = "cargo test -p jet --lib dev_server -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev server serves local modules and applies hot updates without requiring a full restart."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:081c8e87981a049f7d2a2e79a5af68ec8c1703e4d00558eca9d9618c99ca3f59"
+digest = "sha256:84d17b68f63bd65f7d1146271438e1492b871e10c106a75b30bf46e399492e49"
 
 [[cases]]
 id = "dev-server-proxy-contract"
@@ -289,14 +435,14 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-proxy-contract"
 contract_id = "dev-server-proxy-contract"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-proxy-contract"
+source_ref = "apps/jet/external-contracts/behavior/dev-server-proxy-contract.md#dev-server-proxy-contract"
 test_path = "apps/jet/tests/behavior_dev_server_proxy_contract.rs"
 command = "cargo test -p jet --lib dev_server::proxy -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Configured dev-server proxy routes requests to the upstream target with preserved contract behavior."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:466bc56f7ff4bb1ccc5532da54968e73d70e18b7bf2f0dea811b5acb14501b3e"
+digest = "sha256:4b45392ff1765e275d875650603568060b55e26beb4b12c8fb2bb470585a2e11"
 
 [[cases]]
 id = "dev-server-replacement-readiness"
@@ -304,14 +450,14 @@ capability_id = "dev-server-hmr"
 claim_id = "dev-server-replacement-readiness"
 contract_id = "dev-server-replacement-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#dev-server-replacement-readiness"
+source_ref = "apps/jet/external-contracts/behavior/dev-server-replacement-readiness.md#dev-server-replacement-readiness"
 test_path = "apps/jet/tests/behavior_dev_server_replacement_readiness.rs"
 command = "cargo test -p jet --lib dev_server -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet dev server satisfies the replacement readiness suite for local serving, HMR, and proxy behavior."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2ec4f886c6202553e402479726730d7cb7fe7efe8c43eb3d64c7b30a6b120053"
+digest = "sha256:e8675eba879b26158a51edf3cbe7cbd0560578f0ecef2c91f069dffb2911c254"
 
 [[cases]]
 id = "dom-renderer-controlled-input-parity"
@@ -319,7 +465,7 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-input-parity"
 contract_id = "dom-renderer-controlled-input-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/4004.md#dom-renderer-controlled-input-parity"
+source_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-parity.md#dom-renderer-controlled-input-parity"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_input_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_input_parity -- --nocapture"
 required_for_production = true
@@ -331,7 +477,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:54923bba3af3e04941d7336a6fa529ac4a6d4a3c83360f6fb7a4ebbb36a81589"
+digest = "sha256:db969795ee0e158ab668c79a44b0b3a5c8d1e3672b4b2148a0191b361de0a78a"
 
 [[cases]]
 id = "dom-renderer-controlled-input-regression"
@@ -339,14 +485,14 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-input-parity"
 contract_id = "dom-renderer-controlled-input-regression"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/4015.md#dom-renderer-controlled-input-regression"
+source_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-input-regression.md#dom-renderer-controlled-input-regression"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_input_regression.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_input_parity -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["The controlled-input parity regression remains covered by the React DOM oracle scenario."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2dd5b6eb1a44f73907c3d7d54f0ad435a8b81fe3c513a360f77399a5090bfeb5"
+digest = "sha256:9cbeab5d44197474ca1cd1c9994091fb95c86c3710d78fb5d9c95aeb79766421"
 
 [[cases]]
 id = "dom-renderer-controlled-textarea-parity"
@@ -354,14 +500,14 @@ capability_id = "browser-trace-parity"
 claim_id = "dom-renderer-controlled-textarea-parity"
 contract_id = "dom-renderer-controlled-textarea-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/4015.md#dom-renderer-controlled-textarea-parity"
+source_ref = "apps/jet/external-contracts/behavior/dom-renderer-controlled-textarea-parity.md#dom-renderer-controlled-textarea-parity"
 test_path = "apps/jet/tests/behavior_dom_renderer_controlled_textarea_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_textarea_parity -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Controlled textarea values remain equal between React DOM and Jet WASM after updates."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:064bd97dff3b6d6c025ac6c043abcb7451e6ebe77acd2940534b6cb3e4768c96"
+digest = "sha256:cdd6107fee88c33972e455b0f100362766d702829cdf182a22927d5d1c881213"
 
 [[cases]]
 id = "full-jet-health-after-unit-repair"
@@ -369,7 +515,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "full-jet-health-after-unit-repair"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3945.md#full-jet-health-after-unit-repair"
+source_ref = "apps/jet/external-contracts/behavior/full-jet-health-after-unit-repair.md#full-jet-health-after-unit-repair"
 test_path = "apps/jet/tests/behavior_full_jet_health_after_unit_repair.rs"
 command = "cargo test -p jet-wasm --test renderer_layout -- --nocapture"
 required_for_production = true
@@ -379,7 +525,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dde5e4fb5c9926fe9b7cf059b772ea45729936a33f1588dd88b5bd4b6952cb38"
+digest = "sha256:38822ee785e5d2ba4670fd6e114b0e208cc99c6191670dcb962e998e97949a4a"
 
 [[cases]]
 id = "full-toolchain-dogfood-flow"
@@ -387,14 +533,14 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "full-toolchain-dogfood-flow"
 contract_id = "full-toolchain-dogfood-flow"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3778.md#full-toolchain-dogfood-flow"
+source_ref = "apps/jet/external-contracts/behavior/full-toolchain-dogfood-flow.md#full-toolchain-dogfood-flow"
 test_path = "apps/jet/tests/behavior_full_toolchain_dogfood_flow.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --all"
 required_for_production = true
-assertions = []
+assertions = ["The end-to-end Jet toolchain dogfood flow passes all required package, build, browser, and production gates."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8036b6ed5e49ffc09b9e8597be358812a9682c5a2f648bbfdc8d653bf58d6108"
+digest = "sha256:c9ab27e931d6e46cf9cb7625660b2be076d0b8bce3abda702dde77c6dc1ae5fd"
 
 [[cases]]
 id = "generic-cross-file-prop-controls"
@@ -402,14 +548,14 @@ capability_id = "component-workbench"
 claim_id = "generic-cross-file-prop-controls"
 contract_id = "generic-cross-file-prop-controls"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md#generic-cross-file-prop-controls"
+source_ref = "apps/jet/external-contracts/behavior/generic-cross-file-prop-controls.md#generic-cross-file-prop-controls"
 test_path = "apps/jet/tests/behavior_generic_cross_file_prop_controls.rs"
 command = "cargo test -p jet --test controls -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories controls derive editable values for generic, cross-file, and intersection prop types."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7fcc35553df3ad288cbecf14b1eec9c2f3ddb622570313ff98d3746ddafc8ae8"
+digest = "sha256:bba31ac2b50f5a4334b1ea94fb98f3659a6990420560bbfbf7f50cbb0f890102"
 
 [[cases]]
 id = "hook-state-preserving-refresh"
@@ -417,14 +563,29 @@ capability_id = "component-workbench"
 claim_id = "hook-state-preserving-refresh"
 contract_id = "hook-state-preserving-refresh"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#hook-state-preserving-refresh"
+source_ref = "apps/jet/external-contracts/behavior/hook-state-preserving-refresh.md#hook-state-preserving-refresh"
 test_path = "apps/jet/tests/behavior_hook_state_preserving_refresh.rs"
 command = "cargo test -p jet --test preview_hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Preview HMR preserves React hook state across a compatible source edit."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3fa69c7760499573a86d382fdb017736468cbb67d88bcc674eb67de5a2cd3a25"
+digest = "sha256:1e13d7ec7f61cad4a36bfdaa6ceea9104ccc725e4e498b147a1ae3bdc4b8f43f"
+
+[[cases]]
+id = "jet-mangle-utf8-safety"
+capability_id = "library-build-publishing"
+claim_id = "1784"
+contract_id = "1784"
+dimension = "behavior"
+source_ref = "apps/jet/external-contracts/behavior/1784.md#jet-mangle-utf8-safety"
+test_path = "apps/jet/tests/behavior_jet_mangle_utf8_safety.rs"
+command = "cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored"
+required_for_production = true
+assertions = ["jet build --lib must not panic or corrupt output when collision renaming encounters UTF-8 text, comments, or template content."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:db98d3d0b6254f098e183e1e1e77e321e15173e824eaa873dfa8f1045e61bbc5"
 
 [[cases]]
 id = "library-dom-wasm-parity"
@@ -432,7 +593,7 @@ capability_id = "browser-trace-parity"
 claim_id = "library-dom-wasm-parity-fixtures"
 contract_id = "library-dom-wasm-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity"
+source_ref = "apps/jet/external-contracts/behavior/library-dom-wasm-parity.md#library-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_library_dom_wasm_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture"
 required_for_production = true
@@ -445,7 +606,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:89859f3f58b1cb9d395035f2711f54c085273087f936785ba38d2d27c559dd30"
+digest = "sha256:da12fe44e1f74b984673e3eaa33bddd37dee1fd04647c60f5e2d1f2bee6c5c57"
 
 [[cases]]
 id = "library-wasm-lowering-fixtures"
@@ -453,14 +614,14 @@ capability_id = "browser-trace-parity"
 claim_id = "library-wasm-lowering-fixtures"
 contract_id = "library-wasm-lowering-fixtures"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#library-wasm-lowering-fixtures"
+source_ref = "apps/jet/external-contracts/behavior/library-wasm-lowering-fixtures.md#library-wasm-lowering-fixtures"
 test_path = "apps/jet/tests/behavior_library_wasm_lowering_fixtures.rs"
 command = "cargo test -p jet --test tsx_to_rust_imports -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["TSX-to-Rust lowering preserves supported import forms in library fixtures."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d3cf9e901d6c65a6046270aaefc10dd6af66956c2cb3fe3bd8c9cf43f72fe347"
+digest = "sha256:ba393bf8464797a6d96b79a47a45661b54194854329a3d34f4593dc41f74b236"
 
 [[cases]]
 id = "live-wasm-capture-after-click"
@@ -468,7 +629,7 @@ capability_id = "browser-trace-parity"
 claim_id = "browser-automation-diagnostics"
 contract_id = "live-wasm-capture-after-click"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-browser-observation-bundle.md#live-wasm-capture-after-click"
+source_ref = "apps/jet/external-contracts/behavior/live-wasm-capture-after-click.md#live-wasm-capture-after-click"
 test_path = "apps/jet/tests/behavior_live_wasm_capture_after_click.rs"
 command = "cargo test -p jet --test browser_cli_smoke -- --nocapture"
 required_for_production = true
@@ -481,7 +642,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:91f31a8aa7b3f7b8a6892658e26a7be53859487baeb2bc9c1571f418ad939520"
+digest = "sha256:dc668c8fae1393b2f5f239e844bd7048c4f095e6f7ad56c6d3c847db77428f40"
 
 [[cases]]
 id = "mui-visual-table-dom-wasm-parity"
@@ -489,14 +650,14 @@ capability_id = "browser-trace-parity"
 claim_id = "mui-visual-table-dom-wasm-parity"
 contract_id = "mui-visual-table-dom-wasm-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#mui-visual-table-dom-wasm-parity"
+source_ref = "apps/jet/external-contracts/behavior/mui-visual-table-dom-wasm-parity.md#mui-visual-table-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_mui_visual_table_dom_wasm_parity.rs"
 command = "cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Material UI visual-table rendering stays equivalent between React DOM and Jet WASM."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0b6955fef7050c3c7358bc3d9c742c950968d7ffcf03049c75418dc923a4b906"
+digest = "sha256:8734495c9fc7973e5dd040eeb8d9808810653c8f71674be5b14ffa69256dc4e8"
 
 [[cases]]
 id = "multi-fixture-dom-wasm-canvas-paint-parity"
@@ -504,7 +665,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-canvas-paint-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3958.md#multi-fixture-dom-wasm-canvas-paint-parity"
+source_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-canvas-paint-parity.md#multi-fixture-dom-wasm-canvas-paint-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_canvas_paint_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_canvas_paint_parity -- --nocapture"
 required_for_production = true
@@ -515,7 +676,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f5955dee5deab1e6fa82915b8e7daf95e059c5c34edadd1f2e11ae4b9f2611a1"
+digest = "sha256:6eb79166844b31b15dd37ddb7d941f606a92c14c5ae6fe0c0a2a8ba336ce9a1e"
 
 [[cases]]
 id = "multi-fixture-dom-wasm-layout-parity"
@@ -523,7 +684,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-layout-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3944.md#multi-fixture-dom-wasm-layout-parity"
+source_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-layout-parity.md#multi-fixture-dom-wasm-layout-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_layout_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_layout_parity -- --nocapture"
 required_for_production = true
@@ -535,7 +696,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6b91f42851112800ca3c8351be0163e838541b11629412835346329b9d53c262"
+digest = "sha256:d0df14a275ccc28f1c5b73ee6f9906c2d174efaf05251bca4e0164139b6b0f9c"
 
 [[cases]]
 id = "multi-fixture-dom-wasm-parity"
@@ -543,7 +704,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3943.md#multi-fixture-dom-wasm-parity"
+source_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-parity.md#multi-fixture-dom-wasm-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_parity -- --nocapture"
 required_for_production = true
@@ -555,7 +716,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3f145f12c0eaded8dd6ec72e06b495644bf5c9efc753521ee4146eeea6cc1315"
+digest = "sha256:27120a17d63062282e838af23c2e42286c9de4c71e0a00bc11a49848787d37a9"
 
 [[cases]]
 id = "multi-fixture-dom-wasm-screenshot-pixel-parity"
@@ -563,7 +724,7 @@ capability_id = "browser-trace-parity"
 claim_id = "parity-corpus-gates"
 contract_id = "multi-fixture-dom-wasm-screenshot-pixel-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3972.md#multi-fixture-dom-wasm-screenshot-pixel-parity"
+source_ref = "apps/jet/external-contracts/behavior/multi-fixture-dom-wasm-screenshot-pixel-parity.md#multi-fixture-dom-wasm-screenshot-pixel-parity"
 test_path = "apps/jet/tests/behavior_multi_fixture_dom_wasm_screenshot_pixel_parity.rs"
 command = "cargo test -p jet --test react_dom_oracle_conformance multi_fixture_dom_wasm_screenshot_pixel_parity -- --nocapture"
 required_for_production = true
@@ -575,7 +736,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:34c8516ac570dae7a90f0c5052c6356a3552126eebd70f4ff852e6a11a1dc784"
+digest = "sha256:9696ccd6785273cf588034fac5f80a254644d16334d32640cce6409e9dd51e2e"
 
 [[cases]]
 id = "native-test-runner-core"
@@ -583,14 +744,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "native-test-runner-core"
 contract_id = "native-test-runner-core"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3785.md#native-test-runner-core"
+source_ref = "apps/jet/external-contracts/behavior/native-test-runner-core.md#native-test-runner-core"
 test_path = "apps/jet/tests/behavior_native_test_runner_core.rs"
 command = "cargo test -p jet --lib test_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet native test runner discovers, executes, and reports supported test cases."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3a33b5b85459d1a89a11c9e5a2e276508eeb12e7958076ddace9a90ac9225bc0"
+digest = "sha256:e880774bb1193e45b962c57b002b9ab3b6b693505db2ae6557c374f653cc6486"
 
 [[cases]]
 id = "nx-graph-parity"
@@ -598,14 +759,14 @@ capability_id = "workspace-task-runner"
 claim_id = "nx-graph-parity"
 contract_id = "nx-graph-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3781.md#nx-graph-parity"
+source_ref = "apps/jet/external-contracts/behavior/nx-graph-parity.md#nx-graph-parity"
 test_path = "apps/jet/tests/behavior_nx_graph_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::nx -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet builds an Nx workspace dependency graph consistent with the workspace configuration."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bdef04a8899d199d6845335198b675b432892be28a3c2a210da6fa9f8bd3b924"
+digest = "sha256:eb1392d007a2672977ce6ae11f8f553c6a45d030ed28646bdf216da8a09d2d04"
 
 [[cases]]
 id = "package-manager-lockfile-parity"
@@ -613,14 +774,14 @@ capability_id = "package-manager"
 claim_id = "package-manager-lockfile-parity"
 contract_id = "package-manager-lockfile-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-lockfile-parity"
+source_ref = "apps/jet/external-contracts/behavior/package-manager-lockfile-parity.md#package-manager-lockfile-parity"
 test_path = "apps/jet/tests/behavior_package_manager_lockfile_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::lockfile -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet lockfile parsing and hydration preserve package integrity and dependency resolution."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ad2285f8d6ce180243b313c5961144b58432ec4e5b427a799d71320f1f872043"
+digest = "sha256:e1b471513a12c3012ae2ccb929eaa93738ab17eb7529d762017dfd4f2970af06"
 
 [[cases]]
 id = "package-manager-registry-integrity"
@@ -628,14 +789,14 @@ capability_id = "package-manager"
 claim_id = "package-manager-registry-integrity"
 contract_id = "package-manager-registry-integrity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-registry-integrity"
+source_ref = "apps/jet/external-contracts/behavior/package-manager-registry-integrity.md#package-manager-registry-integrity"
 test_path = "apps/jet/tests/behavior_package_manager_registry_integrity.rs"
 command = "cargo test -p jet --lib pkg_manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet package registry resolution preserves package metadata and integrity guarantees."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2eb81de3d2c5235b1e81a5f7b02fc027bbeb9afa449eddb08d6f3e9428f5fdcc"
+digest = "sha256:eb0340a67f43cd6008832304254170255054aa7abcb68f0a56c65e743ec22a52"
 
 [[cases]]
 id = "package-manager-workspace-parity"
@@ -643,14 +804,14 @@ capability_id = "package-manager"
 claim_id = "package-manager-workspace-parity"
 contract_id = "package-manager-workspace-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3779.md#package-manager-workspace-parity"
+source_ref = "apps/jet/external-contracts/behavior/package-manager-workspace-parity.md#package-manager-workspace-parity"
 test_path = "apps/jet/tests/behavior_package_manager_workspace_parity.rs"
 command = "cargo test -p jet --lib pkg_manager::workspace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace package discovery and linking preserve declared workspace relationships."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bbf6c9e69dccab7764503af4c1ac84425d4331436f1aadc4a03da8a88dbd7a61"
+digest = "sha256:8c20b2967183a935c90ac391bf7f2d92997030a65cfecb031923aed2ca157af3"
 
 [[cases]]
 id = "package-phase-gate"
@@ -658,14 +819,14 @@ capability_id = "package-manager"
 claim_id = "package-manager-readiness"
 contract_id = "package-phase-gate"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/validate/complete-package-management-replacement-gate-before-build.md#package-phase-gate"
+source_ref = "apps/jet/external-contracts/behavior/package-phase-gate.md#package-phase-gate"
 test_path = "apps/jet/tests/behavior_package_phase_gate.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase package"
 required_for_production = true
-assertions = []
+assertions = ["The package-manager verification phase passes its complete required gate set."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:839fb77bf5d9d1460b9072479db9b5da1e6abaed80c71b4e2938a0b9130687d1"
+digest = "sha256:c8462aa89511eb2e425a0bebd791105272c98e184948e1abbd194d8aec378eab"
 
 [[cases]]
 id = "phase-3-build-gate"
@@ -673,14 +834,14 @@ capability_id = "bundler-production-build"
 claim_id = "bundler-production-readiness"
 contract_id = "phase-3-build-gate"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/remove-optional-esbuild-from-phase-3-production-build-gate.md#phase-3-build-gate"
+source_ref = "apps/jet/external-contracts/behavior/phase-3-build-gate.md#phase-3-build-gate"
 test_path = "apps/jet/tests/behavior_phase_3_build_gate.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --phase build"
 required_for_production = true
-assertions = []
+assertions = ["The production build verification phase passes its complete required gate set."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d7a2e8539b7149fe861b766c6e4d962ac1e954d5f6352edcc788601bdf87592b"
+digest = "sha256:4929f1959564b99af9a6df66cc99c7219849fec43388817d42795c0ffe23427f"
 
 [[cases]]
 id = "prebundle-importmap-parity"
@@ -688,14 +849,14 @@ capability_id = "dev-server-hmr"
 claim_id = "prebundle-importmap-parity"
 contract_id = "prebundle-importmap-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#prebundle-importmap-parity"
+source_ref = "apps/jet/external-contracts/behavior/prebundle-importmap-parity.md#prebundle-importmap-parity"
 test_path = "apps/jet/tests/behavior_prebundle_importmap_parity.rs"
 command = "cargo test -p jet --lib dev_server::prebundle -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Dev-server prebundling produces an import map that resolves configured dependencies."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4436a308d11ce94371a67ff79e654292c831d2243a30d8df11278371f0634daf"
+digest = "sha256:ac9e9a78d483d871b38df059a175ed6f327c4c1030c2f2fe13a492dd1dbf9516"
 
 [[cases]]
 id = "product-flow-e2e-readiness"
@@ -703,14 +864,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "product-flow-e2e-readiness"
 contract_id = "product-flow-e2e-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3784.md#product-flow-e2e-readiness"
+source_ref = "apps/jet/external-contracts/behavior/product-flow-e2e-readiness.md#product-flow-e2e-readiness"
 test_path = "apps/jet/tests/behavior_product_flow_e2e_readiness.rs"
 command = "cargo test -p jet --lib e2e -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet native product-flow end-to-end scenarios execute through the supported user journey."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6328267fe3f581b0b01ed92b0ae01ed84c7a7568455f88ae787e036083eecdb0"
+digest = "sha256:1a254e357c27d5d084e0b97844c25b8e56b366486d695cce8d54b4277beabc40"
 
 [[cases]]
 id = "product-flow-e2e-review"
@@ -718,14 +879,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "product-flow-e2e-review"
 contract_id = "product-flow-e2e-review"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3784.md#product-flow-e2e-review"
+source_ref = "apps/jet/external-contracts/behavior/product-flow-e2e-review.md#product-flow-e2e-review"
 test_path = "apps/jet/tests/behavior_product_flow_e2e_review.rs"
 command = "cargo test -p jet --lib e2e -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Product-flow evidence exposes the required reviewable end-to-end outcome."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c1efb92c313cb9e9ab5c1935b4cc0a044c9708c7e9c548b29557231f4b58b8f0"
+digest = "sha256:4d7fdb084aacf9ca5e2fac38571a3bcd60f9709b9c0319a2aeb1d5c407757b6f"
 
 [[cases]]
 id = "production-bundle-output-parity"
@@ -733,14 +894,14 @@ capability_id = "bundler-production-build"
 claim_id = "production-bundle-output-parity"
 contract_id = "production-bundle-output-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3782.md#production-bundle-output-parity"
+source_ref = "apps/jet/external-contracts/behavior/production-bundle-output-parity.md#production-bundle-output-parity"
 test_path = "apps/jet/tests/behavior_production_bundle_output_parity.rs"
 command = "cargo test -p jet --lib bundler -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet production bundler emits parseable output with required module resolution behavior."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4c97f1669ae1180e3c645f0297fd8dc671707980af73f111f04fbde8dd330a86"
+digest = "sha256:e4b85ba19a3e6a4b678f11839cc472aaaaa69ef5b50a889bbf2519b18aefa11c"
 
 [[cases]]
 id = "production-replacement-readiness"
@@ -748,14 +909,14 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "production-replacement-readiness"
 contract_id = "production-replacement-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3778.md#production-replacement-readiness"
+source_ref = "apps/jet/external-contracts/behavior/production-replacement-readiness.md#production-replacement-readiness"
 test_path = "apps/jet/tests/behavior_production_replacement_readiness.rs"
 command = "apps/jet/scripts/verify-basic-dom-gates.sh --all"
 required_for_production = true
-assertions = []
+assertions = ["The full production replacement flow passes its required end-to-end gates."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:84e0ec378c3fa01c11fd42d17754f39045a96e23e6e665192ad40489dd9e40c1"
+digest = "sha256:a330a2a65c5f56464564362849d94cd2fc8a12fc8412f2f48edf533afb327312"
 
 [[cases]]
 id = "react-refresh-state-preserved"
@@ -763,14 +924,14 @@ capability_id = "dev-server-hmr"
 claim_id = "react-refresh-state-preserved"
 contract_id = "react-refresh-state-preserved"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3780.md#react-refresh-state-preserved"
+source_ref = "apps/jet/external-contracts/behavior/react-refresh-state-preserved.md#react-refresh-state-preserved"
 test_path = "apps/jet/tests/behavior_react_refresh_state_preserved.rs"
 command = "cargo test -p jet --lib dev_server::hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["React refresh chooses a hot update that preserves state when the edit is compatible."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7361bc16bb941776f47e95e8070c6b93851c08b723d5bbb920e4ba94654c9534"
+digest = "sha256:34cba1a867b13f10c901ed15066920b632842a510cd055793a8e19233adcb445"
 
 [[cases]]
 id = "reporter-artifacts"
@@ -778,14 +939,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "reporter-artifacts"
 contract_id = "reporter-artifacts"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3785.md#reporter-artifacts"
+source_ref = "apps/jet/external-contracts/behavior/reporter-artifacts.md#reporter-artifacts"
 test_path = "apps/jet/tests/behavior_reporter_artifacts.rs"
 command = "cargo test -p jet --lib reporter -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet reporter emits the expected test-result and artifact records for completed runs."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b8c4edc179ec8c51b1ae10a71e47fc3d6d1fd5a9e4abec9d3878399a05eab78c"
+digest = "sha256:c1dff64f3b18cc874f01a3babc490a476e7a9469ab91c6db642d3991e40ef8ca"
 
 [[cases]]
 id = "scss-sass-compilation"
@@ -793,14 +954,14 @@ capability_id = "bundler-production-build"
 claim_id = "scss-sass-compilation"
 contract_id = "scss-sass-compilation"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/scss-sass-compilation-in-the-build-lib-css-pipeline.md#scss-sass-compilation"
+source_ref = "apps/jet/external-contracts/behavior/scss-sass-compilation.md#scss-sass-compilation"
 test_path = "apps/jet/tests/behavior_scss_sass_compilation.rs"
 command = "cargo test -p jet --lib css::scss"
 required_for_production = true
-assertions = []
+assertions = ["Jet compiles SCSS and Sass imports through the library CSS build pipeline."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6382ace9fc24e5f9c5737dd8d95227c32e448d0c0be1cf3e746a121f3653f288"
+digest = "sha256:f86f51d3e84865df280a0f31c66afdd56915449efbda88e0a4510d855e55a3ee"
 
 [[cases]]
 id = "stack-aware-openapi-codegen"
@@ -808,14 +969,14 @@ capability_id = "rust-native-frontend-toolchain"
 claim_id = "stack-aware-openapi-codegen"
 contract_id = "stack-aware-openapi-codegen"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#stack-aware-openapi-codegen"
+source_ref = "apps/jet/external-contracts/behavior/stack-aware-openapi-codegen.md#stack-aware-openapi-codegen"
 test_path = "apps/jet/tests/behavior_stack_aware_openapi_codegen.rs"
 command = "cargo test -p jet --test openapi_golden"
 required_for_production = true
-assertions = []
+assertions = ["Jet OpenAPI code generation selects the correct stack-aware client and hook output."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:27d3066d1b57847c3c9cf93c45e6cce425d92b8691f1bbd6107e361ef34e7abf"
+digest = "sha256:5d78c3c249818993ee65dc007575527bebeada184b0adc56397b11590c9ebc4c"
 
 [[cases]]
 id = "stories-bare-import-resolution"
@@ -823,14 +984,14 @@ capability_id = "component-workbench"
 claim_id = "stories-bare-import-resolution"
 contract_id = "stories-bare-import-resolution"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md#stories-bare-import-resolution"
+source_ref = "apps/jet/external-contracts/behavior/stories-bare-import-resolution.md#stories-bare-import-resolution"
 test_path = "apps/jet/tests/behavior_stories_bare_import_resolution.rs"
 command = "cargo test -p jet --test manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories manager resolves bare imports from node_modules for development and static export."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b4b21477babcabb867252badb6fd31d960851f668f2121e34e93889e1c6820f4"
+digest = "sha256:1f8cf9fb4867a9ab1c2be5f332e865a741fe7ada0ed73c31ee97c0d9f2e688f8"
 
 [[cases]]
 id = "stories-controls-panel"
@@ -838,14 +999,14 @@ capability_id = "component-workbench"
 claim_id = "stories-controls-panel"
 contract_id = "stories-controls-panel"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md#stories-controls-panel"
+source_ref = "apps/jet/external-contracts/behavior/stories-controls-panel.md#stories-controls-panel"
 test_path = "apps/jet/tests/behavior_stories_controls_panel.rs"
 command = "cargo test -p jet --test controls -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories controls render prop-derived inputs and update the preview when args change."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2fe3fc6542831ccf44c3139e664c0b5939c805ceabfee50be112e63427cfba47"
+digest = "sha256:8fe8aee97cf0d96108fc0af5e62e49aebf4bb9e5d7b1c84765f9b28dea6a7c9a"
 
 [[cases]]
 id = "stories-dev-manager"
@@ -853,14 +1014,14 @@ capability_id = "component-workbench"
 claim_id = "stories-dev-manager"
 contract_id = "stories-dev-manager"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#stories-dev-manager"
+source_ref = "apps/jet/external-contracts/behavior/stories-dev-manager.md#stories-dev-manager"
 test_path = "apps/jet/tests/behavior_stories_dev_manager.rs"
 command = "cargo test -p jet --test manager -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet stories dev starts a manager with sidebar and preview behavior for discovered stories."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cb154417fdbf68a49f5621c58ff7727f040256113baa04e70c74dea62919f170"
+digest = "sha256:5570f42401d53cbdc520f61fcc6a9ae2ec618b808679037610b7b33f6c1e0644"
 
 [[cases]]
 id = "stories-preview-hmr"
@@ -868,14 +1029,14 @@ capability_id = "component-workbench"
 claim_id = "stories-preview-hmr"
 contract_id = "stories-preview-hmr"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#stories-preview-hmr"
+source_ref = "apps/jet/external-contracts/behavior/stories-preview-hmr.md#stories-preview-hmr"
 test_path = "apps/jet/tests/behavior_stories_preview_hmr.rs"
 command = "cargo test -p jet --test preview_hmr -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Stories preview HMR refreshes modules while preserving compatible component state."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4e3558b06950551d3554b1dc5e84a7f1dbbaf8bb47180ee3ff41e60f790553d5"
+digest = "sha256:025b264ec154c8e6fc4cfe3d4ba0d08098b8ce85aeec6e1ed92fbfa3a0b1d437"
 
 [[cases]]
 id = "stories-static-export"
@@ -883,14 +1044,14 @@ capability_id = "component-workbench"
 claim_id = "stories-static-export"
 contract_id = "stories-static-export"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md#stories-static-export"
+source_ref = "apps/jet/external-contracts/behavior/stories-static-export.md#stories-static-export"
 test_path = "apps/jet/tests/behavior_stories_static_export.rs"
 command = "cargo test -p jet --test stories_build -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet stories build emits a static workbench with manager, previews, and relative asset URLs."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4241d5f1b650689479d2cfe8f198b741f7533e1e48b2953c88acb9fc788f6049"
+digest = "sha256:6c5cc5894cc22d4c839df81c207753fd47eb0282d6f60d3b3d4486d896f4eefc"
 
 [[cases]]
 id = "task-runner-graph-cache"
@@ -898,14 +1059,14 @@ capability_id = "workspace-task-runner"
 claim_id = "task-runner-graph-cache"
 contract_id = "task-runner-graph-cache"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3781.md#task-runner-graph-cache"
+source_ref = "apps/jet/external-contracts/behavior/task-runner-graph-cache.md#task-runner-graph-cache"
 test_path = "apps/jet/tests/behavior_task_runner_graph_cache.rs"
 command = "cargo test -p jet --lib task_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet task runner builds and executes a dependency graph with its cache contract intact."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1f399b12b35103e12a783638857fb5d42ac7352332fa8095d9ef5c1b52770002"
+digest = "sha256:66fc4553fad49363b80c455f9d1075834547c80bfbb58728ba86410cf61b0742"
 
 [[cases]]
 id = "trace-evidence-artifacts"
@@ -913,14 +1074,14 @@ capability_id = "browser-trace-parity"
 claim_id = "trace-evidence-artifacts"
 contract_id = "trace-evidence-artifacts"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#trace-evidence-artifacts"
+source_ref = "apps/jet/external-contracts/behavior/trace-evidence-artifacts.md#trace-evidence-artifacts"
 test_path = "apps/jet/tests/behavior_trace_evidence_artifacts.rs"
 command = "cargo test -p jet --lib trace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet trace subsystem emits required trace evidence artifacts for supported runs."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e08321adace57e1e890551daff003d8792d3857acf1ca1344cc6f24875c2698b"
+digest = "sha256:a4fef59cb403ed29e3a849aec5ade6b86de2775979aa0a4a3723ce7879e6dcc4"
 
 [[cases]]
 id = "trace-replay-evidence"
@@ -928,14 +1089,14 @@ capability_id = "native-test-product-flow-e2e"
 claim_id = "trace-replay-evidence"
 contract_id = "trace-replay-evidence"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3784.md#trace-replay-evidence"
+source_ref = "apps/jet/external-contracts/behavior/trace-replay-evidence.md#trace-replay-evidence"
 test_path = "apps/jet/tests/behavior_trace_replay_evidence.rs"
 command = "cargo test -p jet --lib trace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Recorded Jet trace evidence replays into the expected observable outcome."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:97ed25951d6bcc784562c80d13d8050900c825599bc76e0d79dfc5bfff20b062"
+digest = "sha256:3da6d26769bd4328274b87502f3f6a2d6b048b72a3536f878f0abf13afa2f2ad"
 
 [[cases]]
 id = "transform-resolver-parity"
@@ -943,14 +1104,14 @@ capability_id = "bundler-production-build"
 claim_id = "transform-resolver-parity"
 contract_id = "transform-resolver-parity"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3782.md#transform-resolver-parity"
+source_ref = "apps/jet/external-contracts/behavior/transform-resolver-parity.md#transform-resolver-parity"
 test_path = "apps/jet/tests/behavior_transform_resolver_parity.rs"
 command = "cargo test -p jet --lib transform -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet transform resolver resolves supported source and package imports consistently."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cf74d53b7c94962e00273841607391a5227bf309afc36845d18894a4c322df28"
+digest = "sha256:8d78df546ba9b194ef64e42fddec5b9a58acbcba65d5b4454f24aff6d8336d51"
 
 [[cases]]
 id = "webgpu-large-table-smoke"
@@ -958,14 +1119,14 @@ capability_id = "browser-trace-parity"
 claim_id = "webgpu-large-table-smoke"
 contract_id = "webgpu-large-table-smoke"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-large-table-smoke"
+source_ref = "apps/jet/external-contracts/behavior/webgpu-large-table-smoke.md#webgpu-large-table-smoke"
 test_path = "apps/jet/tests/behavior_webgpu_large_table_smoke.rs"
 command = "cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_status_and_visual_probe_when_available -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Default WebGPU renderer reports runtime status and captures the required large-table visual probe."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1c2eaf25f30f67177eeb4c9156353fa8e2895d9d6a8b1b2ab08a97f0318f90b8"
+digest = "sha256:0ed811f703417ff1d6681492f22d52807c47d9421af3b404bd837be934988557"
 
 [[cases]]
 id = "webgpu-wasm-build-default"
@@ -973,14 +1134,14 @@ capability_id = "browser-trace-parity"
 claim_id = "webgpu-wasm-build-default"
 contract_id = "webgpu-wasm-build-default"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-wasm-build-default"
+source_ref = "apps/jet/external-contracts/behavior/webgpu-wasm-build-default.md#webgpu-wasm-build-default"
 test_path = "apps/jet/tests/behavior_webgpu_wasm_build_default.rs"
 command = "cargo test -p jet --test wasm_build_end_to_end wasm_build_selects_webgpu_scaffold_by_default -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet WASM build selects the WebGPU scaffold by default."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:182db55f3cac7e4f346e0829113097be5fd7eb4e498a2e0928b22e4784526f2d"
+digest = "sha256:556a07d3abb55b7fa72d024c2c0d44bdcea60f7ae864f3c4de90a46e90eb4af0"
 
 [[cases]]
 id = "workspace-package-selection"
@@ -988,14 +1149,14 @@ capability_id = "workspace-task-runner"
 claim_id = "workspace-package-selection"
 contract_id = "workspace-package-selection"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3781.md#workspace-package-selection"
+source_ref = "apps/jet/external-contracts/behavior/workspace-package-selection.md#workspace-package-selection"
 test_path = "apps/jet/tests/behavior_workspace_package_selection.rs"
 command = "cargo test -p jet --lib pkg_manager::workspace -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace package selection resolves the requested workspace package and its metadata."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:07a454a9166f6e2e42a4ff2f8acd3ab13d0ffc2c6f2595e7954eb0f86b008809"
+digest = "sha256:7dea0a017b97dc3c2f05bc3a31a5fd4bffb2a2a478868cdfe9f009d28b0c92e8"
 
 [[cases]]
 id = "workspace-task-runner-readiness"
@@ -1003,11 +1164,11 @@ capability_id = "workspace-task-runner"
 claim_id = "workspace-task-runner-readiness"
 contract_id = "workspace-task-runner-readiness"
 dimension = "behavior"
-source_ref = ".aw/tech-design/projects/jet/specs/3781.md#workspace-task-runner-readiness"
+source_ref = "apps/jet/external-contracts/behavior/workspace-task-runner-readiness.md#workspace-task-runner-readiness"
 test_path = "apps/jet/tests/behavior_workspace_task_runner_readiness.rs"
 command = "cargo test -p jet --lib task_runner -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = ["Jet workspace task runner passes its readiness suite for graph execution and caching."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4d1a976cd2e1455f7b7df07ccae2eca71da3cf34978f8ee16ef62b41ee57283a"
+digest = "sha256:750693cb4f697b887c85b24f5bdcec95eb45d822f048efc9e36b36504c63d5ca"
