@@ -31,7 +31,12 @@ async fn test_restart_recovery_and_reject_corrupt() {
 
     let gpu = beam::gpu::GpuContext::new().map(Arc::new);
     let registry = Arc::new(RwLock::new(HashMap::new()));
-    let app = beam::service::router_with_state(registry.clone(), gpu.clone(), Some(data_dir.clone()));
+    let app = beam::service::router_with_state(
+        registry.clone(),
+        gpu.clone(),
+        Some(data_dir.clone()),
+        Arc::new(beam::service::StaticRoleMapVerifier::open()),
+    );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server_handle = tokio::spawn(async move {
@@ -78,16 +83,17 @@ async fn test_restart_recovery_and_reject_corrupt() {
     // --- Phase 2: Start Server 2 (Restart & Recover!) ---
     // Simulate serve startup scan directory
     let mut registry_map = HashMap::new();
-    let entries = std::fs::read_dir(&data_dir).unwrap();
-    for entry in entries {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("bin") {
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            let col = Collection::load(&path).unwrap();
-            let mut cs = beam::service::CollectionState::new(col);
-            cs.rebuild(&gpu);
-            registry_map.insert(name, cs);
+    if let Ok(entries) = std::fs::read_dir(&data_dir) {
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("bin") {
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                let col = Collection::load(&path).unwrap();
+                let mut cs = beam::service::CollectionState::new(col);
+                cs.rebuild(&gpu);
+                registry_map.insert(name, cs);
+            }
         }
     }
     assert_eq!(registry_map.len(), 1);
@@ -97,7 +103,12 @@ async fn test_restart_recovery_and_reject_corrupt() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
-    let app = beam::service::router_with_state(registry2.clone(), gpu.clone(), Some(data_dir.clone()));
+    let app = beam::service::router_with_state(
+        registry2.clone(),
+        gpu.clone(),
+        Some(data_dir.clone()),
+        Arc::new(beam::service::StaticRoleMapVerifier::open()),
+    );
 
     let (shutdown_tx2, shutdown_rx2) = tokio::sync::oneshot::channel::<()>();
     let server_handle2 = tokio::spawn(async move {
