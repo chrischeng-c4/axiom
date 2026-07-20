@@ -110,7 +110,6 @@ changes:
     impl_mode: hand-written
     description: Record payload limits, citation provenance, freshness, sentinel isolation, failure, license, and read-only verification rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
