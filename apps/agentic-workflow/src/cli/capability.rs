@@ -7716,6 +7716,25 @@ fn lifecycle_action_for_work_item(
     require_issue_inventory: bool,
     default_reason: &str,
 ) -> (CapabilityActionKind, String, String) {
+    // Issue #1800: a tracker-closed WI's locally cached phase (e.g. a stale
+    // `cb_genned` trailer left over from before the issue was closed) must
+    // never drive the next command -- it routes to real work-item lookups
+    // (`aw td fill <id>`) that 404 once the WI is gone. Exclude closed
+    // evidence from every downstream phase/expected_command branch and send
+    // the loop back to reconcile the active WI reference instead.
+    if evidence.is_some_and(|evidence| evidence.state == IssueState::Closed.as_str()) {
+        return (
+            CapabilityActionKind::ReconcileWiRefs,
+            format!("aw wi plan --project {}", report.project),
+            wi_plan_reason(
+                report,
+                "active WI reference resolved to a GitHub-closed issue; its cached local \
+                 phase is stale and must not drive the lifecycle, so it must be excluded and \
+                 reconciled to a real open WI before the EC-first TD/codegen lifecycle",
+            ),
+        );
+    }
+
     if let Some(command) = evidence
         .and_then(|evidence| evidence.expected_command.as_deref())
         .map(str::trim)
@@ -18996,6 +19015,76 @@ capability_refs:
                 "phase: {phase}"
             );
         }
+    }
+
+    // Issue #1800: a WI closed on the backend with a stale non-terminal
+    // local phase (e.g. `cb_genned` left over from before it closed) must
+    // never be selected as an active root -- the previous behavior emitted
+    // `aw td fill <id>` against a WI the backend now reports 404 for.
+    #[test]
+    fn lifecycle_action_excludes_closed_wi_with_stale_phase() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#1375".to_string(),
+            gap_id: "generated-manual-ec-evidence-schema".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "closed".to_string(),
+            phase: Some("cb_genned".to_string()),
+            expected_command: None,
+            title: "stale closed WI".to_string(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "1375",
+            Some(&evidence),
+            Some("apps/agentic-workflow/tech-design/logic/manual.md"),
+            None,
+            true,
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(!command.contains("td fill"));
+        assert!(reason.contains("GitHub-closed"));
+    }
+
+    // Same scenario, but proving the exclusion holds through the full
+    // `choose_next_action` open-gap dispatch a capability/backlog run tick
+    // actually calls -- not just the lower-level phase-routing helper. This
+    // is the jet/#1375 repro shape from #1800: a doc-stored Active WI ref
+    // that is now closed on the tracker, with a stale non-terminal local
+    // phase, must never select `aw td fill <id>` as the next command.
+    #[test]
+    fn choose_next_action_excludes_closed_wi_root_with_stale_phase() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let mut item = sample_report_item_with_gap(Some("#1375"));
+        item.wi_evidence.push(CapabilityWiEvidence {
+            reference: "#1375".to_string(),
+            gap_id: "package-manager-readiness".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "closed".to_string(),
+            phase: Some("cb_genned".to_string()),
+            expected_command: None,
+            title: "stale closed WI".to_string(),
+        });
+        report.capabilities = vec![item];
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
+
+        assert_eq!(action.kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(action.command, "aw wi plan --project jet");
+        assert!(!action.command.contains("td fill"));
+        assert!(action.reason.contains("GitHub-closed"));
     }
 
     #[test]
