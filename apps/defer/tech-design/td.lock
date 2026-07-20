@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-20T19:49:38.931357+00:00"
-digest = "sha256:e322228318f7a84e50abfc7874b4a71a99a8ea01eaa816d98290a3c6caa8320c"
-source_digest = "sha256:e322228318f7a84e50abfc7874b4a71a99a8ea01eaa816d98290a3c6caa8320c"
-ir_digest = "sha256:4b011282f88941a1cbe3d635fd74a67e6e01c1c9059c6a90716fba0fa67ae6f8"
+generated_at = "2026-07-20T19:53:38.983479+00:00"
+digest = "sha256:f91728def3f1ca7bf38508d983764a8ae7f857c8923e361eb323c8cc6b570e39"
+source_digest = "sha256:f91728def3f1ca7bf38508d983764a8ae7f857c8923e361eb323c8cc6b570e39"
+ir_digest = "sha256:9b192fc2cfbe0629c153f6a2f57d5a2fb5036558e90a75f2c3bd13eb7eb01f9f"
 
 [[files]]
 path = "README.md"
@@ -21,8 +21,8 @@ section_count = 4
 
 [[files]]
 path = "logic/delayed-task-dispatch-service-placeholder.md"
-digest = "sha256:7a1ec009d66d26513573deff3b871555a6b60c923648867a876c4a7ab797ad8c"
-ir_digest = "sha256:ea6384a2e6e43743157d5eb2815d62c7d74d447dcfff53f9d80cfd88732076bf"
+digest = "sha256:0c1193be3675121329f78bdea33d80d7dfb01ec1694e402a04b47ec62a8ad7c3"
+ir_digest = "sha256:7992fcc16385bf002a500722dc1cc4e7d240e11132dc86a053ef0369cc07f579"
 section_count = 3
 
 [[files]]
