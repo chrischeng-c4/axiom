@@ -11,9 +11,8 @@ use workbench::{
     native_agent_pty::{PtyCommand, PtyRuntime, PtySize},
 };
 
-const GRAPH_FIXTURE: &str = include_str!(
-    "fixtures/graph-context/graphify-out/workbench-graph.json"
-);
+const GRAPH_FIXTURE: &str =
+    include_str!("fixtures/graph-context/graphify-out/workbench-graph.json");
 const SERVICE_FIXTURE: &str = include_str!("fixtures/graph-context/src/service.rs");
 const HANDLER_FIXTURE: &str = include_str!("fixtures/graph-context/src/handler.rs");
 
@@ -84,8 +83,9 @@ impl ContextRenderer for SentinelRenderer {
 
     fn supports(&self, request: &ContextRequest) -> RendererSupport {
         match request.target() {
-            workbench::context::ContextTarget::File(path)
-                if path == Path::new("sentinel.aw") => RendererSupport::Supported,
+            workbench::context::ContextTarget::File(path) if path == Path::new("sentinel.aw") => {
+                RendererSupport::Supported
+            }
             _ => RendererSupport::Unsupported,
         }
     }
@@ -117,9 +117,8 @@ impl GraphPayloadSource for FailingSource {
 #[test]
 fn renders_source_or_visible_inference_for_every_node_and_edge() {
     let fixture = GraphFixture::new();
-    let document = RendererRegistry::production().render(
-        &ContextRequest::workspace(&fixture.root).expect("workspace context"),
-    );
+    let document = RendererRegistry::production()
+        .render(&ContextRequest::workspace(&fixture.root).expect("workspace context"));
     assert_eq!(document.kind, ContextDocumentKind::Graph);
     assert_eq!(document.renderer_id, "graph-context");
 
@@ -132,16 +131,23 @@ fn renders_source_or_visible_inference_for_every_node_and_edge() {
             let id = record["id"].as_str().unwrap();
             let classification = record["classification"].as_str().unwrap();
             assert!(
-                document.body_html.contains(&format!("data-record-id=\"{id}\"")),
+                document
+                    .body_html
+                    .contains(&format!("data-record-id=\"{id}\"")),
                 "missing rendered {record_kind} {id}"
             );
-            let has_source_link = document.navigation.iter().any(|link| {
-                link.label.starts_with(&format!("{record_kind} {id}:"))
-            });
+            let has_source_link = document
+                .navigation
+                .iter()
+                .any(|link| link.label.starts_with(&format!("{record_kind} {id}:")));
             let has_visible_derived_label = classification != "extracted"
                 && document.body_html.contains(&format!(
                     ">{}</p>",
-                    if classification == "inferred" { "Inferred" } else { "Ambiguous" }
+                    if classification == "inferred" {
+                        "Inferred"
+                    } else {
+                        "Ambiguous"
+                    }
                 ));
             assert!(
                 has_source_link || has_visible_derived_label,
@@ -149,7 +155,10 @@ fn renders_source_or_visible_inference_for_every_node_and_edge() {
             );
             for source in record["sources"].as_array().unwrap() {
                 let path = source["relative_path"].as_str().unwrap();
-                assert!(document.body_html.contains(path), "missing source input {path}");
+                assert!(
+                    document.body_html.contains(path),
+                    "missing source input {path}"
+                );
             }
         }
     }
@@ -205,7 +214,11 @@ fn provider_absence_leaves_generic_and_aw_sentinel_renderers_usable() {
     }
 
     let test_source = include_str!("graph_context_adapter.rs");
-    assert!(!test_source.contains("AwTyped"), "test imported a concrete AW renderer");
+    let concrete_renderer = ["Aw", "Typed", "Renderer"].concat();
+    assert!(
+        !test_source.contains(&concrete_renderer),
+        "test imported a concrete AW renderer"
+    );
 }
 
 #[test]
@@ -251,14 +264,16 @@ fn adapter_contract_is_reference_only_and_read_only() {
         .iter()
         .map(|path| fs::read(path).expect("before bytes"))
         .collect();
-    let _ = RendererRegistry::production().render(
-        &ContextRequest::workspace(&fixture.root).expect("workspace request"),
-    );
+    let _ = RendererRegistry::production()
+        .render(&ContextRequest::workspace(&fixture.root).expect("workspace request"));
     let after: Vec<Vec<u8>> = watched
         .iter()
         .map(|path| fs::read(path).expect("after bytes"))
         .collect();
-    assert_eq!(before, after, "graph rendering mutated provider or source files");
+    assert_eq!(
+        before, after,
+        "graph rendering mutated provider or source files"
+    );
 
     let implementation = include_str!("../src/context/graph.rs");
     for forbidden in [
@@ -292,27 +307,24 @@ fn payload_limits_and_source_confinement_fail_closed() {
         vec![b' '; MAX_GRAPH_PAYLOAD_BYTES + 1],
     )
     .expect("oversized payload");
-    let oversized = renderer.render(&request).expect_err("oversized graph must fail");
+    let oversized = renderer
+        .render(&request)
+        .expect_err("oversized graph must fail");
     assert!(oversized.to_string().contains("exceeds"));
 
-    let unsafe_payload = GRAPH_FIXTURE.replacen(
-        "src/service.rs",
-        "../outside.rs",
-        1,
-    );
+    let unsafe_payload = GRAPH_FIXTURE.replacen("src/service.rs", "../outside.rs", 1);
     fs::write(
         fixture.root.join("graphify-out/workbench-graph.json"),
         unsafe_payload,
     )
     .expect("unsafe payload");
-    let unsafe_error = renderer.render(&request).expect_err("unsafe path must fail");
+    let unsafe_error = renderer
+        .render(&request)
+        .expect_err("unsafe path must fail");
     assert!(unsafe_error.to_string().contains("confined"));
 
-    let unknown_endpoint = GRAPH_FIXTURE.replacen(
-        "\"to\": \"handler\"",
-        "\"to\": \"missing-node\"",
-        1,
-    );
+    let unknown_endpoint =
+        GRAPH_FIXTURE.replacen("\"to\": \"handler\"", "\"to\": \"missing-node\"", 1);
     fs::write(
         fixture.root.join("graphify-out/workbench-graph.json"),
         unknown_endpoint,

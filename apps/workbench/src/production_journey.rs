@@ -306,7 +306,7 @@ pub fn render_journey_context(
         None => ContextRequest::workspace(&root),
     }
     .map_err(|error| error.to_string())?;
-    Ok(RendererRegistry::generic_with_optional_aw().render(&request))
+    Ok(RendererRegistry::production().render(&request))
 }
 
 fn parse_agent_kind(value: &str) -> Result<AgentKind, String> {

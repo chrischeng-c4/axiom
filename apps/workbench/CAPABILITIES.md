@@ -34,6 +34,7 @@ Gate Inventory:
 - verified: `cargo test -p workbench --test generic_context_renderers -- --nocapture`
 - verified: `cargo test -p workbench --test aw_typed_renderer -- --nocapture`
 - verified: `cargo test -p workbench --test context_provenance -- --nocapture`
+- verified: `cargo test -p workbench --test graph_context_adapter -- --nocapture`
 - verified: `cargo test -p workbench --test production_journey -- --nocapture`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -46,6 +47,6 @@ Gate Inventory:
 | optional-aw-typed-renderer | change | #2196 | complete | verified | prototype | `aw_typed_renderer` four-kind fixtures and byte identity |
 | context-provenance-core | change | #2197 | complete | verified | prototype | `context_provenance` canonical, derived, and unavailable states |
 | context-provenance | change | #2198 | complete | verified | prototype | duplicate contract satisfied by #2197 and `context_provenance` |
-| optional-graph-adapter | change | #2199 | planned | planned | none | `graph_context_adapter` |
+| optional-graph-adapter | change | #2199 | complete | verified | prototype | `graph_context_adapter` bounded compatibility payload, provenance, and failure isolation |
 | optional-derived-page-adapter | change | #2200 | planned | planned | none | `derived_page_context_adapter` |
 | production-journey | change | #2201 | complete | verified | production | `production_journey` plus `evidence/production-journey/v1/manifest.json` |

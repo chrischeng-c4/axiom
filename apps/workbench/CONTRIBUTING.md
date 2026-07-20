@@ -102,6 +102,24 @@ canonical regular file below the selected root may produce navigation; missing
 or invalid inputs stay visible and non-authoritative. The provenance core must
 not execute providers, AW, GitHub, verification commands, or repository writes.
 
+The optional graph compatibility gate is:
+
+```bash
+cargo test -p workbench --test graph_context_adapter -- --nocapture
+```
+
+The adapter owns only `workbench.graph-context.v1`; Graphify remains a
+reference-only provider and no provider implementation, SDK, or schema may be
+copied into Workbench. Keep the payload at or below one MiB, bound node, edge,
+field, and source counts, reject duplicate ids, unknown endpoints, traversal,
+invalid spans, and symlink escape, and escape all rendered values. Every node
+and edge must expose canonical source navigation or a visible inferred or
+ambiguous badge with every input retained. Provider absence, malformed data,
+and read failure must leave Markdown, Git, the native PTY, and independently
+registered AW-like renderers usable. Tests must use a local registry sentinel
+instead of importing the concrete AW renderer. Rendering and refresh are
+read-only and must not invoke a provider or mutate repository/AW state.
+
 The release-grade assembled journey gate is:
 
 ```bash

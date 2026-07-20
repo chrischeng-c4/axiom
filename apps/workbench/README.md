@@ -121,6 +121,22 @@ input location, including unavailable inputs. The model is serializable and
 provider-neutral; resolving it performs metadata/canonicalization reads only.
 Repository source and executable verification evidence remain canonical.
 
+## Optional Graph Context
+
+For repositories that export `graphify-out/workbench-graph.json`, Workbench
+can render a bounded `workbench.graph-context.v1` compatibility payload ahead
+of the generic workspace view. The repository-owned schema accepts a provider
+identity, nodes, edges, and explicit source inputs; it does not embed or invoke
+Graphify code, schemas, or SDKs.
+
+Every node and edge shows an extracted, inferred, or ambiguous provenance
+badge. Canonical extracted inputs become source navigation, while derived
+records keep all inputs visible, including missing ones. A missing payload is
+simply unsupported. Malformed, oversized, unsafe, or provider-failed payloads
+produce a warning and fall through to AW, Markdown, or Git context without
+affecting the native PTY. Rendering is a fresh read and never mutates the
+provider output, repository, or AW lifecycle.
+
 ## Production Journey
 
 The assembled desktop path now starts with a registered canonical folder,
@@ -160,5 +176,6 @@ cargo test -p workbench --test pty_cwd_context -- --nocapture
 cargo test -p workbench --test generic_context_renderers -- --nocapture
 cargo test -p workbench --test aw_typed_renderer -- --nocapture
 cargo test -p workbench --test context_provenance -- --nocapture
+cargo test -p workbench --test graph_context_adapter -- --nocapture
 cargo test -p workbench --test production_journey -- --nocapture
 ```

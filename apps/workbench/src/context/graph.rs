@@ -77,12 +77,15 @@ impl GraphPayloadSource for FileGraphPayloadSource {
             )));
         }
 
-        let file = File::open(path)
-            .map_err(|error| RendererError::new(format!("could not open graph payload: {error}")))?;
+        let file = File::open(path).map_err(|error| {
+            RendererError::new(format!("could not open graph payload: {error}"))
+        })?;
         let mut bytes = Vec::new();
         file.take(max_bytes as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|error| RendererError::new(format!("could not read graph payload: {error}")))?;
+            .map_err(|error| {
+                RendererError::new(format!("could not read graph payload: {error}"))
+            })?;
         if bytes.len() > max_bytes {
             return Err(RendererError::new(format!(
                 "graph payload exceeds the {max_bytes}-byte limit"
@@ -149,7 +152,9 @@ impl ContextRenderer for GraphContextRenderer {
 
     fn render(&self, request: &ContextRequest) -> Result<ContextDocument, RendererError> {
         if !matches!(request.target(), ContextTarget::Workspace) {
-            return Err(RendererError::new("graph context supports only workspace targets"));
+            return Err(RendererError::new(
+                "graph context supports only workspace targets",
+            ));
         }
         let requested_path = Self::payload_path(request);
         let payload_path = fs::canonicalize(&requested_path).map_err(|error| {
@@ -193,7 +198,10 @@ fn validate_payload(payload: &GraphPayload, root: &Path) -> Result<(), RendererE
             validate_text("node kind", &node.kind, MAX_ID_BYTES)?;
         }
         if !all_ids.insert(node.id.as_str()) {
-            return Err(RendererError::new(format!("duplicate graph id {:?}", node.id)));
+            return Err(RendererError::new(format!(
+                "duplicate graph id {:?}",
+                node.id
+            )));
         }
         node_ids.insert(node.id.as_str());
         validate_sources(node.classification, &node.sources, root)?;
@@ -202,7 +210,10 @@ fn validate_payload(payload: &GraphPayload, root: &Path) -> Result<(), RendererE
         validate_text("edge id", &edge.id, MAX_ID_BYTES)?;
         validate_text("edge label", &edge.label, MAX_LABEL_BYTES)?;
         if !all_ids.insert(edge.id.as_str()) {
-            return Err(RendererError::new(format!("duplicate graph id {:?}", edge.id)));
+            return Err(RendererError::new(format!(
+                "duplicate graph id {:?}",
+                edge.id
+            )));
         }
         if !node_ids.contains(edge.from.as_str()) || !node_ids.contains(edge.to.as_str()) {
             return Err(RendererError::new(format!(
@@ -282,17 +293,17 @@ fn render_payload(
     let mut edges_html = String::new();
 
     for node in payload.nodes {
-        let view = provenance_item(
-            payload.provider.clone(),
-            node.classification,
-            node.sources,
-        )
-        .resolve(request.root());
+        let view = provenance_item(payload.provider.clone(), node.classification, node.sources)
+            .resolve(request.root());
         nodes_html.push_str(&render_record(
             "node",
             &node.id,
             &node.label,
-            if node.kind.is_empty() { None } else { Some(&node.kind) },
+            if node.kind.is_empty() {
+                None
+            } else {
+                Some(&node.kind)
+            },
             &view,
             request.root(),
             &mut navigation,
@@ -300,12 +311,8 @@ fn render_payload(
         ));
     }
     for edge in payload.edges {
-        let view = provenance_item(
-            payload.provider.clone(),
-            edge.classification,
-            edge.sources,
-        )
-        .resolve(request.root());
+        let view = provenance_item(payload.provider.clone(), edge.classification, edge.sources)
+            .resolve(request.root());
         edges_html.push_str(&render_record(
             "edge",
             &edge.id,
@@ -366,10 +373,12 @@ fn render_record(
             let line = link.span.map(|span| span.start.line);
             let link_label = line.map_or_else(
                 || format!("{record_kind} {id}: {}", link.relative_path.display()),
-                |line| format!(
-                    "{record_kind} {id}: {}:{line}",
-                    link.relative_path.display()
-                ),
+                |line| {
+                    format!(
+                        "{record_kind} {id}: {}:{line}",
+                        link.relative_path.display()
+                    )
+                },
             );
             navigation.push(ContextNavigation {
                 label: link_label,
