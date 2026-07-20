@@ -4,6 +4,7 @@ use crate::domain::collection::Collection;
 use crate::domain::ports::{DistanceCalculator, VectorRepository};
 use crate::domain::scheduler::{PipelineScheduler, QueryBatch};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in search_service.rs is hand-written pending codegen support">
 /// Application Service mapping inbound search requests to the Domain Scheduler.
 pub struct SearchApplicationService<R, C>
 where
@@ -12,6 +13,7 @@ where
 {
     scheduler: PipelineScheduler<R, C>,
 }
+// </HANDWRITE>
 
 impl<R, C> SearchApplicationService<R, C>
 where

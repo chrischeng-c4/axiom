@@ -595,6 +595,7 @@ persist_collection(&state, &name, &cs.collection);
         (status = 404, description = "Collection not found", body = ErrorEnvelope)
     )
 )]
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
 async fn query_collection(
     State(state): State<AppState>,
     Extension(principal): Extension<RoleMapPrincipal>,
@@ -643,6 +644,7 @@ async fn query_collection(
 
     Ok((StatusCode::OK, Json(QueryResp { neighbors })).into_response())
 }
+// </HANDWRITE>
 
 // -- Admin Handlers --------------------------------------------------------
 
