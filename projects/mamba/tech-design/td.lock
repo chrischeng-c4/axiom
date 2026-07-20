@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "projects/mamba/tech-design"
-generated_at = "2026-07-20T05:30:46.945423+00:00"
-digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
-source_digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
-ir_digest = "sha256:8949ca9cd01bf87920989600b9210fb80b43fe9a28c0b6ba5095c9a8cc539569"
+generated_at = "2026-07-20T07:02:24.530522+00:00"
+digest = "sha256:85f077086d24376f1caba126a9f76e48a37c3bd5c08e0c7ec1e3e5856d28a21a"
+source_digest = "sha256:85f077086d24376f1caba126a9f76e48a37c3bd5c08e0c7ec1e3e5856d28a21a"
+ir_digest = "sha256:5cb8aca07f5c0180e38618d4131d394d1536eacb39513a38ff19a9f445c6e914"
 
 [[files]]
 path = "README.md"
@@ -93,8 +93,8 @@ section_count = 0
 
 [[files]]
 path = "logic/asyncio-to-thread-dispatch-gather-mb-await-drops-second-parallel.md"
-digest = "sha256:75cf573755495d47767395f95dd02554421162c30e4d6d7fcbb8e6f32708eb26"
-ir_digest = "sha256:6de8790f7436ea59f63b5bbb8f8f58f89c9dc05b01a7b38c6a6de0a01d12ade5"
+digest = "sha256:03aa7a2c03bfa500cb6a25d2d4f88629e1d9b709041b50ffd6c25605319e2561"
+ir_digest = "sha256:d32989ae65abab7d0b1ef00915161a3ff1e3feea011c3d7cda58340a94508079"
 section_count = 3
 
 [[files]]
