@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-20T22:38:14.909644+00:00"
-digest = "sha256:017eb85423af8a99375db539520e37795e54320f98855cd6143b8fb2718eee10"
-source_digest = "sha256:017eb85423af8a99375db539520e37795e54320f98855cd6143b8fb2718eee10"
-ir_digest = "sha256:f3d88f46fcee60d6bfd426000640ba7ed98dc4d179d6246b17d674fc6db83982"
+generated_at = "2026-07-20T23:26:31.839307+00:00"
+digest = "sha256:22235bcaf1b5f7f31bab33020ca2064fe6db2917e99d25e0a2924830e36d6ab4"
+source_digest = "sha256:22235bcaf1b5f7f31bab33020ca2064fe6db2917e99d25e0a2924830e36d6ab4"
+ir_digest = "sha256:cb40db9a3aa43e7e33566f031a7dc40fc1b0cca2d21fac718b292a4e6682323a"
 
 [[files]]
 path = "README.md"
@@ -42,6 +42,12 @@ path = "logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md"
 digest = "sha256:aa54050ef4ecf1bd1c19d3d5dbe58b356dc3891e808cc84f68e05a2df277e514"
 ir_digest = "sha256:bcf4dfb79d726c5e5057744f93a78f5efa4aaacbc3727f2bf78230876b194824"
 section_count = 4
+
+[[files]]
+path = "semantic/close-capability-claim-competitor-feature-parity-delayed-task-co.md"
+digest = "sha256:7bc480aceefbb5fb08db7741944d58bef7de4e7c793889a5e12b8843cad6c070"
+ir_digest = "sha256:2f5014c9d3f3fb656ae8e81ff10e68644cf4ef59d8b61d58ca4f68e288883ffd"
+section_count = 3
 
 [[files]]
 path = "semantic/close-capability-claim-long-running-stability-delayed-task-soak.md"
