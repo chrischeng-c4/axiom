@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T08:42:06.087079+00:00"
-digest = "sha256:32651c88513278d03027b9e82cc2d4750e4c7e715612af7fb5850d9a4284d3cd"
-source_digest = "sha256:32651c88513278d03027b9e82cc2d4750e4c7e715612af7fb5850d9a4284d3cd"
-ir_digest = "sha256:e6eb99bd9dceec706da09f9e8c955d7aeb6f9761b011494502252eea5473905f"
+generated_at = "2026-07-20T09:15:31.533609+00:00"
+digest = "sha256:ddf50f1b2b563325cf52a5eca648c25636a048c1abed18c22ecf06bc60a5f4d0"
+source_digest = "sha256:ddf50f1b2b563325cf52a5eca648c25636a048c1abed18c22ecf06bc60a5f4d0"
+ir_digest = "sha256:6d5827a51223664d528c2a690c4861fa60e03812e632c84a556b016bcd3dd5fa"
 
 [[files]]
 path = "README.md"
@@ -29,4 +29,10 @@ section_count = 4
 path = "semantic/correct-ddd-search-metric-and-candidate-identity-semantics.md"
 digest = "sha256:44c332829a679f87c96389287475c09cd47269e361905f5135ed51873523ee6f"
 ir_digest = "sha256:64923e96d0f2ad2148850ec10eae69947a6b81e7fcb3719cc9f8350ac3c6f84f"
+section_count = 3
+
+[[files]]
+path = "validate/make-required-service-and-gpu-test-gates-execution-honest.md"
+digest = "sha256:b2b044837f2ea49fe5298e777f5883d3a78babb0739f5d9ebdcba8c9df76c0ca"
+ir_digest = "sha256:9d35c5d6041b884aa25a2f5e85614429a966a54c08c29cc70a9da9d2c898350a"
 section_count = 3
