@@ -2,13 +2,19 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T16:35:29.226781+00:00"
-digest = "sha256:1e517f5c6b287cabeccc863065d0c1d08394e74c6eef3f8969788267f22ba043"
-source_digest = "sha256:1e517f5c6b287cabeccc863065d0c1d08394e74c6eef3f8969788267f22ba043"
-ir_digest = "sha256:387032d376f1ad7ca8fbac4e12bfcb209cdec4b0f1470c7bc5f3618ca5661d0f"
+generated_at = "2026-07-20T16:56:43.152907+00:00"
+digest = "sha256:1627df8ce2d1ebd38f2260dab223bdc5355f6d67491a555b210b32cae55a2342"
+source_digest = "sha256:1627df8ce2d1ebd38f2260dab223bdc5355f6d67491a555b210b32cae55a2342"
+ir_digest = "sha256:f2260e4ef598ae036dc828c33d56f0d35a5d88ff424aca2abda73b9531054019"
 
 [[files]]
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
 digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
 ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
+section_count = 3
+
+[[files]]
+path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
+digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
+ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
 section_count = 3
