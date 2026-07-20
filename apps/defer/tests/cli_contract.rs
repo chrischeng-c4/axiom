@@ -10,6 +10,7 @@ fn defer() -> Command {
     Command::new(env!("CARGO_BIN_EXE_defer"))
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the fail-closed behavior oracle for exact command grammar, offline llm, exact TypeScript client generation, and deployment-render exit status.">
 #[test]
 fn help_exposes_standard_and_domain_surfaces() {
     let output = defer().arg("--help").output().unwrap();
@@ -51,6 +52,7 @@ fn help_exposes_standard_and_domain_surfaces() {
         }
     }
 }
+// </HANDWRITE>
 
 #[test]
 fn serve_exposes_shared_structured_log_configuration() {
