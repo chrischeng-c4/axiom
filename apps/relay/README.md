@@ -46,7 +46,7 @@ remain first-class domain roots.
 | CLI Standard Surface | 1204 | implemented | passing | conformance | ready | shared `cli-std` llm/upgrade/issue surface with build-stamp provenance |
 | Chainable Output Conformance | - | implemented | passing | conformance | ready | raw artifact streams stay unwrapped and terminal write/backup/render paths use executable `next:` or explicit done markers |
 | Competitive Broker Feature Parity | - | implemented | verified | dogfood | ready | RabbitMQ/NATS JetStream/Redis Streams work-queue replacement breadth plus real three-voter Kind failover |
-| Competitive Broker Performance | 125 | implemented | passing | dogfood | ready | repeatable local lifecycle throughput gate and real-service comparison harness; claims remain workload-scoped |
+| Competitive Broker Performance | 125, #2172 | implemented | passing | dogfood | ready | release-mode measured fsync-always lifecycle envelope plus advisory real-service comparison harness; claims remain workload-scoped |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | recovery, bounded retention, lease reclaim, graceful drain, backup, two-cycle failover, and fixed-state 60-second error/RSS/FD/thread/p99 soak |
 | Security Hardening | 1206 | implemented | passing | conformance | ready | audited live-rotation bearer RBAC, admission limits, real peer mTLS, restricted K8s pods, Secret projection, and NetworkPolicy |
 | HTTP/2 API List | 108 | implemented | passing | conformance | ready | concise HTTP/1.1+h2c producer, bidi consumer, compatibility worker, probe, metrics, OpenAPI, and offline spec surfaces |
@@ -157,24 +157,27 @@ Gate Inventory:
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Meter/Vat: `apps/relay/vat.toml#meter-perf` - isolated meter execution for the throughput ratchet.; Harness: `cargo run -p relay --release --example bench_compare -- --backend <target>` - durable-only closed-loop external broker comparison across relay, RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly.; Arena: `apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml` - advisory normalized ratio wrapper.; Rust bench: `relay_bench` - local broker throughput baseline.
-EC Dimensions: efficiency: `cd apps/relay && ../../target/debug/vat run meter-perf` - meter-owned throughput model and ratchet conformance; behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate` - deterministic local gate shape
-Root WI: 125
+Surfaces: Meter/Vat: `apps/relay/vat.toml#meter-perf` - isolated meter execution for the release-mode measured durable lifecycle gate.; Harness: `cargo run -p relay --release --example bench_compare -- --backend <target>` - durable-only closed-loop external broker comparison across relay, RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly.; Arena: `apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml` - advisory normalized ratio wrapper.; Rust test: `measured_performance` - machine-readable fsync-always local envelope with an independent parser.
+EC Dimensions: behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate -- --nocapture` - deterministic work-queue and decision-model conformance; efficiency: `cargo test --release -p relay --test measured_performance measured_durable_lifecycle_gate -- --exact --ignored --nocapture` - independently parsed 2,000-message durable envelope; stability: `RELAY_SOAK_AUTOSTART=1 bash apps/relay/scripts/soak.sh` - 60-second error, resource, and p99 plateau gate
+Root WI: #2172
 Status: auditing
 Required Verification: dogfood
 Promise:
-Keep Relay's performance claims tied to repeatable throughput tests and an
-vat-isolated meter gate and keep the external competitor comparison against
-RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly as advisory dogfood until
-the native broker harness is promoted into a required gate.
+Keep Relay's performance claims tied to a release-mode, fsync-always durable
+measurement whose report is parsed independently and fails closed on missing or
+zero observations. Keep RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly
+comparisons as advisory dogfood until equivalent real-service calibration is
+promoted into a required production gate.
 Gate Inventory:
-- apps/relay/vat.toml; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs; apps/relay/src/perf_gate.rs; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml
+- apps/relay/vat.toml; apps/relay/tests/measured_performance.rs; apps/relay/tests/work_queue_throughput.rs; apps/relay/tests/perf_gate.rs
+- apps/relay/scripts/soak.sh; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | o-1-lease-cursor-throughput | epic | - | implemented | passing | conformance | apps/relay/tests/work_queue_throughput.rs |
 | normalized-win-ratchet-decision-model | epic | 125 | implemented | passing | conformance | apps/relay/tests/perf_gate.rs |
-| vat-meter-throughput-gate | epic | 125 | implemented | passing | dogfood | `cd apps/relay && ../../target/debug/vat run meter-perf` (2026-07-17, exit 0); apps/relay/vat.toml#meter-perf |
+| measured-durable-lifecycle-production-gate | change | #2172 | implemented | passing | dogfood | release-only child report plus independent parent parser; fixed 2,000-message/128-byte/batch-100 envelope |
+| vat-meter-throughput-gate | epic | 125 | implemented | passing | dogfood | `cd apps/relay && ../../target/debug/vat run meter-perf`; apps/relay/vat.toml#meter-perf |
 | external-broker-comparison | epic | 125 | implemented | passing | dogfood | 2026-07-17 real Relay/RabbitMQ/NATS bulk lifecycle calibration; apps/relay/docs/perf-gate.md; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
 
 ### Long-Running Stability

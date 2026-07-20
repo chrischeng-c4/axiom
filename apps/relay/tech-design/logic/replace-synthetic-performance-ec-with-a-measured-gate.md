@@ -1,6 +1,13 @@
 ---
 id: '2172'
-summary: (fill)
+summary: Replace Relay's synthetic performance false-green with a release-mode fsync-always durable lifecycle report, an independent fail-closed parser, and complete behavior, efficiency, and stability EC coverage.
+capability_refs:
+  - id: competitor-performance
+    role: primary
+    gap: normalized-win-ratchet-decision-model
+    claim: normalized-win-ratchet-decision-model
+    coverage: full
+    rationale: The measured report and independent threshold oracle replace the claim's hard-coded-ratio production false-green while preserving advisory external calibration.
 fill_sections: [logic, changes, unit-test]
 ---
 
