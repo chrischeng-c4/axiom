@@ -68,16 +68,6 @@ flowchart TD
 
 ```yaml
 changes:
-  - path: apps/defer/aw.toml
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: "Declare Defer as a Rust workspace with the real cargo test gate so accepted EC sources generate compilable wrappers instead of schema text."
-  - path: apps/defer/scripts/soak.sh
-    action: modify
-    section: unit-test
-    impl_mode: hand-written
-    reason: "Exercise a fixed successful task and a fixed real-HTTP fault task, require committed retry progress in both steady windows, and retain bounded resource/latency thresholds."
   - path: apps/defer/tests/http_dispatch_signing.rs
     action: modify
     section: unit-test
