@@ -74,24 +74,23 @@ changes:
     section: unit-test
     impl_mode: hand-written
     anchor: trusted_relay_peers_replicate_messages_over_mtls
-    description: Add a direct required-mTLS accept/connect journey whose client trusts the server CA but presents an identity signed by an untrusted CA; assert the server rejects it before HTTP/Raft handling.
+    description: Generalize the material fixture so identity and trust authorities can differ, then bind a required-mTLS server to an ephemeral listener and assert its accept seam rejects a client identity signed by a second CA even though that client trusts the real server CA.
   - path: apps/relay/README.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Align security-hardening with Lumen's SecurityTool classification and declare behavior, security, and stability dimensions.
+    description: Set Type SecurityTool, list behavior/security/stability commands, root the remediation at 2175, and include auth, admission, untrusted peer, K8s, and last-known-good evidence.
   - path: apps/relay/external-contracts/security-hardening/security/security-evidence.md
     action: modify
     section: e2e-test
     impl_mode: hand-written
-    description: Replace the advisory static-only case with executable behavior, negative-security, and last-known-good stability journeys while retaining guard as the static tool owner.
+    description: Add behavior, security, and stability cases; the security case runs every Relay negative suite without filters, and the stability case runs shared reload tests plus Relay adapter and peer-TLS continuity.
   - path: apps/relay/vat.toml
     action: modify
     section: config
     impl_mode: hand-written
-    description: Make guard-security attach meter evidence from auth, admission, peer-mTLS, and direct K8s tests rather than relay_core.
+    description: Build auth, service_admission, raft_peer_mtls, and direct_k8s_assets and attach their full unfiltered cargo invocation to guard as meter evidence.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
