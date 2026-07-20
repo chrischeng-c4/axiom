@@ -111,3 +111,49 @@ changes:
     impl_mode: hand-written
     description: Record compatibility schema limits, provenance, sentinel isolation, failure, and read-only verification rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-graph-context-adapter-verification
+requirements:
+  bounded_confined_payload:
+    id: R5
+    text: "The one-MiB compatibility boundary, graph-count limits, endpoint validation, HTML escaping, source confinement, and one-based spans fail closed without fabricated links."
+    kind: security
+    risk: high
+    verify: tests/graph_context_adapter.rs::payload_limits_and_source_confinement_fail_closed
+  malformed_and_failure_isolation:
+    id: R3
+    text: "Malformed graphs, duplicate ids, missing endpoints, oversized data, unsafe sources, and injected byte-source failure become graph warnings while lower-priority renderers still return context."
+    kind: failure-recovery
+    risk: high
+    verify: tests/graph_context_adapter.rs::malformed_and_failing_provider_are_isolated
+  node_edge_provenance:
+    id: R1
+    text: "Every valid graph node and edge renders with canonical source navigation or an explicit inferred or ambiguous derived-authority label and retains all source inputs."
+    kind: contract
+    risk: high
+    verify: tests/graph_context_adapter.rs::renders_source_or_visible_inference_for_every_node_and_edge
+  provider_absence_isolation:
+    id: R2
+    text: "With no compatibility payload, Graph remains unsupported and Markdown, Git, PTY source boundaries, and an independently registered AW sentinel remain usable."
+    kind: failure-recovery
+    risk: high
+    verify: tests/graph_context_adapter.rs::provider_absence_leaves_generic_and_aw_sentinel_renderers_usable
+  repository_owned_contract:
+    id: R4
+    text: "The adapter parses only workbench.graph-context.v1 fixtures, imports no Graphify implementation or SDK, and performs no repository, AW, provider, subprocess, or verification mutation."
+    kind: boundary
+    risk: high
+    verify: tests/graph_context_adapter.rs::adapter_contract_is_reference_only_and_read_only
+---
+flowchart TD
+    r1[R1 node edge provenance] --> tests_graph_context_adapter_rs_renders_source_or_visible_inference_for_every_node_and_edge[tests/graph_context_adapter.rs::renders_source_or_visible_inference_for_every_node_and_edge]
+    r2[R2 provider absence isolation] --> tests_graph_context_adapter_rs_provider_absence_leaves_generic_and_aw_sentinel_renderers_usable[tests/graph_context_adapter.rs::provider_absence_leaves_generic_and_aw_sentinel_renderers_usable]
+    r3[R3 malformed and failure isolation] --> tests_graph_context_adapter_rs_malformed_and_failing_provider_are_isolated[tests/graph_context_adapter.rs::malformed_and_failing_provider_are_isolated]
+    r4[R4 repository owned contract] --> tests_graph_context_adapter_rs_adapter_contract_is_reference_only_and_read_only[tests/graph_context_adapter.rs::adapter_contract_is_reference_only_and_read_only]
+    r5[R5 bounded confined payload] --> tests_graph_context_adapter_rs_payload_limits_and_source_confinement_fail_closed[tests/graph_context_adapter.rs::payload_limits_and_source_confinement_fail_closed]
+```
