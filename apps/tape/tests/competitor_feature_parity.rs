@@ -16,7 +16,7 @@ struct FeatureRow {
     replay_baseline: bool,
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in competitor_feature_parity.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in competitor_feature_parity.rs is hand-written pending codegen support">
 fn matrix() -> Vec<FeatureRow> {
     vec![
         FeatureRow {
