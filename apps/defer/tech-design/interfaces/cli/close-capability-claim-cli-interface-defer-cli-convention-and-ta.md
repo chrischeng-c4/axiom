@@ -54,3 +54,28 @@ flowchart TD
     stability --> verified
     invoke -->|scope boundary| unchanged([domain and shared implementations unchanged])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/tests/cli_contract.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: help_exposes_standard_and_domain_surfaces
+    reason: "Own the fail-closed behavior oracle for exact command grammar, offline llm, exact TypeScript client generation, and deployment-render exit status."
+  - path: apps/defer/tests/cli_efficiency.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: offline_cli_and_codegen_stay_within_latency_ceiling
+    reason: "Own the release-mode non-zero operation count and hard median/p99 CLI efficiency oracle."
+  - path: apps/defer/tests/cli_stability.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: offline_cli_is_deterministic_and_resource_bounded
+    reason: "Own repeated deterministic output, exact codegen cleanup, 60-second bound, and FD plateau evidence."
+```
