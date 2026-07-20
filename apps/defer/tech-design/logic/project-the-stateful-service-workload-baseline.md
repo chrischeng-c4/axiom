@@ -36,3 +36,15 @@ flowchart TD
     shared --> validate[capability check passes]
     local --> validate
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the field-style stateful-service-workload contract and one work root; reference current shared-library paths and existing Defer domain evidence without duplicating their policies.
+```
