@@ -16,54 +16,56 @@ capability_refs:
 
 ```mermaid
 ---
-id: defer-delayed-task-stability-contract
-entry: invoke
+id: defer-delayed-task-stability-verification
+entry: observe_behavior
 nodes:
-  invoke: { kind: start, label: "exercise the Defer stability contract through committed scheduler public process and operator surfaces" }
-  behavior: { kind: process, label: "run lifecycle queue policy and real three-node Raft recovery suites" }
-  behavior_ok: { kind: decision, label: "fourteen tests preserve ordering rate control fencing and repeated failover state?" }
-  efficiency: { kind: process, label: "measure one thousand durable enqueue lease ack operations against the Relay control" }
-  efficiency_ok: { kind: decision, label: "zero errors complete metrics and defer to relay ratio at least 0.80?" }
-  soak: { kind: process, label: "cross proposal cache and snapshot cadence then measure two fixed-keyspace retry windows" }
-  soak_ok: { kind: decision, label: "non-zero operations retry progress and RSS FD task and p99 bounds all hold?" }
-  kind: { kind: process, label: "reconcile operator StatefulSet and exact Bound 1Gi PVC then replace the serving pod" }
-  kind_ok: { kind: decision, label: "different pod UID recovers tasks accepts mutations and cluster cleanup is verified?" }
-  fail: { kind: terminal, label: "fail closed on skipped work stale fencing missing metrics resource drift PVC mismatch lost state or residual cluster" }
-  verified: { kind: terminal, label: "behavior efficiency process stability and operator recovery are independently observed" }
-  shared: { kind: terminal, label: "shared Raft observability executor and Kubernetes mechanisms remain library owned" }
+  observe_behavior: { kind: start, label: "execute fourteen lifecycle rate-control and real three-node Raft tests" }
+  behavior_ok: { kind: decision, label: "ordering control fencing durable restart convergence and repeated failover all observed?" }
+  measure_efficiency: { kind: process, label: "execute one thousand durable enqueue lease ack operations and the identical Relay control" }
+  efficiency_ok: { kind: decision, label: "metrics complete errors zero and defer throughput at least eighty percent of Relay?" }
+  warm_soak: { kind: process, label: "warm fixed task keys through proposal cache and snapshot cadence" }
+  measure_soak: { kind: process, label: "measure two thirty-second retry windows and process resource samples" }
+  soak_ok: { kind: decision, label: "operations non-zero retry advances and RSS FD tasks and p99 remain bounded?" }
+  deploy_kind: { kind: process, label: "build source image reconcile CRD operator StatefulSet and exact Bound 1Gi PVC" }
+  replace_pod: { kind: process, label: "delete serving pod require a different ready UID and read the committed queue and tasks" }
+  mutate_after_recovery: { kind: process, label: "pause the queue cancel a task and observe terminal accounting" }
+  cleanup_ok: { kind: decision, label: "cluster deletion succeeds and the cluster name is absent?" }
+  fail: { kind: terminal, label: "contract fails closed" }
+  verified: { kind: terminal, label: "delayed-task stability claim is externally verified" }
 edges:
-  - { from: invoke, to: behavior }
-  - { from: behavior, to: behavior_ok }
-  - { from: behavior_ok, to: efficiency, label: "yes" }
+  - { from: observe_behavior, to: behavior_ok }
+  - { from: behavior_ok, to: measure_efficiency, label: "yes" }
   - { from: behavior_ok, to: fail, label: "no" }
-  - { from: efficiency, to: efficiency_ok }
-  - { from: efficiency_ok, to: soak, label: "yes" }
+  - { from: measure_efficiency, to: efficiency_ok }
+  - { from: efficiency_ok, to: warm_soak, label: "yes" }
   - { from: efficiency_ok, to: fail, label: "no" }
-  - { from: soak, to: soak_ok }
-  - { from: soak_ok, to: kind, label: "yes" }
+  - { from: warm_soak, to: measure_soak }
+  - { from: measure_soak, to: soak_ok }
+  - { from: soak_ok, to: deploy_kind, label: "yes" }
   - { from: soak_ok, to: fail, label: "no" }
-  - { from: kind, to: kind_ok }
-  - { from: kind_ok, to: verified, label: "yes" }
-  - { from: kind_ok, to: fail, label: "no" }
-  - { from: invoke, to: shared, label: "ownership boundary" }
+  - { from: deploy_kind, to: replace_pod }
+  - { from: replace_pod, to: mutate_after_recovery }
+  - { from: mutate_after_recovery, to: cleanup_ok }
+  - { from: cleanup_ok, to: verified, label: "yes" }
+  - { from: cleanup_ok, to: fail, label: "no" }
 ---
 flowchart TD
-    invoke([exercise committed Defer surfaces]) --> behavior[run lifecycle rate and three-node Raft suites]
-    behavior --> behavior_ok{fourteen behavior tests pass?}
-    behavior_ok -->|yes| efficiency[measure one thousand durable lifecycle operations]
+    observe_behavior([run lifecycle rate and Raft suites]) --> behavior_ok{behavior and recovery observed?}
+    behavior_ok -->|yes| measure_efficiency[measure Defer and Relay durable lifecycle]
     behavior_ok -->|no| fail([fail closed])
-    efficiency --> efficiency_ok{ratio at least 0.80 and metrics complete?}
-    efficiency_ok -->|yes| soak[run fixed-keyspace retry soak]
+    measure_efficiency --> efficiency_ok{complete metrics errors zero ratio >= 0.80?}
+    efficiency_ok -->|yes| warm_soak[warm fixed keys through snapshot cadence]
     efficiency_ok -->|no| fail
-    soak --> soak_ok{progress and resource bounds hold?}
-    soak_ok -->|yes| kind[replace operator pod over exact Bound 1Gi PVC]
+    warm_soak --> measure_soak[measure two retry and resource windows]
+    measure_soak --> soak_ok{non-zero progress and bounds hold?}
+    soak_ok -->|yes| deploy_kind[reconcile source image and exact Bound 1Gi PVC]
     soak_ok -->|no| fail
-    kind --> kind_ok{state mutation and cleanup verified?}
-    kind_ok -->|yes| verified([stability contract observed])
-    kind_ok -->|no| fail
-    invoke -->|ownership boundary| shared([shared mechanisms remain in libs])
+    deploy_kind --> replace_pod[replace serving pod and recover records]
+    replace_pod --> mutate_after_recovery[pause queue and cancel task]
+    mutate_after_recovery --> cleanup_ok{cluster deletion and absence verified?}
+    cleanup_ok -->|yes| verified([stability claim externally verified])
+    cleanup_ok -->|no| fail
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
