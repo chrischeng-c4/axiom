@@ -52,7 +52,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "ManagedService for Beam"
+    anchor: "impl ManagedService for Beam"
   - path: apps/beam/src/dx.rs
     action: modify
     section: logic
