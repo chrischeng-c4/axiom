@@ -19,6 +19,13 @@
 //! (non-wasm) `jet build` handler these tests exercise, so today it silently
 //! leaves stale content-hashed files behind on a second build into the same
 //! `dist/`. Pre-existing and unrelated to #2137; out of scope here.
+//!
+//! #2140 extends the determinism and stale-guard tests below with the same
+//! assertions against the store's independent import-scan section (its own
+//! `[bundle-timing] import-scan: ... i_hits=N i_misses=M` line) rather than
+//! adding new top-level tests, per the same reuse-not-duplicate-harness
+//! intent as the rest of this file. Its poisoned-entry coverage is likewise
+//! unit-level only (`persistent_cache.rs`'s `import_scan_*` tests).
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::hash_map::DefaultHasher;
@@ -138,6 +145,49 @@ fn parse_cache_timing_line(stderr: &str) -> Option<CacheTiming> {
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ImportScanTiming {
+    fast: u64,
+    fallback: u64,
+    hits: u64,
+    misses: u64,
+}
+
+/// Parse the `[bundle-timing] import-scan: fast=X fallback=Y i_hits=N
+/// i_misses=M` line `jet build` emits to stderr under
+/// `JET_BUNDLE_TIMING=1` (#2140; see `Bundler::build_graph` in
+/// `src/bundler/mod.rs`). `i_hits`/`i_misses` count persistent import-scan
+/// cache lookups (a section of the same `transform-cache.bin` store the
+/// `[bundle-timing] cache: ...` line above reports on, gated independently
+/// via `SCANNER_VERSION` rather than `config_fingerprint`); `fast`/
+/// `fallback` count which raw scan strategy ran for modules that missed.
+fn parse_import_scan_timing_line(stderr: &str) -> Option<ImportScanTiming> {
+    let line = stderr
+        .lines()
+        .find(|line| line.starts_with("[bundle-timing] import-scan:"))?;
+    let mut fast = None;
+    let mut fallback = None;
+    let mut hits = None;
+    let mut misses = None;
+    for field in line.split_whitespace() {
+        if let Some(v) = field.strip_prefix("fast=") {
+            fast = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("fallback=") {
+            fallback = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("i_hits=") {
+            hits = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("i_misses=") {
+            misses = v.parse::<u64>().ok();
+        }
+    }
+    Some(ImportScanTiming {
+        fast: fast?,
+        fallback: fallback?,
+        hits: hits?,
+        misses: misses?,
+    })
+}
+
 fn content_hash(bytes: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
@@ -218,6 +268,21 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
             .exists(),
         "cold build did not write the persistent transform cache store"
     );
+    // #2140: every fresh import scan (fast-path or tree-sitter fallback) is
+    // exactly one import-scan cache miss; holds on any run regardless of
+    // how many modules happen to share byte-identical content (which can
+    // produce a handful of intra-run cache *hits* even on an otherwise
+    // cold store — e.g. generated barrel re-export stubs — so this checks
+    // the miss/scan relationship rather than asserting hits == 0).
+    let cold_import_scan = parse_import_scan_timing_line(&cold_stderr).ok_or_else(|| {
+        anyhow!("cold build did not print an import-scan timing line\nstderr={cold_stderr}")
+    })?;
+    assert_eq!(
+        cold_import_scan.misses,
+        cold_import_scan.fast + cold_import_scan.fallback,
+        "cold build: every import-scan cache miss must correspond to exactly \
+         one fast-path or fallback scan; stderr={cold_stderr}"
+    );
     let cold_signature = dist_signature(&fixture).context("hash cold dist output")?;
 
     clean_dist_dir(&fixture);
@@ -236,6 +301,28 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
          cold misses={} warm hits={}\nstderr={warm_stderr}",
         cold_timing.misses, warm_timing.hits
     );
+    // #2140: an unchanged rebuild must have zero import-scan misses, and
+    // must hit every content signature the cold build either scanned fresh
+    // or already deduped in-memory (hits + misses, not just misses — see
+    // the cold-run comment above on same-content intra-run hits).
+    let warm_import_scan = parse_import_scan_timing_line(&warm_stderr).ok_or_else(|| {
+        anyhow!("warm rebuild did not print an import-scan timing line\nstderr={warm_stderr}")
+    })?;
+    assert_eq!(
+        warm_import_scan.misses, 0,
+        "warm rebuild (unchanged sources) must have zero import-scan cache \
+         misses; stderr={warm_stderr}"
+    );
+    assert_eq!(
+        warm_import_scan.hits,
+        cold_import_scan.hits + cold_import_scan.misses,
+        "warm rebuild must import-scan-cache-hit every content signature the \
+         cold build produced (fresh scans + intra-run dedup hits); \
+         cold hits={} misses={} warm hits={}\nstderr={warm_stderr}",
+        cold_import_scan.hits,
+        cold_import_scan.misses,
+        warm_import_scan.hits
+    );
     let warm_signature = dist_signature(&fixture).context("hash warm dist output")?;
 
     assert_eq!(
@@ -246,11 +333,15 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
 
     eprintln!(
         "[transform_cache] determinism: cold hits={} misses={}; warm hits={} misses={}; \
-         dist files={}",
+         import-scan cold hits={} misses={}; warm hits={} misses={}; dist files={}",
         cold_timing.hits,
         cold_timing.misses,
         warm_timing.hits,
         warm_timing.misses,
+        cold_import_scan.hits,
+        cold_import_scan.misses,
+        warm_import_scan.hits,
+        warm_import_scan.misses,
         warm_signature.len(),
     );
     Ok(())
@@ -279,6 +370,20 @@ fn persistent_cache_stale_guard_only_edited_module_misses() -> Result<()> {
         "expected the mui-visual fixture to transform more than one module; \
          got {total_modules}"
     );
+    // #2140: the import-scan section's own module pool (scripts scanned for
+    // imports) need not equal the transform section's pool count exactly
+    // (e.g. a module can be import-scanned but later pruned before
+    // transform), so this tracks its own total independently.
+    let baseline_import_scan = parse_import_scan_timing_line(&String::from_utf8_lossy(
+        &baseline.stderr,
+    ))
+    .ok_or_else(|| anyhow!("baseline build (A) did not print an import-scan timing line"))?;
+    let total_import_scanned = baseline_import_scan.hits + baseline_import_scan.misses;
+    assert!(
+        total_import_scanned > 1,
+        "expected the mui-visual fixture to import-scan more than one module; \
+         got {total_import_scanned}"
+    );
 
     edit_fixture_heading_text(&fixture_a).context("edit fixture A")?;
 
@@ -298,6 +403,27 @@ fn persistent_cache_stale_guard_only_edited_module_misses() -> Result<()> {
         total_modules - 1,
         "every module except the edited one must still hit the persistent cache; \
          total_modules={total_modules}\nstderr={edited_stderr}"
+    );
+    // #2140: a pure JSX text-node edit changes only the edited module's own
+    // content_hash, so exactly one import-scan entry (keyed on content_hash
+    // + is_typescript, no path/dep component) must miss; every other
+    // module's import-scan entry is untouched and must still hit.
+    let edited_import_scan = parse_import_scan_timing_line(&edited_stderr).ok_or_else(|| {
+        anyhow!(
+            "edited rebuild (A) did not print an import-scan timing line\nstderr={edited_stderr}"
+        )
+    })?;
+    assert_eq!(
+        edited_import_scan.misses, 1,
+        "editing exactly one leaf module's text content must miss exactly that \
+         one module's import-scan cache entry; stderr={edited_stderr}"
+    );
+    assert_eq!(
+        edited_import_scan.hits,
+        total_import_scanned - 1,
+        "every module except the edited one must still hit the persistent \
+         import-scan cache; total_import_scanned={total_import_scanned}\n\
+         stderr={edited_stderr}"
     );
     let edited_signature = dist_signature(&fixture_a).context("hash edited (A) dist output")?;
 
@@ -327,6 +453,22 @@ fn persistent_cache_stale_guard_only_edited_module_misses() -> Result<()> {
         "from-scratch build of the edited source must transform every module \
          (same module count as the unedited baseline); stderr={from_scratch_stderr}"
     );
+    // #2140: same miss/scan invariant as the cold-build case above (not
+    // hits == 0 — a fresh tempdir can still see a handful of intra-run
+    // import-scan hits from same-content modules).
+    let from_scratch_import_scan =
+        parse_import_scan_timing_line(&from_scratch_stderr).ok_or_else(|| {
+            anyhow!(
+                "from-scratch build (B) did not print an import-scan timing line\n\
+                 stderr={from_scratch_stderr}"
+            )
+        })?;
+    assert_eq!(
+        from_scratch_import_scan.misses,
+        from_scratch_import_scan.fast + from_scratch_import_scan.fallback,
+        "from-scratch build: every import-scan cache miss must correspond to \
+         exactly one fast-path or fallback scan; stderr={from_scratch_stderr}"
+    );
     let from_scratch_signature =
         dist_signature(&fixture_b).context("hash from-scratch (B) dist output")?;
 
@@ -338,8 +480,15 @@ fn persistent_cache_stale_guard_only_edited_module_misses() -> Result<()> {
 
     eprintln!(
         "[transform_cache] stale guard: total_modules={total_modules} edited misses={} \
-         edited hits={} from-scratch misses={}",
-        edited_timing.misses, edited_timing.hits, from_scratch_timing.misses,
+         edited hits={} from-scratch misses={}; import-scan \
+         total_import_scanned={total_import_scanned} edited misses={} edited hits={} \
+         from-scratch misses={}",
+        edited_timing.misses,
+        edited_timing.hits,
+        from_scratch_timing.misses,
+        edited_import_scan.misses,
+        edited_import_scan.hits,
+        from_scratch_import_scan.misses,
     );
     Ok(())
 }

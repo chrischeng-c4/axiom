@@ -158,6 +158,20 @@ impl ModuleGraph {
             .collect()
     }
 
+    /// #2140 — bare dependency-id iterator, same order as `dependencies`'s
+    /// `neighbors_directed` walk (its `.map()`/`.collect()` cannot reorder
+    /// the underlying iterator), but without `dependencies`'s per-neighbour
+    /// `find_edge` + `edge_weight` lookup pair, since callers that only
+    /// want ids (`persistent_cache::dependency_fingerprint`) would
+    /// otherwise pay for an `EdgeKind` they immediately discard, plus the
+    /// `Vec<(ModuleId, EdgeKind)>` allocation `dependencies` collects it
+    /// into. Byte-identical fingerprint output to before this WI — only
+    /// the wasted work computing it is gone.
+    pub fn dependency_ids(&self, id: ModuleId) -> impl Iterator<Item = ModuleId> + '_ {
+        use petgraph::Direction;
+        self.graph.neighbors_directed(id, Direction::Outgoing)
+    }
+
     /// Modules that import (directly or transitively) the given path.
     /// BFS walk over reverse `Import` / `CssImport` / `WasmImport`
     /// edges. **`DynamicImport` edges stop the walk** — every

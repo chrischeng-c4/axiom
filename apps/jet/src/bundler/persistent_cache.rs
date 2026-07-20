@@ -67,6 +67,22 @@
 //! (non-wall-clock) `last_used` counter so eviction ordering costs no
 //! `SystemTime` calls in the hot path.
 //!
+//! ## Import-scan section (#2140)
+//!
+//! A second, independent row set in the *same* file: `path`-agnostic and
+//! content-addressed by [`ImportScanKey`] (a module's own `content_hash`
+//! plus `is_typescript` — the only two inputs the scan depends on), holding
+//! the already-`Bundler::runtime_static_imports`-narrowed
+//! [`imports::ModuleImports`] that `Bundler::prefetch_one_module` and
+//! `build_graph`'s synchronous fallback both consume. Gated at load by
+//! [`SCANNER_VERSION`] rather than `config_fingerprint` — a scanner-only
+//! behavior change (or a transform-only one) invalidates just its own
+//! section, not the whole file — and evicted independently of the transform
+//! `entries` above (its own [`MAX_STORE_BYTES`] pass, since import-scan
+//! rows are typically orders of magnitude smaller than a compiled module's
+//! code + source map). Same corrupt-row isolation as the transform section:
+//! see [`StoredImportScanEntry`].
+//!
 //! ## Hatches
 //!
 //! `[build] cache` in jet.toml, `--no-cache` on `jet build` (flag wins over
@@ -85,6 +101,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use super::imports;
 use super::CompiledModule;
 
 /// Bumped whenever a transform-pass behavior change could make an
@@ -92,7 +109,28 @@ use super::CompiledModule;
 /// matches what today's transform would emit. Folded into the cache file's
 /// `config_fingerprint` alongside the crate version, so either one changing
 /// invalidates the whole store rather than serving stale-shape code.
-pub const TRANSFORM_CACHE_SCHEMA: u32 = 1;
+///
+/// #2140 bumped this 1 -> 2: `CacheFile` grew two new trailing fields
+/// (`scanner_version`, `import_scan_entries`) for the import-scan section
+/// below. An old (schema-1) file has neither field, so `postcard`'s decode
+/// of the new shape fails cleanly on the missing bytes — the existing
+/// "unreadable, starting cold" warning path in [`PersistentTransformCache::
+/// load`] already handles that outcome, so old stores need no migration:
+/// clean full miss, warned once, never a hard error.
+pub const TRANSFORM_CACHE_SCHEMA: u32 = 2;
+
+/// Bumped whenever import-scan behavior changes (`imports::
+/// extract_imports_fast`, its tree-sitter fallback, or `Bundler::
+/// runtime_static_imports`'s type-only-import narrowing) in a way that
+/// could make an old cached [`imports::ModuleImports`] no longer match what
+/// today's scan would produce for the same content. Stored once per file
+/// (`CacheFile::scanner_version`) and checked once at load — independently
+/// of [`TRANSFORM_CACHE_SCHEMA`]/`config_fingerprint`, which gate the
+/// transform section — so a scanner-only behavior change invalidates just
+/// the import-scan section, and vice versa. See the module doc comment's
+/// "Import-scan section" heading.
+/// @issue #2140
+pub const SCANNER_VERSION: u32 = 1;
 
 /// Store location, relative to the project root (the same root `jet build`
 /// resolves `node_modules/` from). `node_modules/.jet/` is an existing jet
@@ -115,6 +153,23 @@ pub struct EntryKey {
     pub barrel_fingerprint: u64,
 }
 
+/// Key for one cached import-scan entry (#2140): a module's own source
+/// `content_hash` plus `is_typescript` — the only two inputs `Bundler::
+/// prefetch_one_module`'s import-scan (`imports::extract_imports_fast` /
+/// its tree-sitter fallback, narrowed through `Bundler::
+/// runtime_static_imports`) depends on. Unlike [`EntryKey`], there is no
+/// `own_id`/`dep_fingerprint` component: an import list is a pure function
+/// of a module's own bytes plus whether it is parsed as TypeScript, never
+/// of this build's graph-discovery order, so this key alone is enough to
+/// address the entry directly (no `path`-keyed indirection needed — two
+/// modules with byte-identical content and the same `is_typescript`-ness
+/// legitimately share one entry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ImportScanKey {
+    pub content_hash: u64,
+    pub is_typescript: bool,
+}
+
 /// One on-disk cache row. `payload` is an independently-encoded
 /// `CompiledModule` blob (not inlined as struct fields) precisely so a
 /// corrupt `payload` can be detected via `checksum` and skipped without
@@ -133,12 +188,33 @@ struct StoredEntry {
     last_used: u64,
 }
 
+/// One on-disk import-scan cache row (#2140). Same corrupt-row isolation as
+/// [`StoredEntry`] (see its doc comment): `payload` is an independently
+/// `postcard`-encoded [`imports::ModuleImports`] blob, checked against
+/// `checksum` before decode, so one corrupt row can never desync the decode
+/// of every row after it.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredImportScanEntry {
+    key: ImportScanKey,
+    checksum: u64,
+    payload: Vec<u8>,
+    last_used: u64,
+}
+
 /// The whole on-disk file: one `postcard`-encoded blob.
+///
+/// #2140 added the two trailing fields for the import-scan section
+/// (`scanner_version`, `import_scan_entries`); see [`TRANSFORM_CACHE_SCHEMA`]
+/// for why appending fields here is safe (old-shaped files just fail to
+/// decode, a clean cold-start) and the module doc comment's "Import-scan
+/// section" heading for the design.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheFile {
     schema: u32,
     config_fingerprint: u64,
     entries: Vec<StoredEntry>,
+    scanner_version: u32,
+    import_scan_entries: Vec<StoredImportScanEntry>,
 }
 
 /// In-memory representation of one live entry — decoded once at `load` (or
@@ -151,6 +227,18 @@ struct LiveEntry {
     last_used: u64,
 }
 
+/// In-memory representation of one live import-scan entry (#2140) —
+/// decoded once at `load` (or inserted fresh this build). Unlike
+/// [`LiveEntry`] there is no separate key field: [`ImportScanKey`] IS the
+/// map key (`PersistentTransformCache::import_scan_entries` is keyed by it
+/// directly), since a lookup needs no secondary match-check beyond the map
+/// lookup itself — see [`ImportScanKey`]'s doc comment.
+#[derive(Debug, Clone)]
+struct LiveImportScanEntry {
+    module: imports::ModuleImports,
+    last_used: u64,
+}
+
 /// Result of [`PersistentTransformCache::load`], surfaced through
 /// `JET_BUNDLE_TIMING` and the final build report.
 #[derive(Debug, Clone, Default)]
@@ -158,6 +246,13 @@ pub struct LoadStats {
     pub enabled: bool,
     pub loaded_entries: usize,
     pub corrupt_entries: usize,
+    /// #2140 — import-scan section counterparts to `loaded_entries`/
+    /// `corrupt_entries` above, tracked separately since the two sections
+    /// are gated by independent fingerprints (`config_fingerprint` vs
+    /// `SCANNER_VERSION`) and can legitimately disagree (one section valid,
+    /// the other cold).
+    pub import_scan_loaded_entries: usize,
+    pub import_scan_corrupt_entries: usize,
     pub duration: Duration,
 }
 
@@ -182,8 +277,16 @@ pub struct PersistentTransformCache {
     misses: AtomicU64,
     /// Monotonic logical clock for `last_used` — deliberately not
     /// `SystemTime`, so touching an entry costs one atomic increment, not a
-    /// clock syscall.
+    /// clock syscall. Shared by both the transform and import-scan
+    /// sections, so `save`'s two independent eviction passes still agree
+    /// on one global sense of "oldest".
     clock: AtomicU64,
+    /// #2140 — import-scan section: content-addressed by [`ImportScanKey`]
+    /// directly (no `path` indirection — see its doc comment), tracked and
+    /// evicted independently of `entries` above.
+    import_scan_entries: DashMap<ImportScanKey, LiveImportScanEntry>,
+    import_scan_hits: AtomicU64,
+    import_scan_misses: AtomicU64,
 }
 
 impl PersistentTransformCache {
@@ -201,18 +304,27 @@ impl PersistentTransformCache {
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             clock: AtomicU64::new(0),
+            import_scan_entries: DashMap::new(),
+            import_scan_hits: AtomicU64::new(0),
+            import_scan_misses: AtomicU64::new(0),
         }
     }
 
     /// Load `<project_root>/node_modules/.jet/transform-cache.bin`, if
-    /// enabled and present. `config_fingerprint` gates the *whole* file: a
-    /// mismatch (schema bump, or a defines/jsx/target/minify/splitting
-    /// option changed since the last build) discards every entry as a
-    /// deliberate, silent cold-start — not corruption, so it does not warn.
-    /// A missing file (first run, or a deliberately cleared store) is the
-    /// same silent cold-start. Only a *present but undecodable* file, or
-    /// individual corrupt entries inside an otherwise good file, print a
-    /// warning — see the module doc comment.
+    /// enabled and present. `schema` gates the whole file's *shape*: a
+    /// mismatch (an old- or new-shaped file this binary cannot decode)
+    /// discards everything as a deliberate, silent cold-start — not
+    /// corruption, so it does not warn (a shape mismatch usually also just
+    /// fails `postcard::from_bytes` outright, handled the same way below).
+    /// Past that, the transform section (`entries`) and import-scan section
+    /// (`import_scan_entries`) are gated *independently* — `config_fingerprint`
+    /// for the former, [`SCANNER_VERSION`] for the latter (#2140) — so a
+    /// change that only affects one (e.g. a `defines` edit, or a
+    /// scanner-only bug fix) discards only that section, not both. A
+    /// missing file (first run, or a deliberately cleared store) is the
+    /// same silent cold-start for both sections. Only a *present but
+    /// undecodable* file, or individual corrupt entries inside an otherwise
+    /// good section, print a warning — see the module doc comment.
     pub fn load(project_root: &Path, config_fingerprint: u64) -> (Self, LoadStats) {
         let start = Instant::now();
 
@@ -229,6 +341,9 @@ impl PersistentTransformCache {
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             clock: AtomicU64::new(0),
+            import_scan_entries: DashMap::new(),
+            import_scan_hits: AtomicU64::new(0),
+            import_scan_misses: AtomicU64::new(0),
         };
 
         let bytes = match std::fs::read(&store_path) {
@@ -263,7 +378,7 @@ impl PersistentTransformCache {
             }
         };
 
-        if file.schema != TRANSFORM_CACHE_SCHEMA || file.config_fingerprint != config_fingerprint {
+        if file.schema != TRANSFORM_CACHE_SCHEMA {
             return (
                 cache,
                 LoadStats {
@@ -273,36 +388,69 @@ impl PersistentTransformCache {
                 },
             );
         }
+        let transform_section_valid = file.config_fingerprint == config_fingerprint;
+        let import_scan_section_valid = file.scanner_version == SCANNER_VERSION;
 
         let mut loaded = 0usize;
         let mut corrupt = 0usize;
         let mut max_last_used = 0u64;
-        for stored in file.entries {
-            if hash_bytes(&stored.payload) != stored.checksum {
-                corrupt += 1;
-                continue;
-            }
-            let module: CompiledModule = match postcard::from_bytes(&stored.payload) {
-                Ok(m) => m,
-                Err(_) => {
+        if transform_section_valid {
+            for stored in file.entries {
+                if hash_bytes(&stored.payload) != stored.checksum {
                     corrupt += 1;
                     continue;
                 }
-            };
-            max_last_used = max_last_used.max(stored.last_used);
-            cache.entries.insert(
-                stored.path,
-                LiveEntry {
-                    key: stored.key,
-                    module,
-                    last_used: stored.last_used,
-                },
-            );
-            loaded += 1;
+                let module: CompiledModule = match postcard::from_bytes(&stored.payload) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        corrupt += 1;
+                        continue;
+                    }
+                };
+                max_last_used = max_last_used.max(stored.last_used);
+                cache.entries.insert(
+                    stored.path,
+                    LiveEntry {
+                        key: stored.key,
+                        module,
+                        last_used: stored.last_used,
+                    },
+                );
+                loaded += 1;
+            }
         }
+
+        let mut import_scan_loaded = 0usize;
+        let mut import_scan_corrupt = 0usize;
+        if import_scan_section_valid {
+            for stored in file.import_scan_entries {
+                if hash_bytes(&stored.payload) != stored.checksum {
+                    import_scan_corrupt += 1;
+                    continue;
+                }
+                let module: imports::ModuleImports = match postcard::from_bytes(&stored.payload) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        import_scan_corrupt += 1;
+                        continue;
+                    }
+                };
+                max_last_used = max_last_used.max(stored.last_used);
+                cache.import_scan_entries.insert(
+                    stored.key,
+                    LiveImportScanEntry {
+                        module,
+                        last_used: stored.last_used,
+                    },
+                );
+                import_scan_loaded += 1;
+            }
+        }
+
         // Anything inserted fresh this build must sort after everything
         // just loaded, so `save`'s oldest-first eviction stays meaningful
-        // across process runs instead of resetting to 0 every load.
+        // across process runs instead of resetting to 0 every load. One
+        // shared clock across both sections (see its field doc comment).
         cache.clock.store(max_last_used + 1, Ordering::Relaxed);
 
         if corrupt > 0 {
@@ -314,6 +462,15 @@ impl PersistentTransformCache {
                 loaded + corrupt,
             );
         }
+        if import_scan_corrupt > 0 {
+            eprintln!(
+                "warn: jet transform cache at {} had {import_scan_corrupt} corrupt import-scan \
+                 entr{} out of {}; dropped and will re-scan (#2140)",
+                store_path.display(),
+                if import_scan_corrupt == 1 { "y" } else { "ies" },
+                import_scan_loaded + import_scan_corrupt,
+            );
+        }
 
         (
             cache,
@@ -321,6 +478,8 @@ impl PersistentTransformCache {
                 enabled: true,
                 loaded_entries: loaded,
                 corrupt_entries: corrupt,
+                import_scan_loaded_entries: import_scan_loaded,
+                import_scan_corrupt_entries: import_scan_corrupt,
                 duration: start.elapsed(),
             },
         )
@@ -334,18 +493,44 @@ impl PersistentTransformCache {
     /// exactly. Touches the entry's recency on a hit; counts exactly one
     /// hit or miss per call either way.
     pub fn get(&self, path: &Path, key: &EntryKey) -> Option<CompiledModule> {
+        let (lookup_ns, clone_ns) = (AtomicU64::new(0), AtomicU64::new(0));
+        self.get_with_laps(path, key, &lookup_ns, &clone_ns)
+    }
+
+    /// Same contract as [`Self::get`], additionally attributing the wall
+    /// time spent finding+matching the entry (`lookup_ns`) separately from
+    /// cloning the matched `CompiledModule` out (`clone_ns`) — #2140's
+    /// hit-path sub-lap attribution, consulted by `transform_modules`'s
+    /// `persistent-cache-hit-laps` line. `get` is a thin wrapper around
+    /// this with throwaway local counters, so there is exactly one copy of
+    /// the lookup/clone logic.
+    pub fn get_with_laps(
+        &self,
+        path: &Path,
+        key: &EntryKey,
+        lookup_ns: &AtomicU64,
+        clone_ns: &AtomicU64,
+    ) -> Option<CompiledModule> {
         if !self.enabled {
             return None;
         }
-        if let Some(mut entry) = self.entries.get_mut(path) {
-            if entry.key == *key {
+        let lookup_start = Instant::now();
+        let found = self.entries.get_mut(path).filter(|entry| entry.key == *key);
+        lookup_ns.fetch_add(lookup_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        match found {
+            Some(mut entry) => {
                 entry.last_used = self.next_clock();
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                return Some(entry.module.clone());
+                let clone_start = Instant::now();
+                let module = entry.module.clone();
+                clone_ns.fetch_add(clone_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                Some(module)
+            }
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
             }
         }
-        self.misses.fetch_add(1, Ordering::Relaxed);
-        None
     }
 
     /// Record (or replace) `path`'s entry. A later `save` call persists
@@ -377,6 +562,49 @@ impl PersistentTransformCache {
 
     pub fn misses(&self) -> u64 {
         self.misses.load(Ordering::Relaxed)
+    }
+
+    /// Look up a cached import-scan result for `key` (#2140). Content-
+    /// addressed, so unlike [`Self::get`] there is no `path` parameter and
+    /// no secondary key-match check beyond the map lookup itself: a hit on
+    /// `key` is valid for *any* module sharing that exact
+    /// `(content_hash, is_typescript)` pair (see [`ImportScanKey`]'s doc
+    /// comment for why that is safe). Touches recency on a hit; counts
+    /// exactly one hit or miss per call either way.
+    pub fn get_import_scan(&self, key: &ImportScanKey) -> Option<imports::ModuleImports> {
+        if !self.enabled {
+            return None;
+        }
+        match self.import_scan_entries.get_mut(key) {
+            Some(mut entry) => {
+                entry.last_used = self.next_clock();
+                self.import_scan_hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.module.clone())
+            }
+            None => {
+                self.import_scan_misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Record (or replace) `key`'s import-scan result (#2140). A later
+    /// `save` call persists whatever is live in-memory at that point.
+    pub fn insert_import_scan(&self, key: ImportScanKey, module: imports::ModuleImports) {
+        if !self.enabled {
+            return;
+        }
+        let last_used = self.next_clock();
+        self.import_scan_entries
+            .insert(key, LiveImportScanEntry { module, last_used });
+    }
+
+    pub fn import_scan_hits(&self) -> u64 {
+        self.import_scan_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn import_scan_misses(&self) -> u64 {
+        self.import_scan_misses.load(Ordering::Relaxed)
     }
 
     /// Encode every live entry, apply the [`MAX_STORE_BYTES`] oldest-first
@@ -422,10 +650,48 @@ impl PersistentTransformCache {
         }
         let entries_written = rows.len();
 
+        // #2140 — import-scan section: same encode + checksum + oldest-
+        // first eviction shape as the transform `rows` above, kept as an
+        // independent pass (own byte total, own `MAX_STORE_BYTES` cap)
+        // rather than merged into one heterogeneous eviction, since
+        // import-scan rows are typically orders of magnitude smaller than a
+        // compiled module and merging would mean every `save` re-sorting a
+        // mixed-type Vec for a cap this section will rarely if ever near.
+        let mut scan_rows: Vec<StoredImportScanEntry> =
+            Vec::with_capacity(self.import_scan_entries.len());
+        for kv in self.import_scan_entries.iter() {
+            let module = &kv.value().module;
+            let payload = match postcard::to_stdvec(module) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::debug!(
+                        "jet transform cache: skipping unencodable import-scan entry {:?}: {e} (#2140)",
+                        kv.key()
+                    );
+                    continue;
+                }
+            };
+            let checksum = hash_bytes(&payload);
+            scan_rows.push(StoredImportScanEntry {
+                key: *kv.key(),
+                checksum,
+                payload,
+                last_used: kv.value().last_used,
+            });
+        }
+        scan_rows.sort_unstable_by_key(|r| r.last_used);
+        let mut scan_total: u64 = scan_rows.iter().map(|r| r.payload.len() as u64).sum();
+        while scan_total > MAX_STORE_BYTES && !scan_rows.is_empty() {
+            let removed = scan_rows.remove(0);
+            scan_total -= removed.payload.len() as u64;
+        }
+
         let file = CacheFile {
             schema: TRANSFORM_CACHE_SCHEMA,
             config_fingerprint: self.config_fingerprint,
             entries: rows,
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: scan_rows,
         };
         let bytes = match postcard::to_stdvec(&file) {
             Ok(b) => b,
@@ -498,19 +764,24 @@ fn hash_seq<T: std::hash::Hash>(items: &[T]) -> u64 {
     hasher.finish()
 }
 
-/// Ordered dependency-id fingerprint for `id`: `graph.dependencies(id)`'s
+/// Ordered dependency-id fingerprint for `id`: `graph.dependency_ids(id)`'s
 /// own (unsorted) order, each resolved through `module_map` to the numeric
 /// id this build assigned it. Deliberately not sorted — see the module doc
 /// comment's `dep_fingerprint` entry for why order must be preserved.
+///
+/// #2140 — goes through `dependency_ids` (bare `ModuleId`s), not
+/// `dependencies` (`ModuleId` + `EdgeKind` pairs via a `find_edge` +
+/// `edge_weight` lookup this function never used): same iteration order,
+/// so byte-identical output, one fewer `Vec` allocation and no wasted
+/// edge-kind lookups per dependency.
 pub fn dependency_fingerprint(
     graph: &super::ModuleGraph,
     id: super::ModuleId,
     module_map: &HashMap<PathBuf, usize>,
 ) -> u64 {
     let ids: Vec<usize> = graph
-        .dependencies(id)
-        .into_iter()
-        .filter_map(|(dep_id, _kind)| {
+        .dependency_ids(id)
+        .filter_map(|dep_id| {
             graph
                 .get_node(dep_id)
                 .and_then(|node| module_map.get(&node.path).copied())
@@ -837,6 +1108,8 @@ mod tests {
             schema: TRANSFORM_CACHE_SCHEMA,
             config_fingerprint: 42,
             entries: vec![good_entry, bad_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -876,6 +1149,8 @@ mod tests {
             schema: TRANSFORM_CACHE_SCHEMA,
             config_fingerprint: 1,
             entries: vec![good_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -993,6 +1268,218 @@ mod tests {
         }
         assert_eq!(evicted_paths, vec![PathBuf::from("/proj/src/m0.js")]);
         assert_eq!(rows.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2140 — import-scan section tests below. Same fixture/naming style as
+    // the transform-section tests above.
+
+    fn sample_imports(source: &str) -> imports::ModuleImports {
+        imports::ModuleImports {
+            static_imports: vec![imports::ImportDeclaration {
+                source: source.to_string(),
+                kind: imports::ImportKind::Named,
+            }],
+            dynamic_imports: Vec::new(),
+            exports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn import_scan_miss_then_insert_then_hit_round_trips() {
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let key = ImportScanKey {
+            content_hash: hash_str("import x from './x';"),
+            is_typescript: false,
+        };
+
+        assert!(cache.get_import_scan(&key).is_none());
+        assert_eq!(cache.import_scan_misses(), 1);
+
+        cache.insert_import_scan(key, sample_imports("./x"));
+        let hit = cache
+            .get_import_scan(&key)
+            .expect("expected a hit after insert");
+        assert_eq!(hit.static_imports[0].source, "./x");
+        assert_eq!(cache.import_scan_hits(), 1);
+        assert_eq!(cache.import_scan_misses(), 1);
+    }
+
+    #[test]
+    fn import_scan_is_typescript_is_part_of_the_key() {
+        // Same `content_hash` (a `.js` file and a `.ts` file with
+        // byte-identical bytes are a real, if rare, scenario), different
+        // `is_typescript` — must be a miss, not a stale hit, since
+        // `runtime_static_imports` behaves differently for the two.
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let content_hash = hash_str("import x from './x'; export {};");
+        let js_key = ImportScanKey {
+            content_hash,
+            is_typescript: false,
+        };
+        cache.insert_import_scan(js_key, sample_imports("./x"));
+
+        let ts_key = ImportScanKey {
+            content_hash,
+            is_typescript: true,
+        };
+        assert!(cache.get_import_scan(&ts_key).is_none());
+        assert!(cache.get_import_scan(&js_key).is_some());
+    }
+
+    #[test]
+    fn import_scan_poisoned_payload_checksum_rejects_without_losing_other_entries() {
+        let good_key = ImportScanKey {
+            content_hash: hash_str("import a from './a';"),
+            is_typescript: false,
+        };
+        let good_payload = postcard::to_stdvec(&sample_imports("./a")).unwrap();
+        let good_entry = StoredImportScanEntry {
+            key: good_key,
+            checksum: hash_bytes(&good_payload),
+            payload: good_payload,
+            last_used: 0,
+        };
+
+        let bad_key = ImportScanKey {
+            content_hash: hash_str("import b from './b';"),
+            is_typescript: false,
+        };
+        let mut bad_payload = postcard::to_stdvec(&sample_imports("./b")).unwrap();
+        let bad_checksum = hash_bytes(&bad_payload);
+        if let Some(byte) = bad_payload.first_mut() {
+            *byte ^= 0xFF;
+        }
+        let bad_entry = StoredImportScanEntry {
+            key: bad_key,
+            checksum: bad_checksum,
+            payload: bad_payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 7,
+            entries: Vec::new(),
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: vec![good_entry, bad_entry],
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"import_scan_poisoned_payload_checksum_rejects")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        let (cache, stats) = PersistentTransformCache::load(&dir, 7);
+        assert_eq!(stats.import_scan_loaded_entries, 1);
+        assert_eq!(stats.import_scan_corrupt_entries, 1);
+        assert!(cache.get_import_scan(&good_key).is_some());
+        assert!(cache.get_import_scan(&bad_key).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_scan_and_transform_sections_are_gated_independently() {
+        // A `config_fingerprint` mismatch (transform section) must not
+        // discard an otherwise-valid import-scan section, and a
+        // `scanner_version` mismatch (import-scan section) must not
+        // discard an otherwise-valid transform section — the two
+        // fingerprints gate their own section only (#2140).
+        let good_module = sample_module(0, "const good = 1;");
+        let good_payload = postcard::to_stdvec(&good_module).unwrap();
+        let transform_entry = StoredEntry {
+            path: PathBuf::from("/proj/src/good.js"),
+            key: sample_key(),
+            checksum: hash_bytes(&good_payload),
+            payload: good_payload,
+            last_used: 0,
+        };
+
+        let scan_key = ImportScanKey {
+            content_hash: hash_str("import a from './a';"),
+            is_typescript: false,
+        };
+        let scan_payload = postcard::to_stdvec(&sample_imports("./a")).unwrap();
+        let scan_entry = StoredImportScanEntry {
+            key: scan_key,
+            checksum: hash_bytes(&scan_payload),
+            payload: scan_payload,
+            last_used: 0,
+        };
+
+        // Written with the CURRENT `SCANNER_VERSION` but a config_fingerprint
+        // that the load call below deliberately won't match.
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 100,
+            entries: vec![transform_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: vec![scan_entry],
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"import_scan_and_transform_sections_are_gated_independently")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        // Load with a DIFFERENT config_fingerprint (200 != 100): the
+        // transform section must come up empty while the import-scan
+        // section (whose own `scanner_version` still matches) survives.
+        let (cache, stats) = PersistentTransformCache::load(&dir, 200);
+        assert_eq!(stats.loaded_entries, 0, "transform section must miss");
+        assert_eq!(
+            stats.import_scan_loaded_entries, 1,
+            "import-scan section must still load"
+        );
+        assert!(cache
+            .get(Path::new("/proj/src/good.js"), &sample_key())
+            .is_none());
+        assert!(cache.get_import_scan(&scan_key).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_scan_save_then_load_round_trips_across_a_process_boundary_simulation() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"import_scan_save_then_load_round_trips")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (cache, _) = PersistentTransformCache::load(&dir, 55);
+        let key = ImportScanKey {
+            content_hash: hash_str("import y from './y';"),
+            is_typescript: true,
+        };
+        cache.insert_import_scan(key, sample_imports("./y"));
+        let save_stats = cache.save();
+        assert!(save_stats.bytes_written > 0);
+
+        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 55);
+        assert_eq!(load_stats.import_scan_loaded_entries, 1);
+        let hit = reloaded
+            .get_import_scan(&key)
+            .expect("expected the saved import-scan entry to round-trip");
+        assert_eq!(hit.static_imports[0].source, "./y");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

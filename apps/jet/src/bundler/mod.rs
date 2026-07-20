@@ -735,10 +735,11 @@ struct PrefetchedModule {
     /// Which import-extraction path this module's `imports` came from
     /// (#1997): `Some(true)` = the string-scan fast path
     /// (`imports::extract_imports_fast`), `Some(false)` = the tree-sitter
-    /// fallback, `None` = extraction was never attempted (not a
-    /// `ModuleKind::Script`, or the file read failed). Read back in
-    /// `build_graph` to print the `JET_BUNDLE_TIMING` `import-scan:`
-    /// line; carries no other behavior.
+    /// fallback, `None` = extraction was never attempted — not a
+    /// `ModuleKind::Script`, the file read failed, or (#2140) a persistent
+    /// import-scan cache hit supplied the already-narrowed result with no
+    /// fresh scan needed. Read back in `build_graph` to print the
+    /// `JET_BUNDLE_TIMING` `import-scan:` line; carries no other behavior.
     used_fast_import_scan: Option<bool>,
 }
 
@@ -1486,34 +1487,14 @@ impl Bundler {
                 // never produced there, so `tree` stays `None` for a fast-scanned
                 // module and the transform stage re-parses it if needed --
                 // exactly like it already does for every TS/TSX/JSX module today.
-                match imports::extract_imports_fast(src) {
-                    Some(module_imports) => {
-                        used_fast_import_scan = Some(true);
-                        imports = Ok(self.runtime_static_imports(
-                            src,
-                            module_path,
-                            is_typescript,
-                            module_imports,
-                        ));
-                    }
-                    None => {
-                        used_fast_import_scan = Some(false);
-                        match imports::extract_imports_with_tree(src, is_typescript) {
-                            Ok((module_imports, parsed)) => {
-                                if reusable {
-                                    tree = Some(parsed);
-                                }
-                                imports = Ok(self.runtime_static_imports(
-                                    src,
-                                    module_path,
-                                    is_typescript,
-                                    module_imports,
-                                ));
-                            }
-                            Err(e) => imports = Err(e.to_string()),
-                        }
-                    }
-                }
+                // #2140: `scan_module_imports_cached` additionally consults the
+                // persistent import-scan cache before running either scan (a
+                // no-op when the cache is disabled, e.g. dev server/`--lib`).
+                let (scanned_imports, scanned_tree, scanned_fast_flag) =
+                    self.scan_module_imports_cached(src, module_path, is_typescript, reusable);
+                imports = scanned_imports;
+                tree = scanned_tree;
+                used_fast_import_scan = scanned_fast_flag;
                 if let Ok(module_imports) = &imports {
                     let mut specs: Vec<&str> = Vec::new();
                     if is_jsx {
@@ -1996,6 +1977,79 @@ impl Bundler {
         module_imports
     }
 
+    /// #2140 — content-addressed import-scan cache consult, shared by
+    /// `prefetch_one_module` and `build_graph`'s synchronous fallback (the
+    /// two `extract_imports_fast`/fallback call sites). On a persistent-
+    /// cache hit, returns the already-`runtime_static_imports`-narrowed
+    /// `ModuleImports` with neither scan function invoked — mirrors
+    /// `used_fast_import_scan: None`'s existing "extraction never
+    /// attempted" meaning (now also true of a cache hit: there was nothing
+    /// to attempt). On a miss, runs the exact same fast-path-first pipeline
+    /// both call sites already ran before this WI, then inserts the
+    /// narrowed result so a later build — or another module with
+    /// byte-identical content — hits.
+    ///
+    /// Only pays for the content hash + cache lookup when the persistent
+    /// cache is actually enabled (`jet build`'s one-shot CLI path);
+    /// dev-server/`--lib`/`--nx` never set `cache_project_root`, so
+    /// `enabled()` is `false` there and this degrades to exactly the
+    /// pre-#2140 scan with no added cost.
+    ///
+    /// Returns `(imports, tree, used_fast_import_scan)`: `tree` is `Some`
+    /// only for a fresh tree-sitter-fallback parse of a `reusable`
+    /// (plain-JS) module — never populated on a cache hit, since no parse
+    /// happened; the transform stage already re-parses on demand for every
+    /// module that also lacks a tree today (every fast-scanned module), so
+    /// this is a same-process perf side-channel, not a persisted "product".
+    fn scan_module_imports_cached(
+        &self,
+        source: &str,
+        module_path: &Path,
+        is_typescript: bool,
+        reusable: bool,
+    ) -> (
+        std::result::Result<imports::ModuleImports, String>,
+        Option<tree_sitter::Tree>,
+        Option<bool>,
+    ) {
+        let scan_key = self
+            .persistent_cache
+            .enabled()
+            .then(|| persistent_cache::ImportScanKey {
+                content_hash: persistent_cache::hash_str(source),
+                is_typescript,
+            });
+        if let Some(key) = &scan_key {
+            if let Some(cached) = self.persistent_cache.get_import_scan(key) {
+                return (Ok(cached), None, None);
+            }
+        }
+
+        let mut tree: Option<tree_sitter::Tree> = None;
+        let mut used_fast_import_scan = Some(true);
+        let raw = match imports::extract_imports_fast(source) {
+            Some(module_imports) => module_imports,
+            None => {
+                used_fast_import_scan = Some(false);
+                match imports::extract_imports_with_tree(source, is_typescript) {
+                    Ok((module_imports, parsed)) => {
+                        if reusable {
+                            tree = Some(parsed);
+                        }
+                        module_imports
+                    }
+                    Err(e) => return (Err(e.to_string()), None, used_fast_import_scan),
+                }
+            }
+        };
+        let narrowed = self.runtime_static_imports(source, module_path, is_typescript, raw);
+        if let Some(key) = scan_key {
+            self.persistent_cache
+                .insert_import_scan(key, narrowed.clone());
+        }
+        (Ok(narrowed), tree, used_fast_import_scan)
+    }
+
     /// Read-through helper for `source_cache`: a cache hit (populated by the
     /// crawl's `prefetch_one_module`) returns the shared `Arc<str>` with no
     /// filesystem access; a miss falls back to `fs::read_to_string` and
@@ -2074,7 +2128,14 @@ impl Bundler {
                 .values()
                 .filter(|p| p.used_fast_import_scan == Some(false))
                 .count();
-            eprintln!("[bundle-timing] import-scan: fast={fast} fallback={fallback}");
+            // #2140: i_hits/i_misses count persistent import-scan cache
+            // lookups across both `prefetch_one_module` and this
+            // function's own synchronous fallback branch below.
+            eprintln!(
+                "[bundle-timing] import-scan: fast={fast} fallback={fallback} i_hits={} i_misses={}",
+                self.persistent_cache.import_scan_hits(),
+                self.persistent_cache.import_scan_misses(),
+            );
         }
 
         let mut queue: Vec<(PathBuf, Option<ModuleId>, Option<graph::EdgeKind>)> =
@@ -2168,19 +2229,20 @@ impl Bundler {
                     }
                     // #1997: same fast-path-first preference as the parallel
                     // prefetch above, for this rare synchronous fallback (a
-                    // module the wave crawl didn't already memoize).
+                    // module the wave crawl didn't already memoize). #2140:
+                    // routed through the same cache-consulting helper as
+                    // `prefetch_one_module`; this call site never reused a
+                    // parse tree even before #2140 (`extract_imports`
+                    // discards it), so `reusable=false`.
                     None => {
-                        let extracted = match imports::extract_imports_fast(&source) {
-                            Some(imports) => Ok(imports),
-                            None => imports::extract_imports(&source, is_typescript),
-                        };
+                        let (extracted, _tree, _used_fast) = self.scan_module_imports_cached(
+                            &source,
+                            &module_path,
+                            is_typescript,
+                            false,
+                        );
                         match extracted {
-                            Ok(imports) => self.runtime_static_imports(
-                                &source,
-                                &module_path,
-                                is_typescript,
-                                imports,
-                            ),
+                            Ok(imports) => imports,
                             Err(e) => {
                                 tracing::warn!(
                                     "Failed to extract imports from {:?}: {}",
@@ -2583,7 +2645,42 @@ impl Bundler {
         let dce_require_gate_ns = std::sync::atomic::AtomicU64::new(0);
         let dce_require_run_ns = std::sync::atomic::AtomicU64::new(0);
 
+        // #2140 (beat-vite round 9) — persistent-cache pure-hit-path
+        // attribution: how much of each module's pre-transform work below
+        // goes to reading its source, hashing that content, assembling the
+        // rest of the persistent-cache key (the barrel-demand snapshot plus
+        // `dependency_fingerprint`/`barrel_fingerprint`), the store's own
+        // lookup, cloning the matched `CompiledModule` out on a hit, vs.
+        // everything else per module (the GH #3136 `fs::metadata`/mtime
+        // read, the always-miss-in-a-one-shot-build in-memory `self.cache`
+        // probe, `cached.id` assignment). Every module runs source-read
+        // through store-lookup regardless of hit or miss — only `clone` and
+        // the hit-only slice of `other` are exclusive to a hit — so on a
+        // run with any misses, `other` also carries those misses' own small
+        // per-module overhead here, never their (unrelated, much larger)
+        // real transform cost, which begins after this block. Summed across
+        // every worker thread in the `par_iter` below, like the sub-laps
+        // above, so the total can exceed this phase's own wall-clock
+        // `transform_modules` lap; on a fully warm rebuild (`cache: ...
+        // misses=0`) every module takes the hit branch, so these six sum to
+        // the whole pure-hit-path cost the WI is about. Printed as a
+        // `persistent-cache-hit-laps` `JET_BUNDLE_TIMING` sibling line
+        // regardless of whether the persistent cache is enabled (all
+        // near-zero when it's off, since `get_with_laps` returns a fast
+        // miss immediately).
+        let hit_source_read_ns = std::sync::atomic::AtomicU64::new(0);
+        let hit_content_hash_ns = std::sync::atomic::AtomicU64::new(0);
+        let hit_key_assembly_ns = std::sync::atomic::AtomicU64::new(0);
+        let hit_store_lookup_ns = std::sync::atomic::AtomicU64::new(0);
+        let hit_clone_ns = std::sync::atomic::AtomicU64::new(0);
+        let hit_other_ns = std::sync::atomic::AtomicU64::new(0);
+
         use rayon::prelude::*;
+        // #2140 — the hit-path source read below keeps the cached `Arc<str>`
+        // as-is (no `.to_string()` copy) and only allocates an owned
+        // `String` in the barrel-prune branch that actually needs one; see
+        // that match for the `Cow::Borrowed`/`Cow::Owned` split.
+        use std::borrow::Cow;
 
         // #1995 — per-module pass gating. `fold_define_short_circuits` +
         // `eliminate_static_conditionals_syntax` + `eliminate_unused_side_
@@ -2660,7 +2757,13 @@ impl Bundler {
                 }
                 transformed_modules.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if let Some(mut cached) = self.cache.get(&node.path, mtime) {
+                let other_start = std::time::Instant::now();
+                let in_memory_hit = self.cache.get(&node.path, mtime);
+                hit_other_ns.fetch_add(
+                    other_start.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                if let Some(mut cached) = in_memory_hit {
                     cached.id = module_id;
                     tracing::debug!("Using cached module: {:?}", node.path);
                     return Some(Ok(cached));
@@ -2670,8 +2773,15 @@ impl Bundler {
                 // re-reading this module's bytes from disk a third time
                 // (already read once by the crawl, once by the survivors
                 // pre-pass).
-                let source = match self.cached_source(&node.path) {
-                    Ok(s) => s.to_string(),
+                // #2140 — keep the cache's `Arc<str>` handle as-is (a clone
+                // is just a refcount bump) instead of eagerly `.to_string()`-
+                // copying every module's full source on every hit; the one
+                // consumer that needs an owned `String` (the barrel-prune
+                // branch below) allocates its own via `Cow::Owned`, and
+                // every other module now reads through with zero byte copy.
+                let read_start = std::time::Instant::now();
+                let source: Arc<str> = match self.cached_source(&node.path) {
+                    Ok(s) => s,
                     Err(e) => {
                         return Some(Err(anyhow::anyhow!(
                             "bundler: cannot read module {:?}: {e} (GH #3136)",
@@ -2679,6 +2789,10 @@ impl Bundler {
                         )));
                     }
                 };
+                hit_source_read_ns.fetch_add(
+                    read_start.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
 
                 // #2137 — persistent transform cache lookup, reachable only
                 // once the in-memory `self.cache` check above has already
@@ -2694,9 +2808,21 @@ impl Bundler {
                 // `--nx`) pays only one `bool` check here. See
                 // `persistent_cache`'s module doc comment for what each
                 // `EntryKey` field guards against.
+                let barrel_snapshot_start = std::time::Instant::now();
                 let barrel_demand_snapshot = self.barrel_demand.lock().get(&node.path).cloned();
+                hit_key_assembly_ns.fetch_add(
+                    barrel_snapshot_start.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                let content_hash_start = std::time::Instant::now();
+                let content_hash = persistent_cache::hash_str(&source);
+                hit_content_hash_ns.fetch_add(
+                    content_hash_start.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                let key_assembly_start = std::time::Instant::now();
                 let persistent_key = persistent_cache::EntryKey {
-                    content_hash: persistent_cache::hash_str(&source),
+                    content_hash,
                     own_id: module_id,
                     dep_fingerprint: persistent_cache::dependency_fingerprint(
                         &graph,
@@ -2707,13 +2833,32 @@ impl Bundler {
                         barrel_demand_snapshot.as_ref(),
                     ),
                 };
-                if let Some(mut cached) = self.persistent_cache.get(&node.path, &persistent_key) {
+                hit_key_assembly_ns.fetch_add(
+                    key_assembly_start.elapsed().as_nanos() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                let persistent_hit = self.persistent_cache.get_with_laps(
+                    &node.path,
+                    &persistent_key,
+                    &hit_store_lookup_ns,
+                    &hit_clone_ns,
+                );
+                if let Some(mut cached) = persistent_hit {
+                    // #2140 — no in-memory `self.cache` backfill here (this
+                    // used to `self.cache.insert(node.path.clone(), mtime,
+                    // cached.clone())`, paying a path clone + module clone +
+                    // DashMap insert on every persistent-cache hit). A
+                    // persistent-cache hit is only reachable when
+                    // `cache_project_root` is set, which only `jet build`'s
+                    // one-shot CLI path does (`cli.rs`'s `cache_project_root:
+                    // if cache_enabled { Some(root_dir.clone()) } else {
+                    // None }` — dev server / `--lib` / `--nx` never set it).
+                    // `jet build --watch` is a no-op warning today (GH
+                    // #3708), not a real loop, so `transform_modules` never
+                    // runs a second time in the same process to consult
+                    // this backfill — it was pure write-only cost on every
+                    // hit.
                     cached.id = module_id;
-                    // Backfill the in-memory cache too, so a second build in
-                    // the same long-lived process (dev server) hits
-                    // `self.cache` directly next time without a persistent
-                    // lookup.
-                    self.cache.insert(node.path.clone(), mtime, cached.clone());
                     tracing::debug!("Using persistent-cached module: {:?}", node.path);
                     return Some(Ok(cached));
                 }
@@ -2730,13 +2875,13 @@ impl Bundler {
                 // so it must not be reused below — a cache miss here
                 // falls back to a fresh parse, the same as any TS/TSX/JSX
                 // module already takes.
-                let source = match &barrel_demand_snapshot {
+                let source: Cow<'_, str> = match &barrel_demand_snapshot {
                     Some(BarrelDemand::Names(names)) => {
                         let pruned = prune_barrel_source_to_demand(&source, names);
                         self.parsed_trees.lock().remove(&node.path);
-                        pruned
+                        Cow::Owned(pruned)
                     }
-                    _ => source,
+                    _ => Cow::Borrowed(&*source),
                 };
 
                 let result = match node.kind {
@@ -3005,6 +3150,20 @@ impl Bundler {
                 std::time::Duration::from_nanos(dce_fold_run_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_require_gate_ns.load(Ordering::Relaxed)),
                 std::time::Duration::from_nanos(dce_require_run_ns.load(Ordering::Relaxed)),
+            );
+
+            // #2140 (beat-vite round 9) — persistent-cache pure-hit-path
+            // attribution, as a `transform-sub-laps` sibling line: see the
+            // `hit_*_ns` declaration comment above for what each bucket
+            // covers and the cross-worker-summed caveat.
+            eprintln!(
+                "[bundle-timing] persistent-cache-hit-laps: source_read={:?} content_hash={:?} key_assembly={:?} store_lookup={:?} clone={:?} other={:?}",
+                std::time::Duration::from_nanos(hit_source_read_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(hit_content_hash_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(hit_key_assembly_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(hit_store_lookup_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(hit_clone_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(hit_other_ns.load(Ordering::Relaxed)),
             );
         }
 

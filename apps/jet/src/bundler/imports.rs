@@ -8,11 +8,16 @@
 /// what Vite does: alias resolution happens in the module graph construction
 /// step, before any `node_modules` lookup.
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
 
 /// Import/export information extracted from a module
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone, PartialEq)]
+///
+/// #2140 — `Serialize`/`Deserialize` let this round-trip through the
+/// persistent transform cache's import-scan section (`persistent_cache.rs`);
+/// the derive is additive and does not change in-memory behavior.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModuleImports {
     pub static_imports: Vec<ImportDeclaration>,
     pub dynamic_imports: Vec<String>,
@@ -21,7 +26,7 @@ pub struct ModuleImports {
 
 /// Static import declaration
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImportDeclaration {
     pub source: String,
     pub kind: ImportKind,
@@ -29,7 +34,7 @@ pub struct ImportDeclaration {
 
 /// Kind of import
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportKind {
     Default,
     Named,
@@ -39,7 +44,7 @@ pub enum ImportKind {
 
 /// Export declaration
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportDeclaration {
     pub kind: ExportKind,
     pub source: Option<String>,
@@ -47,7 +52,7 @@ pub struct ExportDeclaration {
 
 /// Kind of export
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExportKind {
     Named,
     Default,
