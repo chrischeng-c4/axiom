@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T20:20:06.669890+00:00"
-digest = "sha256:2a9d981a509d4d39627b3043e75d661dc8954d2cf78d6212d2a8ad2123cd7334"
-source_digest = "sha256:2a9d981a509d4d39627b3043e75d661dc8954d2cf78d6212d2a8ad2123cd7334"
-ir_digest = "sha256:322cd319a35e78fd8f17f85b4b009bb2a056dc11db1b48d59f4471f740aeae09"
+generated_at = "2026-07-20T20:37:31.894946+00:00"
+digest = "sha256:77904c43906805ee14e2b16394382d2cc5688eed6437854fb394da4a35e8493a"
+source_digest = "sha256:77904c43906805ee14e2b16394382d2cc5688eed6437854fb394da4a35e8493a"
+ir_digest = "sha256:311716f56d69a62a3b87623031f84dde7315a6ad25c214f109527ebb431d90fb"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "logic/add-an-optional-graphify-compatible-graph-context-adapter.md"
 digest = "sha256:2218257ec5ac914e41efba53019218df16075463e11f3484611c542e6b214ac8"
 ir_digest = "sha256:2837a702cc951358b39e907939db8356378973bb00b045bf0aa6f1cb3b7cf23b"
+section_count = 3
+
+[[files]]
+path = "logic/add-an-optional-llm-wiki-compatible-derived-page-context-adapter.md"
+digest = "sha256:7e3628e5bd9cff6a74560f9d12a3a60c978d1358c960e2b77bcca486c0b6361c"
+ir_digest = "sha256:40e0b4fb3c787082b7585b2d2ee88168418c1e1650380ed6e77bf05383fc423d"
 section_count = 3
 
 [[files]]
