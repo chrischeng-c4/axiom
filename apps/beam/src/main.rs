@@ -807,7 +807,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 K8sCmd::Operator(operator) => {
                     match operator.cmd.unwrap_or(K8sOperatorCmd::Run) {
                         K8sOperatorCmd::Run => {
-                            println!("beam operator: reconcile controller running (placeholder)");
+                            beam::operator::run().await?;
                         }
                         K8sOperatorCmd::Render(render) => {
                             let body = render_operator_yaml(&render.namespace);
