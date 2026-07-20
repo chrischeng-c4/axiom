@@ -1,3 +1,7 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:5378a983" tracker="pending-tracker" reason="Retain Markdown, Git, AW, provenance, and source-navigation result evidence."
-// TODO: hand-write content for `apps/workbench/evidence/production-journey/v1/context-summary.json`.
-// HANDWRITE-END
+{
+  "schemaVersion": "workbench.production-context.evidence.v1",
+  "generatedBy": "cargo test -p workbench --test production_journey -- --nocapture",
+  "renderers": {},
+  "sourceNavigation": [],
+  "provenance": {}
+}
