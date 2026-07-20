@@ -1,6 +1,15 @@
 ---
 id: '2150'
-summary: (fill)
+summary: >
+  Enforce Bearer service-auth on all data and admin REST APIs in beam, supporting
+  collection-scoped authorization, admin role restriction, and body size limits.
+capability_refs:
+  - id: "security-hardening"
+    role: primary
+    claim: "beam-service-auth"
+    coverage: full
+    rationale: >
+      Enforces service-auth on data and admin APIs.
 fill_sections: [logic, changes, unit-test]
 ---
 
