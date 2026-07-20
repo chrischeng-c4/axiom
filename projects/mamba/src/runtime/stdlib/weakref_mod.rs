@@ -1328,6 +1328,7 @@ fn reject_non_weakreferenceable(obj: MbValue) -> bool {
     false
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
@@ -1381,6 +1382,7 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
     registry_push(obj, wref);
     wref
 }
+// </HANDWRITE>
 
 /// weakref.deref(wref) -> referent or None (stub).
 ///
@@ -1392,6 +1394,7 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
     reference_target(wref)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 /// weakref.proxy(obj, callback=None) -> proxy wrapper for referents whose
 /// observable contract needs proxy identity/dead-target checks; otherwise keep
 /// the legacy live-object alias carve-out.
@@ -1462,6 +1465,7 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
     }
     obj
 }
+// </HANDWRITE>
 
 /// CPython-style repr for a `weakref.ref` (ReferenceType) instance:
 ///   `<weakref at 0xADDR; to 'CLASS' at 0xADDR>`
@@ -1854,6 +1858,7 @@ fn register_weakref_classes() {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in weakref_mod.rs is hand-written pending codegen support">
 /// Register the weakref module.
 pub fn register() {
     register_weakref_classes();
@@ -1950,6 +1955,7 @@ pub fn register() {
     super::register_module("_weakref", c_api_attrs);
     super::register_module("weakref", attrs);
 }
+// </HANDWRITE>
 // HANDWRITE-END
 
 #[cfg(test)]
