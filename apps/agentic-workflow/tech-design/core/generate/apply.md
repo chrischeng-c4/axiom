@@ -849,6 +849,12 @@ fn run_apply_inner(
                 .then(|| std::fs::read_to_string(&target_path).ok())
                 .flatten()
                 .is_some_and(|content| is_whole_file_handwrite_content(&content));
+        let existing_whole_file_handwrite = entry.impl_mode == ImplMode::HandWritten
+            && target_path
+                .exists()
+                .then(|| std::fs::read_to_string(&target_path).ok())
+                .flatten()
+                .is_some_and(|content| is_whole_file_handwrite_content(&content));
 
         // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
         // owns the writable skeleton: a new file gets a whole-file HANDWRITE
@@ -865,6 +871,21 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
+            if existing_whole_file_handwrite {
+                apply_diagnostic!(
+                    "[gen apply] HANDWRITE: existing whole-file marker retained in {} (idempotent)",
+                    entry.path,
+                );
+                files.push(FileApplyResult {
+                    path: PathBuf::from(&entry.path),
+                    created: false,
+                    updated: false,
+                    blocks_updated: 0,
+                    dry_run,
+                    processed: true,
+                });
+                continue;
+            }
             if target_path.exists() && !is_rust_source(&target_path) {
                 apply_diagnostic!(
                     "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
@@ -2897,6 +2918,15 @@ fn validate_handwrite_anchors_before_write(
                 .flatten()
                 .is_some_and(|content| is_whole_file_handwrite_content(&content));
         if handwrite_whole_file_promotion {
+            continue;
+        }
+
+        let existing_whole_file_handwrite = target_path
+            .exists()
+            .then(|| std::fs::read_to_string(&target_path).ok())
+            .flatten()
+            .is_some_and(|content| is_whole_file_handwrite_content(&content));
+        if existing_whole_file_handwrite {
             continue;
         }
 
@@ -7223,6 +7253,55 @@ changes:
         }
         assert_eq!(std::fs::read(&config_target).unwrap(), config_before);
         assert_eq!(std::fs::read(&icon_target).unwrap(), icon_before);
+    }
+
+    #[test]
+    fn hand_written_whole_file_create_scaffold_is_regeneration_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let target = root.join("src/host.rs");
+        let spec_path = root.join("tech-design/logic/idempotent-handwrite.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: idempotent-handwrite
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/host.rs
+    action: create
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply(&spec_path, root, false).unwrap();
+        let scaffold = std::fs::read_to_string(&target).unwrap();
+        let filled = scaffold.replace("// TODO: hand-write", "pub fn filled_host() {}");
+        assert_ne!(filled, scaffold);
+        std::fs::write(&target, &filled).unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        assert!(report.files.iter().any(|file| {
+            file.path == PathBuf::from("src/host.rs") && file.processed && !file.updated
+        }));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), filled);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.
