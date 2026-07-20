@@ -250,6 +250,12 @@ pub struct ServeArgs {
     /// Data directory for durable local persistence.
     #[arg(long, env = "BEAM_DATA_DIR")]
     pub data_dir: Option<String>,
+    /// Auth mode: `required` or `off` (the default).
+    #[arg(long, env = "BEAM_AUTH", default_value = "off")]
+    pub auth: String,
+    /// Token registry file path.
+    #[arg(long, env = "BEAM_TOKEN_REGISTRY_FILE")]
+    pub token_registry_file: Option<String>,
 }
 // </HANDWRITE>
 
@@ -744,8 +750,13 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         Command::Serve(args) => {
             let addr = format!("{}:{}", args.host, args.port);
             // <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="#2149" reason="wire data_dir to serve call">
-let data_path = args.data_dir.map(std::path::PathBuf::from);
-            block_on(beam::service::serve(&addr, data_path))?;
+            let data_path = args.data_dir.map(std::path::PathBuf::from);
+            let auth_config = beam::service::AuthConfig::resolve(
+                &args.auth,
+                args.token_registry_file.as_deref(),
+                std::env::var(beam::service::LEGACY_TOKENS_ENV).ok().as_deref(),
+            )?;
+            block_on(beam::service::serve(&addr, data_path, auth_config))?;
             // </HANDWRITE>
             Ok(ExitCode::SUCCESS)
         }
