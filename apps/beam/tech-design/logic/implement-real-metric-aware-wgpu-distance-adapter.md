@@ -1,6 +1,16 @@
 ---
 id: '2148'
-summary: (fill)
+summary: >
+  Implement a real, metric-aware WGPU distance adapter for WgpuDistanceEngine
+  using Beam's existing GPU flat/batched distance primitives, supporting multi-query batching
+  and L2/Dot/Cosine metrics with a clear CPU fallback.
+capability_refs:
+  - id: "gpu-vector-index"
+    role: primary
+    claim: "beam-ddd-wgpu-distance-adapter"
+    coverage: full
+    rationale: >
+      Exposes the GPU distance adapter as the primary driver for WGPU vector queries.
 fill_sections: [logic, changes, unit-test]
 ---
 
