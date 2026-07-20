@@ -60,6 +60,19 @@ impl ManagedService for Beam {
         let host = self.spec.host.as_deref().unwrap_or("0.0.0.0");
         let grace_secs = self.spec.grace_secs.unwrap_or(30);
 
+        let owner_references = if let (Some(uid), Some(name)) = (&self.metadata.uid, &self.metadata.name) {
+            vec![serde_json::json!({
+                "apiVersion": "beam.dev/v1alpha1",
+                "kind": "Beam",
+                "name": name,
+                "uid": uid,
+                "controller": true,
+                "blockOwnerDeletion": true
+            })]
+        } else {
+            vec![]
+        };
+
         let service = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Service",
@@ -69,9 +82,7 @@ impl ManagedService for Beam {
                 "labels": {
                     "app": name,
                 },
-                "ownerReferences": [
-                    kube::core::ObjectMeta::controller_owner_ref(self).unwrap()
-                ]
+                "ownerReferences": owner_references
             },
             "spec": {
                 "ports": [
@@ -114,9 +125,7 @@ impl ManagedService for Beam {
                 "labels": {
                     "app": name,
                 },
-                "ownerReferences": [
-                    kube::core::ObjectMeta::controller_owner_ref(self).unwrap()
-                ]
+                "ownerReferences": owner_references
             },
             "spec": {
                 "replicas": 1,
