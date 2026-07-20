@@ -16,10 +16,22 @@ fn direct_base_is_a_restricted_durable_singleton() {
         "10Gi"
     );
     let container = &statefulset["spec"]["template"]["spec"]["containers"][0];
+    let pod_security = &statefulset["spec"]["template"]["spec"]["securityContext"];
+    assert_eq!(pod_security["runAsNonRoot"], true);
+    assert_eq!(pod_security["runAsUser"], 65532);
+    assert_eq!(pod_security["seccompProfile"]["type"], "RuntimeDefault");
     assert_eq!(container["command"][0], "relay");
     assert_eq!(container["ports"][0]["containerPort"], 7000);
     assert_eq!(container["ports"][1]["containerPort"], 7001);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
+    assert_eq!(
+        container["securityContext"]["allowPrivilegeEscalation"],
+        false
+    );
+    assert_eq!(
+        container["securityContext"]["capabilities"]["drop"][0],
+        "ALL"
+    );
     let env = container["env"].as_sequence().unwrap();
     assert!(env.iter().any(|entry| entry["name"] == "RELAY_LOG_FORMAT"));
     let config = yaml(include_str!("../k8s/base/configmap.yaml"));
@@ -42,9 +54,23 @@ fn direct_base_is_a_restricted_durable_singleton() {
 fn prod_profile_uses_security_components_without_voter_hpa() {
     let prod = include_str!("../k8s/overlays/prod/kustomization.yaml");
     assert!(prod.contains("RELAY_TOKEN_REGISTRY_FILE"));
+    assert!(prod.contains("secretName: relay-token-registry"));
+    assert!(prod.contains("readOnly: true"));
     assert!(prod.contains("../../components/observability"));
     assert!(prod.contains("../../components/network-policy"));
     assert!(!prod.contains("HorizontalPodAutoscaler"));
     assert!(!prod.contains("kind: HPA"));
+
+    let policy = yaml(include_str!(
+        "../k8s/components/network-policy/networkpolicy.yaml"
+    ));
+    assert_eq!(policy["kind"], "NetworkPolicy");
+    assert_eq!(policy["spec"]["podSelector"]["matchLabels"]["app"], "relay");
+    let policy_types = policy["spec"]["policyTypes"].as_sequence().unwrap();
+    assert!(policy_types.iter().any(|value| value == "Ingress"));
+    assert!(policy_types.iter().any(|value| value == "Egress"));
+    let policy_yaml = serde_yaml::to_string(&policy).unwrap();
+    assert!(policy_yaml.contains("port: 7000"));
+    assert!(policy_yaml.contains("port: 7001"));
 }
 // HANDWRITE-END
