@@ -1,23 +1,23 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-bounded-replay-soak
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
+// @ec tape-long-running-stability-bounded-replay-soak
+// @capability long-running-stability
+// @claim tape-bounded-replay-rss-plateau
+// @contract tape-replay-stability-bounded-soak
+// @category stability
 // @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @command TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh
 // AW-EC-END
 
-// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
-// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
+// Contract: A fixed event window is seeded before measurement, then replay/checkpoint/health traffic succeeds across two steady windows.
+// Contract: The Tape process RSS drift stays within the configured steady-window budget without treating append-only journal growth as a leak.
+// Contract: No packet-loss, FD-leak, retention/compaction, or multi-hour production-soak threshold is claimed by this baseline contract.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_long_running_stability_bounded_replay_soak() {
+    let command = "TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh";
+    let id = "tape-long-running-stability-bounded-replay-soak";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

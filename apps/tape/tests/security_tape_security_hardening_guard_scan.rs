@@ -11,7 +11,7 @@
 // AW-EC-END
 
 // Contract: guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings.
-// Contract: guard attaches meter evidence for tape's bearer-auth request-boundary smoke (cli_contract auth-relevant cases).
+// Contract: guard attaches non-zero meter evidence for Tape's service_auth bearer-token, topic-RBAC, and credential-rotation journey.
 // Contract: The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

@@ -1,23 +1,24 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/security-hardening/security/auth-bearer-rbac.md#tape-security-hardening-auth-bearer-rbac
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
-// @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @ec tape-security-hardening-auth-bearer-rbac
+// @capability security-hardening
+// @claim tape-bearer-topic-role-auth
+// @contract tape-bearer-token-topic-rbac
+// @category security
+// @required_for_production false
+// @command cargo test -p tape --test service_auth -- --nocapture
 // AW-EC-END
 
-// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
-// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
+// Contract: When TAPE_AUTH=required, missing and unknown bearer tokens are rejected; a reader cannot append to a topic.
+// Contract: Topic-scoped write grants authorize append, topic-scoped read grants authorize replay and checkpoint operations, and wildcard administrator grants cover every topic.
+// Contract: The required-mode registry fails fast for missing, malformed, empty, or unknown auth configuration; TAPE_AUTH=off remains the explicit local tokenless mode.
+// Contract: Auth rejection uses the shared unauthenticated/forbidden envelope and the standard probe, metrics, OpenAPI, and docs routes remain tokenless.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_security_hardening_auth_bearer_rbac() {
+    let command = "cargo test -p tape --test service_auth -- --nocapture";
+    let id = "tape-security-hardening-auth-bearer-rbac";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

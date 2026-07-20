@@ -1,23 +1,26 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/security-hardening/security/access-control.md#tape-security-hardening-access-control
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
-// @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @ec tape-security-hardening-access-control
+// @capability security-hardening
+// @claim tape-topic-subscription-authz-boundary
+// @contract tape-topic-security-rbac-and-admission
+// @category security
+// @required_for_production false
+// @command cargo test -p service-auth -- --nocapture && cargo test -p tape --test service_auth --test service_admission -- --nocapture
 // AW-EC-END
 
-// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
-// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
+// Contract: Appending to a topic requires that topic's write grant.
+// Contract: Replay and checkpoint operations require that topic's read grant and never expose data from an unauthorized topic.
+// Contract: Authentication failures retain the shared service-auth error shape while operational probes remain tokenless.
+// Contract: Append is classified as write admission and a configured shared policy returns bounded 429 responses without limiting probes.
+// Contract: The projected token registry rotates atomically without restarting Tape, while the shared service-auth suite independently verifies credential-free authorization audit events.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_security_hardening_access_control() {
+    let command =
+        "cargo test -p service-auth -- --nocapture && cargo test -p tape --test service_auth --test service_admission -- --nocapture";
+    let id = "tape-security-hardening-access-control";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
