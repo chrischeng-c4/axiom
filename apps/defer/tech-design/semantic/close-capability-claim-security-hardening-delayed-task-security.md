@@ -61,7 +61,6 @@ flowchart TD
     manifest_ok -->|yes| verified([security boundary externally verified])
     manifest_ok -->|no| fail
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
