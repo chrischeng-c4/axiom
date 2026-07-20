@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:9d06eed7" tracker="pending-tracker" reason="Configure one local WebView window and disable release bundling for the initial host slice."
+// TODO: hand-write content for `apps/workbench/tauri.conf.json`.
+// HANDWRITE-END

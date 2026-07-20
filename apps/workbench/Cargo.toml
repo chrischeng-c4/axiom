@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:86f4ee4a" tracker="pending-tracker" reason="Define the workbench library and desktop binary with Tauri 2 host/build dependencies."
+// TODO: hand-write content for `apps/workbench/Cargo.toml`.
+// HANDWRITE-END
