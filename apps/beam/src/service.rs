@@ -393,8 +393,8 @@ async fn drop_collection(
 ) -> Result<Response, ApiErr> {
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.remove(&name).is_some() {
-        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="delete collection file">
-        delete_collection_file(&state, &name);
+        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="delete collection file">
+delete_collection_file(&state, &name);
         // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "dropped": name }))).into_response())
     } else {
