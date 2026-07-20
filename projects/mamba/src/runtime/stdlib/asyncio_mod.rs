@@ -2037,7 +2037,7 @@ mod tests {
         crate::runtime::async_rt::cleanup_all_async();
     }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in asyncio_mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1841" reason="unit-test section in asyncio_mod.rs is hand-written pending codegen support">
     #[test]
     fn test_to_thread_parallelizes_direct_function_pointer_calls() {
         // #1845: see test_task_cancel_marks_cancelled_and_await_raises.
