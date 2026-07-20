@@ -1,3 +1,30 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:86f4ee4a" tracker="pending-tracker" reason="Define the workbench library and desktop binary with Tauri 2 host/build dependencies."
-// TODO: hand-write content for `apps/workbench/Cargo.toml`.
-// HANDWRITE-END
+# @spec apps/workbench/tech-design/interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md#logic
+[package]
+name = "workbench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Terminal-first native desktop host with pluggable read-only context renderers"
+build = "build.rs"
+
+[lib]
+name = "workbench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "workbench"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
