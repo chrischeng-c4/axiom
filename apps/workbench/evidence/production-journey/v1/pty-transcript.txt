@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:eaccd77b" tracker="pending-tracker" reason="Retain deterministic real-PTY input/output and cwd telemetry evidence."
+// TODO: hand-write content for `apps/workbench/evidence/production-journey/v1/pty-transcript.txt`.
+// HANDWRITE-END
