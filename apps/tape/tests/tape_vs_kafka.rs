@@ -34,7 +34,7 @@ impl Drop for KafkaContainer {
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tape_vs_kafka.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in tape_vs_kafka.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tape_beats_kafka_on_local_backlog_replay() {
     if cfg!(debug_assertions) {
