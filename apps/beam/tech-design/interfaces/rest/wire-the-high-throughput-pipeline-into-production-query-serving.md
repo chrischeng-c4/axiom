@@ -75,3 +75,35 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2153-verification
+requirements:
+  overlap_concurrent_batching:
+    id: R2
+    text: "Implement bounded concurrent batching that overlaps candidate fetch for a later batch with GPU compute for the current batch."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test pipeline_overlap
+  preserve_semantics:
+    id: R3
+    text: "Preserve backpressure, cancellation, result order, metric semantics, and storage-error propagation."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test throughput_pipeline
+  wire_ddd_search:
+    id: R1
+    text: "Wire the corrected DDD search application service into the real Beam query path without maintaining two divergent collection/index models."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test service
+---
+flowchart TD
+    r1[R1 wire ddd search] --> cargo_test_p_beam_test_service[cargo test -p beam --test service]
+    r2[R2 overlap concurrent batching] --> cargo_test_p_beam_test_pipeline_overlap[cargo test -p beam --test pipeline_overlap]
+    r3[R3 preserve semantics] --> cargo_test_p_beam_test_throughput_pipeline[cargo test -p beam --test throughput_pipeline]
+```
