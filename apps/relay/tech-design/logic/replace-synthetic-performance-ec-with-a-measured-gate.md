@@ -86,3 +86,42 @@ changes:
     impl_mode: codegen
     description: Regenerate EC bindings for the three revised competitor-performance cases.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-measured-performance-gate-verification
+requirements:
+  existing_work_queue_behavior_remains_correct:
+    id: R4
+    text: "The measured-oracle change does not alter publish, lease, acknowledgement, redelivery, or committed-watermark behavior."
+    kind: regression
+    risk: medium
+    verify: cargo test -p relay --test work_queue_throughput --test perf_gate
+  measured_gate_fails_closed:
+    id: R1
+    text: "A release-mode child producer runs the fsync-always durable publish and lease/ack lifecycle, emits non-zero machine-readable observations, and an independent parent oracle rejects missing or zero samples before enforcing pinned throughput and latency floors."
+    kind: regression
+    risk: high
+    verify: cargo test --release -p relay --test measured_performance measured_durable_lifecycle_gate -- --exact --ignored --nocapture
+  runtime_tool_dimensions_are_covered:
+    id: R2
+    text: "The competitor-performance EC supplies executable behavior, efficiency, and stability cases with specific observable assertions."
+    kind: functional
+    risk: high
+    verify: aw ec check --project relay
+  vat_meter_runs_measured_gate:
+    id: R3
+    text: "The vat-isolated meter-perf runner executes the release-mode measured gate and not only synthetic in-memory correctness tests."
+    kind: integration
+    risk: high
+    verify: cd apps/relay && ../../target/debug/vat run meter-perf
+---
+flowchart TD
+    r1[R1 measured gate fails closed] --> cargo_test_release_p_relay_test_measured_performance_measured_durable_lifecycle_gate_exact_ignored_nocapture[cargo test --release -p relay --test measured_performance measured_durable_lifecycle_gate -- --exact --ignored --nocapture]
+    r2[R2 runtime tool dimensions are covered] --> aw_ec_check_project_relay[aw ec check --project relay]
+    r3[R3 vat meter runs measured gate] --> cd_apps_relay_target_debug_vat_run_meter_perf[cd apps/relay && ../../target/debug/vat run meter-perf]
+    r4[R4 existing work queue behavior remains correct] --> cargo_test_p_relay_test_work_queue_throughput_test_perf_gate[cargo test -p relay --test work_queue_throughput --test perf_gate]
+```
