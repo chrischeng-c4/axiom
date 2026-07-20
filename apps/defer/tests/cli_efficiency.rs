@@ -83,7 +83,6 @@ fn percentile_us(sorted: &[u128], percentile: usize) -> u128 {
     sorted[rank - 1]
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2213" reason="Own the release-mode non-zero operation count and hard median/p99 CLI efficiency oracle.">
 #[test]
 #[ignore = "release-mode CLI efficiency gate"]
 fn offline_cli_and_codegen_stay_within_latency_ceiling() {
@@ -138,5 +137,4 @@ fn offline_cli_and_codegen_stay_within_latency_ceiling() {
         p99 as f64 / 1_000.0
     );
 }
-// </HANDWRITE>
 // HANDWRITE-END

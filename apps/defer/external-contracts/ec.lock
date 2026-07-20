@@ -3,14 +3,76 @@ project = "defer"
 ir_kind = "ec"
 ec_path = "apps/defer/external-contracts"
 inventory_path = "apps/defer/aw.toml"
-generated_at = "2026-07-20T19:26:14.824392+00:00"
-ir_digest = "sha256:71589b5e5a83f07334c5a911d7a5968e7d0dfd5d5d4f9f20a5bdaf4276d8912e"
-source_digest = "sha256:3e5c09ef6802ac5003960e46af95129750c51796f2f684ac16a5f75e63861e9c"
+generated_at = "2026-07-20T20:42:53.637324+00:00"
+ir_digest = "sha256:14234578998e4db878eaf1538880b1420534a523138e6d9a15dba1199565d120"
+source_digest = "sha256:77ee02eb87efbc6be863c9a5b3853450d1ec9a8d633475c72b551a2f01f0689f"
 tool_contracts = []
+
+[[sources]]
+path = "apps/defer/external-contracts/behavior/2213.md"
+digest = "sha256:ca45612fb08f79035a9fd191b53c4224213ea32539acc5aad2d4e61acfd5ee02"
 
 [[sources]]
 path = "apps/defer/external-contracts/behavior/766.md"
 digest = "sha256:5c9515ebb1dc72ef284111481535e6512604a0cd28ab46b0f727504ee1bb8033"
+
+[[cases]]
+id = "defer-cli-interface-conformance"
+capability_id = "cli-interface"
+claim_id = "defer-cli-convention-and-task-verbs"
+contract_id = "standard-domain-cli-offline-spec-and-render-contract"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2213.md#defer-cli-interface-conformance"
+test_path = "apps/defer/tests/behavior_defer_cli_interface_conformance.rs"
+command = "cargo test -p defer --test cli_contract -- --nocapture"
+required_for_production = true
+assertions = [
+    "`defer --help` exits successfully and exposes the standard `llm`, `upgrade`, and `issue` commands together with `serve`, `spec`, `queue`, `task`, `dispatch`, `backup`, `k8s`, and `dockerfile`; independent `task --help` and `queue --help` observations must include create/status/cancel and get/put/control respectively.",
+    "`defer llm --topic outline` runs while every HTTP(S)/ALL proxy variable points at a local connection trap, makes zero network connections, advertises workflow/API/delivery/HA/auth topics, and terminates with `next: done`.",
+    "`defer spec --format openapi` emits the queue-task route and a terminal marker, while TypeScript generation must produce exactly types.ts, runtime.ts, client.ts, hooks.ts, and index.ts; client.ts must contain createDeferClient plus taskCreate/taskStatus/taskCancel route functions, so an arbitrary non-empty placeholder fails.",
+    "Source/release Dockerfile and CRD/operator/prod-instance render commands each have their exit status asserted before content inspection and emit the expected lifecycle-layer kinds; `defer serve --help` exposes the shared pretty/json log-format policy.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:807386c5ec22f33ee93af303f4ddee49a70e5b0a3daaff9e45b22e2662e88f19"
+
+[[cases]]
+id = "defer-cli-interface-efficiency"
+capability_id = "cli-interface"
+claim_id = "defer-cli-convention-and-task-verbs"
+contract_id = "bounded-offline-cli-and-codegen-latency"
+dimension = "efficiency"
+source_ref = "apps/defer/external-contracts/behavior/2213.md#defer-cli-interface-efficiency"
+test_path = "apps/defer/tests/efficiency_defer_cli_interface_efficiency.rs"
+command = "cargo test --release -p defer --test cli_efficiency -- --ignored --nocapture"
+required_for_production = true
+assertions = [
+    "After one warmup per operation, the release binary completes at least 20 measured offline operations spanning help, llm outline, OpenAPI emission, and TypeScript generation with zero command failures and non-empty contract output.",
+    "The emitted numeric report includes operation count, median, p95, and p99 latency; median must be <= 250 ms and p99 <= 750 ms on the local gate host, and missing metrics or a zero-operation report fails.",
+    "Every measured codegen operation validates the exact five-file TypeScript output and Defer task client methods, so faster placeholder or empty generation cannot satisfy the efficiency threshold.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:46e50c37b660e77b6c3a40d6e12fd463f597fc937605ac4829fd2a1a0e8430b2"
+
+[[cases]]
+id = "defer-cli-interface-stability"
+capability_id = "cli-interface"
+claim_id = "defer-cli-convention-and-task-verbs"
+contract_id = "repeated-offline-cli-determinism-and-resource-plateau"
+dimension = "stability"
+source_ref = "apps/defer/external-contracts/behavior/2213.md#defer-cli-interface-stability"
+test_path = "apps/defer/tests/stability_defer_cli_interface_stability.rs"
+command = "cargo test --release -p defer --test cli_stability -- --ignored --nocapture"
+required_for_production = true
+assertions = [
+    "Sixty-four repeated rounds of help, llm outline, OpenAPI emission, and source-Dockerfile rendering complete with zero failures and byte-identical stdout for each operation; a nondeterministic or partial output fails.",
+    "Sixteen additional TypeScript generation rounds produce byte-identical exact five-file outputs, and every temporary output directory disappears after its round rather than accumulating state.",
+    "The full repeated gate completes within 60 seconds and reports file-descriptor growth <= 8 when the host exposes an FD inventory; a missing progress count, leaked child/temp state, breached bound, or skipped ignored test fails.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c255d2ef681e883c47153b7a36d63b478a4bfd38ea3dd63e5c2a4f0104cc5914"
 
 [[cases]]
 id = "defer-http-dispatch-and-retries"
