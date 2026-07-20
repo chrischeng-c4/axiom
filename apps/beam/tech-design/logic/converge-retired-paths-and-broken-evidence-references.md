@@ -80,7 +80,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: TOPICS
+    anchor: main
   - path: apps/beam/tech-design/interfaces/cli/scaffold-service-crate-and-standard-cli-shell.md
     action: modify
     section: logic
