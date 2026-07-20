@@ -6,7 +6,7 @@
 //! which workload to poll for readiness, and the `Loom` status subresource.
 
 use kube::ResourceExt;
-use operator::{ManagedService, ReadinessTarget, ReadyFacts};
+use service_k8s::{ManagedService, ReadinessTarget, ReadyFacts};
 use serde_json::json;
 
 use crate::operator::crd::Loom;
@@ -50,5 +50,5 @@ impl ManagedService for Loom {
 /// `loom k8s operator run` — run the reconcile controller on the shared
 /// `libs/operator` host (leader-gated; HA-safe at `replicas > 1`).
 pub async fn run() -> anyhow::Result<()> {
-    operator::run::<Loom>().await
+    service_k8s::run::<Loom>().await
 }

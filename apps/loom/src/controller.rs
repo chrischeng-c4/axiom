@@ -483,7 +483,7 @@ pub fn run() -> anyhow::Result<()> {
         // single-voter raft (LOOM_RAFT_DIR) > file crash-recovery (LOOM_DATA_DIR)
         // > in-memory. The cluster store also exposes a raft router peers reach.
         let mut raft_router: Option<Router> = None;
-        let store: Arc<dyn RunStore> = if raft_host::replica_mode() {
+        let store: Arc<dyn RunStore> = if raft_runtime::replica_mode() {
             // k8s scale-out (REPLICAS_PER_SHARD > 1): derive node id / voters /
             // peers from the StatefulSet downward API. `LOOM_PEERS` overrides the
             // peer DNS to run a multi-node group on one host.
@@ -500,7 +500,7 @@ pub fn run() -> anyhow::Result<()> {
             let headless = std::env::var("LOOM_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| format!("{prefix}-headless"));
             let topo =
-                raft_host::ClusterTopology::from_env(&prefix, &headless, 7474, "LOOM_PEERS")?;
+                raft_runtime::ClusterTopology::from_env(&prefix, &headless, 7474, "LOOM_PEERS")?;
             eprintln!(
                 "loom: raft REPLICA mode — node {}, {} peer(s), dir {dir}",
                 topo.node_id,
