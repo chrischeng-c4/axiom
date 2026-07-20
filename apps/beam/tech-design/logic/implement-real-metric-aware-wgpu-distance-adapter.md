@@ -31,7 +31,6 @@ flowchart TD
     run_gpu --> done([Return results & evidence])
     run_cpu --> done
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
