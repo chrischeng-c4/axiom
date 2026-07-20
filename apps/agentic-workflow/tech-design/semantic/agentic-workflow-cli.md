@@ -4585,7 +4585,14 @@ changes:
       agent-first; explicit human-only policy remains blocking and
       `needs_revision` publishes nothing. Closed or missing doc-stored WI refs
       remain advisory reconciliation evidence and do not suppress a bounded
-      replacement candidate for an otherwise unverified claim.
+      replacement candidate for an otherwise unverified claim. Repeated claim
+      ids collapse to one candidate while retaining every capability
+      alignment; capability Root WI and claim WI remain distinct, and only an
+      explicit claim WI ref or exact claim id in an open non-epic WI suppresses
+      duplicate drafts. Each remaining candidate retains all same-project test
+      targets, carries a runnable verification command with a claim-specific
+      observable result, and requires implementation plus a passing gate;
+      linkage, prose, downgrade, or deferral alone cannot close it.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability.rs"
     action: modify
