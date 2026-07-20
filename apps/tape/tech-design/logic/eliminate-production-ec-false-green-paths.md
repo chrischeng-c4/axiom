@@ -71,7 +71,6 @@ flowchart TD
   revise --> regenerate
   verify --> done([False-green paths closed])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
