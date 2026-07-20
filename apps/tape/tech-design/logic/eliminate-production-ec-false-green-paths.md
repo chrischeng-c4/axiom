@@ -136,7 +136,6 @@ changes:
     impl_mode: hand-written
     description: "Compile and meter the real Tape bearer-auth integration journey in the guard runner. generator gap: missing-generator:vat:ec-runner-reconciliation (#2159)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
