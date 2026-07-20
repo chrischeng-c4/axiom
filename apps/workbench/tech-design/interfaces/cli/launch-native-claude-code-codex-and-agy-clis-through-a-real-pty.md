@@ -117,3 +117,56 @@ changes:
     impl_mode: hand-written
     description: Record the real PTY test command and the ban on replacing it with mocks or installed-vendor requirements.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-native-agent-pty-verification
+requirements:
+  claude_initial_default:
+    id: R2
+    text: "AgentKind default resolves to Claude Code while every provider remains explicitly selectable through the same construction boundary."
+    kind: regression
+    risk: medium
+    verify: tests/pty_agent_adapters.rs::adapter_commands_are_exact_and_claude_is_default
+  exact_provider_commands:
+    id: R1
+    text: "Claude Code, Codex, and AGY adapters expose exactly the native program name, empty default argument list, and selected canonical cwd without hidden session flags."
+    kind: contract
+    risk: high
+    verify: tests/pty_agent_adapters.rs::adapter_commands_are_exact_and_claude_is_default
+  interrupt_and_cleanup:
+    id: R4
+    text: "The PTY forwards terminal interrupt input to the controlled child and explicit termination plus Drop cleanup kill and reap abandoned children without leaking a live session."
+    kind: lifecycle
+    risk: high
+    verify: tests/pty_agent_adapters.rs::real_pty_interrupt_and_termination_cleanup
+  real_pty_io_resize_exit_and_cwd:
+    id: R3
+    text: "A real local shell fixture receives input and returns output through the PTY, starts in the selected folder, observes kernel terminal resize, and yields its exact exit status."
+    kind: integration
+    risk: high
+    verify: tests/pty_agent_adapters.rs::real_pty_round_trip_resize_cwd_and_exit
+  recoverable_unavailable_binaries:
+    id: R5
+    text: "Each unavailable vendor binary returns a typed recoverable error before PTY allocation, after which the same runtime can still launch the deterministic local shell fixture."
+    kind: failure-recovery
+    risk: high
+    verify: tests/pty_agent_adapters.rs::missing_vendor_binaries_are_recoverable
+  vendor_sessions_remain_authoritative:
+    id: R6
+    text: "The runtime owns only program, args, cwd, PTY streams, size, signals, status, and cleanup; test source neither requires installed vendor CLIs nor introduces vendor history or resume state."
+    kind: boundary
+    risk: medium
+    verify: tests/pty_agent_adapters.rs::runtime_has_no_vendor_session_model_or_required_vendor_smoke
+---
+flowchart TD
+    r1[R1 exact provider commands] --> tests_pty_agent_adapters_rs_adapter_commands_are_exact_and_claude_is_default[tests/pty_agent_adapters.rs::adapter_commands_are_exact_and_claude_is_default]
+    r2[R2 claude initial default] --> tests_pty_agent_adapters_rs_adapter_commands_are_exact_and_claude_is_default
+    r3[R3 real pty io resize exit and cwd] --> tests_pty_agent_adapters_rs_real_pty_round_trip_resize_cwd_and_exit[tests/pty_agent_adapters.rs::real_pty_round_trip_resize_cwd_and_exit]
+    r4[R4 interrupt and cleanup] --> tests_pty_agent_adapters_rs_real_pty_interrupt_and_termination_cleanup[tests/pty_agent_adapters.rs::real_pty_interrupt_and_termination_cleanup]
+    r5[R5 recoverable unavailable binaries] --> tests_pty_agent_adapters_rs_missing_vendor_binaries_are_recoverable[tests/pty_agent_adapters.rs::missing_vendor_binaries_are_recoverable]
+    r6[R6 vendor sessions remain authoritative] --> tests_pty_agent_adapters_rs_runtime_has_no_vendor_session_model_or_required_vendor_smoke[tests/pty_agent_adapters.rs::runtime_has_no_vendor_session_model_or_required_vendor_smoke]
+```
