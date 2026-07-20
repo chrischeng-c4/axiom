@@ -74,7 +74,6 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
