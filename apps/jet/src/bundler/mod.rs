@@ -3986,7 +3986,7 @@ impl Bundler {
                     lap("fn_decl_conversion");
                     if timing {
                         eprintln!(
-                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_impure={}",
                             elision_stats.modules,
                             elision_stats.elided_keys,
                             elision_stats.kept,
@@ -3996,6 +3996,8 @@ impl Bundler {
                             elision_stats.kept_string_indexed,
                             elision_stats.kept_barrel_glue,
                             elision_stats.kept_other,
+                            elision_stats.rhs_normalized,
+                            elision_stats.rhs_skipped_impure,
                         );
                     }
                     lap("export_elision");
@@ -4308,7 +4310,7 @@ impl Bundler {
                 lap("fn_decl_conversion");
                 if timing {
                     eprintln!(
-                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={} rhs_normalized={} rhs_skipped_impure={}",
                         elision_stats.modules,
                         elision_stats.elided_keys,
                         elision_stats.kept,
@@ -4318,6 +4320,8 @@ impl Bundler {
                         elision_stats.kept_string_indexed,
                         elision_stats.kept_barrel_glue,
                         elision_stats.kept_other,
+                        elision_stats.rhs_normalized,
+                        elision_stats.rhs_skipped_impure,
                     );
                 }
                 lap("export_elision");

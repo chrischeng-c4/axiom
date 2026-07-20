@@ -3615,6 +3615,24 @@ pub struct ExportElisionStats {
     /// see [`ExportKeepReason`]. None of these map to one of the issue's
     /// five named keep-ladder rungs.
     pub kept_other: usize,
+    /// #2161: export assignments whose non-identifier RHS was rewritten to
+    /// a synthetic `var __jx_<m>_<key> = <RHS>;` binding ahead of the
+    /// assignment, making the assignment itself identifier-RHS and
+    /// therefore eligible for the same-chunk elision rungs above. Not part
+    /// of the `kept` sum: a normalized key may still end up elided
+    /// (counted in `elided_keys`) or kept for an unrelated reason (counted
+    /// in one of the `kept_*` buckets above) — this field only reports how
+    /// many keys were normalized on the way there, regardless of outcome.
+    pub rhs_normalized: usize,
+    /// #2161: candidate export assignments with a non-identifier RHS that
+    /// [`is_pure_normalizable_export_rhs`] declined to normalize — the RHS
+    /// shape falls outside the v1 purity ladder (a member chain, a call
+    /// expression, or any other shape not provably side-effect-free to
+    /// hoist). These are exactly the assignments that also surface under
+    /// `ExportKeepReason::ComplexRhs` (`kept_other`) once elision itself
+    /// runs, so this counter doesn't add a new dump tag of its own — see
+    /// [`normalize_pure_export_rhs_unvalidated`].
+    pub rhs_skipped_impure: usize,
 }
 
 impl ExportElisionStats {
@@ -3728,6 +3746,250 @@ fn mark_export_key_kept(
             export_key_occurrence_estimate(usage),
         ));
     }
+}
+
+/// Per-call counters for [`normalize_pure_export_rhs_unvalidated`] (#2161),
+/// merged into the caller's `ExportElisionStats::rhs_normalized` /
+/// `ExportElisionStats::rhs_skipped_impure` once the combined pipeline's
+/// output is chosen (see `convert_and_elide_flat_region`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RhsNormalizationStats {
+    normalized: usize,
+    skipped_impure: usize,
+}
+
+/// The v1 purity ladder for hoisting a non-identifier export RHS into a
+/// synthetic `var` binding (#2161): arrow functions, function expressions,
+/// and the same bare-literal shapes [`is_inlineable_literal_export_expr`]
+/// already treats as side-effect-free elsewhere in this file. Member
+/// chains and call expressions are deliberately excluded from v1 — a
+/// member read can trigger a getter and a call can have arbitrary side
+/// effects, so evaluating either any earlier than the original assignment
+/// site (which is what hoisting into an unconditionally-evaluated `var`
+/// initializer does) is not provably safe.
+fn is_pure_normalizable_export_rhs(expr: &str) -> bool {
+    is_inlineable_literal_export_expr(expr)
+        || is_bare_function_expression(expr)
+        || is_bare_arrow_function_expression(expr)
+}
+
+/// `function` [name] `(` params `)` `{` body `}`, consuming `expr` in full.
+/// `async`/generator forms fall outside the v1 ladder: an `async` prefix
+/// means `expr` never starts with the literal text `"function"`, and a
+/// generator's `*` (with or without a separating space before it) fails
+/// either the post-`function` keyword-boundary check or the "next non-name
+/// byte must be `(`" check below, so both are rejected without a dedicated
+/// check for either.
+fn is_bare_function_expression(expr: &str) -> bool {
+    let b = expr.as_bytes();
+    if !expr.starts_with("function") {
+        return false;
+    }
+    match b.get("function".len()) {
+        Some(c) if c.is_ascii_whitespace() || *c == b'(' => {}
+        _ => return false,
+    }
+    let mut i = "function".len();
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i < b.len() && is_id_start_byte(b[i]) {
+        i += 1;
+        while i < b.len() && is_id_cont_byte(b[i]) {
+            i += 1;
+        }
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+    }
+    if b.get(i) != Some(&b'(') {
+        return false;
+    }
+    let Some(after_params) = skip_code_balanced(b, i, b'(', b')') else {
+        return false;
+    };
+    let mut j = after_params;
+    while j < b.len() && b[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if b.get(j) != Some(&b'{') {
+        return false;
+    }
+    skip_code_balanced(b, j, b'{', b'}') == Some(b.len())
+}
+
+/// `<params> => <body>`, consuming `expr` in full, where `<params>` is a
+/// bare identifier or a parenthesized parameter list and `<body>` is a
+/// block or a bare expression. `async` arrows are out of the v1 ladder
+/// (#2161), mirroring the function-expression restriction above.
+fn is_bare_arrow_function_expression(expr: &str) -> bool {
+    if expr.starts_with("async")
+        && matches!(expr.as_bytes().get(5), Some(c) if c.is_ascii_whitespace() || *c == b'(')
+    {
+        return false;
+    }
+    let b = expr.as_bytes();
+    if b.is_empty() {
+        return false;
+    }
+    let after_params = if b[0] == b'(' {
+        let Some(end) = skip_code_balanced(b, 0, b'(', b')') else {
+            return false;
+        };
+        end
+    } else {
+        let mut i = 0;
+        while i < b.len() && is_id_cont_byte(b[i]) {
+            i += 1;
+        }
+        if i == 0 || !is_js_identifier(&expr[..i]) {
+            return false;
+        }
+        i
+    };
+    let mut i = after_params;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if !expr[i..].starts_with("=>") {
+        return false;
+    }
+    i += 2;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() {
+        return false;
+    }
+    if b[i] == b'{' {
+        skip_code_balanced(b, i, b'{', b'}') == Some(b.len())
+    } else {
+        // Expression body: the body's own *content* needs no further
+        // purity check here (constructing the arrow function never
+        // evaluates it), but a depth-0 comma would mean `expr` isn't a
+        // single AssignmentExpression — seeing `<arrow>, <more>` here means
+        // the *original* statement was a comma-operator sequence
+        // expression (a legal RHS for a plain assignment statement), which
+        // would silently become a second `var` declarator (a different
+        // program, and likely a parse error) if hoisted verbatim into a
+        // `var` initializer. Reject rather than risk it — the reparse
+        // guard in `convert_and_elide_flat_region` would catch a mistake
+        // here anyway, but this keeps the common case out of that fallback
+        // path.
+        !contains_top_level_comma(&expr[i..])
+    }
+}
+
+/// Whether `s` contains a depth-0 (unparenthesized/unbracketed) comma.
+/// Mirrors [`find_direct_export_assignment_semicolon`]'s depth-tracking
+/// scan style; see [`is_bare_arrow_function_expression`]'s expression-body
+/// case for why this matters.
+fn contains_top_level_comma(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let (mut paren, mut bracket, mut brace) = (0usize, 0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next;
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'(' => paren += 1,
+            b')' => paren = paren.saturating_sub(1),
+            b'[' => bracket += 1,
+            b']' => bracket = bracket.saturating_sub(1),
+            b'{' => brace += 1,
+            b'}' => brace = brace.saturating_sub(1),
+            b',' if paren == 0 && bracket == 0 && brace == 0 => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Rewrites `<exports_obj>.key = <RHS>;` to
+/// `var __jx_<m>_<key> = <RHS>; <exports_obj>.key = __jx_<m>_<key>;` for
+/// every flat-region export assignment whose RHS is a non-identifier but
+/// provably pure shape (#2161, see [`is_pure_normalizable_export_rhs`]).
+///
+/// Purely a textual rewrite over the same
+/// [`collect_direct_export_assignments`] shape
+/// [`elide_same_chunk_export_bindings_unvalidated`] itself scans for: the
+/// synthesized binding is `var`-hoisted (never block-scoped, so
+/// `collect_block_scoped_declaration_names` — which only tracks
+/// `function`/`class`/`let`/`const` — never flags it), which means every
+/// one of elision's existing identifier-RHS rungs (block-scope, namespace,
+/// registry, ...) applies to it exactly as it would to any other
+/// identifier-RHS export assignment. This function does not duplicate any
+/// of elision's keep/elide decision logic — it only creates the identifier
+/// for that logic to run against. A normalized key that elision still
+/// keeps (for an unrelated reason, e.g. a namespace escape) is expected:
+/// it surfaces under the matching `kept_*` bucket exactly as it would have
+/// pre-normalization, just via a one-hop-further indirection.
+///
+/// The always-dot-form `_m{module_id}.exports.{key}` used for the
+/// rewritten assignment is safe regardless of whether the original source
+/// used bracket or dot notation: `collect_direct_export_assignments`'s
+/// regex restricts `key` to `[A-Za-z_$][A-Za-z0-9_$]*`, which is always a
+/// syntactically valid property name in dot form too (property accessors
+/// aren't subject to reserved-word restrictions).
+fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizationStats) {
+    let assignments = collect_direct_export_assignments(code);
+    let mut stats = RhsNormalizationStats::default();
+    if assignments.is_empty() {
+        return (code.to_string(), stats);
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for ((module_id, key), assignment) in &assignments {
+        if is_js_identifier(&assignment.expr) {
+            continue; // already elision-eligible; nothing to normalize.
+        }
+        if !is_pure_normalizable_export_rhs(&assignment.expr) {
+            stats.skipped_impure += 1;
+            continue;
+        }
+        let synthetic = format!("__jx_{module_id}_{key}");
+        let replacement = format!(
+            "var {synthetic} = {}; _m{module_id}.exports.{key} = {synthetic};",
+            assignment.expr,
+        );
+        replacements.push((assignment.span.0, assignment.span.1, replacement));
+        stats.normalized += 1;
+    }
+
+    if replacements.is_empty() {
+        return (code.to_string(), RhsNormalizationStats::default());
+    }
+    let rewritten = apply_static_replacements(code, replacements);
+    if rewritten == code {
+        // Mirrors `elide_same_chunk_export_bindings_unvalidated`'s own
+        // bail-to-original-on-overlap-surprise handling: treat it
+        // identically to "nothing to do" rather than reporting stats for
+        // an effect that didn't actually land.
+        return (code.to_string(), RhsNormalizationStats::default());
+    }
+    (rewritten, stats)
 }
 
 /// Drop the exports-object property-key indirection for same-chunk,
@@ -7253,6 +7515,14 @@ pub fn convert_flat_region_function_declarations_to_var(
 /// fails to parse, a second reparse of just the post-conversion text
 /// disambiguates which pass to keep, preserving each pass's existing
 /// independent fall-back-to-original guarantee exactly.
+///
+/// Also runs pure-export-RHS normalization (#2161,
+/// [`normalize_pure_export_rhs_unvalidated`]) between the two: a purely
+/// textual pre-pass over conversion's output, so it costs nothing beyond
+/// its own (cheap, regex-based) `collect_direct_export_assignments` scan —
+/// no extra region-wide `js_parses_without_errors` reparse on the common
+/// path, same "one shared reparse" contract as the conversion+elision pair
+/// above.
 pub fn convert_and_elide_flat_region(
     code: &str,
 ) -> (String, FnDeclConversionStats, ExportElisionStats) {
@@ -7265,21 +7535,55 @@ pub fn convert_and_elide_flat_region(
     // diagnostics to report as-is, not a validation reset.
     let conv_is_noop = conv_stats.converted == 0;
 
-    let (after_elision, elision_stats) = elide_same_chunk_export_bindings_unvalidated(&after_conv);
+    // #2161: normalize pure non-identifier export RHS shapes (arrow
+    // functions, function expressions, bare literals) into a synthetic
+    // `var __jx_<m>_<key>` binding ahead of the export assignment, so the
+    // identifier-only rungs in `elide_same_chunk_export_bindings_unvalidated`
+    // can fire on them too. JET_NO_RHS_NORMALIZE=1 is a dedicated escape
+    // hatch, independent of JET_NO_EXPORT_ELISION (which disables elision
+    // itself, not just this feeding step) — lets an A/B comparison isolate
+    // this specific rewrite from the rest of the (already-shipped)
+    // conv+elision pipeline.
+    let no_rhs_normalize = std::env::var_os("JET_NO_RHS_NORMALIZE").is_some();
+    let (after_normalize, normalize_stats) = if no_rhs_normalize {
+        (after_conv.clone(), RhsNormalizationStats::default())
+    } else {
+        normalize_pure_export_rhs_unvalidated(&after_conv)
+    };
+
+    let (after_elision, mut elision_stats) =
+        elide_same_chunk_export_bindings_unvalidated(&after_normalize);
 
     if after_elision == code {
         return (code.to_string(), conv_stats, ExportElisionStats::default());
     }
     if super::dce::js_parses_without_errors(&after_elision) {
+        elision_stats.rhs_normalized = normalize_stats.normalized;
+        elision_stats.rhs_skipped_impure = normalize_stats.skipped_impure;
         return (after_elision, conv_stats, elision_stats);
     }
 
-    // The combined result doesn't parse. If conversion made no edit, the
-    // fault is entirely elision's (`after_conv` == `code`, always valid);
-    // report conversion's real stats and reset only elision's — exactly
-    // what calling the two standalone, self-validating wrappers in
-    // sequence would produce. Otherwise disambiguate with a second reparse
-    // of conversion's output alone — a cost only ever paid on this path,
+    // The combined result doesn't parse. Degrade one stage at a time: if
+    // normalization changed anything, first retry with it dropped —
+    // elision running directly on `after_conv` is exactly the pre-#2161
+    // pipeline, so a normalization-induced parse failure never regresses
+    // below that already-established-safe baseline.
+    if after_normalize != after_conv {
+        let (after_elision_no_norm, elision_stats_no_norm) =
+            elide_same_chunk_export_bindings_unvalidated(&after_conv);
+        if after_elision_no_norm != code
+            && super::dce::js_parses_without_errors(&after_elision_no_norm)
+        {
+            return (after_elision_no_norm, conv_stats, elision_stats_no_norm);
+        }
+    }
+
+    // If conversion made no edit, the fault is entirely elision's-and/or-
+    // normalization's (both fed by `after_conv` == `code`, always valid);
+    // report conversion's real stats and reset the rest — exactly what
+    // calling the standalone, self-validating wrappers in sequence would
+    // produce. Otherwise disambiguate with a second reparse of
+    // conversion's output alone — a cost only ever paid on this path,
     // never observed on real corpora.
     if conv_is_noop {
         return (code.to_string(), conv_stats, ExportElisionStats::default());
@@ -7529,6 +7833,367 @@ mod convert_and_elide_flat_region_tests {
              expected comfortably under 2s even on slow/loaded CI hardware",
             code.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod rhs_normalization_tests {
+    use super::*;
+
+    // ── is_pure_normalizable_export_rhs: the v1 purity ladder ──────────
+
+    #[test]
+    fn purity_ladder_accepts_block_bodied_arrow_function() {
+        assert!(is_pure_normalizable_export_rhs("() => { return 1; }"));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_expression_bodied_arrow_function_with_paren_params() {
+        assert!(is_pure_normalizable_export_rhs("(a, b) => a + b"));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_single_identifier_param_arrow_function() {
+        assert!(is_pure_normalizable_export_rhs("x => x * 2"));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_arrow_function_with_default_parameter_containing_a_nested_arrow() {
+        // The nested arrow lives entirely inside the (balanced) parameter
+        // list; constructing the outer arrow is side-effect-free regardless
+        // of what a parameter default's own expression looks like.
+        assert!(is_pure_normalizable_export_rhs("(fn = () => {}) => fn()"));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_anonymous_function_expression() {
+        assert!(is_pure_normalizable_export_rhs("function () { return 1; }"));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_named_function_expression() {
+        assert!(is_pure_normalizable_export_rhs(
+            "function Foo() { return 1; }"
+        ));
+    }
+
+    #[test]
+    fn purity_ladder_accepts_bare_literals() {
+        assert!(is_pure_normalizable_export_rhs("\"hello\""));
+        assert!(is_pure_normalizable_export_rhs("42"));
+        assert!(is_pure_normalizable_export_rhs("true"));
+        assert!(is_pure_normalizable_export_rhs("null"));
+    }
+
+    #[test]
+    fn purity_ladder_rejects_member_chains() {
+        // v1 ladder explicitly excludes member reads: a getter could fire.
+        assert!(!is_pure_normalizable_export_rhs("a.b.c"));
+        assert!(!is_pure_normalizable_export_rhs("_r(3).css"));
+    }
+
+    #[test]
+    fn purity_ladder_rejects_call_expressions() {
+        // v1 ladder explicitly excludes calls: arbitrary side effects.
+        assert!(!is_pure_normalizable_export_rhs("createSvgIcon(x, y)"));
+        assert!(!is_pure_normalizable_export_rhs("(() => {})()"));
+    }
+
+    #[test]
+    fn purity_ladder_rejects_async_and_generator_functions() {
+        // Out of the v1 ladder -- see is_bare_function_expression /
+        // is_bare_arrow_function_expression's doc comments for exactly
+        // which check rejects each shape.
+        assert!(!is_pure_normalizable_export_rhs("async () => {}"));
+        assert!(!is_pure_normalizable_export_rhs("async x => x"));
+        assert!(!is_pure_normalizable_export_rhs("async function () {}"));
+        assert!(!is_pure_normalizable_export_rhs("function* () {}"));
+        assert!(!is_pure_normalizable_export_rhs("function *named() {}"));
+    }
+
+    #[test]
+    fn purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body() {
+        // `_m5.exports.f = (a) => a, sideEffect();` is a legal *assignment
+        // statement* RHS today (comma operator: assign the arrow, then
+        // separately evaluate `sideEffect()`). Hoisting the text verbatim
+        // into `var __jx_5_f = (a) => a, sideEffect();` would silently
+        // become a second (syntactically invalid) `var` declarator instead
+        // -- `var` initializers parse as `AssignmentExpression`, not
+        // `Expression`, so a top-level comma there means something
+        // different. Must be rejected outright, not left to the reparse
+        // guard to catch.
+        assert!(!is_pure_normalizable_export_rhs("(a) => a, sideEffect()"));
+        assert!(!is_pure_normalizable_export_rhs("x => x, sideEffect()"));
+    }
+
+    // ── normalize_pure_export_rhs_unvalidated: the textual rewrite ─────
+
+    #[test]
+    fn normalize_rewrites_arrow_function_export_to_synthetic_var() {
+        let code = concat!("var _m1={exports:{}};", "_m1.exports[\"f\"]=()=>{};",);
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1);
+        assert_eq!(stats.skipped_impure, 0);
+        assert!(
+            out.contains("var __jx_1_f = ()=>{};"),
+            "synthetic declarator missing: {out}"
+        );
+        assert!(
+            out.contains("_m1.exports.f = __jx_1_f;"),
+            "export assignment should now be identifier-RHS: {out}"
+        );
+        assert!(super::super::dce::js_parses_without_errors(&out));
+    }
+
+    #[test]
+    fn normalize_counts_skipped_impure_candidates() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "_m1.exports[\"g\"]=createSvgIcon(x,y);",
+            "_m1.exports[\"h\"]=_r(2).css;",
+        );
+        let (_out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1, "only f is a pure shape: {stats:?}");
+        assert_eq!(
+            stats.skipped_impure, 2,
+            "g (call) and h (member chain) are impure: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn normalize_leaves_identifier_rhs_untouched() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+        );
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(out, code);
+        assert_eq!(stats, RhsNormalizationStats::default());
+    }
+
+    #[test]
+    fn normalize_is_a_no_op_with_no_export_assignments() {
+        let code = "var x = 1; function f() { return x; }";
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(out, code);
+        assert_eq!(stats, RhsNormalizationStats::default());
+    }
+
+    // ── convert_and_elide_flat_region: full-pipeline integration ───────
+
+    #[test]
+    fn combined_pipeline_normalizes_then_elides_an_arrow_function_export() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "var _m2_y=_r(1)[\"f\"];",
+        );
+        let (out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        assert_eq!(elision_stats.rhs_normalized, 1, "{elision_stats:?}");
+        assert_eq!(elision_stats.rhs_skipped_impure, 0, "{elision_stats:?}");
+        assert_eq!(elision_stats.elided_keys, 1, "{elision_stats:?}");
+        assert!(
+            !out.contains("_m1.exports"),
+            "property-key indirection should be gone: {out}"
+        );
+        assert!(
+            out.contains("__jx_1_f"),
+            "synthetic binding should carry the value through: {out}"
+        );
+        assert!(super::super::dce::js_parses_without_errors(&out));
+    }
+
+    #[test]
+    fn combined_pipeline_normalized_then_still_kept_key_is_fine() {
+        // A normalizable RHS on a namespace-escaped module still gets
+        // normalized (rhs_normalized counts it) but is correctly kept (not
+        // elided) for the pre-existing namespace-escape reason -- exactly
+        // the "normalized-then-still-kept key is fine" case named in
+        // #2161. Module 3's "g" elides normally alongside it so
+        // `replacements` is non-empty overall: mirrors the *pre-existing*
+        // `test_elide_same_chunk_export_bindings_stats_attribute_kept_reasons`
+        // fixture shape, because `elide_same_chunk_export_bindings_unvalidated`
+        // resets *all* stats (including already-attributed keep reasons) to
+        // `ExportElisionStats::default()` whenever nothing elides in a call
+        // -- a pre-existing characteristic this pass doesn't touch, worked
+        // around here exactly like that existing test already does.
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "var _m2_ns=_r(1);",
+            "var _m3={exports:{}};",
+            "_m3.exports[\"g\"]=()=>{};",
+            "var _m9_g=_r(3)[\"g\"];",
+        );
+        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        assert_eq!(elision_stats.rhs_normalized, 2, "{elision_stats:?}");
+        assert_eq!(
+            elision_stats.elided_keys, 1,
+            "only module 3's g elides: {elision_stats:?}"
+        );
+        assert_eq!(
+            elision_stats.kept_namespace, 1,
+            "module 1's f is namespace-escaped: {elision_stats:?}"
+        );
+    }
+
+    #[test]
+    fn jet_no_rhs_normalize_hatch_disables_normalization_only() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "var _m2_y=_r(1)[\"f\"];",
+        );
+
+        // SAFETY: test-only env mutation, set immediately before use and
+        // removed immediately after (mirrors the established
+        // JET_NO_PASS_GATES/JET_NO_STMT_DCE pattern elsewhere in this
+        // crate, e.g. `bundler::mod` tests) -- no other test reads or
+        // writes JET_NO_RHS_NORMALIZE, so there's no cross-test
+        // interference despite the default multi-threaded test runner.
+        std::env::set_var("JET_NO_RHS_NORMALIZE", "1");
+        let (out_disabled, _conv_stats, elision_stats_disabled) =
+            convert_and_elide_flat_region(code);
+        std::env::remove_var("JET_NO_RHS_NORMALIZE");
+
+        let (out_enabled, _conv_stats2, elision_stats_enabled) =
+            convert_and_elide_flat_region(code);
+
+        // Hatch on: normalization never runs, so "f"'s arrow-function RHS
+        // stays a non-identifier -- elision's pre-#2161 keep-on-ComplexRhs
+        // behavior applies unchanged, and with nothing else to do the
+        // whole pipeline is a byte-identical no-op.
+        assert_eq!(out_disabled, code, "hatch must fully disable normalization");
+        assert_eq!(
+            elision_stats_disabled,
+            ExportElisionStats::default(),
+            "{elision_stats_disabled:?}"
+        );
+
+        // Hatch off (default): the same fixture normalizes and then elides.
+        assert_eq!(
+            elision_stats_enabled.rhs_normalized, 1,
+            "{elision_stats_enabled:?}"
+        );
+        assert_eq!(
+            elision_stats_enabled.elided_keys, 1,
+            "{elision_stats_enabled:?}"
+        );
+        assert_ne!(
+            out_enabled, code,
+            "without the hatch, the fixture should change"
+        );
+    }
+
+    // ── #2161 Step 0: the `.name` / NamedEvaluation decision ───────────
+
+    /// Documents the decided `.name` behavior via the shape of the rewrite
+    /// itself, rather than re-deriving ECMAScript NamedEvaluation semantics
+    /// in a Rust assertion (this crate has no embedded JS engine to
+    /// actually execute the output and read `.name` back). Verified
+    /// empirically with Node ahead of writing this pass (ECMA-262 13.15.2,
+    /// NamedEvaluation): a MemberExpression-LHS assignment
+    /// (`<exports_obj>.key = () => {}`) NEVER triggers NamedEvaluation --
+    /// `IsIdentifierRef(LeftHandSideExpression)` is false for a member
+    /// expression, so `.name` is `""` there today, for every ComplexRhs
+    /// anonymous-function/arrow-function export RHS, both before and after
+    /// this change. This pass instead binds the value to a `var`
+    /// *declarator* (`var __jx_<m>_<key> = <RHS>`), which DOES trigger
+    /// NamedEvaluation (`VariableDeclarator` is one of the spec's named
+    /// forms) -- taking `.name` from `""` to the (pre-mangle) synthetic
+    /// name, and after mangling to whatever short name the mangler assigns
+    /// it. Decision: proceed with plain hoisting: `""` -> non-empty is a
+    /// neutral-to-positive change (never a regression), so no
+    /// NamedEvaluation-preserving mitigation is needed.
+    #[test]
+    fn normalized_binding_moves_the_function_from_a_member_expression_assignment_to_a_var_declarator_gaining_a_name(
+    ) {
+        let code = concat!("var _m1={exports:{}};", "_m1.exports[\"f\"]=()=>{};",);
+        let (out, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1);
+        // Before: `_m1.exports["f"]=()=>{}` -- a MemberExpression-LHS
+        // assignment, never a NamedEvaluation site, so `.name === ""`.
+        assert!(!code.contains("var __jx_1_f"));
+        // After: `var __jx_1_f = ()=>{}` -- a VariableDeclarator, the
+        // NamedEvaluation-eligible shape that gives the function a real
+        // (pre-mangle) `.name === "__jx_1_f"`.
+        assert!(
+            out.contains("var __jx_1_f = ()=>{};"),
+            "expected a VariableDeclarator NamedEvaluation site: {out}"
+        );
+    }
+
+    // ── Mangler interaction ─────────────────────────────────────────────
+
+    #[test]
+    fn synthetic_binding_survives_and_gets_renamed_by_the_scope_based_mangler() {
+        // Explicit requirement from #2161: the synthetic `var __jx_<m>_<key>`
+        // must not be special-cased away from mangling -- it's just an
+        // ordinary `var` declared in the flattened root IIFE scope, so it
+        // goes through the same `compute_renames`/`apply_renames` path as
+        // every other flattened-module local (see mangle.rs; unlike the
+        // `_m<digits>_<suffix>` catch-all `compress_generated_prefixed_names`
+        // exists for, which only matters for *block-scoped* leftovers that
+        // slip past the primary scope-based pass -- #2132's `_mN_f` vars
+        // are the precedent this mirrors).
+        let code = concat!(
+            "(function(){\n",
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "var _m2_y=_r(1)[\"f\"];",
+            "console.log(_m2_y);",
+            "})();\n",
+        );
+        let (normalized, stats) = normalize_pure_export_rhs_unvalidated(code);
+        assert_eq!(stats.normalized, 1);
+        assert!(normalized.contains("__jx_1_f"));
+
+        let mangled = super::super::mangle::mangle_variables_with_root(&normalized);
+        assert!(
+            !mangled.contains("__jx_1_f"),
+            "mangler should have renamed the synthetic binding to a short name: {mangled}"
+        );
+    }
+
+    // ── Counters: ExportElisionStats::rhs_normalized / rhs_skipped_impure ──
+
+    #[test]
+    fn export_elision_stats_rhs_counters_default_to_zero() {
+        let stats = ExportElisionStats::default();
+        assert_eq!(stats.rhs_normalized, 0);
+        assert_eq!(stats.rhs_skipped_impure, 0);
+    }
+
+    #[test]
+    fn export_elision_stats_rhs_counters_are_independent_of_kept_and_elided_totals() {
+        // rhs_normalized/rhs_skipped_impure are not summands of `kept` or
+        // `elided_keys` -- they report how many candidates were fed into
+        // normalization, regardless of the outcome elision assigns them
+        // afterward. This mixed fixture (one normalized+elided, one
+        // normalized+kept, one impure+kept) exercises all three states.
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"f\"]=()=>{};",
+            "var _m2_ns=_r(1);",
+            "var _m3={exports:{}};",
+            "_m3.exports[\"g\"]=()=>{};",
+            "var _m9_g=_r(3)[\"g\"];",
+            "var _m4={exports:{}};",
+            "_m4.exports[\"h\"]=createSvgIcon(x,y);",
+            "var _m9_h=_r(4)[\"h\"];",
+        );
+        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        assert_eq!(
+            elision_stats.rhs_normalized, 2,
+            "f and g are pure shapes: {elision_stats:?}"
+        );
+        assert_eq!(
+            elision_stats.rhs_skipped_impure, 1,
+            "h is a call expression: {elision_stats:?}"
+        );
+        assert_eq!(elision_stats.elided_keys, 1, "only g: {elision_stats:?}");
     }
 }
 // </HANDWRITE>
