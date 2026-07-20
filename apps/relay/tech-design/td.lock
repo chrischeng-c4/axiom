@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-20T09:54:38.481929+00:00"
-digest = "sha256:ba4e5a51283a350430803fa94546ad9433770c660c58624aeb4c3544b3282a34"
-source_digest = "sha256:ba4e5a51283a350430803fa94546ad9433770c660c58624aeb4c3544b3282a34"
-ir_digest = "sha256:291298c8cb523d3a9d230bf20a11dd3904e62331257a5965e66688eea6eb92ee"
+generated_at = "2026-07-20T13:27:52.909397+00:00"
+digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
+source_digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
+ir_digest = "sha256:37b722c3f4e97bb624fb2b7a1cbce0fc7f096249d29e917c03dc9ced3067e9d7"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -117,8 +117,8 @@ section_count = 4
 
 [[files]]
 path = "logic/replace-static-only-security-ec-with-negative-evidence.md"
-digest = "sha256:8b6e4c4366df5e9eb9fdae2f48ec219ead1044fe5c0f8df09d934961a60e7d80"
-ir_digest = "sha256:f29890d50f2255c8b1ae1c198b8adb08447283c9a4cd8537de6bdee353725007"
+digest = "sha256:a08355f3b421db09be9ae63754186e0db5dbda6e3328e23b740796e8db040766"
+ir_digest = "sha256:ce94814403bf9dcf3858c284b6f65d899e37ac1bd2eb4c3a0a8e37e65d861fa2"
 section_count = 3
 
 [[files]]
