@@ -309,6 +309,21 @@ fn print_refusal_envelope(
     );
 }
 
+/// #1912 R4: read-only accessor for `aw meta check`'s stale-binary
+/// diagnosis. Returns the checkout's declared source version when
+/// `binary_version` is strictly behind it (same axiom-repo detection and
+/// semver-behind rule as [`check_once`] / [`enforce_mutating_verb_gate`]),
+/// else `None`. Never touches the throttle marker — this is a pure
+/// read used to pick a remediation string, not a warning emission.
+pub(crate) fn binary_behind_checkout_source_version(
+    cwd: &Path,
+    binary_version: &str,
+) -> Option<String> {
+    let repo_root = find_axiom_repo_root(cwd)?;
+    let source_version = resolve_source_version(&repo_root)?;
+    is_behind(binary_version, &source_version).then_some(source_version)
+}
+
 /// Entry point: hard-gate lifecycle-mutating verbs on stale-binary skew
 /// (#1417). Resolves the invoked verb path from `std::env::args()`, the
 /// axiom-repo + source version from the process CWD (same detection as
@@ -665,6 +680,71 @@ mod tests {
                 source_version: "9.9.9".to_string(),
                 verb_path: "td.fill".to_string(),
             }
+        );
+    }
+
+    // -- #1912 R1: meta.sync/meta.init are covered by the #1417 gate --------
+
+    #[test]
+    fn meta_sync_and_meta_init_are_classified_as_mutating_in_the_gate() {
+        // #1912 R1: `aw meta sync`/`aw meta init` write repo-owned marker
+        // blocks from an embedded template snapshot — the exact class of
+        // verb #1417's mutating-verb hard gate exists to cover. This locks
+        // in that coverage: a regression here would silently reopen the
+        // 2026-07-17 stale-binary destruction path for the semver-behind
+        // case (the checkout-template-sourcing fix in `meta.rs` covers the
+        // no-version-bump case #1417 alone cannot detect).
+        assert_eq!(
+            super::super::chain::verb_mutates_lifecycle("meta.sync"),
+            Some(true)
+        );
+        assert_eq!(
+            super::super::chain::verb_mutates_lifecycle("meta.init"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn gate_decision_refuses_meta_sync_when_binary_behind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        let decision = gate_decision_at(&repo, "0.4.4", Some("meta.sync"), None);
+        assert_eq!(
+            decision,
+            StaleBinaryGate::Refuse {
+                source_version: "9.9.9".to_string(),
+                verb_path: "meta.sync".to_string(),
+            }
+        );
+    }
+
+    // -- #1912 R4: content-precise binary-stale accessor ---------------------
+
+    #[test]
+    fn binary_behind_checkout_source_version_some_when_behind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "9.9.9");
+        assert_eq!(
+            binary_behind_checkout_source_version(&repo, "0.4.4"),
+            Some("9.9.9".to_string())
+        );
+    }
+
+    #[test]
+    fn binary_behind_checkout_source_version_none_when_equal() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = write_fixture_repo(tmp.path(), "0.4.4");
+        assert_eq!(binary_behind_checkout_source_version(&repo, "0.4.4"), None);
+    }
+
+    #[test]
+    fn binary_behind_checkout_source_version_none_outside_checkout() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        assert_eq!(
+            binary_behind_checkout_source_version(&elsewhere, "0.1.0"),
+            None
         );
     }
 
