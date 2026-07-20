@@ -211,6 +211,31 @@ pub fn resolve_exports(
 /// Object key insertion order determines precedence; `conditions` acts as a
 /// membership filter (which conditions are active), not a precedence list.
 ///
+/// #2261 — deliberately does NOT resolve array-shaped targets (Node's
+/// PACKAGE_TARGET_RESOLVE "otherwise, if target is an array" branch). An
+/// array target is real-world Node.js's idiom for "list of alternatives for
+/// resolvers that don't understand the object form"; per spec, a
+/// conditions-object array element that includes `"default"` always
+/// resolves (since `"default"` is unconditionally active), which for a
+/// package like `@babel/runtime` (`["./helpers/X.js"` in an outer
+/// `{"node": ..., "import": ..., "default": ...}` object, plus a plain CJS
+/// fallback string second element`]`) makes the FIRST element pick jet's
+/// browser-production `"import"` condition and land on an ESM-authored
+/// helper file — correct for an `import`-reached specifier, but wrong for
+/// the (extremely common, transitively pulled in by nearly every
+/// `@babel/plugin-transform-runtime`-compiled package) case where the very
+/// same specifier is reached through a literal CJS `require(...)` call
+/// jet's codegen applies no `.default`-interop unwrapping to. jet's active
+/// `conditions` set is a single global list with no call-site (`require()`
+/// vs `import`) sensitivity, so array resolution cannot be made correct here
+/// without that broader (out-of-scope for #2261) resolver capability; the
+/// safe, spec-legal choice is to treat an array target as unresolved
+/// (`Ok(None)`) and let the caller's pre-existing literal-subpath-join
+/// fallback (`ModuleResolver::resolve_package_dir`,
+/// `resolve_bare_specifier_from_index`) handle it, exactly as before this
+/// gap was audited. See #2261 follow-up notes for the call-site-sensitive
+/// conditions design this would need.
+///
 // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R2
 // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R3
 fn resolve_export_value(value: &serde_json::Value, conditions: &[&str]) -> Result<Option<String>> {
@@ -226,6 +251,10 @@ fn resolve_export_value(value: &serde_json::Value, conditions: &[&str]) -> Resul
                 if conditions.contains(&key.as_str()) {
                     match v {
                         serde_json::Value::String(path) => return Ok(Some(path.clone())),
+                        // Nested condition object (e.g. react-router's
+                        // `"./dom"`: outer node/module/import/default, inner
+                        // types/module-sync/default, #2261) recurses through
+                        // this same function.
                         serde_json::Value::Object(_) => {
                             if let Some(result) = resolve_export_value(v, conditions)? {
                                 return Ok(Some(result));
@@ -653,6 +682,94 @@ mod tests {
             result,
             Some("./esm.mjs".to_string()),
             "node key skipped (not in conditions); import matched"
+        );
+    }
+
+    // ─── T11: react_router_dom_nested_conditions ─────────────────────────────────
+
+    /// T11 (#2261): react-router@7.18.1's real `exports["./dom"]` shape — a
+    /// two-level nested condition object (outer node/module/import/default,
+    /// inner types/module/module-sync/default or types/default). jet's real
+    /// `browser-production` condition set (`ResolveOptions::
+    /// for_browser_production`) must descend into "module" (the first outer
+    /// key both present in the exports object and a member of the active
+    /// conditions) and then into that key's own "default" (since "types"
+    /// never matches at runtime), landing on the `.mjs` build.
+    // REQ: R2, R3
+    #[test]
+    fn test_react_router_dom_nested_conditions() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{
+                "name": "react-router",
+                "exports": {{
+                    "./dom": {{
+                        "node": {{
+                            "types": "./dist/development/dom-export.d.mts",
+                            "module": "./dist/development/dom-export.js",
+                            "module-sync": "./dist/development/dom-export.js",
+                            "default": "./dist/development/dom-export.js"
+                        }},
+                        "module": {{
+                            "types": "./dist/development/dom-export.d.mts",
+                            "default": "./dist/development/dom-export.mjs"
+                        }},
+                        "import": {{
+                            "types": "./dist/development/dom-export.d.mts",
+                            "default": "./dist/development/dom-export.mjs"
+                        }},
+                        "default": "./dist/development/dom-export.js"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let conditions: &[&str] = &["browser", "module", "import", "production", "default"];
+        let result = resolve_exports(file.path(), Some("./dom"), conditions).unwrap();
+        assert_eq!(
+            result,
+            Some("./dist/development/dom-export.mjs".to_string()),
+            "must descend two levels (module -> default) to the .mjs build, not degrade to a string require"
+        );
+    }
+
+    // ─── T12: three_level_nested_conditions ──────────────────────────────────────
+
+    /// T12 (#2261): synthetic 3-level nesting, one level deeper than react-
+    /// router's real shape, to pin that `resolve_export_value`'s recursion
+    /// isn't hardcoded to exactly two levels.
+    // REQ: R2, R3
+    #[test]
+    fn test_three_level_nested_conditions() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{
+                "name": "test",
+                "exports": {{
+                    "./sub": {{
+                        "node": {{
+                            "development": {{
+                                "import": "./dist/node-dev-import.js",
+                                "default": "./dist/node-dev-default.js"
+                            }},
+                            "default": "./dist/node-default.js"
+                        }},
+                        "default": "./dist/default.js"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let conditions: &[&str] = &["node", "development", "import", "default"];
+        let result = resolve_exports(file.path(), Some("./sub"), conditions).unwrap();
+        assert_eq!(
+            result,
+            Some("./dist/node-dev-import.js".to_string()),
+            "must descend three levels (node -> development -> import)"
         );
     }
 }

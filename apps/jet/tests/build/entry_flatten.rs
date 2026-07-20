@@ -1610,4 +1610,243 @@ async fn entry_flatten_default_interop_thunk_section_boundary_skips_lookalike_so
 
     Ok(())
 }
+
+// ── nested exports-map conditions (#2261) ───────────────────────────────────
+//
+// react-router@7.18.1's `./dom` subpath nests two levels of condition
+// objects (outer node/module/import/default, inner
+// types/module-sync/default or types/default). Graph-walk resolution
+// (`resolver::package::resolve_export_value`) already recursed correctly
+// through this shape; the actual #2261 bug was codegen's *independent*
+// re-derivation of "bare specifier text -> module id"
+// (`resolve_bare_specifier_from_index` in `transform::modules`), which only
+// tried a literal `root.join(subpath)` disk join and never consulted the
+// exports map at all — silently falling through to a naked string
+// `require('rr-core/dom')` that throws `Module not found` at runtime
+// (jet's `__jet__.require` is purely numeric-id-keyed; see
+// `Bundler::generate_runtime`) while `jet build` reported success.
+
+/// Writes an `rr-shim` -> `rr-core/dom` package chain shaped exactly like
+/// the real-corpus react-router@7.18.1 regression (#2261): `rr-core`'s
+/// `package.json` nests its `"./dom"` export two levels deep (outer
+/// node/module/import/default, inner types/default), and `rr-shim`
+/// re-exports it wholesale (`export * from 'rr-core/dom'`) the same way
+/// react-router's own `index.js` re-exports from `./dom`. The active
+/// browser-production conditions (`browser`, `module`, `import`,
+/// `production`, `default` — `ResolveOptions::for_browser_production`)
+/// select the outer `"module"` key, then its inner `"default"` key,
+/// landing on `dist/development/dom-export.mjs`. A dynamic `import()` of an
+/// unrelated `lazy.js` is included so `--splitting` actually routes through
+/// the entry-flatten path (`Bundler::generate_split_bundle`'s early return
+/// on zero dynamic imports, issue #1932) rather than the plain single
+/// -bundle path.
+fn write_nested_exports_map_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("node_modules/rr-core/dist/development"))
+        .expect("create node_modules/rr-core/dist/development");
+    fs::write(
+        dir.join("node_modules/rr-core/package.json"),
+        r#"{
+  "name": "rr-core",
+  "version": "1.0.0",
+  "exports": {
+    "./dom": {
+      "node": {
+        "types": "./dist/development/dom-export.d.ts",
+        "module": "./dist/development/dom-export.mjs",
+        "module-sync": "./dist/development/dom-export.js",
+        "default": "./dist/development/dom-export.js"
+      },
+      "module": {
+        "types": "./dist/development/dom-export.d.ts",
+        "default": "./dist/development/dom-export.mjs"
+      },
+      "import": {
+        "types": "./dist/development/dom-export.d.ts",
+        "default": "./dist/development/dom-export.mjs"
+      },
+      "default": "./dist/development/dom-export.js"
+    }
+  }
+}
+"#,
+    )
+    .expect("write rr-core package.json");
+    fs::write(
+        dir.join("node_modules/rr-core/dist/development/dom-export.mjs"),
+        "export const RR_DOM_MARKER = 'RR_DOM_MARKER_VALUE';\n",
+    )
+    .expect("write rr-core dom-export.mjs (module/import condition target)");
+    // The node/default condition target also exists so a resolver
+    // misconfiguration that selects the wrong branch fails loudly (reading
+    // the wrong marker) rather than passing by accident.
+    fs::write(
+        dir.join("node_modules/rr-core/dist/development/dom-export.js"),
+        "exports.RR_DOM_MARKER = 'RR_DOM_MARKER_VALUE_NODE';\n",
+    )
+    .expect("write rr-core dom-export.js (node/default condition target)");
+
+    fs::create_dir_all(dir.join("node_modules/rr-shim")).expect("create node_modules/rr-shim");
+    // `"sideEffects": false` (a common, realistic declaration for a pure
+    // re-export shim, matching real react-router's own package.json) keeps
+    // rr-shim itself in the flat region alongside rr-core's resolved
+    // target: without it, `is_entry_module_flatten_safe`'s conservative
+    // `.js`-file-in-`node_modules` heuristic (`is_side_effect_free`,
+    // scope_hoist.rs) leaves rr-shim on the `__jet__` registry, which would
+    // instead exercise the *separate*, already-documented #1993 residual
+    // limitation ("Residual limitation" doc comment above
+    // `generate_entry_flat_region`): a flat module's synchronous top-level
+    // call into registry residue that itself requires a flat module not
+    // otherwise directly imported by the caller can race the flat-only
+    // topological order. That gap is orthogonal to #2261's resolver bug
+    // and intentionally left untouched here — this fixture avoids it
+    // entirely so the real-browser assertion below is a clean read on the
+    // exports-map fix alone.
+    fs::write(
+        dir.join("node_modules/rr-shim/package.json"),
+        r#"{"name":"rr-shim","version":"1.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write rr-shim package.json");
+    fs::write(
+        dir.join("node_modules/rr-shim/index.js"),
+        "export * from 'rr-core/dom';\n",
+    )
+    .expect("write rr-shim index.js");
+
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { RR_DOM_MARKER } from 'rr-shim';
+
+document.getElementById('root').innerHTML = '<div id="output">' + RR_DOM_MARKER + '</div>';
+
+import('./lazy.js');
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/lazy.js"),
+        "export default function lazy() { return 'LAZY'; }\n",
+    )
+    .expect("write lazy");
+}
+
+/// Scans every built `.js` file under `dist` for a literal occurrence of
+/// `needle` — the cheap, no-browser-required static-guard half of this
+/// test (the same "(a) Static guard" / "(b) Dynamic proof" two-step shape
+/// `entry_flatten_default_interop_thunk_section_boundary_skips_lookalike_source_comment`
+/// above uses, extended here to scan the whole `dist` tree rather than
+/// just the entry file since a resolved-vs-fallback subpath could in
+/// principle land in either).
+fn dist_js_files_containing(dist: &Path, needle: &str) -> Vec<PathBuf> {
+    list_files_recursive(dist)
+        .into_iter()
+        .filter(|p| p.extension().and_then(OsStr::to_str) == Some("js"))
+        .filter(|p| fs::read_to_string(p).is_ok_and(|code| code.contains(needle)))
+        .collect()
+}
+
+/// #2261 — a package's `exports` map may nest condition objects two (or
+/// more) levels deep (react-router@7.18.1's `./dom` subpath: outer
+/// node/module/import/default, inner types/module-sync/default). Codegen's
+/// independent bare-specifier re-derivation
+/// (`resolve_bare_specifier_from_index` in `transform::modules`) must
+/// resolve through that nesting the same way graph-walk resolution does —
+/// not silently fall through to a naked string `require('rr-core/dom')`
+/// that throws `Module not found` at runtime while `jet build` reports
+/// success (a black page in production).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_flatten_resolves_nested_exports_map_condition_subpath_through_reexport() -> Result<()>
+{
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_nested_exports_map_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting"])?,
+        "build --splitting (nested exports-map condition fixture)",
+    )?;
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "splitting build must emit dist/index.html"
+    );
+
+    let dist = fixture.join("dist");
+
+    // (a) Static guard (cheap, no browser required): the raw specifier text
+    // must never survive codegen as a naked string require — that is
+    // exactly the #2261 symptom (a numeric-id-only `__jet__.require`
+    // runtime throwing `Module not found` for a string id at page load).
+    let offending = dist_js_files_containing(&dist, "require('rr-core/dom')");
+    assert!(
+        offending.is_empty(),
+        "found a naked string require('rr-core/dom') in built output (the \
+         #2261 bug: codegen fell through to a runtime string require \
+         instead of resolving the nested exports-map condition target) in: \
+         {offending:?}"
+    );
+
+    // (b) Dynamic proof: the app must actually boot and render in a real
+    // Chromium, not merely pass the static shape check.
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping real-browser half of \
+             entry_flatten_resolves_nested_exports_map_condition_subpath_through_reexport: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<Option<String>, anyhow::Error>(output_text)
+    })
+    .await;
+
+    let output_text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "entry_flatten_resolves_nested_exports_map_condition_subpath_through_reexport \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        output_text.as_deref(),
+        Some("RR_DOM_MARKER_VALUE"),
+        "app must boot rendering the re-exported nested-condition target's \
+         value instead of failing to load with a black page (#2261)"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END

@@ -1,6 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 // CODEGEN-BEGIN
 use anyhow::Result;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
@@ -38,6 +39,23 @@ pub struct ModuleResolutionIndex {
     /// every existing caller's lowering unchanged.
     /// @issue #1930
     splitting: bool,
+    /// Active resolve conditions (e.g. `["browser", "module", "import",
+    /// "production", "default"]`), threaded from `Bundler::conditions` (a
+    /// clone of `ResolveOptions::conditions`) so `resolve_bare_specifier_
+    /// from_index` can consult a package's `package.json` "exports" map
+    /// with the SAME condition set `resolver::mod::resolve_package_dir`
+    /// already applies during graph-walk resolution, instead of only ever
+    /// trying a raw `root.join(subpath)` literal join. Without this, a
+    /// subpath whose real file lives behind a nested exports-map condition
+    /// object (react-router@7's `"./dom"` — outer node/module/import/
+    /// default, inner types/module-sync/default) resolves fine during
+    /// `build_graph` but can never be re-derived here from the raw
+    /// specifier text, so codegen falls through to a naked string
+    /// `require('specifier')` that throws "Module not found" at runtime
+    /// (#2261). Empty (via `#[derive(Default)]`) for any caller that
+    /// doesn't opt in — every pre-#2261 caller's resolution is unchanged.
+    /// @issue #2261
+    conditions: Vec<String>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
@@ -87,6 +105,7 @@ impl ModuleResolutionIndex {
             alias_entries: alias_entries.to_vec(),
             base_url,
             splitting: false,
+            conditions: Vec::new(),
         }
     }
 
@@ -94,6 +113,14 @@ impl ModuleResolutionIndex {
     /// @issue #1930
     pub fn with_splitting(mut self, splitting: bool) -> Self {
         self.splitting = splitting;
+        self
+    }
+
+    /// Thread the active resolve conditions (#2261) so bare-specifier
+    /// subpath resolution can consult a package's exports map the same way
+    /// graph-walk resolution already does.
+    pub fn with_conditions(mut self, conditions: Vec<String>) -> Self {
+        self.conditions = conditions;
         self
     }
 }
@@ -1032,6 +1059,43 @@ fn resolve_bare_specifier_from_index(
         {
             return Some(id);
         }
+
+        // #2261 — the literal `root.join(subpath)` join above only finds a
+        // subpath that exists verbatim on disk. A package whose
+        // `package.json` "exports" map routes a subpath through nested
+        // condition objects (react-router@7's `"./dom"`: outer
+        // node/module/import/default, inner types/module-sync/default) has
+        // no such file. Consult the exports map with the same active
+        // conditions `resolver::package::resolve_exports` already applies
+        // during graph-walk resolution, so codegen re-derives exactly the
+        // path `build_graph` resolved instead of falling through to a
+        // naked string `require('specifier')`. A no-op (via the empty-
+        // conditions guard) for any caller that didn't opt in via
+        // `with_conditions`.
+        if let Some(subpath) = subpath.as_deref() {
+            if !resolution_index.conditions.is_empty() {
+                let package_json = root.join("package.json");
+                let condition_refs: Vec<&str> = resolution_index
+                    .conditions
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                if let Ok(Some(export_path)) = crate::resolver::package::resolve_exports(
+                    &package_json,
+                    Some(&format!("./{subpath}")),
+                    &condition_refs,
+                ) {
+                    let candidate = root.join(export_path.trim_start_matches("./"));
+                    if let Some(id) = lookup_file_or_directory_module_id(
+                        module_map,
+                        Some(resolution_index),
+                        &candidate,
+                    ) {
+                        return Some(id);
+                    }
+                }
+            }
+        }
     }
     None
 }
@@ -1094,6 +1158,49 @@ fn resolve_bare_specifier_from_jet_store(
         }
     }
     None
+}
+
+thread_local! {
+    /// #2261 — records every bare specifier that fell through to the naked
+    /// string `require('specifier')` fallback (the last line of
+    /// [`resolve_module_path`]) during the *current* top-level
+    /// [`transform_modules_with_dir_index_and_tree`] call, so
+    /// `Bundler::transform_modules` can distinguish "genuinely declared
+    /// external" from "codegen couldn't re-derive an already-resolved graph
+    /// module" and fail the build loudly on the latter. Thread-local rather
+    /// than a parameter threaded through every recursive AST-walk helper
+    /// that can reach `resolve_module_path`, for the same reason as
+    /// `resolver::mod::PACKAGE_JSON_PROBE`: a top-level transform call is
+    /// never reentrant into itself, but many run concurrently across rayon
+    /// worker threads (`Bundler::transform_modules`'s `par_iter`) — each
+    /// thread's probe is independent of every other thread's.
+    static UNRESOLVED_REQUIRE_PROBE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Start collecting naked-string-require fallbacks for the current thread
+/// (#2261). Call once per top-level transform, paired with
+/// [`take_unresolved_require_probe`]; a caller that never starts a probe
+/// leaves [`record_unresolved_require_fallback`] a no-op, so every existing
+/// caller of `transform_modules_with_dir_index_and_tree` and friends is
+/// unaffected.
+pub fn start_unresolved_require_probe() {
+    UNRESOLVED_REQUIRE_PROBE.with(|cell| *cell.borrow_mut() = Some(Vec::new()));
+}
+
+/// Take (and clear) every specifier collected on this thread since the last
+/// [`start_unresolved_require_probe`] call. #2261.
+pub fn take_unresolved_require_probe() -> Vec<String> {
+    UNRESOLVED_REQUIRE_PROBE
+        .with(|cell| cell.borrow_mut().take())
+        .unwrap_or_default()
+}
+
+fn record_unresolved_require_fallback(specifier: &str) {
+    UNRESOLVED_REQUIRE_PROBE.with(|cell| {
+        if let Some(probe) = cell.borrow_mut().as_mut() {
+            probe.push(specifier.to_string());
+        }
+    });
 }
 
 fn resolve_module_path(
@@ -1275,6 +1382,22 @@ fn resolve_module_path(
         }
     }
 
+    // #2261 — only a *bare* specifier (not `./`/`/`-prefixed) is the
+    // resolver/codegen mismatch this probe exists to catch. `build_graph`
+    // only graph-walks the *reachable* branch of a `require(...)` call, so a
+    // relative require sitting in a provably-dead branch (the extremely
+    // common CJS dev/prod-conditional pattern real packages ship, e.g.
+    // react's own `index.js`: `if (NODE_ENV === 'production') {
+    // require('./cjs/react.production.min.js') } else {
+    // require('./cjs/react.development.js') }`) legitimately has no
+    // module-graph entry for its unreached side and must keep silently
+    // falling through to a harmless, never-executed string require instead
+    // of failing the build — confirmed against `transform_cache`'s MUI
+    // fixture, which exercises exactly this pattern for react/react-dom/
+    // react-is/scheduler.
+    if !path.starts_with('.') && !path.starts_with('/') {
+        record_unresolved_require_fallback(path);
+    }
     format!("require('{}')", path)
 }
 

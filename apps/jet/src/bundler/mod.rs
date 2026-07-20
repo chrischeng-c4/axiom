@@ -758,6 +758,24 @@ pub struct Bundler {
     /// @spec apps/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
     /// @issue #1317
     unresolved_deps: Mutex<Vec<UnresolvedDependency>>,
+    /// Collected during `transform_modules`: every bare specifier whose
+    /// codegen-time re-resolution (`transform::modules::resolve_module_
+    /// path`) fell through to a naked string `require('specifier')` even
+    /// though the specifier was NOT declared external (`externals`/
+    /// `externalize_all_packages` below). This is a *different* failure
+    /// mode from `unresolved_deps` above: `build_graph`'s resolver may have
+    /// already found the real target fine (e.g. through a nested
+    /// exports-map condition object codegen's independent re-derivation
+    /// doesn't yet handle) — the module IS in the graph, it's just not
+    /// re-findable by `resolve_module_path`'s fallback chain from the raw
+    /// specifier text alone — so this never populates `unresolved_deps`'s
+    /// "Cannot resolve package" branch. Drained into a typed error from
+    /// `bundle()` if non-empty, mirroring `unresolved_deps`'s #1317 gate for
+    /// this transform-time counterpart.
+    ///
+    /// @spec apps/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
+    /// @issue #2261
+    unresolved_require_fallbacks: Mutex<Vec<UnresolvedDependency>>,
     /// Per-module tree-sitter trees parsed during `build_graph`, drained by
     /// `transform_modules` so plain-JS modules are parsed once, not twice.
     /// Keyed by the canonical module path. Empty for any module not safe to
@@ -860,6 +878,32 @@ pub struct Bundler {
     /// Explicit tsconfig `baseUrl`, retained for the codegen-time resolver so
     /// emitted requires use the same local-module mapping as graph discovery.
     base_url: Option<PathBuf>,
+    /// Active resolve conditions (e.g. `["browser", "module", "import",
+    /// "production", "default"]`), cloned from `options.resolve_options.
+    /// conditions` in `Bundler::new` before `resolve_options` moves into
+    /// `ModuleResolver::new`, like `alias_entries`/`base_url` above.
+    /// Threaded into the codegen-time `ModuleResolutionIndex` (via
+    /// `with_conditions`) so `resolve_bare_specifier_from_index` can consult
+    /// a package's exports map with the same condition set graph-walk
+    /// resolution used.
+    /// @issue #2261
+    conditions: Vec<String>,
+    /// Declared externals (`[build].externals` / `--external`), cloned from
+    /// the FINAL `resolve_options.externals` in `Bundler::new` — i.e. after
+    /// `options.externals` has already been forwarded into it — so this
+    /// reflects exactly what `self.resolver` treats as external. Paired
+    /// with `externalize_all_packages` below to gate
+    /// `unresolved_require_fallbacks`: only a specifier the user opted into
+    /// externalizing may legitimately reach a naked string
+    /// `require('specifier')`; anything else that does is a resolver/codegen
+    /// mismatch bug, not a deliberate external.
+    /// @issue #2261
+    externals: HashSet<String>,
+    /// Lib mode's "treat every bare specifier as external" switch, cloned
+    /// from the final `resolve_options.externalize_all_packages` alongside
+    /// `externals` above.
+    /// @issue #2261
+    externalize_all_packages: bool,
     /// When true, `generate_bundle` emits a multi-chunk `BundleOutput`
     /// (entry + async/shared `ChunkArtifact`s) instead of a single file, and
     /// dynamic `import()` lowers to `__jet__.dynamicImport(id)`. Default
@@ -962,6 +1006,10 @@ impl Bundler {
         // codegen-time resolver (`transform_modules`) can also consult it.
         let alias_entries = resolve_options.alias.clone();
         let base_url = resolve_options.base_url.clone();
+        // #2261: same clone-before-move as alias_entries/base_url above, so
+        // the codegen-time resolver can consult a package's exports map
+        // with the same active conditions graph-walk resolution used.
+        let conditions = resolve_options.conditions.clone();
         // Forward externalize_all_packages to the resolver
         if options.externalize_all_packages {
             resolve_options.externalize_all_packages = true;
@@ -970,6 +1018,12 @@ impl Bundler {
         for ext in &options.externals {
             resolve_options.externals.insert(ext.clone());
         }
+        // #2261 — captured after the externalize_all_packages/externals
+        // forwarding above, like `resolver_config_fingerprint` below, so
+        // `unresolved_require_fallbacks`' declared-external gate reflects
+        // exactly what `self.resolver` treats as external.
+        let externals = resolve_options.externals.clone();
+        let externalize_all_packages = resolve_options.externalize_all_packages;
         // #2141 — captured after the externalize_all_packages/externals
         // forwarding above so it reflects the exact `ResolveOptions` value
         // `ModuleResolver::new` below actually runs with; every
@@ -990,7 +1044,11 @@ impl Bundler {
             defines,
             alias_entries,
             base_url,
+            conditions,
+            externals,
+            externalize_all_packages,
             unresolved_deps: Mutex::new(Vec::new()),
+            unresolved_require_fallbacks: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
             barrel_demand: Mutex::new(HashMap::new()),
             implicit_edges: Mutex::new(Vec::new()),
@@ -1034,6 +1092,7 @@ impl Bundler {
         self.check_unresolved_deps()?;
         let (modules, has_cycle) = self.transform_modules().await?;
         lap("transform_modules");
+        self.check_unresolved_require_fallbacks()?;
 
         // Tree shaking: analyze used exports across the module graph, then
         // remove unused export declarations from each module.  Modules with
@@ -2534,6 +2593,57 @@ impl Bundler {
         Err(format_unresolved_error(&deps))
     }
 
+    /// #2261 — whether `specifier` is a *declared* external: either an exact
+    /// entry (or `"<ext>/"`-prefixed subpath) in `self.externals`, or any
+    /// bare specifier at all when `self.externalize_all_packages` is set
+    /// (lib mode). Mirrors `resolver::ModuleResolver::is_explicit_external`'s
+    /// logic exactly, since `self.externals`/`self.externalize_all_packages`
+    /// are clones of the same final `ResolveOptions` fields that resolver
+    /// instance runs with. Only a declared external may legitimately reach
+    /// a naked string `require('specifier')` in emitted code; every other
+    /// bare specifier that does is `resolve_module_path` failing to
+    /// re-derive a resolution `build_graph` already found.
+    fn is_declared_external(&self, specifier: &str) -> bool {
+        self.externals.contains(specifier)
+            || self
+                .externals
+                .iter()
+                .any(|ext| specifier.starts_with(&format!("{}/", ext)))
+            || (self.externalize_all_packages
+                && !specifier.starts_with('.')
+                && !specifier.starts_with('/'))
+    }
+
+    fn record_unresolved_require_fallback(&self, specifier: &str, importer: &PathBuf) {
+        self.unresolved_require_fallbacks
+            .lock()
+            .push(UnresolvedDependency {
+                specifier: specifier.to_string(),
+                importer: importer.clone(),
+                reason: "codegen fell through to a naked string require — resolved in the \
+                         module graph but not re-derivable from the raw specifier text"
+                    .to_string(),
+            });
+    }
+
+    /// Fail the build if `transform_modules` collected any non-external bare
+    /// specifier that fell through to a naked string `require('specifier')`
+    /// at codegen time (#2261). The diagnostic enumerates each offending
+    /// specifier with its importer (deduplicated by specifier, stable
+    /// lexical order), distinct from `check_unresolved_deps`'s #1317
+    /// message since the root cause here is a resolver/codegen mismatch,
+    /// not a missing package.
+    ///
+    /// @spec apps/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
+    /// @issue #2261
+    fn check_unresolved_require_fallbacks(&self) -> Result<()> {
+        let deps = std::mem::take(&mut *self.unresolved_require_fallbacks.lock());
+        if deps.is_empty() {
+            return Ok(());
+        }
+        Err(format_unresolved_require_fallback_error(&deps))
+    }
+
     /// #2141 — node_modules-scoped resolution cache. Eligibility is
     /// deliberately narrow and two-sided:
     ///
@@ -2835,7 +2945,8 @@ impl Bundler {
                 &self.alias_entries,
                 self.base_url.clone(),
             )
-            .with_splitting(self.splitting);
+            .with_splitting(self.splitting)
+            .with_conditions(self.conditions.clone());
         let side_effect_free_module_ids =
             collect_side_effect_free_module_indices(self, &graph, &sorted_ids);
 
@@ -3146,7 +3257,17 @@ impl Bundler {
                         // Reuse the tree-sitter parse from graph construction
                         // (plain-JS modules only) so this module is parsed once.
                         let reuse_tree = self.parsed_trees.lock().remove(&node.path);
-                        self.transformer
+                        // #2261 — collect every bare specifier this module's
+                        // codegen falls through to a naked string require
+                        // for, so a genuine resolver/codegen mismatch (the
+                        // specifier resolved fine in the graph, but
+                        // `resolve_module_path` couldn't re-derive it) can
+                        // fail the build instead of shipping a runtime
+                        // "Module not found". See
+                        // `check_unresolved_require_fallbacks`.
+                        crate::transform::modules::start_unresolved_require_probe();
+                        let transformed = self
+                            .transformer
                             .transform_js_with_context_resolution_tree_and_timings(
                                 &source,
                                 &node.path,
@@ -3154,7 +3275,14 @@ impl Bundler {
                                 Some(&resolution_index),
                                 reuse_tree,
                                 Some(&transform_sub_laps),
-                            )
+                            );
+                        for specifier in crate::transform::modules::take_unresolved_require_probe()
+                        {
+                            if !self.is_declared_external(&specifier) {
+                                self.record_unresolved_require_fallback(&specifier, &node.path);
+                            }
+                        }
+                        transformed
                     }
                     graph::ModuleKind::Css => Ok(crate::transform::TransformResult {
                         code: String::new(),
@@ -4583,6 +4711,40 @@ fn format_unresolved_error(deps: &[UnresolvedDependency]) -> anyhow::Error {
         ));
     }
     msg.push_str("See: https://github.com/anthropics/cclab/issues/1317");
+    anyhow::anyhow!(msg)
+}
+
+/// #2261 — sibling to `format_unresolved_error` for the transform-time
+/// naked-string-require fallback. Same dedup/sort/format shape (first
+/// sighting per specifier wins, lexical order), different wording: these
+/// specifiers WERE found by `build_graph`, so the remedy is different from
+/// "install the missing package."
+fn format_unresolved_require_fallback_error(deps: &[UnresolvedDependency]) -> anyhow::Error {
+    use std::collections::BTreeMap;
+
+    let mut by_specifier: BTreeMap<&str, &UnresolvedDependency> = BTreeMap::new();
+    for d in deps {
+        by_specifier.entry(d.specifier.as_str()).or_insert(d);
+    }
+
+    let mut msg = String::from(
+        "Unresolved imports at codegen time — `jet build` cannot continue. \
+         These specifiers resolved fine while building the module graph, but \
+         jet's codegen could not re-derive the same resolution (for example, \
+         a package.json \"exports\" subpath nested behind conditions jet does \
+         not yet resolve at this step). Either report this as a jet bug, or \
+         if the specifier is intentionally left as a runtime require, mark it \
+         external (mark the specifier as external) and re-run:\n",
+    );
+    for (_, d) in &by_specifier {
+        msg.push_str(&format!(
+            "  • `{}` imported from {} — {}\n",
+            d.specifier,
+            d.importer.display(),
+            d.reason,
+        ));
+    }
+    msg.push_str("See: https://github.com/chrischeng-c4/axiom/issues/2261");
     anyhow::anyhow!(msg)
 }
 
@@ -6083,6 +6245,148 @@ mod unresolved_deps_tests {
             !msg.contains("Other.tsx"),
             "diagnostic must dedup by specifier, got:\n{msg}"
         );
+    }
+}
+
+/// Pins the #2261 behaviour: a bare specifier that graph-walk resolution
+/// (`build_graph`, via `ModuleResolver` using the build's live
+/// `resolve_options.conditions`) already resolved successfully, but that
+/// codegen's independent specifier-text re-derivation
+/// (`transform::modules::resolve_module_path` and friends) cannot
+/// re-derive, must fail the build loudly instead of shipping a naked string
+/// `require('specifier')` that throws `Module not found` at runtime (see
+/// `Bundler::generate_runtime`'s `r`/require function — purely numeric-id
+/// keyed, no string fallback).
+///
+/// The fixture constructs a genuine instance of this divergence that is
+/// deliberately independent of the specific nested-subpath-exports-map gap
+/// #2261 itself fixed (`resolve_bare_specifier_from_index`'s new
+/// subpath-exports-map consultation in `transform/modules.rs`): a package
+/// ROOT `"."` entry (no subpath at all, so that fix's `subpath.as_deref()`
+/// guard never engages) whose `exports` value is keyed on a *custom* resolve
+/// condition. `resolver::package::resolve_exports` (graph-walk) honors
+/// whatever `ResolveOptions::conditions` the build is configured with, so it
+/// resolves this fine; `transform::modules::collect_export_candidate_strings`
+/// (codegen's independent root-entry candidate collector) instead walks a
+/// fixed, hardcoded condition-key list (`["browser", "default", "import",
+/// "require", "module", "production", "development"]`) with no knowledge of
+/// custom conditions, so it comes up empty and falls through to the
+/// naked-string-require fallback this gate exists to catch. Proves the gate
+/// catches the whole bug *class* #2261 named (resolver/codegen
+/// re-derivation mismatch), not only the one nested-subpath variant this
+/// change directly fixed.
+///
+/// @spec apps/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
+/// @issue #2261
+#[cfg(test)]
+mod unresolved_require_fallback_tests {
+    use super::*;
+    use crate::bundler::types::BundleOptions;
+    use std::collections::HashSet;
+    use std::io::Write;
+
+    fn write_fixture(dir: &std::path::Path, files: &[(&str, &str)]) -> PathBuf {
+        for (name, contents) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(contents.as_bytes()).unwrap();
+        }
+        dir.join(files[0].0)
+    }
+
+    /// `rr-root-only`'s package root (`"."`) export is only reachable under
+    /// a custom `"worker"` condition — resolvable by the live
+    /// conditions-aware graph-walk resolver when the build is configured
+    /// with that exact condition, but invisible to codegen's hardcoded
+    /// root-entry candidate list.
+    const ROOT_ONLY_PACKAGE_JSON: &str = r#"{
+  "name": "rr-root-only",
+  "version": "1.0.0",
+  "exports": {
+    ".": {
+      "worker": "./dist/entry.js"
+    }
+  }
+}
+"#;
+
+    fn root_only_fixture_files() -> Vec<(&'static str, &'static str)> {
+        vec![
+            (
+                "entry.js",
+                "import { ROOT_ONLY_MARKER } from 'rr-root-only';\nexport const x = ROOT_ONLY_MARKER;\n",
+            ),
+            (
+                "node_modules/rr-root-only/package.json",
+                ROOT_ONLY_PACKAGE_JSON,
+            ),
+            (
+                "node_modules/rr-root-only/dist/entry.js",
+                "export const ROOT_ONLY_MARKER = 'ROOT_ONLY_MARKER_VALUE';\n",
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn unresolvable_codegen_fallback_fails_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(tmp.path(), &root_only_fixture_files());
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            resolve_options: crate::resolver::ResolveOptions {
+                conditions: vec!["worker".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let err = bundler.bundle(entry).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Unresolved imports at codegen time"),
+            "expected the #2261 codegen-fallback diagnostic, got: {msg}"
+        );
+        assert!(
+            msg.contains("`rr-root-only`"),
+            "diagnostic should name the unresolved specifier, got: {msg}"
+        );
+        assert!(
+            msg.contains("entry.js"),
+            "diagnostic should name the importer, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn declared_external_suppresses_codegen_fallback_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(tmp.path(), &root_only_fixture_files());
+
+        let mut externals = HashSet::new();
+        externals.insert("rr-root-only".to_string());
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            externals,
+            resolve_options: crate::resolver::ResolveOptions {
+                conditions: vec!["worker".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        // Same graph-walk/codegen re-derivation miss as above, but the user
+        // explicitly declared `rr-root-only` external this time — only
+        // declared externals may legitimately emit a naked string require,
+        // so this must not fail the build.
+        let _ = bundler
+            .bundle(entry)
+            .await
+            .expect("declared external must continue to allow the codegen string-require fallback");
     }
 }
 
