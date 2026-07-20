@@ -2,12 +2,12 @@
 //! Native agent command construction and real PTY lifecycle.
 
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySystem};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 pub use portable_pty::{ExitStatus, PtySize};
 
 #[cfg(unix)]
@@ -113,8 +113,12 @@ impl PtyCommand {
 /// Typed, recoverable failures from the native PTY boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PtyLaunchError {
-    UnavailableBinary { program: PathBuf },
-    InvalidWorkingDirectory { cwd: PathBuf },
+    UnavailableBinary {
+        program: PathBuf,
+    },
+    InvalidWorkingDirectory {
+        cwd: PathBuf,
+    },
     SessionClosed,
     Operation {
         operation: &'static str,
@@ -212,7 +216,10 @@ impl PtyRuntime {
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         let child = pair.slave.spawn_command(builder).map_err(|error| {
-            PtyLaunchError::operation("child spawn", format!("{}: {error}", command.program.display()))
+            PtyLaunchError::operation(
+                "child spawn",
+                format!("{}: {error}", command.program.display()),
+            )
         })?;
         drop(pair.slave);
 
@@ -363,5 +370,4 @@ impl Drop for PtySession {
     }
 }
 
-<!-- marker: missing-generator:logic:c4f5b6e3 path: apps/workbench/src/native_agent_pty.rs reason: Define provider command construction, recoverable binary resolution, and the real native PTY session lifecycle. -->
 // HANDWRITE-END

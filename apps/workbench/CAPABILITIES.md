@@ -29,13 +29,14 @@ lifecycle state, or inferred knowledge as canonical repository truth.
 Gate Inventory:
 - verified: `cargo test -p workbench --test desktop_launch_smoke -- --nocapture`
 - verified: `cargo test -p workbench --test folder_shell_journey -- --nocapture`
+- verified: `cargo test -p workbench --test pty_agent_adapters -- --nocapture`
 - planned: `cargo test -p workbench --test production_journey -- --nocapture`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | desktop-application-bootstrap | change | #2191 | complete | verified | prototype | `desktop_launch_smoke` |
 | three-column-folder-shell | change | #2192 | complete | verified | prototype | `folder_shell_journey` plus retained viewport evidence |
-| native-agent-pty | change | #2193 | planned | planned | none | `pty_agent_adapters` |
+| native-agent-pty | change | #2193 | complete | verified | prototype | `pty_agent_adapters` real-shell fixture |
 | authoritative-cwd-context | change | #2194 | planned | planned | none | `pty_cwd_context` |
 | generic-context-renderers | change | #2195 | planned | planned | none | `generic_context_renderers` |
 | optional-aw-typed-renderer | change | #2196 | planned | planned | none | `aw_typed_renderer` |

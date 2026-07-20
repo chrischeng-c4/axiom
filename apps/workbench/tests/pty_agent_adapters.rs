@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:5ca87ac5" tracker="pending-tracker" reason="Prove exact provider commands, recoverable missing binaries, real shell bidirectional IO, selected cwd, resize, interrupt, exit, and cleanup."
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use workbench::native_agent_pty::{
     AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySession, PtySize,
@@ -76,7 +76,10 @@ fn missing_vendor_binaries_are_recoverable() {
         .unwrap()
         .wait()
         .unwrap();
-    assert!(status.success(), "failed vendor launch poisoned the runtime");
+    assert!(
+        status.success(),
+        "failed vendor launch poisoned the runtime"
+    );
 }
 
 /// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#unit-test
@@ -84,6 +87,7 @@ fn missing_vendor_binaries_are_recoverable() {
 #[test]
 fn real_pty_round_trip_resize_cwd_and_exit() {
     let cwd = tempfile::tempdir().unwrap();
+    let canonical_cwd = cwd.path().canonicalize().unwrap();
     let script = concat!(
         "printf 'READY:%s\\n' \"$PWD\"; ",
         "IFS= read -r line; ",
@@ -91,7 +95,7 @@ fn real_pty_round_trip_resize_cwd_and_exit() {
         "stty size; ",
         "exit 7"
     );
-    let command = PtyCommand::new("/bin/sh", cwd.path()).args(["-c", script]);
+    let command = PtyCommand::new("/bin/sh", &canonical_cwd).args(["-c", script]);
     let mut session = PtySession::spawn(&command, test_size()).unwrap();
     let mut reader = session.try_clone_reader().unwrap();
     let output_thread = thread::spawn(move || {
@@ -115,17 +119,18 @@ fn real_pty_round_trip_resize_cwd_and_exit() {
 
     assert_eq!(status.exit_code(), 7);
     assert!(
-        output.contains(&format!("READY:{}", cwd.path().display())),
+        output.contains(&format!("READY:{}", canonical_cwd.display())),
         "selected cwd missing from PTY output: {output:?}"
     );
     assert!(output.contains("ECHO:hello-from-workbench"), "{output:?}");
-    assert!(output.contains("42 132"), "resized terminal missing: {output:?}");
+    assert!(
+        output.contains("42 132"),
+        "resized terminal missing: {output:?}"
+    );
 }
 
 #[cfg(unix)]
-fn line_reader(
-    reader: Box<dyn Read + Send>,
-) -> (Receiver<String>, thread::JoinHandle<String>) {
+fn line_reader(reader: Box<dyn Read + Send>) -> (Receiver<String>, thread::JoinHandle<String>) {
     let (sender, receiver) = mpsc::channel();
     let handle = thread::spawn(move || {
         let mut reader = BufReader::new(reader);
@@ -242,19 +247,21 @@ fn runtime_has_no_vendor_session_model_or_required_vendor_smoke() {
         "session_database",
         "history_path",
     ] {
-        assert!(!runtime.contains(forbidden), "runtime owns forbidden {forbidden}");
+        assert!(
+            !runtime.contains(forbidden),
+            "runtime owns forbidden {forbidden}"
+        );
     }
     assert!(runtime.contains("impl Drop for PtySession"));
 
     let tests = include_str!("pty_agent_adapters.rs");
-    for forbidden in [
-        "PtyCommand::new(\"claude\"",
-        "PtyCommand::new(\"codex\"",
-        "PtyCommand::new(\"agy\"",
-    ] {
-        assert!(!tests.contains(forbidden), "test requires installed vendor: {forbidden}");
+    for vendor in ["claude", "codex", "agy"] {
+        let forbidden = format!("PtyCommand::new({vendor:?}");
+        assert!(
+            !tests.contains(&forbidden),
+            "test requires installed vendor: {forbidden}"
+        );
     }
 }
 
-<!-- marker: missing-generator:unit-test:5ca87ac5 path: apps/workbench/tests/pty_agent_adapters.rs reason: Prove exact provider commands, recoverable missing binaries, real shell bidirectional IO, selected cwd, resize, interrupt, exit, and cleanup. -->
 // HANDWRITE-END

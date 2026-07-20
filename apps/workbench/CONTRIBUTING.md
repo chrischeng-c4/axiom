@@ -46,6 +46,16 @@ constrained-width screenshots, and therefore needs permission to start the
 browser process in sandboxed agent hosts. It must not be replaced with a DOM
 mock or static string-only assertion.
 
+The native-agent runtime gate is:
+
+```bash
+cargo test -p workbench --test pty_agent_adapters -- --nocapture
+```
+
+It must use the real platform PTY and deterministic local shell fixture. Do not
+replace it with a PTY mock or make installed Claude Code, Codex, or AGY binaries
+mandatory in CI.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

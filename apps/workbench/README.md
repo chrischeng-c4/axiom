@@ -53,9 +53,23 @@ constrained-width states remain actionable. The retained viewport and
 interaction evidence for this slice lives under
 [`evidence/folder-shell/2192`](evidence/folder-shell/2192/).
 
+## Native Agent PTY
+
+Workbench constructs one inspectable native command for Claude Code, Codex, or
+AGY; Claude Code is the initial default. The command keeps the selected launch
+folder as child cwd and adds no hidden resume or history arguments. If the
+selected binary is unavailable, launch returns a recoverable error before PTY
+allocation so another agent can be selected immediately.
+
+The runtime uses a real native pseudo-terminal for input, output, terminal
+resize, Ctrl-C, child exit status, explicit termination, and abandoned-session
+cleanup. It does not store vendor sessions or derive context cwd from terminal
+text. The next child work item owns authoritative cwd-to-context synchronization.
+
 ## Verification
 
 ```bash
 cargo test -p workbench --test desktop_launch_smoke -- --nocapture
 cargo test -p workbench --test folder_shell_journey -- --nocapture
+cargo test -p workbench --test pty_agent_adapters -- --nocapture
 ```
