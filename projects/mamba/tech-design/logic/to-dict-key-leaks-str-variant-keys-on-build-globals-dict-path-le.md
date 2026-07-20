@@ -1,6 +1,32 @@
 ---
 id: '1979'
-summary: (fill)
+summary: >
+  WI #1979 investigates the to_dict_key Str-variant-keys leak surfaced by
+  the #1978 crash investigation and confirms it is a real, unconditional
+  heap leak -- but not where the issue title points. to_dict_key
+  (dict_ops.rs) implements one internally consistent borrow-only contract
+  across every DictKey variant: it never releases the caller's incoming key
+  reference, and only the four pointer-identity variants (Tuple/FrozenSet/
+  BigInt/Instance) add an independent retain_if_ptr for the dict's own
+  stored ptr; the Str/Bytes/StrCodepoints/Other value-copy variants
+  correctly omit any retain because they deep-copy their data and never
+  dereference the original pointer again. The true, unconditional leak is
+  in the caller: build_globals_dict (closure.rs) fabricates a fresh
+  MbObject::new_str(name.clone()) key purely to satisfy mb_dict_setitem's
+  signature, in both its plain-global (id_ns) loop and its function-name
+  (func_info) loop, and never calls release_if_ptr on that key afterward --
+  so every exposed global/function name permanently leaks one rc=1 heap Str
+  allocation on every call (globals(), inspect.currentframe/stack,
+  module-global pickling, enum body, and class body execution all
+  re-invoke it). The fix releases each fabricated key immediately after its
+  mb_dict_setitem call in both loops; to_dict_key itself needs no change.
+capability_refs:
+  - id: "mamba-core-semantics"
+    role: primary
+    gap: "build-globals-dict-leaks-no-key-references"
+    claim: "build-globals-dict-leaks-no-key-references"
+    coverage: partial
+    rationale: "Pins WI #1979's root-cause confirmation and fix design under mamba-core-semantics' Tier 1 work root 'build_globals_dict leaks no key references': every fabricated dict key that build_globals_dict allocates to expose a global or function name is released after its mb_dict_setitem call, verified via build_globals_dict_key_leak_free's 10k-iteration RSS-plateau proof."
 fill_sections: [logic, changes, unit-test]
 ---
 
