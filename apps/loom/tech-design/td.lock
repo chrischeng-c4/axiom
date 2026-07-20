@@ -1,0 +1,9 @@
+version = 2
+project = "loom"
+ir_kind = "td"
+td_path = "apps/loom/tech-design"
+generated_at = "2026-07-20T10:00:32.844034+00:00"
+digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+source_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ir_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+files = []
