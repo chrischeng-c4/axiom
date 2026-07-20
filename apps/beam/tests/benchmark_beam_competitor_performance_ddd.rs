@@ -7,7 +7,7 @@
 // @contract search-efficiency-ddd-overhead
 // @category efficiency
 // @required_for_production true
-// @command cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario ddd-overhead
+// @command cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test
 // AW-EC-END
 
 // Contract: The Domain Service `PipelineScheduler` introduces less than 1% latency overhead compared to a tightly-coupled monolithic pipeline.
@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_ddd_overhead() {
-    let command =
-        "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario ddd-overhead";
+    let command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test";
     let id = "beam-competitor-performance-ddd-overhead";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

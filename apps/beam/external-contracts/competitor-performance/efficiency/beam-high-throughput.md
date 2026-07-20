@@ -25,7 +25,7 @@ e2e_tests:
     contract_id: search-efficiency-ddd-overhead
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_ddd.rs
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario ddd-overhead"
+    command: "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
     assertions:
       - "The Domain Service `PipelineScheduler` introduces less than 1% latency overhead compared to a tightly-coupled monolithic pipeline."
       - "The Hexagonal `VectorRepository` and `DistanceCalculator` trait dynamic dispatch (or static monomorphization) costs are invisible in the flamegraph."
@@ -36,7 +36,7 @@ e2e_tests:
     contract_id: search-efficiency-batched-rag-throughput
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_overlap.rs
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario pipeline-overlap"
+    command: "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
     assertions:
       - "Async `IoUringVectorRepository` fetches Uncompressed Vectors from NVMe concurrently with `WgpuDistanceEngine` calculations."
       - "GPU Tiled GEMM processing time strictly overlaps with NVMe fetch time on subsequent batches (Pipeline Stall < 5%)."
@@ -48,7 +48,7 @@ e2e_tests:
     contract_id: search-efficiency-memory-footprint
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_memory.rs
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario out-of-core"
+    command: "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
     assertions:
       - "Host RAM consumption is bounded strictly to the size of the `HnswNavigator` graph and compressed PQ codes."
       - "Scaling the `ColdPayload` from 10M to 100M vectors increases NVMe footprint but triggers less than 15% increase in Host RAM usage."
@@ -60,7 +60,7 @@ e2e_tests:
     contract_id: search-efficiency-gpu-scaling
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_gpu.rs
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario gpu-batching"
+    command: "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
     assertions:
       - "System throughput (QPS) scales linearly as `QueryBatch` size increases from 1 to 512."
       - "Peak batched throughput demonstrates at least 10x QPS advantage over the `HnswCpuIndex` baseline from Lumen."
@@ -81,7 +81,7 @@ tool_contracts:
       version: 1
       project: beam
       source_contract: beam-competitor-performance-pipeline-overlap
-      delegate_command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario pipeline-overlap"
+      delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap"
   
   - id: beam-meter-search-efficiency-memory
     tool: meter
@@ -92,5 +92,5 @@ tool_contracts:
       version: 1
       project: beam
       source_contract: beam-competitor-performance-memory-footprint
-      delegate_command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter --scenario out-of-core"
+      delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario out-of-core"
 ```

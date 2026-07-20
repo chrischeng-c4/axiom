@@ -1,0 +1,42 @@
+version = 1
+name = "beam-rig"
+default_runner = "ec-efficiency-meter"
+
+[workspace]
+base = "../.."
+workdir = "apps/beam"
+keep = "always"
+
+[env]
+PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/Users/chrischeng/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin"
+
+[[runners]]
+id = "ec-efficiency-meter"
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && exec cargo test -p beam --test throughput_pipeline -- --nocapture"]
+timeout_s = 600
+
+[[scenarios]]
+id = "ddd-overhead"
+app = "beam"
+runner = "ec-efficiency-meter"
+
+[[scenarios]]
+id = "gpu-batching"
+app = "beam"
+runner = "ec-efficiency-meter"
+
+[[scenarios]]
+id = "out-of-core"
+app = "beam"
+runner = "ec-efficiency-meter"
+
+[[scenarios]]
+id = "pipeline-overlap"
+app = "beam"
+runner = "ec-efficiency-meter"
+
+[[services]]
+id = "beam"
+cmd = ["cargo", "build", "-p", "beam"]
+ready_cmd = ["true"]
+timeout_s = 60
