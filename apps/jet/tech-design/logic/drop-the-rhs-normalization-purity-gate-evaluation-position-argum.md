@@ -1,7 +1,7 @@
 ---
 id: '2168'
 summary: (fill)
-fill_sections: [logic, changes, unit-test]
+fill_sections: [logic, changes, unit-test, e2e-test]
 ---
 
 ## Logic
@@ -230,4 +230,29 @@ flowchart TD
     r8[R8 rename consistency skipped impure to skipped shape stats field] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_normalize_counts_skipped_shape_candidates[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::normalize_counts_skipped_shape_candidates]
     r9[R9 rename consistency combined pipeline normalized counter] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalizes_then_elides_an_arrow_function_export[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalizes_then_elides_an_arrow_function_export]
     r10[R10 rename consistency combined pipeline kept key counters] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalized_then_still_kept_key_is_fine[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalized_then_still_kept_key_is_fine]
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: entry-flatten-export-elision-hatch-boots-identically-in-real-browser
+    capability_id: bundler-production-build
+    claim_id: rhs-normalization-shape-predicate
+    name: entry-flattened bundle with the shape-based RHS normalization predicate boots identically to the escape-hatch build in a real Chromium browser
+    command: cargo test -p jet --test entry_flatten
+    assertions:
+      - the mui-visual fixture's entry-flattened production bundle (JET_NO_RHS_NORMALIZE unset, default-on shape predicate) boots in a real headless Chromium instance via the jet browser bridge without a script error
+      - "export_elision_hatch_ab_boots_identically_in_real_browser: the same fixture built with JET_NO_RHS_NORMALIZE=1 (escape hatch, pre-#2168 predicate) also boots cleanly, and observable page state (rendered DOM / captured console output) is identical between the two builds -- proving the wider shape-based accept-matrix (call/member/new/conditional/template/object/array/async/generator RHS now normalized) introduces no runtime behavior change"
+      - entry_flatten_default_is_strictly_smaller_than_no_entry_flatten_escape_hatch and entry_flatten_survivor_filter_is_byte_identical_to_escape_hatch continue passing unchanged, confirming this WI's predicate relaxation composes with the existing entry-flatten pipeline without regressing its own escape-hatch parity guarantees
+  - id: production-build-regression-fixture-boots-in-browser-post-relaxation
+    capability_id: bundler-production-build
+    claim_id: rhs-normalization-shape-predicate
+    name: production build regression fixture boots in a real browser and emits a parseable minified bundle after the RHS normalization predicate relaxation
+    command: cargo test -p jet --test production_build_regression
+    assertions:
+      - "production_build_regression_fixture_boots_in_browser: the full production-minified bundle (shape-based predicate default-on) boots in a real headless Chromium instance without a script error, exercising the complete generate_bundle / generate_split_bundle pipeline this WI's counter-rename touches (bundle-timing eprintln sites)"
+      - "production_build_minify_emits_parseable_js_bundle: the minified bundle output remains syntactically parseable JS (js_parses_without_errors) end to end, confirming the reparse-validate-and-degrade safety net (scope_hoist_opt.rs:7526-7599) is unaffected by the wider accept-matrix"
+      - the 2 common::snapshot utility tests in this suite continue passing, confirming no snapshot-fixture drift from the predicate/rename change
 ```
