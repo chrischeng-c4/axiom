@@ -3534,7 +3534,7 @@ fn find_package_info(module_path: &std::path::Path) -> Option<(std::path::PathBu
 // R7: Same-chunk export-binding elision (#2128)
 // ──────────────────────────────────────────────────────────────────────────
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Counters for `elide_same_chunk_export_bindings`, surfaced via
 /// `JET_BUNDLE_TIMING` as `export-elision: modules=N elided_keys=M kept=K
 /// kept_registry=.. kept_cross_chunk=.. kept_namespace=..
