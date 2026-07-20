@@ -1,6 +1,16 @@
 ---
 id: '2152'
-summary: (fill)
+summary: >
+  Implement a functioning Kubernetes operator for Beam using libs/service-k8s, watching
+  Beam custom resources, managing owned resources, finalizers, and observedGeneration status.
+capability_refs:
+  - id: "kubernetes-native-deployment"
+    role: primary
+    claim: "beam-k8s-operator-reconcile"
+    coverage: full
+    rationale: >
+      Replaces the dummy print-and-exit operator command with a real k8s reconciliation
+      controller and makes instance rendering output a Beam custom resource.
 fill_sections: [logic, changes, unit-test]
 ---
 
