@@ -1142,7 +1142,9 @@ fn run_force_regen_specs(
     dry_run: bool,
     quiet: bool,
 ) -> Result<(usize, usize, usize, Vec<std::path::PathBuf>)> {
-    use crate::generate::apply::{run_apply_scoped_targets, run_apply_scoped_targets_quiet};
+    use crate::generate::apply::{
+        run_apply_scoped_codegen_targets, run_apply_scoped_codegen_targets_quiet,
+    };
 
     let mut updated_files = 0usize;
     let mut created_files = 0usize;
@@ -1157,9 +1159,14 @@ fn run_force_regen_specs(
             root.join(rel_spec)
         };
         let report = if quiet {
-            run_apply_scoped_targets_quiet(&spec_path, root, dry_run, &scope.source_roots)
+            run_apply_scoped_codegen_targets_quiet(
+                &spec_path,
+                root,
+                dry_run,
+                &scope.source_roots,
+            )
         } else {
-            run_apply_scoped_targets(&spec_path, root, dry_run, &scope.source_roots)
+            run_apply_scoped_codegen_targets(&spec_path, root, dry_run, &scope.source_roots)
         }
         .map_err(|e| anyhow::anyhow!("regeneration failed for {}: {}", spec_path.display(), e))?;
         let source_file_count = report.files.len();
@@ -3213,7 +3220,8 @@ mod tests {
         fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
         is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
         run_force_regen, run_force_regen_specs, sample_count, sample_semantic_review_units,
-        spec_declares_source_section, td_public_symbol_semantic_coverage,
+        spec_declares_source_section,
+        td_public_symbol_semantic_coverage,
         terminal_ec_failure_envelope, upsert_public_api_overview,
         upsert_public_api_overview_targets, verify_force_regen_conformance,
         write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
@@ -4164,11 +4172,11 @@ changes:
         let root = tmp.path();
         let td_root = root.join("tech-design");
         let source_root = root.join("src");
-        let source = source_root.join("lib.rs");
+        let source = source_root.join("config.toml");
         let spec = td_root.join("cap-src.md");
         std::fs::create_dir_all(&td_root).unwrap();
         std::fs::create_dir_all(&source_root).unwrap();
-        let original = "pub fn demo(){println!(\"left as authored\");}\n";
+        let original = "mode = \"left-as-authored\"\n";
         std::fs::write(&source, original).unwrap();
         std::fs::write(
             &spec,
@@ -4183,10 +4191,10 @@ id: cap-src
 
 ```yaml
 changes:
-  - path: src/lib.rs
+  - path: src/config.toml
     action: modify
     impl_mode: hand-written
-    description: Preserve hand-written source.
+    description: Preserve tracked non-Rust configuration.
 ```
 "#,
         )
@@ -4203,6 +4211,68 @@ changes:
         assert_eq!((updated, created, blocks), (0, 0, 0));
         assert!(changed_paths.is_empty());
         assert_eq!(std::fs::read_to_string(source).unwrap(), original);
+    }
+
+    #[test]
+    fn cb_gen_force_regen_ignores_absent_handwritten_modify_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_root = root.join("tech-design");
+        let source_root = root.join("src");
+        let spec = td_root.join("mixed.md");
+        std::fs::create_dir_all(&td_root).unwrap();
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::write(
+            &spec,
+            r#"---
+id: cold-mixed
+fill_sections: [schema, changes]
+---
+
+# Cold mixed replay
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  ColdWidget:
+    type: object
+    properties:
+      name: { type: string }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/generated.rs
+    action: create
+    section: schema
+    impl_mode: codegen
+  - path: src/manual.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+```
+"#,
+        )
+        .unwrap();
+
+        let scope = ForceRegenScope {
+            td_root,
+            source_roots: vec![source_root],
+        };
+        let (updated, created, blocks, changed_paths) =
+            run_force_regen_specs(root, &scope, &[spec], false, true).unwrap();
+
+        assert_eq!(updated, 1);
+        assert_eq!(created, 1);
+        assert_eq!(blocks, 1);
+        assert_eq!(changed_paths, vec![root.join("src/generated.rs")]);
+        assert!(root.join("src/generated.rs").is_file());
+        assert!(!root.join("src/manual.rs").exists());
     }
 
     #[test]
