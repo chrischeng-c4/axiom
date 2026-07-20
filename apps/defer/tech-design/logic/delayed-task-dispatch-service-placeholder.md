@@ -78,7 +78,6 @@ changes:
     anchor: target_oracle_verifies_exact_signature_and_rejects_tampering
     reason: "Independently recompute the length-delimited HMAC at the target and reject field/body tampering, wrong key identity, and wrong secrets across retry attempts."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
