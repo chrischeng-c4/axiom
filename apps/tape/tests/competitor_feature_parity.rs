@@ -16,6 +16,7 @@ struct FeatureRow {
     replay_baseline: bool,
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in competitor_feature_parity.rs is hand-written pending codegen support">
 fn matrix() -> Vec<FeatureRow> {
     vec![
         FeatureRow {
@@ -97,6 +98,7 @@ fn matrix() -> Vec<FeatureRow> {
         },
     ]
 }
+// </HANDWRITE>
 
 #[test]
 fn rabbitmq_topic_exchange_is_routing_peer_not_replay_baseline() {
