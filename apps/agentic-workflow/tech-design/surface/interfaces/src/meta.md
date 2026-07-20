@@ -284,14 +284,21 @@ fn run_at_root(root: &Path, args: MetaArgs) -> Result<()> {
     let output = execute(root, &scope, &scope_args, mode)?;
     println!("{}", serde_json::to_string_pretty(&output)?);
     if mode == ApplyMode::Check && !output.findings.is_empty() {
+        if let Some(next) = &output.next {
+            bail!(
+                "META-doc drift detected in {} file/block finding(s); run {}",
+                output.findings.len(),
+                next.command
+            );
+        }
         bail!(
-            "META-doc drift detected in {} file/block finding(s); run {}",
+            "META-doc check blocked by {} non-syncable finding(s): {}",
             output.findings.len(),
             output
-                .next
-                .as_ref()
-                .map(|next| next.command.as_str())
-                .unwrap_or("aw meta sync")
+                .findings
+                .first()
+                .map(|finding| finding.remediation.as_str())
+                .unwrap_or("inspect the structured findings")
         );
     }
     Ok(())
@@ -364,6 +371,17 @@ fn execute_with_binary_version(
     let mut findings =
         validate_meta_doc_layout(root, scope.repository_is_product, &project_paths).findings;
     findings.extend(projection_findings);
+    // #2188: a project-scoped producer run owns repository projections plus
+    // the selected project, not unrelated root allowlist cleanup. The global
+    // no-scope check still reports these repository policy findings.
+    if !scope_args.projects.is_empty() || !scope_args.project_paths.is_empty() {
+        findings.retain(|finding| {
+            !matches!(
+                finding.code.as_str(),
+                "unexpected_root_meta_doc" | "root_capabilities_requires_product"
+            )
+        });
+    }
     findings.sort_by(|left, right| {
         (&left.path, &left.code, &left.message).cmp(&(&right.path, &right.code, &right.message))
     });
@@ -376,9 +394,24 @@ fn execute_with_binary_version(
     let binary_stale = embedded_template_is_stale(root)
         .then(|| "checkout HEAD".to_string())
         .or_else(|| crate::cli::drift::binary_behind_checkout_source_version(root, binary_version));
+    let has_non_syncable_findings = findings.iter().any(|finding| {
+        !matches!(
+            finding.code.as_str(),
+            "managed_block_missing"
+                | "managed_block_stale"
+                | "meta_doc_missing"
+                | "meta_doc_section_missing"
+        )
+    });
 
     let scope_suffix = render_scope_suffix(scope_args);
     let (action, status, next, terminal) = match mode {
+        ApplyMode::Init if has_non_syncable_findings => (
+            "meta_init",
+            "blocked",
+            None,
+            Some(TerminalMarker { status: "blocked" }),
+        ),
         ApplyMode::Init => (
             "meta_init",
             "initialized",
@@ -386,6 +419,12 @@ fn execute_with_binary_version(
                 command: format!("aw meta check{scope_suffix}"),
             }),
             None,
+        ),
+        ApplyMode::Sync if has_non_syncable_findings => (
+            "meta_sync",
+            "blocked",
+            None,
+            Some(TerminalMarker { status: "blocked" }),
         ),
         ApplyMode::Sync => (
             "meta_sync",
@@ -423,6 +462,12 @@ fn execute_with_binary_version(
                 None,
             )
         }
+        ApplyMode::Check if has_non_syncable_findings => (
+            "meta_check",
+            "blocked",
+            None,
+            Some(TerminalMarker { status: "blocked" }),
+        ),
         ApplyMode::Check => (
             "meta_check",
             "drift",
@@ -1236,6 +1281,57 @@ mod tests {
             .to_string()
             .contains("aw meta sync --project-path apps/demo"));
         assert_eq!(fs::read_to_string(path).unwrap(), tampered);
+    }
+
+    #[test]
+    fn meta_check_blocks_non_syncable_layout_without_sync_loop() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = MetaScopeArgs::default();
+        let scope = resolve_scope(temp.path(), &args).unwrap();
+        execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+        fs::write(
+            temp.path().join("CAMPAIGN-RUNBOOK-mamba-drain.md"),
+            "# Mamba campaign\n",
+        )
+        .unwrap();
+
+        let output = execute(temp.path(), &scope, &args, ApplyMode::Check).unwrap();
+
+        assert_eq!(output.status, "blocked");
+        assert!(output.next.is_none());
+        assert_eq!(output.terminal.unwrap().status, "blocked");
+        assert!(output
+            .findings
+            .iter()
+            .any(|finding| finding.code == "unexpected_root_meta_doc"));
+        let error = run_at_root(
+            temp.path(),
+            MetaArgs {
+                command: MetaCommand::Check(args),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("non-syncable"));
+        assert!(!error.contains("aw meta sync"));
+    }
+
+    #[test]
+    fn meta_check_scoped_project_ignores_unrelated_root_allowlist_findings() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = args_for("apps/demo", false);
+        let scope = resolve_scope(temp.path(), &args).unwrap();
+        execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+        fs::write(
+            temp.path().join("CAMPAIGN-RUNBOOK-mamba-drain.md"),
+            "# Mamba campaign\n",
+        )
+        .unwrap();
+
+        let output = execute(temp.path(), &scope, &args, ApplyMode::Check).unwrap();
+
+        assert!(output.findings.is_empty(), "{:#?}", output.findings);
+        assert_eq!(output.terminal.unwrap().status, "done");
     }
 
     #[test]

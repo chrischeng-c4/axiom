@@ -50,6 +50,8 @@ scenarios:
       - "the command exits non-zero"
       - "each finding names the file, block id, and aw meta sync remediation"
       - "no file byte changes"
+      - "only producer-repairable findings emit aw meta sync; non-syncable layout findings emit a blocked terminal without a next-command loop (#2188)"
+      - "an explicitly project-scoped check excludes unrelated repository allowlist findings while the no-scope global check retains them (#2188)"
   - id: S4
     title: root agent guidance has one semantic source
     when:
@@ -112,7 +114,7 @@ properties:
   action:
     enum: [meta_init, meta_sync, meta_check]
   status:
-    enum: [initialized, synchronized, clean, drift, binary_stale]
+    enum: [initialized, synchronized, clean, drift, binary_stale, blocked]
   repository_root:
     type: string
   repository_is_product:
@@ -164,7 +166,7 @@ properties:
       - type: object
         required: [status]
         properties:
-          status: { const: done }
+          status: { enum: [done, blocked] }
 ```
 
 ## Logic
@@ -182,7 +184,9 @@ nodes:
   reconcile: { kind: process, label: "Render and replace only owned marker span" }
   skeleton: { kind: process, label: "Create or append canonical skeleton block" }
   mode: { kind: decision, label: "Check mode?" }
+  repairable: { kind: decision, label: "Every finding producer-repairable?" }
   report: { kind: process, label: "Report exact file/block drift without writing" }
+  blocked: { kind: terminal, label: "Emit blocked without a false sync next" }
   write: { kind: process, label: "Write reconciled bytes" }
   validate: { kind: process, label: "Run ownership matrix validation" }
   next: { kind: terminal, label: "Emit executable next or done terminal" }
@@ -195,7 +199,9 @@ edges:
   - { from: existing, to: validate, label: "no and optional" }
   - { from: reconcile, to: mode }
   - { from: skeleton, to: mode }
-  - { from: mode, to: report, label: "yes" }
+  - { from: mode, to: repairable, label: "yes" }
+  - { from: repairable, to: report, label: "yes" }
+  - { from: repairable, to: blocked, label: "no" }
   - { from: mode, to: write, label: "no" }
   - { from: report, to: validate }
   - { from: write, to: validate }
@@ -210,7 +216,9 @@ flowchart TD
     existing -->|no and optional| validate[Run ownership matrix validation]
     reconcile --> mode{Check mode?}
     skeleton --> mode
-    mode -->|yes| report[Report exact file/block drift without writing]
+    mode -->|yes| repairable{Every finding producer-repairable?}
+    repairable -->|yes| report[Report exact file/block drift without writing]
+    repairable -->|no| blocked([Emit blocked without a false sync next])
     mode -->|no| write[Write reconciled bytes]
     report --> validate
     write --> validate
@@ -282,6 +290,12 @@ requirementDiagram
     risk: high
     verifymethod: test
   }
+  requirement non_syncable_terminal {
+    id: UT10
+    text: "non-syncable layout findings never emit aw meta sync, and scoped project checks ignore unrelated root allowlist findings (#2188)"
+    risk: high
+    verifymethod: test
+  }
 ```
 
 ## Changes
@@ -293,7 +307,7 @@ changes:
     action: create
     section: logic
     impl_mode: codegen
-    description: Register and implement the init/sync/check producer engine, reconcile scoped project skeletons before repo table projections (#2186), preserve marker-owned regions, emit structured output, and cover greenfield configured projects.
+    description: Register and implement the init/sync/check producer engine, reconcile scoped project skeletons before repo table projections (#2186), distinguish producer-repairable drift from blocked non-syncable layout findings (#2188), preserve marker-owned regions, emit structured output, and cover greenfield configured projects.
   - path: apps/agentic-workflow/src/cli/commands.rs
     action: modify
     section: logic
