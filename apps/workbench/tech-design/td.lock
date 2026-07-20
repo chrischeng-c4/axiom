@@ -2,13 +2,13 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T16:01:29.702389+00:00"
-digest = "sha256:45ed8f704dbd02c8afa4e0e9fbaa35d9a913896db9661abeed6301b326898715"
-source_digest = "sha256:45ed8f704dbd02c8afa4e0e9fbaa35d9a913896db9661abeed6301b326898715"
-ir_digest = "sha256:060932d85790c9d8754a4a4c115504ba07d056ac4a4b08cabd5244e5bc90e70e"
+generated_at = "2026-07-20T16:35:29.226781+00:00"
+digest = "sha256:1e517f5c6b287cabeccc863065d0c1d08394e74c6eef3f8969788267f22ba043"
+source_digest = "sha256:1e517f5c6b287cabeccc863065d0c1d08394e74c6eef3f8969788267f22ba043"
+ir_digest = "sha256:387032d376f1ad7ca8fbac4e12bfcb209cdec4b0f1470c7bc5f3618ca5661d0f"
 
 [[files]]
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
-digest = "sha256:6a49a8d177ff81f779f12ad1aeb314c8b4cf5ff48c090499dfa0fe17ca602029"
-ir_digest = "sha256:87be087cc06fb58eaff06017ec3b3f72ff9eb10e721e7bf8f46e40760195732a"
+digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
+ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
 section_count = 3
