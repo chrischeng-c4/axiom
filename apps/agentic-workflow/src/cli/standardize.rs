@@ -5521,7 +5521,7 @@ fn detect_handwrite_gaps(content: &str) -> Vec<HandwriteGap> {
         if reason.trim().is_empty() {
             problems.push("missing reason");
         }
-        if is_missing_tracker(&tracker) {
+        if tracker_attr_absent(&tracker) {
             problems.push("missing tracker");
         }
         if gap.trim().is_empty() && (body.starts_with("<HANDWRITE") || needs_promotion) {
@@ -5544,6 +5544,23 @@ fn is_missing_tracker(tracker: &str) -> bool {
         tracker.trim(),
         "" | "pending-tracker" | "none" | "todo" | "tbd"
     )
+}
+
+/// True only when the `tracker` attribute itself is absent (issue #1898):
+/// distinct from [`is_missing_tracker`], which additionally treats the
+/// `PENDING_TRACKER` sentinel (`"pending-tracker"`) as insufficient for
+/// promotion durability. `aw td gen`'s XML scaffold
+/// (`crate::generate::handwrite_scaffold::scaffold_handwrite`) always emits
+/// `tracker="pending-tracker"` for a freshly generated marker that has no
+/// explicit tracker yet — that IS a recognized, valid `tracker` attribute
+/// value (the marker enters `aw td fill`'s pending queue and gets bound to
+/// a durable `#<slug>` tracker on first fill), not a touched-scope
+/// standardization "attrs missing" gap. `aw td promote`'s durable-tracker
+/// gate (`try_promote_handwrite_marker_to_codegen`) keeps using
+/// `is_missing_tracker` directly, since promoting a still-pending marker to
+/// CODEGEN ownership remains disallowed.
+fn tracker_attr_absent(tracker: &str) -> bool {
+    matches!(tracker.trim(), "" | "none" | "todo" | "tbd")
 }
 
 fn strip_comment_lead(line: &str) -> &str {
@@ -7953,6 +7970,9 @@ paths = ["apps/cap/**"]
         assert_eq!(gaps.len(), 1);
         assert!(gaps[0].message.contains("missing tracker"));
         assert!(gaps[0].needs_promotion);
+
+        let pending_xml = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"logic section in demo.rs is hand-written pending codegen support\">\npub fn existing() {}\n// </HANDWRITE>\n";
+        assert!(detect_handwrite_gaps(pending_xml).is_empty());
 
         let json_marker = r##"
 {

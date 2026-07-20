@@ -1983,6 +1983,67 @@ pub fn before() {}\n\
     }
 
     #[test]
+    fn gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source() {
+        // Issue #1898 end-to-end: drive the real `aw td gen` scaffold
+        // (`crate::generate::handwrite_scaffold::scaffold_handwrite`) over a
+        // pre-existing function, then confirm `aw td fill`'s enumerator
+        // offers it (AC1), its payload adopts the existing body (AC1), and
+        // applying that payload resolves the pending tracker and drops the
+        // marker out of the next enumeration (AC4 in the issue's R4 sense).
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let target = src_dir.join("demo.rs");
+        std::fs::write(&target, "pub fn existing() {\n    42;\n}\n").unwrap();
+
+        let entry = crate::generate::handwrite::HandwriteEntry::default();
+        let outcome = crate::generate::handwrite_scaffold::scaffold_handwrite(
+            &entry,
+            &target,
+            "existing",
+            Some("logic"),
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            crate::generate::handwrite_scaffold::ScaffoldOutcome::Inserted
+        );
+
+        // The scaffolder wrote a real XML marker with the pending sentinel.
+        let scaffolded = std::fs::read_to_string(&target).unwrap();
+        assert!(scaffolded.contains("tracker=\"pending-tracker\""));
+        assert!(scaffolded.contains("pub fn existing()"));
+
+        // AC1: still queued despite surrounding non-empty existing source.
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        let marker = &markers[0];
+        assert!(marker.adopt_existing);
+        assert_eq!(marker.id, "missing-generator:logic");
+
+        let (payload_path, created) =
+            initialize_marker_payload(tmp.path(), "1898", marker).unwrap();
+        assert!(created);
+        assert_eq!(
+            std::fs::read_to_string(&payload_path).unwrap(),
+            format!("{ADOPT_EXISTING_PAYLOAD}\n")
+        );
+
+        // Apply the adopt-existing payload and write the result back, as
+        // `run_apply` would.
+        let filled = apply_marker_payload(&scaffolded, marker, ADOPT_EXISTING_PAYLOAD, "1898")
+            .expect("adopt-existing payload should apply to a genuinely pending XML marker");
+        std::fs::write(&target, &filled).unwrap();
+        assert!(filled.contains("pub fn existing()"));
+        assert!(filled.contains("tracker=\"#1898\""));
+        assert!(filled.contains("</HANDWRITE>"));
+
+        // The next enumeration no longer offers it (R4 / AC3's "next queue"
+        // half — the resolved marker leaves the queue).
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
+    }
+
+    #[test]
     fn adopt_existing_payload_rejects_an_empty_or_comment_marker() {
         let src = format!(
             "{}\n// TODO: hand-write content for `src/demo.rs`.\n{}\n",
