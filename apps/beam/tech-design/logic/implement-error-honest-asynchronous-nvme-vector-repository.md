@@ -66,3 +66,35 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2151-verification
+requirements:
+  io_uring_or_honest_adapter:
+    id: R1
+    text: "Implement a Linux io_uring/O_DIRECT repository or rename and scope the adapter truthfully if the platform cannot support it."
+    kind: functional
+    risk: low
+    verify: cargo test -p beam --test io_uring_repository
+  portable_fallback:
+    id: R3
+    text: "Define a portable fallback without unconditional std::os::unix compilation failures."
+    kind: functional
+    risk: medium
+    verify: cargo test -p beam --test io_uring_repository
+  typed_errors:
+    id: R2
+    text: "Treat missing files, invalid alignment, short reads, and out-of-range offsets as typed errors."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test io_uring_repository
+---
+flowchart TD
+    r1[R1 io uring or honest adapter] --> cargo_test_p_beam_test_io_uring_repository[cargo test -p beam --test io_uring_repository]
+    r2[R2 typed errors] --> cargo_test_p_beam_test_io_uring_repository
+    r3[R3 portable fallback] --> cargo_test_p_beam_test_io_uring_repository
+```
