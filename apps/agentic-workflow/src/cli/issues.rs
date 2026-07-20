@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,8 @@ pub enum IssuesCommand {
     Find(FindArgs),
     /// Plan work-item candidates from a confirmed capability map / README.
     Plan(PlanArgs),
+    /// Submit independent review evidence for a capability WI plan.
+    PlanReview(PlanReviewArgs),
     /// Plan a project phase from the current work-item inventory.
     Epicize(EpicizeArgs),
     /// Split epic/roadmap-sized work into atomic work-item candidates.
@@ -418,6 +421,18 @@ pub struct PlanArgs {
     /// GitHub/GitLab repo override.
     #[arg(long)]
     pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md#cli
+pub struct PlanReviewArgs {
+    /// Agent- or human-backed digest-bound capability-plan review payload.
+    #[arg(long = "evidence-file")]
+    pub evidence_file: PathBuf,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -981,6 +996,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Close(a) => run_close(a).await,
         IssuesCommand::Find(a) => run_find(a).await,
         IssuesCommand::Plan(a) => run_plan(a).await,
+        IssuesCommand::PlanReview(a) => run_plan_review(a).await,
         IssuesCommand::Epicize(a) => run_epicize(a).await,
         IssuesCommand::Atomize(a) => run_atomize(a).await,
         IssuesCommand::Prioritize(a) => run_prioritize(a).await,
@@ -3251,6 +3267,7 @@ async fn run_find(args: FindArgs) -> Result<()> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityRow {
+    capability_id: String,
     capability: String,
     capability_type: String,
     surfaces: String,
@@ -3286,9 +3303,99 @@ pub struct CapabilityWiPlanReport {
     pub reconciliation_count: usize,
     pub resolved_wi_ref_count: usize,
     pub warnings: Vec<String>,
+    pub status: String,
     pub requires_hitl: bool,
-    pub hitl_status: &'static str,
+    pub hitl_status: String,
+    pub review_backing: String,
+    pub source_digest: String,
+    pub review_path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_review_prompt: Option<String>,
+    pub published_issue_count: usize,
     pub plan_command: String,
+}
+
+const CAPABILITY_PLAN_REVIEW_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+enum CapabilityPlanReviewDecision {
+    #[default]
+    Pending,
+    Accepted,
+    NeedsRevision,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct CapabilityPlanReviewChecklist {
+    #[serde(default)]
+    capability_claim_coverage: bool,
+    #[serde(default)]
+    bounded_candidates: bool,
+    #[serde(default)]
+    tracker_reconciliation: bool,
+    #[serde(default)]
+    verification_specific: bool,
+    #[serde(default)]
+    no_duplicate_wis: bool,
+    #[serde(default)]
+    publication_safe: bool,
+}
+
+impl CapabilityPlanReviewChecklist {
+    fn all_satisfied(&self) -> bool {
+        self.capability_claim_coverage
+            && self.bounded_candidates
+            && self.tracker_reconciliation
+            && self.verification_specific
+            && self.no_duplicate_wis
+            && self.publication_safe
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CapabilityPlanReviewRecord {
+    version: u8,
+    project: String,
+    plan_path: String,
+    manifest_path: String,
+    source_digest: String,
+    #[serde(default)]
+    decision: CapabilityPlanReviewDecision,
+    #[serde(default)]
+    reviewer_kind: String,
+    #[serde(default)]
+    reviewed_by: String,
+    #[serde(default)]
+    reviewed_at: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    checklist: CapabilityPlanReviewChecklist,
+    #[serde(default)]
+    findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CapabilityPlanAuthorRecord {
+    version: u8,
+    project: String,
+    source_digest: String,
+    author: String,
+    recorded_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CapabilityPlanManifest {
+    version: u8,
+    project: String,
+    cap_path: String,
+    candidates: Vec<CapabilityCandidate>,
+    reconciliations: Vec<CapabilityTrackerReconciliation>,
 }
 
 #[derive(Deserialize, Default)]
@@ -3392,6 +3499,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         rows: capability_rows
             .into_iter()
             .map(|row| CapabilityRow {
+                capability_id: row.capability_id,
                 capability: row.capability,
                 capability_type: row.capability_type,
                 surfaces: row.surfaces,
@@ -3435,6 +3543,7 @@ pub(crate) async fn build_capability_wi_plan_report(
     };
     let reconciliations =
         capability_tracker_reconciliations(&capability_map.rows, &issues, &resolved_wi_refs);
+    let review_backing = capability_plan_review_backing(&project_root, &project);
     let body = render_capability_wi_plan(
         &project,
         &title,
@@ -3445,6 +3554,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         &candidates,
         &resolved_wi_refs,
         &warnings,
+        &review_backing,
     );
     let path = write_planning_artifact(
         &project_root,
@@ -3455,13 +3565,67 @@ pub(crate) async fn build_capability_wi_plan_report(
         &body,
     )?;
 
+    let manifest = CapabilityPlanManifest {
+        version: CAPABILITY_PLAN_REVIEW_VERSION,
+        project: project.clone(),
+        cap_path: cap_path.display().to_string(),
+        candidates: candidates.clone(),
+        reconciliations: reconciliations.clone(),
+    };
+    let manifest_path = capability_plan_sidecar_path(&path, "manifest.json");
+    let manifest_body = format!("{}\n", serde_json::to_string_pretty(&manifest)?);
+    write_file_atomically(&manifest_path, &manifest_body)?;
+    let source_digest = capability_plan_source_digest(&body, &manifest_body);
+    let review_path = capability_plan_sidecar_path(&path, "review.json");
+    let author_path = capability_plan_sidecar_path(&path, "author.json");
+    let author_record = CapabilityPlanAuthorRecord {
+        version: CAPABILITY_PLAN_REVIEW_VERSION,
+        project: project.clone(),
+        source_digest: source_digest.clone(),
+        author: current_plan_actor_identity(),
+        recorded_at: chrono::Utc::now().to_rfc3339(),
+    };
+    write_file_atomically(
+        &author_path,
+        &format!("{}\n", serde_json::to_string_pretty(&author_record)?),
+    )?;
+    let payload_path = capability_plan_review_payload_path(&project_root, &project, &source_digest);
+    if let Some(parent) = payload_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let pending_record = CapabilityPlanReviewRecord {
+        version: CAPABILITY_PLAN_REVIEW_VERSION,
+        project: project.clone(),
+        plan_path: path.display().to_string(),
+        manifest_path: manifest_path.display().to_string(),
+        source_digest: source_digest.clone(),
+        decision: CapabilityPlanReviewDecision::Pending,
+        reviewer_kind: if review_backing == "human" {
+            "human".to_string()
+        } else {
+            "agent".to_string()
+        },
+        reviewed_by: String::new(),
+        reviewed_at: String::new(),
+        summary: String::new(),
+        checklist: CapabilityPlanReviewChecklist::default(),
+        findings: Vec::new(),
+    };
+    write_file_atomically(
+        &payload_path,
+        &format!("{}\n", serde_json::to_string_pretty(&pending_record)?),
+    )?;
+
     let plan_command = capability_wi_plan_command(&project, args.cap_path.as_deref());
+    let review_command = capability_plan_review_command(&payload_path);
+    let requires_hitl = review_backing == "human";
     Ok(CapabilityWiPlanReport {
         action: "planned",
         kind: "capability_plan",
         project: project.clone(),
         backend: backend_name,
-        path,
+        path: path.clone(),
         cap_path,
         capability_count: capability_map.capability_count,
         planning_row_count: capability_map.rows.len(),
@@ -3470,10 +3634,455 @@ pub(crate) async fn build_capability_wi_plan_report(
         reconciliation_count: reconciliations.len(),
         resolved_wi_ref_count: resolved_wi_refs.len(),
         warnings,
-        requires_hitl: true,
-        hitl_status: "pending",
+        status: if requires_hitl {
+            "pending_human_review".to_string()
+        } else {
+            "pending_agent_review".to_string()
+        },
+        requires_hitl,
+        hitl_status: if requires_hitl {
+            "pending_human".to_string()
+        } else {
+            "pending_agent_review".to_string()
+        },
+        review_backing: review_backing.clone(),
+        source_digest: source_digest.clone(),
+        review_path,
+        payload_path: Some(payload_path.clone()),
+        next: Some(review_command),
+        agent_review_prompt: (!requires_hitl).then(|| {
+            capability_plan_agent_review_prompt(&project, &path, &payload_path, &source_digest)
+        }),
+        published_issue_count: 0,
         plan_command,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingCapabilityPlanReview {
+    pub command: String,
+    pub payload_path: PathBuf,
+    pub prompt: String,
+    pub requires_hitl: bool,
+}
+
+pub(crate) fn pending_capability_plan_review(
+    project_root: &Path,
+    project: &str,
+) -> Option<PendingCapabilityPlanReview> {
+    let dir = crate::shared::workspace::workitems_path(project_root)
+        .join(project)
+        .join("capability-plan");
+    let mut plans = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect::<Vec<_>>();
+    plans.sort();
+    for plan_path in plans.into_iter().rev() {
+        let manifest_path = capability_plan_sidecar_path(&plan_path, "manifest.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let plan_body = std::fs::read_to_string(&plan_path).ok()?;
+        let manifest_body = std::fs::read_to_string(&manifest_path).ok()?;
+        let source_digest = capability_plan_source_digest(&plan_body, &manifest_body);
+        let review_path = capability_plan_sidecar_path(&plan_path, "review.json");
+        if let Ok(review_body) = std::fs::read_to_string(&review_path) {
+            if serde_json::from_str::<CapabilityPlanReviewRecord>(&review_body)
+                .ok()
+                .is_some_and(|record| {
+                    record.source_digest == source_digest
+                        && record.decision == CapabilityPlanReviewDecision::Accepted
+                })
+            {
+                return None;
+            }
+        }
+        let payload_path =
+            capability_plan_review_payload_path(project_root, project, &source_digest);
+        if !payload_path.is_file() {
+            return None;
+        }
+        let review_backing = capability_plan_review_backing(project_root, project);
+        let requires_hitl = review_backing == "human";
+        return Some(PendingCapabilityPlanReview {
+            command: capability_plan_review_command(&payload_path),
+            payload_path: payload_path.clone(),
+            prompt: if requires_hitl {
+                format!(
+                    "Capability plan `{}` requires explicit human review under capability_plan_review_backing=human. Complete `{}` and run the review command.",
+                    plan_path.display(),
+                    payload_path.display()
+                )
+            } else {
+                capability_plan_agent_review_prompt(
+                    project,
+                    &plan_path,
+                    &payload_path,
+                    &source_digest,
+                )
+            },
+            requires_hitl,
+        });
+    }
+    None
+}
+
+async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let evidence_body = std::fs::read_to_string(&args.evidence_file)
+        .with_context(|| format!("failed to read {}", args.evidence_file.display()))?;
+    let mut record: CapabilityPlanReviewRecord = serde_json::from_str(&evidence_body)
+        .with_context(|| {
+            format!(
+                "invalid capability-plan review payload {}",
+                args.evidence_file.display()
+            )
+        })?;
+    validate_capability_plan_review_record(&project_root, &record)?;
+    let plan_path = PathBuf::from(&record.plan_path);
+    let review_path = capability_plan_sidecar_path(&plan_path, "review.json");
+    record.reviewed_at = chrono::Utc::now().to_rfc3339();
+
+    let (status, next, published_issue_count) = match record.decision {
+        CapabilityPlanReviewDecision::Accepted => {
+            let manifest_body = std::fs::read_to_string(&record.manifest_path)?;
+            let manifest: CapabilityPlanManifest = serde_json::from_str(&manifest_body)?;
+            let published = publish_capability_plan_candidates(&record.project, &manifest).await?;
+            (
+                "accepted",
+                format!(
+                    "aw goal capability --project {} --non-interactive",
+                    record.project
+                ),
+                published,
+            )
+        }
+        CapabilityPlanReviewDecision::NeedsRevision => (
+            "needs_revision",
+            format!("aw wi plan --project {}", record.project),
+            0,
+        ),
+        CapabilityPlanReviewDecision::Pending => unreachable!("pending rejected by validation"),
+    };
+    // Persist acceptance only after every candidate has been published (or
+    // independently deduplicated). A transient backend failure must leave the
+    // plan pending so the exact same evidence can be retried safely.
+    write_file_atomically(
+        &review_path,
+        &format!("{}\n", serde_json::to_string_pretty(&record)?),
+    )?;
+    let _ = std::fs::remove_file(&args.evidence_file);
+    let output = serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "action": "capability_plan_review",
+        "project": record.project,
+        "status": status,
+        "clean": status == "accepted",
+        "requires_hitl": false,
+        "source_digest": record.source_digest,
+        "review_path": review_path,
+        "backing": record.reviewer_kind,
+        "findings": record.findings,
+        "published_issue_count": published_issue_count,
+        "next": { "kind": "run_command", "command": next },
+    });
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", serde_json::to_string(&output)?);
+    }
+    Ok(())
+}
+
+fn validate_capability_plan_review_record(
+    project_root: &Path,
+    record: &CapabilityPlanReviewRecord,
+) -> Result<()> {
+    if record.version != CAPABILITY_PLAN_REVIEW_VERSION {
+        anyhow::bail!(
+            "capability-plan review version {} is unsupported; expected {}",
+            record.version,
+            CAPABILITY_PLAN_REVIEW_VERSION
+        );
+    }
+    if record.project.trim().is_empty() || record.reviewed_by.trim().is_empty() {
+        anyhow::bail!("capability-plan review requires project and reviewed_by identity");
+    }
+    if record.summary.trim().is_empty() {
+        anyhow::bail!("capability-plan review requires a semantic review summary");
+    }
+    let plan_path = PathBuf::from(&record.plan_path);
+    let manifest_path = PathBuf::from(&record.manifest_path);
+    let expected_plan_root = crate::shared::workspace::workitems_path(project_root)
+        .join(&record.project)
+        .join("capability-plan");
+    if !plan_path.starts_with(&expected_plan_root)
+        || manifest_path != capability_plan_sidecar_path(&plan_path, "manifest.json")
+    {
+        anyhow::bail!(
+            "capability-plan review paths must name a plan and its manifest under {}",
+            expected_plan_root.display()
+        );
+    }
+    resolve_project_label(project_root, &record.project)
+        .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+    let plan_body = std::fs::read_to_string(&plan_path)
+        .with_context(|| format!("read reviewed plan {}", plan_path.display()))?;
+    let manifest_body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read reviewed manifest {}", manifest_path.display()))?;
+    let actual_digest = capability_plan_source_digest(&plan_body, &manifest_body);
+    if actual_digest != record.source_digest {
+        anyhow::bail!(
+            "capability-plan review evidence is stale; rerun `aw wi plan --project {}`",
+            record.project
+        );
+    }
+    let manifest: CapabilityPlanManifest = serde_json::from_str(&manifest_body)?;
+    if manifest.project != record.project {
+        anyhow::bail!("capability-plan review project does not match its manifest");
+    }
+    let backing = capability_plan_review_backing(project_root, &record.project);
+    match record.reviewer_kind.as_str() {
+        "human" => {}
+        "agent" if backing != "human" => {
+            let author_path = capability_plan_sidecar_path(&plan_path, "author.json");
+            let author_body = std::fs::read_to_string(&author_path).with_context(|| {
+                format!(
+                    "agent capability-plan review requires author evidence {}",
+                    author_path.display()
+                )
+            })?;
+            let author: CapabilityPlanAuthorRecord = serde_json::from_str(&author_body)?;
+            if author.source_digest != record.source_digest {
+                anyhow::bail!("capability-plan author evidence is stale for the reviewed digest");
+            }
+            if author
+                .author
+                .trim()
+                .eq_ignore_ascii_case(record.reviewed_by.trim())
+            {
+                anyhow::bail!(
+                    "agent capability-plan review is not independent: reviewed_by matches the recorded plan author"
+                );
+            }
+        }
+        "agent" => anyhow::bail!(
+            "project `{}` capability_plan_review_backing policy is human-only",
+            record.project
+        ),
+        other => anyhow::bail!(
+            "capability-plan reviewer_kind `{other}` is unsupported; expected human or agent"
+        ),
+    }
+    match record.decision {
+        CapabilityPlanReviewDecision::Accepted => {
+            if !record.findings.is_empty() {
+                anyhow::bail!("accepted capability-plan review must not contain findings");
+            }
+            if !record.checklist.all_satisfied() {
+                anyhow::bail!("accepted capability-plan review requires every checklist item");
+            }
+        }
+        CapabilityPlanReviewDecision::NeedsRevision => {
+            if record.findings.is_empty() {
+                anyhow::bail!("needs_revision capability-plan review requires findings");
+            }
+        }
+        CapabilityPlanReviewDecision::Pending => {
+            anyhow::bail!("capability-plan review decision is still pending")
+        }
+    }
+    Ok(())
+}
+
+async fn publish_capability_plan_candidates(
+    project: &str,
+    manifest: &CapabilityPlanManifest,
+) -> Result<usize> {
+    let project_root = crate::find_project_root()?;
+    let (_, _, mut open_issues, _) =
+        load_project_open_issues_with_backend(&project_root, project, None).await?;
+    let cap_path = PathBuf::from(&manifest.cap_path);
+    let mut published = 0usize;
+    for candidate in &manifest.candidates {
+        if open_issues
+            .iter()
+            .any(|issue| open_issue_serves_capability_candidate(issue, candidate))
+        {
+            continue;
+        }
+        let issue_type = match candidate.issue_type.as_str() {
+            "bug" => TypeFilter::Bug,
+            "refactor" => TypeFilter::Refactor,
+            "test" => TypeFilter::Test,
+            _ => TypeFilter::Enhancement,
+        };
+        run_create_silent(CreateArgs {
+            draft_path: None,
+            title: Some(candidate.title.clone()),
+            issue_type: Some(issue_type),
+            body: Some(capability_candidate_wi_body(project, &cap_path, candidate)),
+            body_file: None,
+            projects: vec![project.to_string()],
+            priority: Some(PriorityFilter::P1),
+            agent: None,
+            remote: false,
+            json: false,
+            repo: None,
+        })
+        .await?;
+        published += 1;
+        open_issues.push(Issue {
+            issue_type: issue_type.into(),
+            title: candidate.title.clone(),
+            state: IssueState::Open,
+            id: None,
+            github_id: None,
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: Vec::new(),
+            created_at: None,
+            updated_at: None,
+            slug: candidate.title.clone(),
+            body: String::new(),
+            related: Vec::new(),
+            implements: Vec::new(),
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        });
+    }
+    Ok(published)
+}
+
+fn open_issue_serves_capability_candidate(issue: &Issue, candidate: &CapabilityCandidate) -> bool {
+    if issue
+        .title
+        .trim()
+        .eq_ignore_ascii_case(candidate.title.trim())
+    {
+        return true;
+    }
+    if issue.issue_type == IssueType::Epic {
+        return false;
+    }
+    let declared = crate::cli::capability::wi_body_capability_alignment_ids(&issue.body);
+    match candidate.claim_id.as_ref() {
+        Some(claim_id) => declared.contains(claim_id),
+        None => declared.contains(&candidate.source_capability_id),
+    }
+}
+
+fn capability_plan_review_backing(project_root: &Path, project: &str) -> String {
+    let configured =
+        crate::services::project_registry::resolve_project_config_row(project_root, project)
+            .ok()
+            .and_then(|row| {
+                let local = project_root.join(row.path).join("aw.toml");
+                let value = std::fs::read_to_string(local)
+                    .ok()?
+                    .parse::<toml::Value>()
+                    .ok()?;
+                value
+                    .get("capability_plan_review_backing")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                let value = std::fs::read_to_string(project_root.join("aw.toml"))
+                    .ok()?
+                    .parse::<toml::Value>()
+                    .ok()?;
+                value
+                    .get("projects")?
+                    .as_array()?
+                    .iter()
+                    .find(|row| row.get("name").and_then(toml::Value::as_str) == Some(project))?
+                    .get("capability_plan_review_backing")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+            });
+    match configured.as_deref().map(str::trim) {
+        Some("human") => "human".to_string(),
+        Some("agent") => "agent".to_string(),
+        _ => "either".to_string(),
+    }
+}
+
+fn capability_plan_source_digest(plan_body: &str, manifest_body: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(plan_body.as_bytes());
+    hasher.update([0]);
+    hasher.update(manifest_body.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn capability_plan_sidecar_path(plan_path: &Path, extension: &str) -> PathBuf {
+    plan_path.with_extension(extension)
+}
+
+fn capability_plan_review_payload_path(
+    project_root: &Path,
+    project: &str,
+    source_digest: &str,
+) -> PathBuf {
+    crate::shared::workspace::payloads_path(project_root)
+        .join("capability-plan")
+        .join(project)
+        .join(source_digest)
+        .join("review.json")
+}
+
+fn capability_plan_review_command(payload_path: &Path) -> String {
+    format!(
+        "aw wi plan-review --evidence-file {}",
+        shell_quote(&payload_path.display().to_string())
+    )
+}
+
+fn capability_plan_agent_review_prompt(
+    project: &str,
+    plan_path: &Path,
+    payload_path: &Path,
+    source_digest: &str,
+) -> String {
+    format!(
+        "Independently review capability WI plan `{}` for project `{project}` at digest `{source_digest}`. Check capability_claim_coverage, bounded_candidates, tracker_reconciliation, verification_specific, no_duplicate_wis, and publication_safe. Fill `{}` with reviewer_kind=agent, an identity independent from the recorded author, decision=accepted with every checklist value true and no findings, or decision=needs_revision with concrete findings. Then run `{}`.",
+        plan_path.display(),
+        payload_path.display(),
+        capability_plan_review_command(payload_path)
+    )
+}
+
+fn current_plan_actor_identity() -> String {
+    std::env::var("AW_AGENT_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("AGENT_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "unknown-actor".to_string())
 }
 
 fn capability_wi_plan_command(project: &str, cap_path_override: Option<&Path>) -> String {
@@ -4066,16 +4675,19 @@ fn push_issue_group(out: &mut String, title: &str, issues: &[&Issue]) {
     out.push('\n');
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CapabilityCandidate {
     title: String,
-    issue_type: &'static str,
+    issue_type: String,
+    source_capability_id: String,
     source_capability: String,
+    claim_id: Option<String>,
     capability_gap: String,
     first_gate: String,
+    parent_wi_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CapabilityTrackerReconciliation {
     capability: String,
     claim: String,
@@ -4191,6 +4803,7 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
                 continue;
             }
             rows.push(CapabilityRow {
+                capability_id: planning_slug(&table_cell(&cells, indices.capability)),
                 capability: table_cell(&cells, indices.capability),
                 capability_type: indices
                     .capability_type
@@ -4467,12 +5080,35 @@ fn tracker_lookup_summary(
 fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<CapabilityCandidate> {
     let mut candidates = Vec::new();
     for row in rows {
-        if !has_actionable_gap(row)
-            || has_active_wi_ref(row)
-            || !matching_issues_for_capability(row, issues).is_empty()
+        if !has_actionable_gap(row) {
+            continue;
+        }
+        let matches = matching_issues_for_capability(row, issues);
+        let claim_has_bounded_wi = row.claim_id.as_deref().is_some_and(|claim_id| {
+            matches.iter().any(|issue| {
+                issue.issue_type != IssueType::Epic
+                    && format!("{}\n{}", issue.title, issue.body)
+                        .to_ascii_lowercase()
+                        .contains(&claim_id.to_ascii_lowercase())
+            })
+        });
+        if row.claim_id.is_none() && (has_active_wi_ref(row) || !matches.is_empty())
+            || row.claim_id.is_some()
+                && (claim_has_bounded_wi
+                    || matches
+                        .iter()
+                        .any(|issue| issue.issue_type != IssueType::Epic)
+                    || has_active_wi_ref(row) && matches.is_empty())
         {
             continue;
         }
+        let mut parent_wi_refs = matches
+            .iter()
+            .filter(|issue| issue.issue_type == IssueType::Epic)
+            .map(|issue| issue_ref(issue))
+            .collect::<Vec<_>>();
+        parent_wi_refs.sort();
+        parent_wi_refs.dedup();
         candidates.push(CapabilityCandidate {
             title: if let Some(claim_id) = row.claim_id.as_deref() {
                 format!(
@@ -4483,8 +5119,10 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
             } else {
                 format!("Close capability gap: {}", row.capability.trim())
             },
-            issue_type: infer_candidate_issue_type(&row.gaps),
+            issue_type: infer_candidate_issue_type(&row.gaps).to_string(),
+            source_capability_id: row.capability_id.clone(),
             source_capability: row.capability.clone(),
+            claim_id: row.claim_id.clone(),
             capability_gap: row.gaps.clone(),
             first_gate: if row.claim_id.is_some() {
                 row.evidence.clone()
@@ -4492,6 +5130,7 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
                 "Create one bounded WI with acceptance criteria and a concrete verification command."
                     .to_string()
             },
+            parent_wi_refs,
         });
     }
     candidates
@@ -4880,6 +5519,7 @@ fn render_capability_wi_plan(
     candidates: &[CapabilityCandidate],
     resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
     warnings: &[String],
+    review_backing: &str,
 ) -> String {
     let mut out = String::new();
     let reconciliations =
@@ -4918,14 +5558,20 @@ fn render_capability_wi_plan(
             out.push_str(&format!("  - {}\n", yaml_quote(warning)));
         }
     }
-    out.push_str("requires_hitl: true\n");
-    out.push_str("hitl_status: pending\n");
+    let requires_hitl = review_backing == "human";
+    out.push_str(&format!("review_backing: {}\n", yaml_quote(review_backing)));
+    out.push_str(&format!("requires_hitl: {requires_hitl}\n"));
+    out.push_str(if requires_hitl {
+        "hitl_status: pending_human\n"
+    } else {
+        "hitl_status: pending_agent_review\n"
+    });
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
     out.push_str("- Translate the confirmed project capability map into WI planning inputs.\n");
     out.push_str("- Cross-check capability gaps against the current open work-item inventory.\n");
-    out.push_str("- Keep this artifact local until a human confirms which WI drafts or tracker updates should publish.\n\n");
+    out.push_str("- Keep this artifact local until an independent digest-bound review accepts its WI drafts and tracker reconciliations.\n\n");
 
     out.push_str("## Source\n\n");
     out.push_str(&format!("- Capability map: `{}`\n", cap_path.display()));
@@ -4996,7 +5642,7 @@ fn render_capability_wi_plan(
 
     if !resolved_wi_refs.is_empty() {
         out.push_str("## Tracker WI Ref Lookups\n\n");
-        out.push_str("These lookups resolve README WI refs that were absent from the current open issue inventory. `not_found` and `lookup_error` entries still need human confirmation before README refs or tracker state are changed.\n\n");
+        out.push_str("These lookups resolve capability WI refs that were absent from the current open issue inventory. Closed refs remain derived provenance; `not_found` and `lookup_error` entries require explicit review before tracker state changes.\n\n");
         out.push_str("| WI | Lookup status | Title | Labels | URL |\n");
         out.push_str("|----|---------------|-------|--------|-----|\n");
         for lookup in resolved_wi_refs.values() {
@@ -5058,7 +5704,7 @@ fn render_capability_wi_plan(
 
     if !candidates.is_empty() {
         out.push_str("\n## Candidate WI Drafts\n\n");
-        out.push_str("Confirm these local draft bodies before publishing tracker issues. They are generated from the capability map and still need human acceptance.\n\n");
+        out.push_str("Review these bounded local draft bodies before publishing tracker issues. Acceptance must be independent and digest-bound.\n\n");
         for (index, candidate) in candidates.iter().enumerate() {
             render_capability_candidate_wi_draft(&mut out, project, cap_path, index + 1, candidate);
         }
@@ -5084,46 +5730,18 @@ fn render_capability_wi_plan(
     }
 
     out.push_str("\n## Recommended CLI Sequence\n\n");
-    if candidates.is_empty() && !reconciliations.is_empty() {
-        out.push_str("1. Confirm `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref is closed, moved, mislabeled, or should be replaced.\n");
-        out.push_str("2. Update README WI refs or tracker state only after HITL reconciliation.\n");
-        out.push_str(&format!("3. `aw wi plan --project {}`\n", project));
-        out.push_str(&format!(
-            "4. `aw run --project {} --max-ticks 1`\n",
-            project
-        ));
-    } else if candidates.is_empty() {
-        out.push_str(
-            "1. Confirm the capability planning matrix; no new WI candidates were generated.\n",
-        );
-        out.push_str(&format!(
-            "2. `aw run --project {} --max-ticks 1`\n",
-            project
-        ));
-    } else {
-        out.push_str(&format!(
-            "1. `aw wi epicize --project {} --title \"{} epics\"`\n",
-            project, project
-        ));
-        out.push_str(&format!(
-            "2. `aw wi atomize --project {} --title \"{} bounded WI candidates\"`\n",
-            project, project
-        ));
-        out.push_str(&format!(
-            "3. `aw wi prioritize --project {} --title \"{} priority plan\"`\n",
-            project, project
-        ));
-        out.push_str(&format!(
-            "4. `aw run --project {} --max-ticks 1`\n",
-            project
-        ));
-    }
+    out.push_str("1. Complete the digest-bound review payload emitted by `aw wi plan`.\n");
+    out.push_str("2. Run the emitted `aw wi plan-review --evidence-file <path>` command; accepted review publishes only bounded, deduplicated candidates.\n");
+    out.push_str(&format!(
+        "3. `aw goal capability --project {} --non-interactive`\n",
+        project
+    ));
 
     out.push_str("\n## Confirmation Guardrails\n\n");
     out.push_str("- Treat README capability rows as the confirmed anchor; if the direction changed, rerun `/aw:capability` before publishing WIs.\n");
-    out.push_str("- Convert each accepted candidate through `aw wi draft init` / `aw wi create`; this artifact does not mutate the tracker.\n");
+    out.push_str("- Accepted independent review authorizes publication of this digest's bounded candidates; needs_revision publishes nothing.\n");
     out.push_str(
-        "- Reconcile existing WI refs before replacing README links or reopening tracker work.\n",
+        "- Closed WI refs remain derived provenance; not_found and lookup_error refs require an explicit review finding before replacement.\n",
     );
     out.push_str("- Non-epic WIs still need Capability Alignment, Scope, Acceptance Criteria, and Reference Context before `aw td`.\n");
     out
@@ -5151,21 +5769,32 @@ fn render_capability_candidate_wi_draft(
         candidate.capability_gap.trim()
     ));
     out.push_str("```md\n");
-    out.push_str(&format!("# {}\n\n", candidate.title.trim()));
+    out.push_str(&capability_candidate_wi_body(project, cap_path, candidate));
+    out.push_str("```\n\n");
+}
+
+fn capability_candidate_wi_body(
+    project: &str,
+    cap_path: &Path,
+    candidate: &CapabilityCandidate,
+) -> String {
+    let claim_or_gap = candidate
+        .claim_id
+        .as_deref()
+        .unwrap_or(candidate.capability_gap.trim());
+    let mut out = format!("# {}\n\n", candidate.title.trim());
     out.push_str("## Problem\n\n");
     out.push_str(&format!(
         "The `{}` capability has a confirmed gap or claim that is not backed by a bounded active work item in the current issue inventory.\n\n",
-        candidate.source_capability.trim()
+        candidate.source_capability_id
     ));
     out.push_str("## Capability Alignment\n\n");
     out.push_str(&format!(
-        "Capability: {}\n",
+        "Capability: `{}` ({})\n",
+        candidate.source_capability_id,
         candidate.source_capability.trim()
     ));
-    out.push_str(&format!(
-        "Capability Gap: {}\n",
-        candidate.capability_gap.trim()
-    ));
+    out.push_str(&format!("Capability Gap: `{claim_or_gap}`\n"));
     out.push_str(&format!(
         "Progress Evidence: {}\n\n",
         candidate.first_gate.trim()
@@ -5174,42 +5803,40 @@ fn render_capability_candidate_wi_draft(
     out.push_str(
         "- R1: Close the capability gap with implementation, linkage, or verified evidence.\n",
     );
-    out.push_str(
-        "- R2: Keep the README capability contract, work item, and TD/CB evidence aligned.\n\n",
-    );
-    out.push_str("## Scope\n\n");
-    out.push_str("### In Scope\n\n");
+    out.push_str("- R2: Keep the capability contract, work item, and TD/CB evidence aligned.\n\n");
+    out.push_str("## Scope\n\n### In Scope\n\n");
     out.push_str("- Resolve this specific capability gap or claim.\n");
     out.push_str(
         "- Add, repair, or link the required verification evidence from the capability map.\n\n",
     );
     out.push_str("### Out of Scope\n\n");
     out.push_str("- Unrelated capability promise changes.\n");
-    out.push_str("- Publishing README status changes without passing the declared gates or recording HITL approval.\n\n");
+    out.push_str("- Publishing capability status changes without passing the declared gates.\n\n");
     out.push_str("## Acceptance Criteria\n\n");
     out.push_str(&format!(
-        "- AC1: `aw capability check --project {}` no longer reports this candidate as a planning blocker.\n",
-        project
+        "- AC1: `aw capability check --project {project}` no longer reports this candidate as a planning blocker.\n"
     ));
-    out.push_str("- AC2: The work item links to TD/CB evidence or a documented verification artifact for the capability gap.\n");
-    out.push_str("- AC3: Required verification passes, or the README claim is downgraded/deferred with HITL approval.\n\n");
-    out.push_str("## Reference Context\n\n");
-    out.push_str("### Related Specs\n\n");
-    out.push_str("| Spec | Relevance |\n");
-    out.push_str("|------|-----------|\n");
+    out.push_str("- AC2: The work item links to primary TD/CB evidence or a documented verification artifact for the capability gap.\n");
+    out.push_str("- AC3: Required verification passes, or the capability claim is explicitly downgraded/deferred.\n\n");
+    out.push_str("## Reference Context\n\n### Related Specs\n\n");
+    out.push_str("| Spec | Relevance |\n|------|-----------|\n");
     out.push_str(&format!(
         "| {} | capability source anchor |\n\n",
         cap_path.display()
     ));
+    if !candidate.parent_wi_refs.is_empty() {
+        out.push_str("Parent WI: ");
+        out.push_str(&candidate.parent_wi_refs.join(", "));
+        out.push_str("\n\n");
+    }
     out.push_str("### Spec Plan\n\n");
-    out.push_str("| Spec ID | Action | Main Spec Ref |\n");
-    out.push_str("|---------|--------|---------------|\n");
+    out.push_str("| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n");
     out.push_str(&format!(
         "| {} | create | {} |\n",
         capability_candidate_spec_id(candidate),
         cap_path.display()
     ));
-    out.push_str("```\n\n");
+    out
 }
 
 fn capability_candidate_spec_id(candidate: &CapabilityCandidate) -> String {
@@ -6078,6 +6705,89 @@ mod tests {
         )
     }
 
+    fn capability_plan_review_fixture(
+        backing: Option<&str>,
+        author: &str,
+        reviewer: &str,
+        decision: CapabilityPlanReviewDecision,
+    ) -> (tempfile::TempDir, CapabilityPlanReviewRecord) {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("apps/jet")).unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"[[projects]]
+name = "jet"
+path = "apps/jet"
+label = "app:jet"
+"#,
+        )
+        .unwrap();
+        if let Some(backing) = backing {
+            std::fs::write(
+                tmp.path().join("apps/jet/aw.toml"),
+                format!("capability_plan_review_backing = \"{backing}\"\n"),
+            )
+            .unwrap();
+        }
+        let plan_path = crate::shared::workspace::workitems_path(tmp.path())
+            .join("jet")
+            .join("capability-plan")
+            .join("plan.md");
+        std::fs::create_dir_all(plan_path.parent().unwrap()).unwrap();
+        let manifest_path = capability_plan_sidecar_path(&plan_path, "manifest.json");
+        let plan_body = "---\nkind: capability_plan\n---\n# plan\n";
+        let manifest = CapabilityPlanManifest {
+            version: CAPABILITY_PLAN_REVIEW_VERSION,
+            project: "jet".to_string(),
+            cap_path: "apps/jet/CAPABILITIES.md".to_string(),
+            candidates: Vec::new(),
+            reconciliations: Vec::new(),
+        };
+        let manifest_body = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+        std::fs::write(&plan_path, plan_body).unwrap();
+        std::fs::write(&manifest_path, &manifest_body).unwrap();
+        let source_digest = capability_plan_source_digest(plan_body, &manifest_body);
+        let author_record = CapabilityPlanAuthorRecord {
+            version: CAPABILITY_PLAN_REVIEW_VERSION,
+            project: "jet".to_string(),
+            source_digest: source_digest.clone(),
+            author: author.to_string(),
+            recorded_at: "2026-07-21T00:00:00Z".to_string(),
+        };
+        std::fs::write(
+            capability_plan_sidecar_path(&plan_path, "author.json"),
+            serde_json::to_string_pretty(&author_record).unwrap(),
+        )
+        .unwrap();
+        let accepted = decision == CapabilityPlanReviewDecision::Accepted;
+        let record = CapabilityPlanReviewRecord {
+            version: CAPABILITY_PLAN_REVIEW_VERSION,
+            project: "jet".to_string(),
+            plan_path: plan_path.display().to_string(),
+            manifest_path: manifest_path.display().to_string(),
+            source_digest,
+            decision,
+            reviewer_kind: "agent".to_string(),
+            reviewed_by: reviewer.to_string(),
+            reviewed_at: String::new(),
+            summary: "Independent semantic review completed.".to_string(),
+            checklist: CapabilityPlanReviewChecklist {
+                capability_claim_coverage: accepted,
+                bounded_candidates: accepted,
+                tracker_reconciliation: accepted,
+                verification_specific: accepted,
+                no_duplicate_wis: accepted,
+                publication_safe: accepted,
+            },
+            findings: if accepted {
+                Vec::new()
+            } else {
+                vec!["Candidate scope is not bounded.".to_string()]
+            },
+        };
+        (tmp, record)
+    }
+
     fn test_issue_with_phase(phase: Option<&str>) -> Issue {
         Issue {
             issue_type: IssueType::Bug,
@@ -6362,6 +7072,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             capability_count: 2,
             rows: vec![
                 CapabilityRow {
+                    capability_id: "package-manager".to_string(),
                     capability: "Package manager".to_string(),
                     capability_type: "DeveloperTool".to_string(),
                     surfaces: "CLI: `jet install` - install dependencies".to_string(),
@@ -6375,6 +7086,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                     claim_user_story: None,
                 },
                 CapabilityRow {
+                    capability_id: "dev-server".to_string(),
                     capability: "Dev server".to_string(),
                     capability_type: "-".to_string(),
                     surfaces: "-".to_string(),
@@ -6403,6 +7115,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             &candidates,
             &BTreeMap::new(),
             &[],
+            "either",
         );
         assert!(body.contains("kind: capability_plan"));
         assert!(body.contains("capability_count: 2"));
@@ -6418,13 +7131,13 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("## Candidate WI Drafts"));
         assert!(body.contains("### Candidate 1: Close capability gap: Package manager"));
         assert!(body.contains("## Capability Alignment"));
-        assert!(body.contains("Capability: Package manager"));
-        assert!(body.contains("Capability Gap: peer dependency roadmap missing"));
+        assert!(body.contains("Capability: `package-manager` (Package manager)"));
+        assert!(body.contains("Capability Gap: `peer dependency roadmap missing`"));
         assert!(body.contains("## Acceptance Criteria"));
         assert!(body.contains("aw capability check --project jet"));
         assert!(body.contains("## Reference Context"));
         assert!(body.contains("## Recommended CLI Sequence"));
-        assert!(body.contains("does not mutate the tracker"));
+        assert!(body.contains("Accepted independent review authorizes publication"));
 
         let warned = render_capability_wi_plan(
             "jet",
@@ -6436,6 +7149,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             &candidates,
             &BTreeMap::new(),
             &["issue inventory unavailable: gh auth missing".to_string()],
+            "either",
         );
         assert!(warned.contains("warnings:"));
         assert!(warned.contains("## Source"));
@@ -6444,9 +7158,152 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
+    fn capability_plan_claim_under_open_epic_becomes_bounded_child_candidate() {
+        let row = CapabilityRow {
+            capability_id: "cli-interface".to_string(),
+            capability: "CLI Interface".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "CLI: `defer`".to_string(),
+            ec_dimensions: "behavior: `cargo test -p defer --test cli_contract`".to_string(),
+            current_state: "CLI exists".to_string(),
+            gaps: "claim defer-cli-convention: CLI claim needs primary TD linkage".to_string(),
+            root_wi: "#766".to_string(),
+            active_wi: "#766".to_string(),
+            evidence: "claim gate: cargo test -p defer --test cli_contract".to_string(),
+            claim_id: Some("defer-cli-convention".to_string()),
+            claim_user_story: Some("As an agent, I need a stable CLI.".to_string()),
+        };
+        let epic = planning_issue(
+            IssueType::Epic,
+            "defer: delayed task service",
+            Some("p1"),
+            766,
+        );
+
+        let candidates = capability_wi_candidates(&[row], &[epic]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].parent_wi_refs, vec!["#766"]);
+        let body = capability_candidate_wi_body(
+            "defer",
+            Path::new("apps/defer/CAPABILITIES.md"),
+            &candidates[0],
+        );
+        assert!(body.contains("Capability: `cli-interface`"));
+        assert!(body.contains("Capability Gap: `defer-cli-convention`"));
+        assert!(body.contains("Parent WI: #766"));
+    }
+
+    #[test]
+    fn capability_plan_publication_deduplicates_the_same_claim_only() {
+        let mut issue = planning_issue(
+            IssueType::Enhancement,
+            "Implement one CLI claim",
+            Some("p1"),
+            812,
+        );
+        issue.body = "## Capability Alignment\n\nCapability: `cli-interface`\nCapability Gap: `defer-cli-convention`\n".to_string();
+        let mut candidate = CapabilityCandidate {
+            title: "Close capability claim: CLI / defer-cli-convention".to_string(),
+            issue_type: "enhancement".to_string(),
+            source_capability_id: "cli-interface".to_string(),
+            source_capability: "CLI Interface".to_string(),
+            claim_id: Some("defer-cli-convention".to_string()),
+            capability_gap: "missing primary TD".to_string(),
+            first_gate: "cargo test -p defer --test cli_contract".to_string(),
+            parent_wi_refs: vec!["#766".to_string()],
+        };
+
+        assert!(open_issue_serves_capability_candidate(&issue, &candidate));
+        candidate.claim_id = Some("defer-cli-next-command".to_string());
+        assert!(!open_issue_serves_capability_candidate(&issue, &candidate));
+    }
+
+    #[test]
+    fn capability_plan_accepts_independent_agent_review_by_default() {
+        let (tmp, record) = capability_plan_review_fixture(
+            None,
+            "author-agent",
+            "reviewer-agent",
+            CapabilityPlanReviewDecision::Accepted,
+        );
+
+        validate_capability_plan_review_record(tmp.path(), &record).unwrap();
+    }
+
+    #[test]
+    fn capability_plan_rejects_same_agent_self_review() {
+        let (tmp, record) = capability_plan_review_fixture(
+            None,
+            "same-agent",
+            "same-agent",
+            CapabilityPlanReviewDecision::Accepted,
+        );
+
+        let error = validate_capability_plan_review_record(tmp.path(), &record).unwrap_err();
+        assert!(error.to_string().contains("not independent"));
+    }
+
+    #[test]
+    fn capability_plan_human_only_policy_rejects_agent_evidence() {
+        let (tmp, record) = capability_plan_review_fixture(
+            Some("human"),
+            "author-agent",
+            "reviewer-agent",
+            CapabilityPlanReviewDecision::Accepted,
+        );
+
+        let error = validate_capability_plan_review_record(tmp.path(), &record).unwrap_err();
+        assert!(error.to_string().contains("human-only"));
+    }
+
+    #[test]
+    fn capability_plan_needs_revision_requires_and_accepts_findings() {
+        let (tmp, record) = capability_plan_review_fixture(
+            None,
+            "author-agent",
+            "reviewer-agent",
+            CapabilityPlanReviewDecision::NeedsRevision,
+        );
+
+        validate_capability_plan_review_record(tmp.path(), &record).unwrap();
+    }
+
+    #[test]
+    fn capability_plan_review_is_bound_to_exact_digest() {
+        let (tmp, record) = capability_plan_review_fixture(
+            None,
+            "author-agent",
+            "reviewer-agent",
+            CapabilityPlanReviewDecision::Accepted,
+        );
+        std::fs::write(&record.plan_path, "drifted plan").unwrap();
+
+        let error = validate_capability_plan_review_record(tmp.path(), &record).unwrap_err();
+        assert!(error.to_string().contains("stale"));
+    }
+
+    #[test]
+    fn legacy_human_only_plan_does_not_resurrect_as_a_review_blocker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = crate::shared::workspace::workitems_path(tmp.path())
+            .join("jet")
+            .join("capability-plan");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("20260720000000-legacy.md"),
+            "---\nkind: capability_plan\nrequires_hitl: true\nhitl_status: pending\n---\n# legacy\n",
+        )
+        .unwrap();
+
+        assert!(pending_capability_plan_review(tmp.path(), "jet").is_none());
+    }
+
+    #[test]
     fn capability_plan_summary_groups_stale_active_wi_refs_as_reconciliations() {
         let rows = vec![
             CapabilityRow {
+                capability_id: "package-manager".to_string(),
                 capability: "Package Manager".to_string(),
                 capability_type: "DeveloperTool".to_string(),
                 surfaces: "CLI: `jet install`".to_string(),
@@ -6460,6 +7317,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                 claim_user_story: None,
             },
             CapabilityRow {
+                capability_id: "package-manager".to_string(),
                 capability: "Package Manager".to_string(),
                 capability_type: "DeveloperTool".to_string(),
                 surfaces: "CLI: `jet install`".to_string(),
@@ -6514,6 +7372,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             &candidates,
             &resolved_wi_refs,
             &[],
+            "either",
         );
         assert!(body.contains("candidate_count: 0"));
         assert!(body.contains("reconciliation_count: 2"));
@@ -6523,16 +7382,14 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("## Tracker WI Ref Lookups"));
         assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
         assert!(!body.contains("## Candidate WI Drafts"));
-        assert!(body.contains(
-            "Confirm `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
-        ));
-        assert!(body.contains("`aw wi plan --project jet`"));
-        assert!(!body.contains("`aw wi epicize --project jet"));
+        assert!(body.contains("Complete the digest-bound review payload"));
+        assert!(body.contains("`aw goal capability --project jet --non-interactive`"));
     }
 
     #[test]
     fn capability_plan_reconciles_stale_root_wi_refs() {
         let row = CapabilityRow {
+            capability_id: "py3-12-functional-parity".to_string(),
             capability: "C1. Py3.12 functional parity".to_string(),
             capability_type: "RuntimeTool".to_string(),
             surfaces: "CLI: `mamba test`".to_string(),
@@ -6604,6 +7461,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     #[test]
     fn capability_matching_uses_active_wi_reference_before_creating_candidate() {
         let row = CapabilityRow {
+            capability_id: "package-manager".to_string(),
             capability: "Package manager".to_string(),
             capability_type: "DeveloperTool".to_string(),
             surfaces: "CLI: `jet install`".to_string(),
@@ -6628,6 +7486,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     #[test]
     fn capability_matching_uses_plain_numeric_active_wi_reference() {
         let row = CapabilityRow {
+            capability_id: "service-query-path".to_string(),
             capability: "Service query path".to_string(),
             capability_type: "Service".to_string(),
             surfaces: "API: `/query`".to_string(),
@@ -6652,6 +7511,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     #[test]
     fn capability_claim_rows_do_not_match_broad_epic_by_keywords_only() {
         let row = CapabilityRow {
+            capability_id: "package-manager".to_string(),
             capability: "Package Manager".to_string(),
             capability_type: "DeveloperTool".to_string(),
             surfaces: "CLI: `jet install`".to_string(),
