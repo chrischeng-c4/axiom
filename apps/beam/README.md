@@ -95,6 +95,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-vector-soak-and-recovery | epic | #769 | planned | planned | none | pending long-running vector gate |
+| beam-test-gate-execution-policy | change | #2146 | planned | planned | none | pending honest test gate execution |
 
 ### Security Hardening
 

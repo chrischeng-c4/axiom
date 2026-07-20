@@ -1,6 +1,17 @@
 ---
 id: '2146'
-summary: (fill)
+summary: >
+  Make Beam's configured service and GPU test gates execution-honest by
+  verifying actual networking and GPU capabilities rather than returning
+  success upon encountering missing infrastructure.
+capability_refs:
+  - id: "long-running-stability"
+    role: primary
+    claim: "beam-test-gate-execution-policy"
+    coverage: full
+    rationale: >
+      This TD establishes the execution-honest test policy for Beam, requiring
+      optional local skips to be separate from required production verification.
 fill_sections: [logic, changes, unit-test]
 ---
 
