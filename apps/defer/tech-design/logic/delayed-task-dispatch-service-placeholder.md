@@ -56,7 +56,6 @@ flowchart TD
     retry --> eligibility
     commit_create --> shared_shell([shared service libraries own non-domain shell])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
