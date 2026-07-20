@@ -116,7 +116,6 @@ changes:
     impl_mode: hand-written
     description: Record fixture, byte-identity, command-isolation, and fallback verification rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
