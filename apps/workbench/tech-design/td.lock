@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T18:14:00.569047+00:00"
-digest = "sha256:2726fd6241636a8d76847d32211e688e8358e7e17622fe5ffa7e60e2a94dfd53"
-source_digest = "sha256:2726fd6241636a8d76847d32211e688e8358e7e17622fe5ffa7e60e2a94dfd53"
-ir_digest = "sha256:e29f889e7bee80fb86f1f450db63a3713ef2ee215d0306969b12c6c3b05765c6"
+generated_at = "2026-07-20T18:29:12.201785+00:00"
+digest = "sha256:618f2d723f9d17119f7a9b328986257cb99edf5bf88ce388efe6346c6e44a74f"
+source_digest = "sha256:618f2d723f9d17119f7a9b328986257cb99edf5bf88ce388efe6346c6e44a74f"
+ir_digest = "sha256:7f56634014a817f8f78eb597661402767dd2ebb87f46ba1964b9396a89b1067b"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -17,6 +17,12 @@ section_count = 3
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
 digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
 ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
+section_count = 3
+
+[[files]]
+path = "logic/add-workbench-context-renderer-registry-with-markdown-and-git-re.md"
+digest = "sha256:cb1d188b2017a4d5accb4ac51aab769a78baff975b93722bf34e0a75630527f9"
+ir_digest = "sha256:726a0091a4f85d8c8a3e2b8c9097d159a182a1cd783912920b3992d1bd714496"
 section_count = 3
 
 [[files]]
