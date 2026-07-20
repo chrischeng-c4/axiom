@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T18:29:12.201785+00:00"
-digest = "sha256:618f2d723f9d17119f7a9b328986257cb99edf5bf88ce388efe6346c6e44a74f"
-source_digest = "sha256:618f2d723f9d17119f7a9b328986257cb99edf5bf88ce388efe6346c6e44a74f"
-ir_digest = "sha256:7f56634014a817f8f78eb597661402767dd2ebb87f46ba1964b9396a89b1067b"
+generated_at = "2026-07-20T18:46:59.658202+00:00"
+digest = "sha256:1bd1d6ec4d85c239c57b46439616015ecb670caca0e20fea5d98080d7f485011"
+source_digest = "sha256:1bd1d6ec4d85c239c57b46439616015ecb670caca0e20fea5d98080d7f485011"
+ir_digest = "sha256:5a3687849a729ce6ba6f2ec832b5265d38c880953bf7591b33cc3a93f34d4274"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -29,6 +29,12 @@ section_count = 3
 path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
 digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
 ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
+section_count = 3
+
+[[files]]
+path = "logic/render-aw-typed-artifacts-as-optional-read-only-workbench-contex.md"
+digest = "sha256:91a7cfdee6d5192fab7d40f0a0dd363002817b259ac151aaf4af08fdb301ccd1"
+ir_digest = "sha256:00a388debbf5cbdc90563daebb2a08412de2b3bdf89b01143fd988fe0b22aabb"
 section_count = 3
 
 [[files]]
