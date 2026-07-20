@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "project": "defer",
+  "source_digest": "sha256:13e3c65c4845c53ff04ee1a328f61e52ed9c7c22a469442e0f3e3a818dba91f6",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-766-wrapper-ownership",
+  "reviewed_at": "2026-07-20T19:27:30.044356+00:00",
+  "summary": "Accepted after independent digest-bound re-review of the generator-ownership-only change. Each case now names a distinct AW-generated wrapper path, while every command, assertion, capability/claim binding, required dimension, and previously accepted product oracle is unchanged. The pre-generation absence of wrapper files is fail-closed and expected: commands still directly execute the real HTTP/Raft, HMAC-negative, release efficiency, and fixed-keyspace retry-soak gates, so wrapper ownership neither substitutes for nor weakens their independent pass/fail oracles.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": [],
+  "target_path": "apps/defer/external-contracts/behavior/766.md"
+}
