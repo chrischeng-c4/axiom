@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T17:56:11.890618+00:00"
-digest = "sha256:8e0f0626810a8ca4aee153bf6ed056c851af5657234d9188396c5c028714d664"
-source_digest = "sha256:8e0f0626810a8ca4aee153bf6ed056c851af5657234d9188396c5c028714d664"
-ir_digest = "sha256:bd04252654235fd3a729950462508a7f3b25d13e671c5174be4b1b6466dd3aea"
+generated_at = "2026-07-20T18:14:00.569047+00:00"
+digest = "sha256:2726fd6241636a8d76847d32211e688e8358e7e17622fe5ffa7e60e2a94dfd53"
+source_digest = "sha256:2726fd6241636a8d76847d32211e688e8358e7e17622fe5ffa7e60e2a94dfd53"
+ir_digest = "sha256:e29f889e7bee80fb86f1f450db63a3713ef2ee215d0306969b12c6c3b05765c6"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -23,4 +23,10 @@ section_count = 3
 path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
 digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
 ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
+section_count = 3
+
+[[files]]
+path = "logic/synchronize-authoritative-pty-cwd-into-workbench-active-context.md"
+digest = "sha256:8b8c04cb8ae22de1eb098b2933dbc2abe85d127c2cfc5e443c4403e083bc088c"
+ir_digest = "sha256:3ece1e1b7ec3e5720b5ff64c370df77a976f38467e9d01f13983b8ebc51ad166"
 section_count = 3
