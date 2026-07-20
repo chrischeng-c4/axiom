@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T14:49:17.410155+00:00"
-digest = "sha256:c04e4f88152acc1bcaca480e24e9e10d26c857e97bbe80d2e6d9fc57b7cd8b7f"
-source_digest = "sha256:c04e4f88152acc1bcaca480e24e9e10d26c857e97bbe80d2e6d9fc57b7cd8b7f"
-ir_digest = "sha256:1aae11576fdee387a97ee92216fdbecc1f05a98214103a32ee38f9926bb736fc"
+generated_at = "2026-07-20T15:08:33.825043+00:00"
+digest = "sha256:14e1bce2295695c5eaf8a48f7e1292a7b2d87c3eccff871dc1260536f93fb7b2"
+source_digest = "sha256:14e1bce2295695c5eaf8a48f7e1292a7b2d87c3eccff871dc1260536f93fb7b2"
+ir_digest = "sha256:982e694bf042740463792d2ab4f8f0f44cf07afd8cea6df3001e946db3b5b92d"
 
 [[files]]
 path = "README.md"
@@ -23,6 +23,12 @@ section_count = 2
 path = "interfaces/rest/enforce-service-auth-on-data-and-admin-apis.md"
 digest = "sha256:cfe2922da7bc12d5ca96dd2e26b510683c32e91fc2b540cd4ef269fe3eb777f4"
 ir_digest = "sha256:996464c4a09f9040e3316b3490293e397afca8ec3f5f483e78fb256b6f04f502"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/wire-the-high-throughput-pipeline-into-production-query-serving.md"
+digest = "sha256:940a211dd92684bec6452bcc610bedc14a6bdf9cace0159437ff9442d9697986"
+ir_digest = "sha256:1d20c9996e98f15a5ebc34bfeb85ae13b36470c82ffd8661b88255463aa80b6b"
 section_count = 3
 
 [[files]]
