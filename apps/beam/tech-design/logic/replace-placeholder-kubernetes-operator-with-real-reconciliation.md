@@ -43,3 +43,38 @@ flowchart TD
     apply_resources --> publish_status[Update status and observedGeneration]
     publish_status --> done
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/beam/src/main.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: K8sOperatorCmd::Run
+  - path: apps/beam/src/dx.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: pub fn render_instance_yaml
+  - path: apps/beam/src/operator/mod.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: apps/beam/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "[dependencies]"
+  - path: apps/beam/k8s/operator/rbac.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: rules
+  - path: apps/beam/tests/operator_reconcile.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
