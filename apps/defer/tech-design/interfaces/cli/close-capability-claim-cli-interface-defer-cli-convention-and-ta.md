@@ -13,48 +13,41 @@ id: defer-cli-interface-verification-contract
 entry: invoke
 nodes:
   invoke: { kind: start, label: "invoke the built defer binary through its public clap surface" }
-  route: { kind: decision, label: "which observable CLI contract is exercised?" }
-  grammar: { kind: process, label: "inspect top-level plus task queue and issue subcommand grammar" }
-  llm: { kind: process, label: "render offline llm outline behind a local proxy connection trap" }
-  spec: { kind: process, label: "emit OpenAPI and generate the exact TypeScript client file and task-method contract" }
-  render: { kind: process, label: "render Dockerfile CRD operator and instance artifacts with exit status checked first" }
-  efficiency: { kind: process, label: "warm then measure twenty release operations and enforce median and p99 ceilings" }
-  stability: { kind: process, label: "repeat deterministic outputs and codegen while enforcing cleanup time and FD bounds" }
-  unchanged: { kind: terminal, label: "domain scheduler and shared library implementations remain unchanged" }
-  verified: { kind: terminal, label: "behavior efficiency and stability EC oracles pass with non-zero observations" }
+  behavior: { kind: process, label: "observe exact grammar zero-network llm exact OpenAPI client files and checked render status" }
+  behavior_ok: { kind: decision, label: "all behavior observations are present and every command exits zero?" }
+  efficiency: { kind: process, label: "warm then measure twenty release operations with exact codegen validation" }
+  efficiency_ok: { kind: decision, label: "non-zero ops errors zero median <= 250 ms and p99 <= 750 ms?" }
+  stability: { kind: process, label: "run sixty-four deterministic CLI rounds and sixteen codegen cleanup rounds" }
+  stability_ok: { kind: decision, label: "256 ops complete within 60 seconds with FD growth <= 8 and byte-stable output?" }
+  fail: { kind: terminal, label: "EC fails closed on missing output zero tests placeholder generation error or breached bound" }
+  verified: { kind: terminal, label: "behavior efficiency and stability wrappers record the CLI claim as observed" }
+  unchanged: { kind: terminal, label: "Defer domain scheduler and shared library implementations remain outside this TD" }
 edges:
-  - { from: invoke, to: route }
-  - { from: route, to: grammar, label: "help and subcommands" }
-  - { from: route, to: llm, label: "agent onboarding" }
-  - { from: route, to: spec, label: "offline API and client" }
-  - { from: route, to: render, label: "deployment artifacts" }
-  - { from: route, to: efficiency, label: "latency gate" }
-  - { from: route, to: stability, label: "repeatability gate" }
-  - { from: grammar, to: verified }
-  - { from: llm, to: verified }
-  - { from: spec, to: verified }
-  - { from: render, to: verified }
-  - { from: efficiency, to: verified }
-  - { from: stability, to: verified }
+  - { from: invoke, to: behavior }
+  - { from: behavior, to: behavior_ok }
+  - { from: behavior_ok, to: efficiency, label: "yes" }
+  - { from: behavior_ok, to: fail, label: "no" }
+  - { from: efficiency, to: efficiency_ok }
+  - { from: efficiency_ok, to: stability, label: "yes" }
+  - { from: efficiency_ok, to: fail, label: "no" }
+  - { from: stability, to: stability_ok }
+  - { from: stability_ok, to: verified, label: "yes" }
+  - { from: stability_ok, to: fail, label: "no" }
   - { from: invoke, to: unchanged, label: "scope boundary" }
 ---
 flowchart TD
-    invoke([invoke built defer CLI]) --> route{observable contract}
-    route -->|help and subcommands| grammar[inspect exact command grammar]
-    route -->|agent onboarding| llm[trap network and render llm outline]
-    route -->|offline API and client| spec[emit OpenAPI and exact TypeScript client]
-    route -->|deployment artifacts| render[check status then rendered kinds]
-    route -->|latency gate| efficiency[measure release median and p99]
-    route -->|repeatability gate| stability[repeat deterministic output and cleanup]
-    grammar --> verified([behavior efficiency and stability pass])
-    llm --> verified
-    spec --> verified
-    render --> verified
-    efficiency --> verified
-    stability --> verified
+    invoke([invoke built defer CLI]) --> behavior[observe exact behavior contract]
+    behavior --> behavior_ok{behavior complete and zero exit?}
+    behavior_ok -->|yes| efficiency[measure twenty release operations]
+    behavior_ok -->|no| fail([fail closed])
+    efficiency --> efficiency_ok{median and p99 within bounds?}
+    efficiency_ok -->|yes| stability[repeat deterministic CLI and codegen rounds]
+    efficiency_ok -->|no| fail
+    stability --> stability_ok{time FD cleanup and bytes stable?}
+    stability_ok -->|yes| verified([CLI claim observed])
+    stability_ok -->|no| fail
     invoke -->|scope boundary| unchanged([domain and shared implementations unchanged])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
