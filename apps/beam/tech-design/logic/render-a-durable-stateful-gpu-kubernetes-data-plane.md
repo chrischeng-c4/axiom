@@ -47,22 +47,21 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "pub struct BeamSpec"
+    anchor: BeamSpec
   - path: apps/beam/src/operator/mod.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "impl ManagedService for Beam"
+    anchor: "ManagedService for Beam"
   - path: apps/beam/src/dx.rs
     action: modify
     section: logic
     impl_mode: hand-written
     anchor: render_instance_yaml
   - path: apps/beam/tests/k8s_render.rs
-    action: modify
+    action: create
     section: unit-test
     impl_mode: hand-written
-    anchor: "tests"
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
