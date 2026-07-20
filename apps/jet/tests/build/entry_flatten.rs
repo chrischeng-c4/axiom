@@ -21,6 +21,7 @@ use axum::{
     routing::get,
     Router,
 };
+use jet::bundler::scope_hoist_opt::find_top_level_bare_require_call;
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::fs;
@@ -1241,6 +1242,194 @@ async fn fn_decl_conversion_mutual_recursion_boots_correctly_in_real_browser() -
          correctly when only the textually-first declarations (isOdd, \
          describeParity) are var-hoisted and isEven stays a hoisted \
          function declaration"
+    );
+
+    Ok(())
+}
+
+// ── #2205: default-interop thunk placement ─────────────────────────────────
+
+/// Writes a fixture that forces *two* registry-resident default-export
+/// modules (`regA.js`, `regB.js`, both `eval`-forced onto the `__jet__`
+/// registry — same technique as `write_entry_flatten_interop_fixture`'s
+/// `unsafe.js`), each default-imported from *two* distinct flat-resident
+/// consumers (`index.js` and `consumer2.js`). `partition_entry_for_flatten`
+/// (`scope_hoist.rs`) emits `registry_ids` in sorted numeric order, so
+/// whichever of `regA`/`regB` gets the smaller module id is textually
+/// followed by the other's own `__jet__.define(...)` block — reproducing
+/// #2205's real-corpus evidence
+/// (`...});var e=_r(1012).default||_r(1012);__jet__.define(1029,...`)
+/// regardless of which specific id jet's graph walk assigns to which file.
+/// A trivial dynamic import (`lazy.js`) is required to route the build
+/// through `Bundler::generate_split_bundle` at all (issue #1932).
+fn write_interop_thunk_registry_placement_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import A from './regA.js';
+import B from './regB.js';
+import { renderTwo } from './consumer2.js';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' + A() + '|' + B() + '|' + renderTwo() + '</div>';
+
+import('./lazy.js');
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/regA.js"),
+        r#"export default function A() {
+  // `eval` forces this module onto the __jet__ registry (fallback-ladder
+  // rung: "fails scope-hoist safety") even though the rest of its body is
+  // ordinary.
+  eval('1');
+  return 'A_MARKER';
+}
+"#,
+    )
+    .expect("write regA");
+    fs::write(
+        dir.join("src/regB.js"),
+        r#"export default function B() {
+  eval('1');
+  return 'B_MARKER';
+}
+"#,
+    )
+    .expect("write regB");
+    fs::write(
+        dir.join("src/consumer2.js"),
+        r#"import A from './regA.js';
+import B from './regB.js';
+
+export function renderTwo() {
+  return 'C2:' + A() + ':' + B();
+}
+"#,
+    )
+    .expect("write consumer2");
+    fs::write(
+        dir.join("src/lazy.js"),
+        "export default function lazy() {}\n",
+    )
+    .expect("write lazy");
+}
+
+/// #2205 — a default-interop thunk hoisted by `hoist_default_interop_thunks`
+/// (`scope_hoist_opt.rs`) for a *registry*-resident id must never land
+/// outside the flat region's `_r`-scoped IIFE (`ReferenceError: _r is not
+/// defined`, silent black page in production while `jet build` reports
+/// success). Asserts both the cheap static invariant (no bare `_r(` call at
+/// true top level anywhere in the built entry) and the actual product
+/// behavior (the app boots and renders correctly in a real browser).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_flatten_default_interop_thunk_for_registry_resident_id_stays_in_scope() -> Result<()>
+{
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_interop_thunk_registry_placement_fixture(fixture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(["build", "--splitting"])
+        .current_dir(fixture)
+        .env("JET_BUNDLE_TIMING", "1")
+        .output()
+        .context("run jet build --splitting")?;
+    let output = require_success(
+        output,
+        "build --splitting (interop thunk registry placement fixture)",
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    // Sanity: the fixture must actually exercise the #1993 combined
+    // registry+flat path with >= 2 registry-resident modules (regA, regB)
+    // — otherwise this test would silently stop covering the bug class if
+    // some upstream change ever widened flatten-safety and swallowed the
+    // `eval` fallback-ladder rung.
+    let registry_count = parse_partition_count(&stderr, "registry");
+    assert!(
+        matches!(registry_count, Some(n) if n >= 2),
+        "expected >= 2 registry-resident modules (regA.js + regB.js, both \
+         eval-forced), got {registry_count:?}\nstderr={stderr}"
+    );
+
+    let dist = fixture.join("dist");
+    let entry_path = find_entry_file(&dist);
+    let entry_code = fs::read_to_string(&entry_path).context("read built entry file")?;
+
+    // (a) Static guard (issue #2205 permanent regression check, cheap and
+    // no browser required): the built entry must never contain a bare
+    // `_r(` call at true top level, outside every `__jet__.define(...)`
+    // factory and outside the flat region's own IIFE.
+    assert!(
+        find_top_level_bare_require_call(&entry_code).is_none(),
+        "found a default-interop thunk (or other `_r(` call) outside any \
+         scope that declares `_r` in the built entry — see \
+         `hoist_default_interop_thunks`'s doc comment (#2205)\n{entry_code}"
+    );
+
+    // (b) Dynamic proof: the app must actually boot and render in a real
+    // Chromium, not merely pass the static shape check.
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping real-browser half of \
+             entry_flatten_default_interop_thunk_for_registry_resident_id_stays_in_scope: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<Option<String>, anyhow::Error>(output_text)
+    })
+    .await;
+
+    let output_text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "entry_flatten_default_interop_thunk_for_registry_resident_id_stays_in_scope \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        output_text.as_deref(),
+        Some("A_MARKER|B_MARKER|C2:A_MARKER:B_MARKER"),
+        "app must boot rendering both registry-resident default exports \
+         (read from the entry's own top level and from a second flat \
+         consumer) without a `ReferenceError: _r is not defined` black page"
     );
 
     Ok(())

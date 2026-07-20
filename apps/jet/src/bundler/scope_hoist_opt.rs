@@ -7211,8 +7211,30 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     // retained-wrapper modules — `!function(...){body}(args);` got its
     // call split off the function expression and the module never
     // initialized (React booted with undefined internals).
+    //
+    // INVARIANT (#2205): a hoisted `var _di{id} = ...;` is only valid
+    // where the flat region's own `_r` is in scope. `banner`'s
+    // `"// Module {id}: "` text is byte-identical between a registry
+    // module's `__jet__.define(...)` block (`format_module_define` in
+    // `bundler::mod`) and a flat-region module's own per-module banner
+    // (`generate_entry_flat_region` in `scope_hoist.rs`), so on the
+    // combined registry+flat-region text #1993's entry-flatten path
+    // builds, `code.find(&banner)` for a *registry*-resident id matches
+    // the registry block instead, and `section_end` lands between two
+    // top-level `__jet__.define(...)` calls — outside every scope that
+    // declares `_r` (`ReferenceError: _r is not defined`). Restrict
+    // hoisting to ids that are actually flat-resident; every other id's
+    // inline `_r(id)["default"] || _r(id)` occurrences stay untouched
+    // below, which is always correct since each already sits inside the
+    // flat region's own `_r`-scoped IIFE.
+    let flat_region_ids = entry_flat_region_mods_ids(code);
     let mut insert_at: HashMap<usize, usize> = HashMap::new();
     for id in &hoistable {
+        if let Some(ids) = &flat_region_ids {
+            if !ids.contains(id) {
+                continue;
+            }
+        }
         let banner = format!("// Module {id}: ");
         let Some(pos) = code.find(&banner) else {
             continue;
@@ -7264,6 +7286,325 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     }
     out.push_str(&code[posn..]);
     out
+}
+
+/// True flat-resident module ids for the entry-flatten combined path
+/// (#1993/#2205): parses the sparse `var _mods={id:_m<id>,...};` object
+/// literal that only `generate_entry_flat_region` (`scope_hoist.rs`)
+/// emits. Returns `None` for the dense array-form `var _mods=[_m0,_m1,
+/// ...];` that plain `generate_flattened_bundle` emits, where every
+/// module is always flat-resident (no registry residue is possible) and
+/// no filtering is needed.
+fn entry_flat_region_mods_ids(code: &str) -> Option<HashSet<usize>> {
+    let start = code.find("var _mods={")?;
+    let open = start + "var _mods=".len();
+    let close_rel = code[open..].find("};\nfunction _r(id){")?;
+    let body = &code[open + 1..open + close_rel];
+    let mut ids = HashSet::new();
+    for entry in body.split(',') {
+        let key = entry.split(':').next().unwrap_or("").trim();
+        if let Ok(id) = key.parse::<usize>() {
+            ids.insert(id);
+        }
+    }
+    Some(ids)
+}
+
+/// Static guard for #2205's bug class. The registry-residue block
+/// (`__jet__.define(...)` calls emitted by `format_module_define` in
+/// `bundler::mod`) and the runtime prelude (`generate_runtime` /
+/// `generate_split_runtime*`) never declare or use an identifier named
+/// `_r` — `_r` only exists inside the entry-flatten flat region's own
+/// IIFE (`generate_entry_flat_region` in `scope_hoist.rs`) or the plain
+/// full-flatten bundle's outer IIFE (`generate_flattened_bundle`). So a
+/// bare `_r(` call at true top level (brace depth 0 across the *whole*
+/// built file) can only be a default-interop thunk emitted or hoisted
+/// outside its consuming scope — exactly the misplacement
+/// [`hoist_default_interop_thunks`] used to produce for a
+/// registry-resident id (see that function's doc comment).
+///
+/// Returns the byte offset of the first offending occurrence, or `None`
+/// if `code` is clean. Skips string / template-literal / line-comment /
+/// block-comment / regex-literal content with the same helpers
+/// [`collect_prefixed_ident_occurrences_in_range`] uses, so embedded
+/// `{`/`}` bytes there never desynchronize the depth count; template
+/// literals are skipped as one opaque span (not depth-tracked through
+/// their `${...}` expressions) since no legitimate or buggy jet output
+/// ever places a bare `_r(` call inside template-literal text.
+pub fn find_top_level_bare_require_call(code: &str) -> Option<usize> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut depth: i64 = 0;
+    let mut prev = b'(';
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i).min(len);
+                prev = b'"';
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next.min(len);
+                prev = b'`';
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'/' => {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+            b'/' if regex_context_byte(prev) => {
+                i = skip_regex_literal(b, i).min(len);
+                prev = b'/';
+                continue;
+            }
+            b'{' => {
+                depth += 1;
+                prev = b'{';
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth -= 1;
+                prev = b'}';
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            if depth <= 0 && &b[start..i] == b"_r" && i < len && b[i] == b'(' {
+                return Some(start);
+            }
+            prev = b'a';
+            continue;
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod interop_thunk_registry_residency_tests {
+    use super::*;
+
+    /// Shape mirrors `generate_split_bundle`'s entry-flatten combined
+    /// path (#1993): registry `__jet__.define(...)` blocks first, then
+    /// the flat region's own `_r`-scoped IIFE. Module 5 is
+    /// registry-resident (like #2205's real-corpus id 1012) and consumed
+    /// twice from the flat region — the threshold that used to trigger
+    /// hoisting. A second registry module (6) textually follows module
+    /// 5's `__jet__.define(...)` block — matching #2205's real-corpus
+    /// evidence (`...});var e=_r(1012).default||_r(1012);__jet__.define(1029,...`)
+    /// — so an ungated `section_end` (the position of the next `// Module
+    /// ` banner) lands between the two registry blocks, at true top
+    /// level, instead of harmlessly inside the flat region's own IIFE.
+    fn combined_registry_and_flat_fixture() -> String {
+        concat!(
+            "// Module 5: node_modules/registry-mod/index.js\n",
+            "__jet__.define(5, function(require, module, exports) {\n",
+            "module.exports.default = function Widget() {};\n",
+            "});\n\n",
+            "// Module 6: node_modules/other-registry-mod/index.js\n",
+            "__jet__.define(6, function(require, module, exports) {\n",
+            "module.exports.thing = 1;\n",
+            "});\n\n",
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n",
+            "var _m1={exports:{}};\n\n",
+            "var _mods={0:_m0,1:_m1};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "// Module 1: consumer_a.js\n",
+            "{\n",
+            "var _m1e=_m1.exports;\n",
+            "var Widget = _r(5)[\"default\"] || _r(5);\n",
+            "_m1e.render = Widget;\n",
+            "}\n",
+            "__jet__.cache[1]={exports:_m1.exports,id:1,loaded:true};\n\n",
+            "// Module 0: consumer_b.js\n",
+            "{\n",
+            "var _m0e=_m0.exports;\n",
+            "var WidgetAgain = _r(5)[\"default\"] || _r(5);\n",
+            "_m0e.render2 = WidgetAgain;\n",
+            "}\n",
+            "__jet__.cache[0]={exports:_m0.exports,id:0,loaded:true};\n\n",
+            "})();\n",
+        )
+        .to_string()
+    }
+
+    #[test]
+    fn does_not_hoist_a_registry_resident_id_into_top_level_scope() {
+        let code = combined_registry_and_flat_fixture();
+        let out = hoist_default_interop_thunks(&code);
+        // The would-be-hoisted var must never land where `_r` isn't in
+        // scope (#2205): no top-level `_di5` declaration, and every
+        // `_r(5)` occurrence keeps its original, correctly-scoped inline
+        // form inside the flat region.
+        assert!(
+            find_top_level_bare_require_call(&out).is_none(),
+            "hoisted thunk landed outside `_r` scope: {out}"
+        );
+        assert_eq!(
+            out.matches("_r(5)[\"default\"] || _r(5)").count(),
+            2,
+            "registry-resident id must stay inline, not hoisted: {out}"
+        );
+        assert!(!out.contains("_di5"), "{out}");
+    }
+
+    #[test]
+    fn still_hoists_a_flat_resident_id_shared_by_two_consumers() {
+        // Sanity: the fix must not regress the original optimization for
+        // ids that genuinely live in the flat region.
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n",
+            "var _m1={exports:{}};\n",
+            "var _m2={exports:{}};\n\n",
+            "var _mods={0:_m0,1:_m1,2:_m2};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "// Module 2: dep.js\n",
+            "{\n",
+            "var _m2e=_m2.exports;\n",
+            "_m2e.default = function Dep() {};\n",
+            "}\n",
+            "__jet__.cache[2]={exports:_m2.exports,id:2,loaded:true};\n\n",
+            "// Module 1: consumer_a.js\n",
+            "{\n",
+            "var _m1e=_m1.exports;\n",
+            "var Dep = _r(2)[\"default\"] || _r(2);\n",
+            "_m1e.render = Dep;\n",
+            "}\n",
+            "__jet__.cache[1]={exports:_m1.exports,id:1,loaded:true};\n\n",
+            "// Module 0: consumer_b.js\n",
+            "{\n",
+            "var _m0e=_m0.exports;\n",
+            "var DepAgain = _r(2)[\"default\"] || _r(2);\n",
+            "_m0e.render2 = DepAgain;\n",
+            "}\n",
+            "__jet__.cache[0]={exports:_m0.exports,id:0,loaded:true};\n\n",
+            "})();\n",
+        )
+        .to_string();
+        let out = hoist_default_interop_thunks(&code);
+        assert!(
+            out.contains("var _di2 = _r(2)[\"default\"] || _r(2);"),
+            "{out}"
+        );
+        assert_eq!(out.matches("_di2").count(), 3, "{out}"); // 1 decl + 2 uses
+        assert_eq!(
+            out.matches("_r(2)[\"default\"] || _r(2)").count(),
+            1, // only inside the hoisted declaration itself
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn pure_array_form_flatten_is_unaffected_by_the_object_form_gate() {
+        // `generate_flattened_bundle`'s array-form `_mods=[...]` shape
+        // (no registry residue possible) must keep hoisting exactly as
+        // before — `entry_flat_region_mods_ids` returns `None` for it.
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n",
+            "var _m1={exports:{}};\n\n",
+            "var _mods=[_m0,_m1];\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:{}}\n\n",
+            "// Module 1: dep.js\n",
+            "{\n",
+            "var _m1e=_m1.exports;\n",
+            "_m1e.default = function Dep() {};\n",
+            "}\n\n",
+            "// Module 0: entry.js\n",
+            "{\n",
+            "var _m0e=_m0.exports;\n",
+            "var A = _r(1)[\"default\"] || _r(1);\n",
+            "var B = _r(1)[\"default\"] || _r(1);\n",
+            "_m0e.a = A;\n",
+            "_m0e.b = B;\n",
+            "}\n",
+            "})();\n",
+        )
+        .to_string();
+        let out = hoist_default_interop_thunks(&code);
+        assert!(
+            out.contains("var _di1 = _r(1)[\"default\"] || _r(1);"),
+            "{out}"
+        );
+        assert_eq!(out.matches("_di1").count(), 3, "{out}");
+    }
+}
+
+#[cfg(test)]
+mod top_level_require_guard_tests {
+    use super::*;
+
+    #[test]
+    fn flags_a_bare_require_call_between_two_registry_define_blocks() {
+        // Exact shape #2205 evidenced: a misplaced thunk statement
+        // sitting between two top-level `__jet__.define(...)` calls.
+        let code = concat!(
+            "__jet__.define(3, function(require, module, exports) {\n",
+            "module.exports.default = 1;\n",
+            "});\n\n",
+            "var e=_r(3)[\"default\"] || _r(3);\n",
+            "__jet__.define(4, function(require, module, exports) {\n",
+            "exports.thing = e;\n",
+            "});\n\n",
+        );
+        assert!(find_top_level_bare_require_call(code).is_some(), "{code}");
+    }
+
+    #[test]
+    fn allows_require_calls_scoped_inside_a_factory_or_flat_iife() {
+        let code = concat!(
+            "__jet__.define(3, function(require, module, exports) {\n",
+            "var x = require(1);\n",
+            "});\n\n",
+            "(function(){\n",
+            "var _mods={0:_m0};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n",
+            "var e = _r(3)[\"default\"] || _r(3);\n",
+            "})();\n",
+        );
+        assert!(find_top_level_bare_require_call(code).is_none(), "{code}");
+    }
+
+    #[test]
+    fn ignores_r_prefixed_identifiers_that_are_not_exactly_underscore_r() {
+        let code = "var _ready = 1;\nvar x = _r2(3);\nvar y = foo_r(3);\n";
+        assert!(find_top_level_bare_require_call(code).is_none(), "{code}");
+    }
+
+    #[test]
+    fn ignores_occurrences_inside_strings_comments_and_regex() {
+        let code = concat!(
+            "// _r(9) in a comment\n",
+            "var s = \"_r(9)\";\n",
+            "/* _r(9) in a block comment */\n",
+            "var re = /_r\\(9\\)/;\n",
+        );
+        assert!(find_top_level_bare_require_call(code).is_none(), "{code}");
+    }
 }
 
 /// Collect every standalone `_m<N>_*` identifier occurrence (position,
