@@ -2,6 +2,9 @@
 use axum::http::{header, HeaderMap};
 use defer::AuthConfig;
 use service_auth::{Role, Verifier};
+use std::net::TcpListener;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const REGISTRY: &str = r#"{
     "writer-token": {"subject": "producer", "roles": {"jobs": "write"}},
@@ -53,4 +56,138 @@ fn malformed_rotation_keeps_the_last_known_good_registry() {
     assert!(principal.ensure("jobs", Role::Read).is_ok());
     assert!(principal.ensure("jobs", Role::Write).is_err());
 }
+
+// <HANDWRITE gap="missing-generator:e2e-test:defer-auth-runtime-wiring" tracker="#2215" reason="Exercise the shipped Defer process so removing its registry watcher or structured audit sink makes the security gate fail.">
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn defer_serve_watches_registry_and_emits_redacted_audit_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry_path = dir.path().join("token-registry.json");
+    std::fs::write(
+        &registry_path,
+        r#"{"old-secret-token":{"subject":"old-admin","roles":{"*":"admin"}}}"#,
+    )
+    .unwrap();
+    let data_dir = dir.path().join("data");
+    let stdout_path = dir.path().join("defer.stdout.log");
+    let stderr_path = dir.path().join("defer.stderr.log");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_defer"))
+        .args([
+            "serve",
+            "--bind",
+            &address.to_string(),
+            "--data-dir",
+            data_dir.to_str().unwrap(),
+            "--auth",
+            "required",
+            "--token-registry-file",
+            registry_path.to_str().unwrap(),
+            "--log-format",
+            "json",
+            "--dispatch-tick-ms",
+            "1000",
+        ])
+        .env("RUST_LOG", "info,service_auth.audit=debug")
+        .stdout(Stdio::from(std::fs::File::create(&stdout_path).unwrap()))
+        .stderr(Stdio::from(std::fs::File::create(&stderr_path).unwrap()))
+        .spawn()
+        .unwrap();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let url = format!("http://{address}");
+    let mut ready = false;
+    for _ in 0..80 {
+        if let Ok(response) = client.get(format!("{url}/healthz")).send().await {
+            if response.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let old_status = if ready {
+        client
+            .put(format!("{url}/v1/queues/jobs"))
+            .bearer_auth("old-secret-token")
+            .json(&defer::QueuePolicy::default())
+            .send()
+            .await
+            .unwrap()
+            .status()
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    let replacement_path = dir.path().join("token-registry.next.json");
+    std::fs::write(
+        &replacement_path,
+        r#"{"new-secret-token":{"subject":"new-reader","roles":{"jobs":"read"}}}"#,
+    )
+    .unwrap();
+    std::fs::rename(&replacement_path, &registry_path).unwrap();
+
+    let mut new_status = axum::http::StatusCode::UNAUTHORIZED;
+    // Production intentionally polls projected Secret files every 15 seconds;
+    // wait through one full cadence instead of swapping in a test-only path.
+    for _ in 0..400 {
+        let response = client
+            .get(format!("{url}/v1/queues/jobs"))
+            .bearer_auth("new-secret-token")
+            .send()
+            .await;
+        if let Ok(response) = response {
+            new_status = response.status();
+            if new_status == axum::http::StatusCode::OK {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let old_after_rotation = client
+        .get(format!("{url}/v1/queues/jobs"))
+        .bearer_auth("old-secret-token")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    let forbidden_status = client
+        .put(format!("{url}/v1/queues/jobs"))
+        .bearer_auth("new-secret-token")
+        .json(&defer::QueuePolicy::default())
+        .send()
+        .await
+        .unwrap()
+        .status();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    child.kill().ok();
+    child.wait().unwrap();
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap();
+    let logs = format!("{stdout}\n{stderr}");
+
+    assert!(ready, "Defer process did not become ready; logs:\n{logs}");
+    assert_eq!(old_status, axum::http::StatusCode::OK);
+    assert_eq!(new_status, axum::http::StatusCode::OK);
+    assert_eq!(old_after_rotation, axum::http::StatusCode::UNAUTHORIZED);
+    assert_eq!(forbidden_status, axum::http::StatusCode::FORBIDDEN);
+    assert!(logs.contains("credential_registry_reload"), "{logs}");
+    assert!(logs.contains("authorization_decision"), "{logs}");
+    assert!(
+        !logs.contains("old-secret-token"),
+        "audit leaked old bearer"
+    );
+    assert!(
+        !logs.contains("new-secret-token"),
+        "audit leaked new bearer"
+    );
+}
+// </HANDWRITE>
 // HANDWRITE-END
