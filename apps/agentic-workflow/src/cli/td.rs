@@ -6436,7 +6436,7 @@ label = "lib:pg"
         let labels = vec!["type:enhancement".to_string(), "app:lumen".to_string()];
         assert_eq!(
             derive_project_td_spec_dir(&labels),
-            "apps/lumen/tech-design/logic/"
+            "projects/lumen/tech-design/logic/"
         );
 
         let labels = vec!["type:enhancement".to_string(), "app:keep".to_string()];
