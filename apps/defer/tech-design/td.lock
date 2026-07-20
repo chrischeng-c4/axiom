@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-06T11:51:27.366681+00:00"
-digest = "sha256:f4446910af1adaac8c7693899d048dbd96e29e85955aaa44ad9b14871d8c62e9"
-source_digest = "sha256:f4446910af1adaac8c7693899d048dbd96e29e85955aaa44ad9b14871d8c62e9"
-ir_digest = "sha256:d92cf25498d06428ae33b8bc9d61dc02fda14690a210a92b1f30e3df76d42081"
+generated_at = "2026-07-20T08:52:16.842224+00:00"
+digest = "sha256:f4fc8afa2c456e647fb376fdf6ff6f2d252dc79aa802c3131385553dd0951d5a"
+source_digest = "sha256:f4fc8afa2c456e647fb376fdf6ff6f2d252dc79aa802c3131385553dd0951d5a"
+ir_digest = "sha256:029d98daa3fccacb31bd6257df1f985dd473d4dc80887164cf54ebdb9d27840f"
 
 [[files]]
 path = "README.md"
@@ -15,6 +15,18 @@ section_count = 0
 
 [[files]]
 path = "logic/core-scheduler-priority-rate-dispatch.md"
-digest = "sha256:b36794419869b94c73f925d9df873e9eea3494c52bfeef9bfa7093089ba419b7"
-ir_digest = "sha256:24c899b7151fe527ca2305a1630c33df32e6afd7752688a735cb7006448588b1"
+digest = "sha256:151ac81fc5393bb59f4f72cebda92849761f18999a11bb52daecb1cffb5f0dea"
+ir_digest = "sha256:07cb4cf4ce4511488dd7df7536455ca4fcea4f2dd5d10a81bb2895b7fbab9f4a"
+section_count = 4
+
+[[files]]
+path = "logic/project-the-stateful-service-workload-baseline.md"
+digest = "sha256:6f4ec93ad058cd9a6d96d4c11913ef4eb54a3343ef1b8e06156667435c1064be"
+ir_digest = "sha256:0dac3e5356f54e5a4c24f3d6f4b86fcf3ce0b25a86f36c429e91ec63145393b5"
+section_count = 3
+
+[[files]]
+path = "logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md"
+digest = "sha256:aa54050ef4ecf1bd1c19d3d5dbe58b356dc3891e808cc84f68e05a2df277e514"
+ir_digest = "sha256:bcf4dfb79d726c5e5057744f93a78f5efa4aaacbc3727f2bf78230876b194824"
 section_count = 4
