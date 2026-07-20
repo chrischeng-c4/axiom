@@ -84,3 +84,42 @@ changes:
     impl_mode: hand-written
     description: Record provenance round-trip, confinement, labeling, and no-mutation verification rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-context-provenance-verification
+requirements:
+  extracted_round_trip:
+    id: R1
+    text: "An extracted item resolves a confined repository-relative file and valid one-based span into canonical source navigation with provider identity intact."
+    kind: contract
+    risk: high
+    verify: tests/context_provenance.rs::extracted_item_round_trips_to_canonical_file_and_span
+  inferred_inputs_visible:
+    id: R2
+    text: "An inferred or ambiguous item is visibly classified as derived and retains every canonical, missing, or invalid source input used to derive it."
+    kind: integration
+    risk: high
+    verify: tests/context_provenance.rs::inferred_items_disclose_provider_label_and_all_inputs
+  invalid_sources_non_authoritative:
+    id: R3
+    text: "Missing files, invalid spans, traversal, and symlink escape produce explicit non-authoritative states with no fabricated navigation target."
+    kind: failure-recovery
+    risk: high
+    verify: tests/context_provenance.rs::invalid_and_missing_sources_never_fabricate_links
+  read_only_boundary:
+    id: R4
+    text: "Provenance resolution performs bounded reads only and exposes no repository, AW, provider, or verification mutation operation."
+    kind: boundary
+    risk: high
+    verify: tests/context_provenance.rs::provenance_api_is_provider_neutral_and_read_only
+---
+flowchart TD
+    r1[R1 extracted round trip] --> tests_context_provenance_rs_extracted_item_round_trips_to_canonical_file_and_span[tests/context_provenance.rs::extracted_item_round_trips_to_canonical_file_and_span]
+    r2[R2 inferred inputs visible] --> tests_context_provenance_rs_inferred_items_disclose_provider_label_and_all_inputs[tests/context_provenance.rs::inferred_items_disclose_provider_label_and_all_inputs]
+    r3[R3 invalid sources non authoritative] --> tests_context_provenance_rs_invalid_and_missing_sources_never_fabricate_links[tests/context_provenance.rs::invalid_and_missing_sources_never_fabricate_links]
+    r4[R4 read only boundary] --> tests_context_provenance_rs_provenance_api_is_provider_neutral_and_read_only[tests/context_provenance.rs::provenance_api_is_provider_neutral_and_read_only]
+```
