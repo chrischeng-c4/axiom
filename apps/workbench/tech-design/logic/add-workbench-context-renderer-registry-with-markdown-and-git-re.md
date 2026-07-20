@@ -111,3 +111,49 @@ changes:
     impl_mode: hand-written
     description: Record the non-AW renderer fixture gate and read-only isolation rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-generic-context-renderers-verification
+requirements:
+  deterministic_registry_selection:
+    id: R1
+    text: "Supported renderers are selected deterministically by priority descending and stable id, while one renderer failure is disclosed and isolated before the next candidate runs."
+    kind: contract
+    risk: high
+    verify: tests/generic_context_renderers.rs::selection_is_deterministic_and_failures_are_isolated
+  navigable_fallback:
+    id: R4
+    text: "Unsupported, oversized, corrupt, missing, or renderer-failed artifacts return a structured fallback with source navigation and warnings rather than panicking."
+    kind: failure-recovery
+    risk: high
+    verify: tests/generic_context_renderers.rs::unsupported_and_corrupt_artifacts_have_navigable_fallbacks
+  non_aw_git_rendering:
+    id: R3
+    text: "The same ordinary Git fixture renders read-only branch/status/diff context and navigable changed paths without requiring aw.toml."
+    kind: integration
+    risk: high
+    verify: tests/generic_context_renderers.rs::non_aw_fixture_renders_markdown_and_git_context
+  non_aw_markdown_rendering:
+    id: R2
+    text: "A repository with no AW artifacts renders bounded UTF-8 Markdown to safe HTML with canonical source provenance and navigation."
+    kind: integration
+    risk: high
+    verify: tests/generic_context_renderers.rs::non_aw_fixture_renders_markdown_and_git_context
+  renderer_boundary_is_read_only:
+    id: R5
+    text: "Generic renderers cannot mutate PTY, cwd telemetry, registered folders, repository files, or AW lifecycle state, and traversal outside the request root is rejected."
+    kind: boundary
+    risk: high
+    verify: tests/generic_context_renderers.rs::renderers_are_path_confined_and_runtime_independent
+---
+flowchart TD
+    r1[R1 deterministic registry selection] --> tests_generic_context_renderers_rs_selection_is_deterministic_and_failures_are_isolated[tests/generic_context_renderers.rs::selection_is_deterministic_and_failures_are_isolated]
+    r2[R2 non aw markdown rendering] --> tests_generic_context_renderers_rs_non_aw_fixture_renders_markdown_and_git_context[tests/generic_context_renderers.rs::non_aw_fixture_renders_markdown_and_git_context]
+    r3[R3 non aw git rendering] --> tests_generic_context_renderers_rs_non_aw_fixture_renders_markdown_and_git_context
+    r4[R4 navigable fallback] --> tests_generic_context_renderers_rs_unsupported_and_corrupt_artifacts_have_navigable_fallbacks[tests/generic_context_renderers.rs::unsupported_and_corrupt_artifacts_have_navigable_fallbacks]
+    r5[R5 renderer boundary is read only] --> tests_generic_context_renderers_rs_renderers_are_path_confined_and_runtime_independent[tests/generic_context_renderers.rs::renderers_are_path_confined_and_runtime_independent]
+```
