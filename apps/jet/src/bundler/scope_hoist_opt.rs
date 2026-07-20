@@ -3535,7 +3535,14 @@ fn find_package_info(module_path: &std::path::Path) -> Option<(std::path::PathBu
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Counters for `elide_same_chunk_export_bindings`, surfaced via
-/// `JET_BUNDLE_TIMING` as `export-elision: modules=N elided_keys=M kept=K`.
+/// `JET_BUNDLE_TIMING` as `export-elision: modules=N elided_keys=M kept=K
+/// kept_registry=.. kept_cross_chunk=.. kept_namespace=..
+/// kept_string_indexed=.. kept_barrel_glue=.. kept_other=..` (#2139: `kept`
+/// used to be a single opaque aggregate, blocking any ranking of which
+/// conservatism rung of the keep ladder costs the most bytes — see
+/// [`ExportKeepReason`] for the exact code arm each `kept_*` field is
+/// attributed from, including two rungs this pass cannot actually
+/// distinguish today).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportElisionStats {
     /// Distinct modules with at least one export key elided.
@@ -3544,7 +3551,183 @@ pub struct ExportElisionStats {
     /// dropped in favor of direct local-binding reads.
     pub elided_keys: usize,
     /// Export key assignments inspected but conservatively left alone.
+    /// Equal to `kept_registry + kept_cross_chunk + kept_namespace +
+    /// kept_string_indexed + kept_barrel_glue + kept_other` (checked by a
+    /// `debug_assert_eq!` where this struct is finalized).
     pub kept: usize,
+    /// Kept because a read of this key was observed through
+    /// `require(id).key` rather than `_r(id).key` — registry-residue
+    /// consumer code living in a different lexical scope than the flat
+    /// region (see `ExportKeyUsage::require_side`). This text-only pass
+    /// cannot see *why* the consumer used `require()` instead of `_r()`,
+    /// so it also absorbs the issue's separately-named "cross-chunk
+    /// reference" rung: a cross-chunk consumer reads an eligible producer
+    /// through the same runtime registry accessor as a registry-resident
+    /// one does, with no distinguishing signal available here — see
+    /// `kept_cross_chunk`.
+    pub kept_registry: usize,
+    /// Always 0 today. A *cross-chunk-referenced* producer never reaches
+    /// this pass as an `_m{id}.exports[...]` candidate at all — the
+    /// entry-flatten partition keeps it CJS-wrapped, same as a
+    /// registry-resident producer (see the "keep triggers satisfied by
+    /// construction" note on `elide_same_chunk_export_bindings_unvalidated`).
+    /// A cross-chunk *consumer* reading an otherwise-eligible producer's
+    /// key is indistinguishable, from this pass, from a registry-resident
+    /// consumer — both are a `require(id).key` read, counted under
+    /// `kept_registry` instead. Kept as a named field (rather than
+    /// dropped) so the counter schema matches the issue's five-rung keep
+    /// ladder and this non-attribution is visible instead of silent.
+    pub kept_cross_chunk: usize,
+    /// Kept because the module has a bare/namespace/computed-key
+    /// `_r(id)`/`require(id)` occurrence anywhere
+    /// (`escaped_ids.contains(id)` — see
+    /// `bare_require_module_ids_excluding_default_fallback`). Also
+    /// absorbs the issue's separately-named "string-indexed access" rung:
+    /// a computed subscript `_r(id)[expr]` fails
+    /// `match_any_property_access_after_base`'s literal-shape match
+    /// exactly like a bare namespace read (`_r(id)` with no property
+    /// access at all) does, so both flag the *whole module* as escaped
+    /// with no per-access-site distinction available — see
+    /// `kept_string_indexed`.
+    pub kept_namespace: usize,
+    /// Always 0 today. A computed-key access `_r(id)[expr]` is the same
+    /// code arm as `kept_namespace` (both fail the literal-property-shape
+    /// match and flag the whole module as escaped), so this pass has no
+    /// separate signal to attribute to "string-indexed" specifically.
+    /// Kept as a named field for the same schema-parity reason as
+    /// `kept_cross_chunk`.
+    pub kept_string_indexed: usize,
+    /// Kept because no `_r(id).key` / `_r(id)["key"]` / `require(id).key`
+    /// read was ever recorded for this exact key
+    /// (`usage.get(key) == None`). The dominant real-world source is
+    /// barrel re-export glue's
+    /// `Object.keys(alias).forEach(k => _m{id}.exports[k] = alias[k])`
+    /// loop (see `collect_object_keys_reexport_mappings`): its forwarded
+    /// keys use a *computed* `[k]` write, so `collect_direct_export_assignments`
+    /// (literal keys only) never records that write, and a downstream
+    /// consumer's read of the forwarded key is never attributed back to
+    /// the original producer's own literal assignment either.
+    pub kept_barrel_glue: usize,
+    /// Every other keep reason: non-identifier RHS (`ComplexRhs`), a
+    /// block-scoped producer binding (`BlockScopedBinding`), an observed
+    /// write through the accessor (`WriteObserved`), or the
+    /// structurally-unreachable defensive fallback (`NoLiveReadSpans`) —
+    /// see [`ExportKeepReason`]. None of these map to one of the issue's
+    /// five named keep-ladder rungs.
+    pub kept_other: usize,
+}
+
+impl ExportElisionStats {
+    /// Bump the counter bucket matching `reason`. See the matching
+    /// `kept_*` field doc comments above (and [`ExportKeepReason`]'s own
+    /// doc comment) for why `RegistryResidueRead`/`NamespaceEscape` each
+    /// absorb one of the issue's five assumed rungs that turned out not
+    /// to be independently observable at this pass.
+    fn record_keep(&mut self, reason: ExportKeepReason) {
+        match reason {
+            ExportKeepReason::RegistryResidueRead => self.kept_registry += 1,
+            ExportKeepReason::NamespaceEscape => self.kept_namespace += 1,
+            ExportKeepReason::NoRecordedReads => self.kept_barrel_glue += 1,
+            ExportKeepReason::ComplexRhs
+            | ExportKeepReason::BlockScopedBinding
+            | ExportKeepReason::WriteObserved
+            | ExportKeepReason::NoLiveReadSpans => self.kept_other += 1,
+        }
+    }
+}
+
+/// Why one candidate `_m{id}.exports["key"] = local;` assignment was kept
+/// (left on the indirection) instead of elided — tags the exact `continue`
+/// arm in [`elide_same_chunk_export_bindings_unvalidated`]'s loop that
+/// produced the decision (#2139).
+///
+/// Verified against the real code rather than assumed: the issue's
+/// starting belief was five independent keep reasons (registry-resident
+/// module, cross-chunk reference, namespace consumption, string-indexed
+/// access, surviving barrel glue re-export). Two of those five turned out
+/// to be structurally indistinguishable, at this pass, from two others —
+/// see the `kept_cross_chunk` / `kept_string_indexed` field doc comments
+/// on [`ExportElisionStats`] for exactly why — leaving the seven arms
+/// below as what the code actually branches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportKeepReason {
+    /// RHS isn't a bare identifier — `is_js_identifier` rejected it
+    /// (function/object/conditional/chained expression).
+    ComplexRhs,
+    /// The module has a bare/namespace/computed-key escape anywhere
+    /// (`escaped_ids.contains(id)`).
+    NamespaceEscape,
+    /// The producer's own local binding is `function`/`class`/`let`/`const`
+    /// scoped to its own flattened-module block.
+    BlockScopedBinding,
+    /// No recorded read at all for this exact key
+    /// (`usage.get(key) == None`).
+    NoRecordedReads,
+    /// At least one write (`_r(id).key = ...` / `require(id).key = ...`)
+    /// was observed.
+    WriteObserved,
+    /// At least one `require(id).key` read was observed.
+    RegistryResidueRead,
+    /// Read spans recorded but empty, with no write and no registry-side
+    /// read either — provably unreachable given
+    /// `collect_export_key_usage`'s invariant that every map entry sets
+    /// `written` or pushes a span before returning; kept only as an
+    /// honest defensive bucket rather than folded silently into another
+    /// reason.
+    NoLiveReadSpans,
+}
+
+impl ExportKeepReason {
+    /// Per-key `JET_ELISION_DEBUG` dump tag. Four of the seven arms fold
+    /// into the coarse `"other"` counter bucket on `ExportElisionStats`
+    /// but stay individually distinguishable in the dump.
+    fn dump_tag(self) -> &'static str {
+        match self {
+            ExportKeepReason::RegistryResidueRead => "registry",
+            ExportKeepReason::NamespaceEscape => "namespace",
+            ExportKeepReason::NoRecordedReads => "barrel_glue",
+            ExportKeepReason::ComplexRhs => "other:complex_rhs",
+            ExportKeepReason::BlockScopedBinding => "other:block_scoped",
+            ExportKeepReason::WriteObserved => "other:write_observed",
+            ExportKeepReason::NoLiveReadSpans => "other:no_live_read_spans",
+        }
+    }
+}
+
+/// Approximate count of places `key`'s literal property-key text appears
+/// in the scanned region: the assignment site itself, plus every recorded
+/// read (`_r`/`require`), plus one more if any write was observed.
+/// `ExportKeyUsage::written` is a bool, not a counter, so a key written
+/// more than once still only adds 1 here — an approximation appropriate
+/// for the `JET_ELISION_DEBUG` dump's "estimated bytes" purpose, not an
+/// exact occurrence count.
+fn export_key_occurrence_estimate(usage: Option<&ExportKeyUsage>) -> usize {
+    1 + usage
+        .map(|reads| reads.spans.len() + usize::from(reads.written))
+        .unwrap_or(0)
+}
+
+/// Record one kept export-key decision: bump `stats`'s matching counter
+/// bucket, and — only when `JET_ELISION_DEBUG` is set (`debug_enabled`) —
+/// append a per-key row to `debug_rows` for the caller to dump.
+fn mark_export_key_kept(
+    stats: &mut ExportElisionStats,
+    debug_rows: &mut Vec<String>,
+    debug_enabled: bool,
+    module_id: usize,
+    key: &str,
+    reason: ExportKeepReason,
+    usage: Option<&ExportKeyUsage>,
+) {
+    stats.record_keep(reason);
+    if debug_enabled {
+        debug_rows.push(format!(
+            "module={module_id} key={key} reason={} key_len={} occurrences={}",
+            reason.dump_tag(),
+            key.len(),
+            export_key_occurrence_estimate(usage),
+        ));
+    }
 }
 
 /// Drop the exports-object property-key indirection for same-chunk,
@@ -3619,16 +3802,41 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
     let mut touched_modules: HashSet<usize> = HashSet::new();
     let mut elided_keys = 0usize;
+    // #2139: per-reason keep attribution. Always accumulated into `stats`
+    // (the loop already visits every assignment, so this costs nothing
+    // extra); `debug_rows` is only populated when JET_ELISION_DEBUG is set.
+    let mut stats = ExportElisionStats::default();
+    let debug_dump_path = std::env::var_os("JET_ELISION_DEBUG");
+    let debug_enabled = debug_dump_path.is_some();
+    let mut debug_rows: Vec<String> = Vec::new();
 
     for (key, assignment) in &assignments {
-        let (id, _prop) = key;
+        let (id, prop) = key;
         // Only "= identifier" RHS forms are eligible; the producer's own
         // local binding is reused verbatim as the consumer-facing name.
         // Function/object/conditional/chained RHS forms are left alone.
         if !is_js_identifier(&assignment.expr) {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::ComplexRhs,
+                usage.get(key),
+            );
             continue;
         }
         if escaped_ids.contains(id) {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::NamespaceEscape,
+                usage.get(key),
+            );
             continue;
         }
         // Each flattened module lives in its own `{ ... }` block (the
@@ -3642,12 +3850,67 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
         // binding that isn't provably `var`-hoisted stays on the
         // indirection.
         if block_scoped_names.contains(&assignment.expr) {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::BlockScopedBinding,
+                usage.get(key),
+            );
             continue;
         }
         let Some(reads) = usage.get(key) else {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::NoRecordedReads,
+                None,
+            );
             continue;
         };
-        if reads.written || reads.require_side || reads.spans.is_empty() {
+        // Decomposed from the original `reads.written || reads.require_side
+        // || reads.spans.is_empty()` short-circuit OR — same order, same
+        // first-true-wins result; #2139 needs each disjunct individually
+        // attributed, which the combined boolean couldn't provide.
+        if reads.written {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::WriteObserved,
+                Some(reads),
+            );
+            continue;
+        }
+        if reads.require_side {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::RegistryResidueRead,
+                Some(reads),
+            );
+            continue;
+        }
+        if reads.spans.is_empty() {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::NoLiveReadSpans,
+                Some(reads),
+            );
             continue;
         }
         replacements.push((assignment.span.0, assignment.span.1, String::new()));
@@ -3682,11 +3945,27 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
         rewritten = apply_static_replacements(&rewritten, orphan_replacements);
     }
 
-    let stats = ExportElisionStats {
-        modules: touched_modules.len(),
-        elided_keys,
-        kept: assignments.len() - elided_keys,
-    };
+    stats.modules = touched_modules.len();
+    stats.elided_keys = elided_keys;
+    stats.kept = assignments.len() - elided_keys;
+    debug_assert_eq!(
+        stats.kept,
+        stats.kept_registry
+            + stats.kept_cross_chunk
+            + stats.kept_namespace
+            + stats.kept_string_indexed
+            + stats.kept_barrel_glue
+            + stats.kept_other,
+        "export-elision kept-reason counters must sum to kept (#2139): {stats:?}",
+    );
+    // JET_ELISION_DEBUG=<file> dumps one row per kept key. Mirrors the
+    // JET_TREESHAKE_DEBUG convention (env-gated, best-effort, sorted,
+    // overwritten each call) — a multi-chunk build where this pass runs
+    // more than once retains only the last call's rows.
+    if let Some(dump) = &debug_dump_path {
+        debug_rows.sort();
+        let _ = std::fs::write(dump, debug_rows.join("\n"));
+    }
     (rewritten, stats)
 }
 
@@ -5713,6 +5992,85 @@ const raw = `_m0_x`;"#;
         let (out, stats) = elide_same_chunk_export_bindings(code);
         assert_eq!(out, code);
         assert_eq!(stats, ExportElisionStats::default());
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_stats_attribute_kept_reasons() {
+        // #2139: one assignment per populated keep-reason bucket, plus one
+        // elided key, verifying each `continue` arm lands in its matching
+        // `kept_*` counter (not just the pre-existing aggregate `kept`).
+        let code = concat!(
+            // Module 1: "x" elides normally (unchanged baseline signal);
+            // "y" has a non-identifier (ternary) RHS -> kept_other.
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "_m1.exports[\"y\"]=condition?a:b;",
+            "var _m9_x=_r(1)[\"x\"];",
+            // Module 2: a bare `_r(2)` namespace read escapes the whole
+            // module -> kept_namespace.
+            "var _m2={exports:{}};",
+            "var _m2_a=1;",
+            "_m2.exports[\"a\"]=_m2_a;",
+            "var _m9_ns=_r(2);",
+            // Module 3: no `_r(3)`/`require(3)` occurrence anywhere, so
+            // this key has zero recorded reads -> kept_barrel_glue (the
+            // same signature as barrel re-export glue's computed-key
+            // forward, see `ExportElisionStats::kept_barrel_glue`'s doc).
+            "var _m3={exports:{}};",
+            "var _m3_b=1;",
+            "_m3.exports[\"b\"]=_m3_b;",
+            // Module 4: read via `require(4)["c"]` (registry-residue
+            // consumer) -> kept_registry.
+            "var _m4={exports:{}};",
+            "var _m4_c=1;",
+            "_m4.exports[\"c\"]=_m4_c;",
+            "var _m9_c=require(4)[\"c\"];",
+        );
+        let (_out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(
+            stats.modules, 1,
+            "only module 1 has an elided key: {stats:?}"
+        );
+        assert_eq!(stats.elided_keys, 1, "only module 1's x elides: {stats:?}");
+        assert_eq!(
+            stats.kept_other, 1,
+            "module 1's y is a non-identifier RHS: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept_namespace, 1,
+            "module 2 is namespace-escaped: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept_barrel_glue, 1,
+            "module 3's key has no recorded read: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept_registry, 1,
+            "module 4's key is require()-read: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept_cross_chunk, 0,
+            "never populated by this pass: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept_string_indexed, 0,
+            "never populated by this pass: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept, 4,
+            "4 assignments kept across the 4 buckets above: {stats:?}"
+        );
+        assert_eq!(
+            stats.kept,
+            stats.kept_registry
+                + stats.kept_cross_chunk
+                + stats.kept_namespace
+                + stats.kept_string_indexed
+                + stats.kept_barrel_glue
+                + stats.kept_other,
+            "kept-reason counters must sum to kept: {stats:?}"
+        );
     }
 }
 // CODEGEN-END

@@ -3936,8 +3936,16 @@ impl Bundler {
                     lap("fn_decl_conversion");
                     if timing {
                         eprintln!(
-                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={}",
-                            elision_stats.modules, elision_stats.elided_keys, elision_stats.kept
+                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                            elision_stats.modules,
+                            elision_stats.elided_keys,
+                            elision_stats.kept,
+                            elision_stats.kept_registry,
+                            elision_stats.kept_cross_chunk,
+                            elision_stats.kept_namespace,
+                            elision_stats.kept_string_indexed,
+                            elision_stats.kept_barrel_glue,
+                            elision_stats.kept_other,
                         );
                     }
                     lap("export_elision");
@@ -3966,8 +3974,16 @@ impl Bundler {
                             scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
                         if timing {
                             eprintln!(
-                                "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={}",
-                                stats.modules, stats.elided_keys, stats.kept
+                                "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                                stats.modules,
+                                stats.elided_keys,
+                                stats.kept,
+                                stats.kept_registry,
+                                stats.kept_cross_chunk,
+                                stats.kept_namespace,
+                                stats.kept_string_indexed,
+                                stats.kept_barrel_glue,
+                                stats.kept_other,
                             );
                         }
                         elided
@@ -4242,8 +4258,16 @@ impl Bundler {
                 lap("fn_decl_conversion");
                 if timing {
                     eprintln!(
-                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={}",
-                        elision_stats.modules, elision_stats.elided_keys, elision_stats.kept
+                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                        elision_stats.modules,
+                        elision_stats.elided_keys,
+                        elision_stats.kept,
+                        elision_stats.kept_registry,
+                        elision_stats.kept_cross_chunk,
+                        elision_stats.kept_namespace,
+                        elision_stats.kept_string_indexed,
+                        elision_stats.kept_barrel_glue,
+                        elision_stats.kept_other,
                     );
                 }
                 lap("export_elision");
@@ -4272,8 +4296,16 @@ impl Bundler {
                         scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
                     if timing {
                         eprintln!(
-                            "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={}",
-                            stats.modules, stats.elided_keys, stats.kept
+                            "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
+                            stats.modules,
+                            stats.elided_keys,
+                            stats.kept,
+                            stats.kept_registry,
+                            stats.kept_cross_chunk,
+                            stats.kept_namespace,
+                            stats.kept_string_indexed,
+                            stats.kept_barrel_glue,
+                            stats.kept_other,
                         );
                     }
                     elided
