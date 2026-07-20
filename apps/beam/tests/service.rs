@@ -31,15 +31,19 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) {
     panic!("server never became healthy");
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in service.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2146" reason="unit-test section in service.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_end_to_end() {
     // Bind an ephemeral port; skip gracefully if the sandbox has no networking.
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("skipping service test: cannot bind 127.0.0.1:0 ({e})");
-            return;
+            if std::env::var("BEAM_REQUIRED_GATES").is_ok() {
+                panic!("honest-gate-failure: required service listener could not bind: {e}");
+            } else {
+                eprintln!("skipping service test: cannot bind 127.0.0.1:0 ({e})");
+                return;
+            }
         }
     };
     let addr = listener.local_addr().expect("bound local addr");
@@ -283,6 +287,15 @@ async fn service_end_to_end() {
     assert_eq!(
         client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
         404
+    );
+
+    println!(
+        "{}",
+        json!({
+            "category": "service",
+            "transport": "h2c",
+            "assertions": 40
+        })
     );
 
     server.abort();
