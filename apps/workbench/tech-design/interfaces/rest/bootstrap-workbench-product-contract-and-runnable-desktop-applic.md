@@ -42,6 +42,11 @@ The desktop boundary is Rust plus Tauri 2. The initial document is deliberately 
 
 ```yaml
 changes:
+  - path: aw.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Register the Workbench project and workspace in the authoritative lifecycle routing table; refs AW bug 2202.
   - path: Cargo.toml
     action: modify
     section: logic
