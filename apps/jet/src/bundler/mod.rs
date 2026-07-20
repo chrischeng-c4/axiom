@@ -1092,6 +1092,7 @@ impl Bundler {
         self.check_unresolved_deps()?;
         let (modules, has_cycle) = self.transform_modules().await?;
         lap("transform_modules");
+        self.scan_modules_for_unresolved_require_fallbacks(&modules);
         self.check_unresolved_require_fallbacks()?;
 
         // Tree shaking: analyze used exports across the module graph, then
@@ -2626,13 +2627,49 @@ impl Bundler {
             });
     }
 
-    /// Fail the build if `transform_modules` collected any non-external bare
-    /// specifier that fell through to a naked string `require('specifier')`
-    /// at codegen time (#2261). The diagnostic enumerates each offending
-    /// specifier with its importer (deduplicated by specifier, stable
-    /// lexical order), distinct from `check_unresolved_deps`'s #1317
-    /// message since the root cause here is a resolver/codegen mismatch,
-    /// not a missing package.
+    /// #2261 round 2 — static companion to the live `unresolved_require_fallback`
+    /// probe `transform_modules` wraps around each *fresh*
+    /// `transform_js_with_context_resolution_tree_and_timings` call. That probe
+    /// cannot see a module served by a `self.cache`/`self.persistent_cache` hit:
+    /// both cache-hit arms `return`/continue before the probe ever starts, so a
+    /// `StoredEntry` computed by an older jet binary (one predating whatever
+    /// bare-specifier resolution fix is live in today's binary) is shipped
+    /// exactly as silently as when it was first cached — see
+    /// `persistent_cache::TRANSFORM_CACHE_SCHEMA`'s #2261-round-2 doc comment
+    /// for the schema-bump half of this fix, which forces a cold re-transform
+    /// on the next build. This scan is the general safety net for the failure
+    /// class as a whole: it re-checks every module's *shipped* code — cache-hit
+    /// or freshly transformed alike — for
+    /// `scope_hoist_opt::find_unresolved_require_fallback_calls`'s naked
+    /// `require('specifier')` give-up shape, so it keeps working even for a
+    /// future transform-behavior change that (like round 1 of #2261 itself)
+    /// forgets to bump the schema constant. Runs once per module, in
+    /// parallel, right after `transform_modules` returns and before scope
+    /// hoisting/minification ever touch the code — see that function's own
+    /// doc comment for why pre-minify per-module text is the reliable scan
+    /// surface (a minifier's identifier-mangling pass can rename the `_r`
+    /// runtime alias used by an *out-of-scope* thunk, but never touches an
+    /// in-place string literal like `'react-router/dom'`).
+    fn scan_modules_for_unresolved_require_fallbacks(&self, modules: &[CompiledModule]) {
+        use rayon::prelude::*;
+
+        modules.par_iter().for_each(|module| {
+            for specifier in scope_hoist_opt::find_unresolved_require_fallback_calls(&module.code) {
+                if !self.is_declared_external(&specifier) {
+                    self.record_unresolved_require_fallback(&specifier, &module.path);
+                }
+            }
+        });
+    }
+
+    /// Fail the build if `transform_modules` or
+    /// `scan_modules_for_unresolved_require_fallbacks` collected any
+    /// non-external bare specifier that fell through to a naked string
+    /// `require('specifier')` at codegen time (#2261). The diagnostic
+    /// enumerates each offending specifier with its importer (deduplicated by
+    /// specifier, stable lexical order), distinct from
+    /// `check_unresolved_deps`'s #1317 message since the root cause here is a
+    /// resolver/codegen mismatch, not a missing package.
     ///
     /// @spec apps/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
     /// @issue #2261

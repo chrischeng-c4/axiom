@@ -214,7 +214,34 @@ use super::CompiledModule;
 /// (`replay_manifest`) for the replay section below. Same reasoning
 /// applies again: an old (schema-3) file is missing the field, `postcard`
 /// fails the decode cleanly, cold start.
-pub const TRANSFORM_CACHE_SCHEMA: u32 = 4;
+///
+/// #2261 round 2 bumped this 4 -> 5: unlike the three bumps above, `CacheFile`'s
+/// *shape* did not change here — this is the doc comment's first sentence
+/// applying without a decode failure to lean on. Round 1 of #2261 changed
+/// `resolve_module_path`'s (`transform/modules.rs`) bare-specifier
+/// resolution behavior (consulting `resolve_bare_specifier_from_index`
+/// before giving up), but neither that change nor any of
+/// [`config_fingerprint`]'s hashed inputs (defines/minify/splitting/jsx/
+/// target/dev-mode/source-maps, plus the crate version) capture "which
+/// resolver logic produced this entry's code" — only the module's own
+/// source bytes and the current build's graph shape ([`EntryKey`]). A
+/// [`StoredEntry`] computed by a pre-round-1 binary therefore decoded
+/// cleanly, matched every `EntryKey` field, and was served verbatim on a
+/// warm-cache build even against a binary carrying round 1's fix,
+/// resurrecting the exact silent-fallback-to-`require('specifier')` bug
+/// round 1 fixed — see `Bundler::transform_modules`'s cache-hit early
+/// returns, which skip the `#2261` unresolved-require probe entirely on a
+/// hit (that probe only wraps a *fresh*
+/// `transform_js_with_context_resolution_tree_and_timings` call). A schema
+/// bump is the general fix for this whole failure class (a behavior-only
+/// transform change with no corresponding `config_fingerprint` input): it
+/// forces one cold, full re-transform on every existing install's next
+/// build, independent of whether that specific install's stale entries
+/// happen to matter. See `scope_hoist_opt::
+/// find_unresolved_require_fallback_calls` for the companion static-output
+/// guard that now also catches this bug class directly, regardless of
+/// cache provenance.
+pub const TRANSFORM_CACHE_SCHEMA: u32 = 5;
 
 /// Bumped whenever import-scan behavior changes (`imports::
 /// extract_imports_fast`, its tree-sitter fallback, or `Bundler::
@@ -3138,6 +3165,79 @@ mod tests {
             .get(Path::new("/proj/src/good.js"), &sample_key())
             .is_none());
         assert!(cache.get_analysis(&analysis_key).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2261 round 2 — the actual regression mechanism, in miniature. Round 1
+    // fixed `resolve_module_path`'s nested-exports-map resolution but never
+    // bumped `TRANSFORM_CACHE_SCHEMA`, so a `PersistentTransformCache` entry
+    // an OLDER (pre-round-1) binary had already computed and stored — a
+    // transform result whose `code` still contains the pre-fix give-up
+    // shape, `require('react-router/dom')` — decoded cleanly under a newer,
+    // fixed binary and was served verbatim: same `path`, same `EntryKey`,
+    // same `config_fingerprint`, nothing about the stale entry itself looked
+    // wrong. `transform_modules`'s cache-hit arm returns it before the
+    // fail-loud `unresolved_require_fallback` probe (scoped tightly around a
+    // *fresh* transform call) ever runs, so the bug shipped again exactly as
+    // silently as when it was first cached. This test proves the fix's core
+    // mechanism directly against `PersistentTransformCache::load` (the exact
+    // function `Bundler::transform_modules` calls): a `schema` one below
+    // today's `TRANSFORM_CACHE_SCHEMA` must discard the entry even when its
+    // `path`/`key`/`config_fingerprint` all match this build's own values —
+    // the one thing an old-schema store can no longer do is ride through on
+    // a coincidentally-matching fingerprint.
+    #[test]
+    fn stale_pre_round_2_schema_entry_is_discarded_even_with_a_matching_config_fingerprint() {
+        let stale_code = "var HydratedRouter = require('react-router/dom')[\"HydratedRouter\"];";
+        let stale_module = sample_module(0, stale_code);
+        let stale_path = stale_module.path.clone();
+        let key = sample_key();
+        let payload = postcard::to_stdvec(&stale_module).unwrap();
+        let stale_entry = StoredEntry {
+            path: stale_path.clone(),
+            key,
+            checksum: hash_bytes(&payload),
+            payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA - 1,
+            config_fingerprint: 42,
+            entries: vec![stale_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
+            replay_manifest: None,
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"stale_pre_round_2_schema_entry_is_discarded")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        // Same `config_fingerprint` (42) the stale file was written under —
+        // isolating the schema check as the only thing standing between a
+        // stale, buggy transform result and a silent re-ship.
+        let (cache, stats) = PersistentTransformCache::load(&dir, 42, 0);
+        assert_eq!(
+            stats.loaded_entries, 0,
+            "an old-schema store must never load any transform entries, \
+             even when config_fingerprint matches"
+        );
+        assert!(
+            cache.get(&stale_path, &key).is_none(),
+            "the stale require('react-router/dom')-shaped entry must miss, \
+             forcing a fresh transform instead of being served from cache"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

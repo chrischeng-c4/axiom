@@ -7436,6 +7436,126 @@ pub fn find_top_level_bare_require_call(code: &str) -> Option<usize> {
     None
 }
 
+/// Static guard extending #2205's family (#2261 round 2). A module's own
+/// generated code can carry a naked, unresolved bare-specifier
+/// `require('specifier')` call — the exact single-quoted shape
+/// `transform::modules::resolve_module_path`'s final give-up fallback
+/// emits — all the way into the shipped bundle without ever tripping the
+/// #2261 round-1 `unresolved_require_fallback` probe: a
+/// `PersistentTransformCache`/`CompilationCache` hit returns the *cached*
+/// `CompiledModule` before the probe (scoped tightly around one fresh
+/// `transform_js_with_context_resolution_tree_and_timings` call) ever
+/// starts — see `Bundler::transform_modules`'s cache-hit early returns —
+/// so a stale entry computed by an older jet binary (one without whatever
+/// bare-specifier resolution fix is live in today's binary) is served and
+/// shipped exactly as silently as the resolver bug it was originally
+/// cached under. [`super::persistent_cache::TRANSFORM_CACHE_SCHEMA`]'s
+/// #2261-round-2 bump closes the specific hole that let this happen, but
+/// this scan is the general safety net: it does not depend on cache
+/// provenance or on remembering to bump a schema constant for the *next*
+/// transform-behavior change.
+///
+/// Called once per module, on that module's own text in its natural,
+/// pre-scope-hoist, pre-minify shape — right after `transform_modules`
+/// returns, before `_r` renaming or identifier mangling ever touch the
+/// code. Unlike [`find_top_level_bare_require_call`] there is no mangled
+/// alias name to chase: the call is always spelled `require(` literally
+/// at this stage, regardless of splitting/entry-flatten/minify
+/// configuration downstream, which is what makes a per-module pre-bundle
+/// scan more reliable here than scanning the final, possibly-mangled
+/// entry/chunk bytes. Skips string/template/comment/regex content with
+/// the same primitives [`find_top_level_bare_require_call`] uses, so a
+/// specifier merely *mentioned* in prose (a doc comment, a vendored error
+/// message — #2261 round 2's own investigation tripped over exactly this:
+/// react-router's own runtime error text contains the literal substring
+/// `` `react-router/dom` `` inside a template literal) can never
+/// false-positive.
+///
+/// Returns every offending specifier found (a module can carry more than
+/// one), skipping any specifier starting with `.`/`/` — the
+/// intentionally-permitted "relative require sitting in a provably-dead
+/// branch" case `resolve_module_path`'s own fallback doc comment carves
+/// out (confirmed against the MUI dev/prod-conditional CJS require
+/// pattern for react/react-dom/react-is/scheduler). Callers filter the
+/// result through `Bundler::is_declared_external` before treating a hit as
+/// a build failure — a declared external is the one other legitimate
+/// reason a bare specifier reaches this shape.
+pub fn find_unresolved_require_fallback_calls(code: &str) -> Vec<String> {
+    // Cheap bail-out: the vast majority of modules never emit this shape
+    // at all, and `str::contains` is a single fast substring scan — avoid
+    // paying for the full string/comment-aware walk below unless there is
+    // at least one candidate anchor present.
+    if !code.contains("require('") {
+        return Vec::new();
+    }
+
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut found = Vec::new();
+    while i < len {
+        match b[i] {
+            b'"' => {
+                i = skip_quoted_literal(b, i).min(len);
+                prev = b'"';
+                continue;
+            }
+            b'\'' => {
+                if i >= 8 && &b[i - 8..i] == b"require(" {
+                    let content_end = skip_quoted_literal(b, i).min(len);
+                    if content_end > i + 1 && b.get(content_end - 1) == Some(&b'\'') {
+                        let specifier = &code[i + 1..content_end - 1];
+                        if !specifier.is_empty()
+                            && !specifier.starts_with('.')
+                            && !specifier.starts_with('/')
+                        {
+                            found.push(specifier.to_string());
+                        }
+                    }
+                    i = content_end;
+                    prev = b'\'';
+                    continue;
+                }
+                i = skip_quoted_literal(b, i).min(len);
+                prev = b'\'';
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next.min(len);
+                prev = b'`';
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'/' => {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+            b'/' if regex_context_byte(prev) => {
+                i = skip_regex_literal(b, i).min(len);
+                prev = b'/';
+                continue;
+            }
+            _ => {}
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+    found
+}
+
 #[cfg(test)]
 mod interop_thunk_registry_residency_tests {
     use super::*;
@@ -7704,6 +7824,87 @@ mod top_level_require_guard_tests {
             "var re = /_r\\(9\\)/;\n",
         );
         assert!(find_top_level_bare_require_call(code).is_none(), "{code}");
+    }
+}
+
+#[cfg(test)]
+mod unresolved_require_fallback_guard_tests {
+    use super::*;
+
+    #[test]
+    fn flags_a_naked_bare_specifier_require_fallback() {
+        // Exact shape #2261 round 2 evidenced in the real react-router@7.18.1
+        // + react-router-dom repro: `resolve_module_path`'s give-up
+        // fallback embedded verbatim in a module's own generated code.
+        let code = "var HydratedRouter=require('react-router/dom')[\"HydratedRouter\"];\n";
+        assert_eq!(
+            find_unresolved_require_fallback_calls(code),
+            vec!["react-router/dom".to_string()],
+        );
+    }
+
+    #[test]
+    fn flags_every_distinct_specifier_in_a_module() {
+        let code = concat!(
+            "var a=require('react-router/dom')[\"HydratedRouter\"];\n",
+            "var b=require('some-other-pkg')[\"default\"];\n",
+        );
+        let mut found = find_unresolved_require_fallback_calls(code);
+        found.sort();
+        assert_eq!(
+            found,
+            vec!["react-router/dom".to_string(), "some-other-pkg".to_string()],
+        );
+    }
+
+    #[test]
+    fn allows_a_relative_require_in_a_provably_dead_branch() {
+        // `resolve_module_path`'s own fallback doc comment carves this
+        // case out deliberately (react's dev/prod-conditional CJS
+        // require pattern) — must never fail the build.
+        let code = "if (0) { require('./cjs/react.production.min.js') }\n";
+        assert!(
+            find_unresolved_require_fallback_calls(code).is_empty(),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn allows_an_absolute_path_require() {
+        let code = "require('/abs/path/to/file.js');\n";
+        assert!(
+            find_unresolved_require_fallback_calls(code).is_empty(),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn ignores_the_specifier_when_only_mentioned_in_prose() {
+        // #2261 round 2's own investigation false-positive trap:
+        // react-router's real runtime error text contains the literal
+        // substring `react-router/dom` inside a template literal, never
+        // as a call. A naive substring grep for `react-router/dom` alone
+        // (without the `require('` anchor + string-skip) would wrongly
+        // flag this.
+        let code = concat!(
+            "throw new Error(`You are not using the <RouterProvider> from `",
+            "+ `react-router/dom` + ` so ReactDOM.flushSync() is unavailable`);\n",
+            "// see require('react-router/dom') in the docs\n",
+            "var s = \"require('react-router/dom')\";\n",
+        );
+        assert!(
+            find_unresolved_require_fallback_calls(code).is_empty(),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn cheap_bailout_returns_empty_when_no_anchor_is_present() {
+        let code = "var x = require(3);\nexport default function App() {}\n";
+        assert!(
+            find_unresolved_require_fallback_calls(code).is_empty(),
+            "{code}"
+        );
     }
 }
 
