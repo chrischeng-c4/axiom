@@ -4064,7 +4064,7 @@ impl Bundler {
     }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in mod.rs is hand-written pending codegen support">
     /// Multi-chunk bundle generation for `--splitting`.
     ///
     /// Partitions `modules` into an entry chunk plus async/shared chunks via
