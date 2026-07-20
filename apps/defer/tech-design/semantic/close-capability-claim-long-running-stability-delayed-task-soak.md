@@ -80,3 +80,39 @@ changes:
     impl_mode: hand-written
     reason: "Require an observed Bound PVC with exact 1Gi request and capacity, and require successful cluster deletion plus absence verification on a successful operator recovery journey."
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: defer-delayed-task-state-recovery
+    name: committed lifecycle and repeated Raft failover recovery
+    command: "cargo test -p defer --test task_lifecycle --test rate_limits --test raft_scheduler -- --nocapture"
+    assertions:
+      - "Exactly fourteen lifecycle, rate-control, and three-node Raft tests execute with zero failures."
+      - "Leader loss preserves the live lease, stale settlement fails, reassignment advances the fence, a restarted node converges, and a second leader loss still completes a new task."
+  - id: defer-delayed-task-scheduler-efficiency
+    name: durable scheduler overhead ceiling against Relay
+    command: "cargo test --release -p defer --test relay_performance_ceiling -- --ignored --nocapture"
+    assertions:
+      - "Exactly 1,000 durable enqueue-lease-ack operations complete with errors = 0 and a complete numeric CPU, RSS, disk, amplification, throughput, and p50/p95/p99 report."
+      - "The same-host Defer throughput is at least 80% of the identically shaped Relay control workload."
+  - id: defer-delayed-task-live-soak
+    name: fixed-keyspace retry progress and resource plateau
+    command: "DEFER_SOAK_AUTOSTART=1 bash apps/defer/scripts/soak.sh"
+    assertions:
+      - "The fixed-keyspace warmup crosses the 1,024-entry proposal-cache and snapshot cadence before two 30-second measured windows."
+      - "Measured operations are non-zero, errors are zero, retry counters advance in both windows, RSS drift is <= 10%, FD growth <= 8, thread/task growth <= 4, and task-read p99 is <= 250 ms with <= 100% growth."
+  - id: defer-delayed-task-kind-pvc-recovery
+    name: operator PVC pod replacement recovery and cleanup
+    command: "bash apps/defer/scripts/kind-e2e.sh"
+    assertions:
+      - "The source image and real CRD/operator reconcile a StatefulSet whose PVC is observed Bound with exact 1Gi request and capacity."
+      - "A different replacement pod UID recovers the two committed task records, accepts queue pause and task cancellation, and the successful journey verifies that the disposable cluster is absent after cleanup."
+  - id: defer-delayed-task-ec-inventory
+    name: accepted long-running stability EC inventory
+    command: "aw ec check --project defer"
+    assertions:
+      - "The accepted behavior, efficiency, live-soak, and Kind/PVC cases remain generated, claim-bound, and structurally clean."
+```
