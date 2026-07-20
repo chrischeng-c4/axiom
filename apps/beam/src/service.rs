@@ -603,8 +603,8 @@ async fn admin_restore(
 
     let mut registry = state.registry.write().expect("registry lock poisoned");
     registry.clear();
-    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="clean and persist collections on restore">
-    if let Some(ref dir) = state.data_dir {
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="clean and persist collections on restore">
+if let Some(ref dir) = state.data_dir {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
