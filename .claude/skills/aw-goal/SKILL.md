@@ -60,3 +60,14 @@ Evaluate in order. Stop at the first match; execute that leaf's CLI form.
   never fabricate approval or treat the envelope as terminal.
 - For adhoc: prose alone is never a gate — every recorded condition must be
   a single bounded, machine-runnable command.
+
+## CLI drift & defect reporting
+
+- Before treating this skill's documented command shapes as ground truth,
+  verify the live CLI surface for the verb in use, e.g. `aw goal --help`
+  (or the specific leaf, e.g. `aw goal wi --help`).
+- If actual CLI behavior diverges from what this skill documents, capture a
+  minimal reproduction: the exact command run and its actual vs. expected
+  output.
+- File the reproduction as a confirmed AW-owned defect via `aw issue create`
+  instead of silently working around the drift in-session.

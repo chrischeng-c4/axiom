@@ -86,3 +86,13 @@ cargo build -p agentic-workflow --bin aw
 For behavior smoke, feed one Codex `apply_patch` payload targeting the project
 and expect a deny JSON. Feed one Bash `sed` payload and expect exit 0 with no
 stdout.
+
+## CLI drift & defect reporting
+
+- Before treating this skill's documented command shapes as ground truth,
+  verify the live CLI surface for the verb in use, e.g. `aw guard --help`.
+- If actual CLI behavior diverges from what this skill documents, capture a
+  minimal reproduction: the exact command run and its actual vs. expected
+  output.
+- File the reproduction as a confirmed AW-owned defect via `aw issue create`
+  instead of silently working around the drift in-session.

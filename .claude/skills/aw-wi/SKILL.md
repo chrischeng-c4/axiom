@@ -187,3 +187,14 @@ Non-epic work-items must be atomic before they enter `/aw:td`:
 If a session ends mid-validation, inspect the work-item with `aw wi show <slug>`
 and continue from the phase recorded in frontmatter. There is no idle scanner
 or per-slug AW workspace recovery path.
+
+## CLI drift & defect reporting
+
+- Before treating this skill's documented command shapes as ground truth,
+  verify the live CLI surface for the verb in use, e.g. `aw wi --help`
+  (or the specific subcommand, e.g. `aw wi create --help`).
+- If actual CLI behavior diverges from what this skill documents, capture a
+  minimal reproduction: the exact command run and its actual vs. expected
+  output.
+- File the reproduction as a confirmed AW-owned defect via `aw issue create`
+  instead of silently working around the drift in-session.
