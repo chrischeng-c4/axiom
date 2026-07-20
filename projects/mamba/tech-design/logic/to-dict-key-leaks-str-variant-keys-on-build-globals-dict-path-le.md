@@ -78,3 +78,35 @@ changes:
     impl_mode: hand-written
     anchor: to_thread_gather_stability
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 1979-verification
+requirements:
+  AC1:
+    id: AC1
+    text: "leaks tool (or 10k-loop RSS plateau) shows the build_globals_dict site no longer leaks; repro numbers (before/after RSS or leak count) are recorded in the WI close comment."
+    kind: functional
+    risk: high
+    verify: build_globals_dict_key_leak_free (same test as R1; window-two peak RSS <= window-one peak RSS bound, before/after byte counts logged to stdout for the close-comment repro numbers)
+  AC2:
+    id: AC2
+    text: "dict/module lib filters stay green and the conformance gate stays at-or-below baseline with real-PASS non-decreasing."
+    kind: regression
+    risk: medium
+    verify: cargo test -p mamba (dict_ops/module/closure regression coverage) plus the tests/harness/cpython conformance sweep against baseline.json
+  R1:
+    id: R1
+    text: "build_globals_dict releases every ephemeral MbObject::new_str(...) key it fabricates for dict_ops::mb_dict_setitem -- in both its plain-global (id_ns) loop and its function-name (func_info) loop -- so repeated globals()-materialization no longer permanently retains string key objects at rc=1."
+    kind: functional
+    risk: high
+    verify: build_globals_dict_key_leak_free (10k-iteration globals() loop, ps-sampled two-window RSS-plateau assertion mirroring to_thread_gather_stability pattern; cargo test -p mamba --test mamba_core_semantics_ec -- build_globals_dict_key_leak_free --exact)
+---
+flowchart TD
+    ac1[AC1 AC1] --> build_globals_dict_key_leak_free_same_test_as_r1_window_two_peak_rss_window_one_peak_rss_bound_before_after_byte_counts_logged_to_stdout_for_the_close_comment_repro_numbers[build_globals_dict_key_leak_free (same test as R1; window-two peak RSS <= window-one peak RSS bound, before/after byte counts logged to stdout for the close-comment repro numbers)]
+    r1[R1 R1] --> build_globals_dict_key_leak_free_10k_iteration_globals_loop_ps_sampled_two_window_rss_plateau_assertion_mirroring_to_thread_gather_stability_pattern_cargo_test_p_mamba_test_mamba_core_semantics_ec_build_globals_dict_key_leak_free_exact[build_globals_dict_key_leak_free (10k-iteration globals() loop, ps-sampled two-window RSS-plateau assertion mirroring to_thread_gather_stability pattern; cargo test -p mamba --test mamba_core_semantics_ec -- build_globals_dict_key_leak_free --exact)]
+    ac2[AC2 AC2] --> cargo_test_p_mamba_dict_ops_module_closure_regression_coverage_plus_the_tests_harness_cpython_conformance_sweep_against_baseline_json[cargo test -p mamba (dict_ops/module/closure regression coverage) plus the tests/harness/cpython conformance sweep against baseline.json]
+```
