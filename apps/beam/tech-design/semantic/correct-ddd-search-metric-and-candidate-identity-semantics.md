@@ -87,7 +87,6 @@ changes:
     anchor: "struct MockDistanceCalculator"
     description: "Update MockDistanceCalculator to be metric-aware, and add comprehensive negative/regression tests for dimension validation, metric ordering, and missing candidates."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
