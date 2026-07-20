@@ -2,10 +2,16 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T16:56:43.152907+00:00"
-digest = "sha256:1627df8ce2d1ebd38f2260dab223bdc5355f6d67491a555b210b32cae55a2342"
-source_digest = "sha256:1627df8ce2d1ebd38f2260dab223bdc5355f6d67491a555b210b32cae55a2342"
-ir_digest = "sha256:f2260e4ef598ae036dc828c33d56f0d35a5d88ff424aca2abda73b9531054019"
+generated_at = "2026-07-20T17:56:11.890618+00:00"
+digest = "sha256:8e0f0626810a8ca4aee153bf6ed056c851af5657234d9188396c5c028714d664"
+source_digest = "sha256:8e0f0626810a8ca4aee153bf6ed056c851af5657234d9188396c5c028714d664"
+ir_digest = "sha256:bd04252654235fd3a729950462508a7f3b25d13e671c5174be4b1b6466dd3aea"
+
+[[files]]
+path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
+digest = "sha256:935dbcd0d32b80391cb37ffcda3a5b967765e395979d4c1683e5278ddddc837e"
+ir_digest = "sha256:a01de635c001098932d26dd6be4662314c4c52a6fee0527a918fbef7f91942de"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
