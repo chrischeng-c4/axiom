@@ -676,7 +676,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 // -- Assembly + serve ------------------------------------------------------
 
-// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="router with state and data_dir support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="router with state and data_dir support">
 pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
     let registry = Arc::new(RwLock::new(HashMap::new()));
     router_with_state(registry, gpu, None)
