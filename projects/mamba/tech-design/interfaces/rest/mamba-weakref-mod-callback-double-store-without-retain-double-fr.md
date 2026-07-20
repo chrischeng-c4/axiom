@@ -51,3 +51,30 @@ flowchart TD
     D --> K["Rust unit tests assert callback rc == 2 right after\nconstruction (one per stored slot) and rc == 1 again\n(caller's original unit) after the produced instance is\nfully released; real-callback CPython fixtures for ref\nand proxy run end-to-end through the compiled binary\nwith zero signal exits"]
     J --> K
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: dispatch_proxy
+  - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: mb_weakref_ref
+  - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: mb_weakref_proxy
+  - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: tests
+```
