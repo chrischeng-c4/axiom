@@ -142,7 +142,10 @@ fn validate_report(report: &PerformanceReport) -> Result<(), String> {
         return Err("workload shape does not match the pinned EC constants".to_owned());
     }
     if report.errors != 0 {
-        return Err(format!("measured workload reported {} errors", report.errors));
+        return Err(format!(
+            "measured workload reported {} errors",
+            report.errors
+        ));
     }
     if report.publish.ops != OPS || report.lease_ack.ops != OPS || report.acked_ops != OPS {
         return Err(format!(
@@ -150,7 +153,10 @@ fn validate_report(report: &PerformanceReport) -> Result<(), String> {
             report.publish.ops, report.lease_ack.ops, report.acked_ops
         ));
     }
-    for (name, phase) in [("publish", &report.publish), ("lease_ack", &report.lease_ack)] {
+    for (name, phase) in [
+        ("publish", &report.publish),
+        ("lease_ack", &report.lease_ack),
+    ] {
         if phase.samples < MIN_SAMPLES_PER_PHASE || phase.elapsed_us == 0 {
             return Err(format!(
                 "{name} has missing observations: samples={} elapsed_us={}",
@@ -208,18 +214,24 @@ fn passing_report() -> PerformanceReport {
 fn report_validation_rejects_zero_samples() {
     let mut report = passing_report();
     report.publish.samples = 0;
-    assert!(validate_report(&report).unwrap_err().contains("missing observations"));
+    assert!(validate_report(&report)
+        .unwrap_err()
+        .contains("missing observations"));
 }
 
 #[test]
 fn report_validation_rejects_incomplete_or_error_lifecycle() {
     let mut incomplete = passing_report();
     incomplete.acked_ops -= 1;
-    assert!(validate_report(&incomplete).unwrap_err().contains("incomplete lifecycle"));
+    assert!(validate_report(&incomplete)
+        .unwrap_err()
+        .contains("incomplete lifecycle"));
 
     let mut errored = passing_report();
     errored.errors = 1;
-    assert!(validate_report(&errored).unwrap_err().contains("reported 1 errors"));
+    assert!(validate_report(&errored)
+        .unwrap_err()
+        .contains("reported 1 errors"));
 }
 
 #[test]
@@ -295,5 +307,4 @@ fn measured_durable_lifecycle_gate() {
     );
 }
 
-<!-- marker: missing-generator:unit-test:c71dc69c path: apps/relay/tests/measured_performance.rs reason: Define a serde report for workload relay-durable-publish-lease-ack-v1; a report-only ignored child measures 2000 128-byte messages in 100-message batches on temporary FsyncPolicy Always storage, while the ignored parent parses the child stdout and requires both phases to have at least 20 samples, zero errors, complete counts, at least 500 messages per second, and batch p95 no greater than 500000 microseconds. -->
 // HANDWRITE-END
