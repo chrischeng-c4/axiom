@@ -65,3 +65,35 @@ changes:
     impl_mode: hand-written
     anchor: "tests"
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2154-verification
+requirements:
+  render_backup_cronjob:
+    id: R3
+    text: "Render a scheduled object-storage backup job/policy for production profiles."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test k8s_render
+  render_gpu_and_extras:
+    id: R2
+    text: "Render GPU resource requests/node placement plus standard probes, Service, PDB, security context, and auth-secret wiring."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test k8s_render
+  render_statefulset_pvc:
+    id: R1
+    text: "Define Beam's service-k8s data-plane renderer as a StatefulSet with stable identity and durable PVC-backed data directory."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test k8s_render
+---
+flowchart TD
+    r1[R1 render statefulset pvc] --> cargo_test_p_beam_test_k8s_render[cargo test -p beam --test k8s_render]
+    r2[R2 render gpu and extras] --> cargo_test_p_beam_test_k8s_render
+    r3[R3 render backup cronjob] --> cargo_test_p_beam_test_k8s_render
+```
