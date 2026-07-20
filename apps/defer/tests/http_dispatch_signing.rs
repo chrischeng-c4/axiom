@@ -99,7 +99,7 @@ fn oracle_accepts(
             )
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Independently recompute the length-delimited HMAC at the target and reject field/body tampering, wrong key identity, and wrong secrets across retry attempts.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#766" reason="Independently recompute the length-delimited HMAC at the target and reject field/body tampering, wrong key identity, and wrong secrets across retry attempts.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn target_oracle_verifies_exact_signature_and_rejects_tampering() {
     let received = Arc::new(Mutex::new(Vec::new()));
