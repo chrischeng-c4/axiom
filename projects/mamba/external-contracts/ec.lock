@@ -3,9 +3,9 @@ project = "mamba"
 ir_kind = "ec"
 ec_path = "projects/mamba/external-contracts"
 inventory_path = "projects/mamba/aw.toml"
-generated_at = "2026-07-20T06:46:40.215026+00:00"
-ir_digest = "sha256:efdd5e9070e4bcd61f35d51a627141fa348755d16de5bf67383976509f66bffc"
-source_digest = "sha256:1afecb439bf2be4cab29ab86dee1a61c23c9f727b3475a4fc7016b38fb94605a"
+generated_at = "2026-07-20T09:23:34.011830+00:00"
+ir_digest = "sha256:a174467443f7067740ce4c6683716fe35a222d86dbc3e22de3753bbf690f68f5"
+source_digest = "sha256:d3b88fdbb3a503b532120e02a012f4053d600a31d4cfca307af534b60aef8139"
 tool_contracts = []
 
 [[sources]]
@@ -77,6 +77,10 @@ path = "projects/mamba/external-contracts/object-model.md"
 digest = "sha256:a367810ec4ce5e3d9b1182df48c3f2e5b162abc957af61082bbffcbe7a720886"
 
 [[sources]]
+path = "projects/mamba/external-contracts/stability/build-globals-dict-key-leak-free.md"
+digest = "sha256:8ce869984e11eef03af785b7e11d036feb1df358103a50822a413c8103d68721"
+
+[[sources]]
 path = "projects/mamba/external-contracts/stability/mamba-t1-to-thread-gather-stability.md"
 digest = "sha256:0e3f27756a722fc7e4d8ecf8a77e90f118b8b4fbab4eb6f70743bb27f6fdebe8"
 
@@ -95,6 +99,26 @@ digest = "sha256:920955b215c125b178b66280861a4ea50427e488a90d13870fa5ec59208722e
 [[sources]]
 path = "projects/mamba/external-contracts/type-system.md"
 digest = "sha256:87e13f2a436505bf63e6ff3a89b1ecdb25388d39fe11c017a8184d7bd4cba88e"
+
+[[cases]]
+id = "build-globals-dict-key-leak-free"
+capability_id = "mamba-core-semantics"
+claim_id = "build-globals-dict-leaks-no-key-references"
+contract_id = "MAMBA-T1-BUILD-GLOBALS-DICT-KEY-LEAK-FREE"
+dimension = "stability"
+source_ref = "projects/mamba/external-contracts/stability/build-globals-dict-key-leak-free.md#build-globals-dict-key-leak-free"
+test_path = "projects/mamba/tests/external_contracts/ec_build_globals_dict_key_leak_free.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- build_globals_dict_key_leak_free --exact"
+required_for_production = true
+assertions = [
+    "Comparing two mamba runs that call globals() 100 times versus 50,000 times (42 exposed names per call: 20 id_ns values, 20 func_info functions, plus the __name__ and total module globals), peak process RSS for the 50,000-call run is no greater than the 100-call run's peak RSS plus 24 MiB; unreleased per-call key allocations would instead grow roughly linearly with call count.",
+    "Equal id_ns and func_info name counts (20 each) ensure a leak isolated to either loop alone still produces per-call growth far in excess of the 24 MiB slack, so the gate cannot pass by exercising only one of the two loops build_globals_dict populates.",
+    "Each run's script accumulates and prints the sum of len(globals()) across every call; the gate asserts this sum exactly equals iterations times the expected 42-key count, so a degenerate or empty build_globals_dict cannot pass vacuously by having nothing left to leak.",
+    "Peak RSS is sampled via the OS process resource-usage counter (wait4/getrusage-equivalent) on the real compiled mamba binary, not a runtime-internal self-reported counter.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5a10b8a4882b058edbd834c4d6dce66e417a99bf98aa71dce55f838e9899644f"
 
 [[cases]]
 id = "mamba-t1-to-thread-gather-efficiency"
