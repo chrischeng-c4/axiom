@@ -3760,7 +3760,7 @@ struct RhsNormalizationStats {
     skipped_impure: usize,
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// The v1 purity ladder for hoisting a non-identifier export RHS into a
 /// synthetic `var` binding (#2161): arrow functions, function expressions,
 /// and the same bare-literal shapes [`is_inlineable_literal_export_expr`]
