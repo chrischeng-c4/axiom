@@ -98,11 +98,6 @@ changes:
     section: logic
     impl_mode: hand-written
     description: Publish the v1 workload and fixed floor semantics plus the latest measured result after calibration.
-  - path: apps/relay/aw.toml
-    action: modify
-    section: e2e-test
-    impl_mode: codegen
-    description: Regenerate digest-bound EC inventory and claim bindings after independent acceptance.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
