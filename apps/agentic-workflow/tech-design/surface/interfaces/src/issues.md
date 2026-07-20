@@ -55,6 +55,10 @@ plan-review` rejects same-agent or stale evidence; accepted independent review
 publishes the candidates, while `needs_revision` publishes nothing. Human-only
 review is an explicit project policy rather than the default.
 
+Closed or missing doc-stored WI references are retained as advisory tracker
+reconciliation evidence, but they do not suppress a bounded replacement WI for
+an unverified capability claim.
+
 Registered rows carrying a retired `project:` label are canonicalized by their
 source path before `resolve_project_label` and `build_create_label_vec` emit the
 current `app:` or `lib:` identity. The suffix comes from the registered name,
@@ -5206,8 +5210,7 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
                 && (claim_has_bounded_wi
                     || matches
                         .iter()
-                        .any(|issue| issue.issue_type != IssueType::Epic)
-                    || has_active_wi_ref(row) && matches.is_empty())
+                        .any(|issue| issue.issue_type != IssueType::Epic))
         {
             continue;
         }
@@ -7635,7 +7638,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
         assert!(body.contains("## Tracker WI Ref Lookups"));
         assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
-        assert!(!body.contains("## Candidate WI Drafts"));
+        assert!(body.contains("## Candidate WI Drafts"));
         assert!(body.contains("Complete the digest-bound review payload"));
         assert!(body.contains("`aw goal capability --project jet --non-interactive`"));
     }
@@ -9030,5 +9033,7 @@ changes:
       independent agent review payload by default. `aw wi plan-review`
       validates policy, reviewer independence, checklist, findings, and exact
       digest before idempotently publishing bounded claim WIs; explicit human
-      policy remains blocking and `needs_revision` publishes nothing.
+      policy remains blocking and `needs_revision` publishes nothing. Stale
+      doc-stored WI refs remain advisory and cannot hide an unverified claim
+      from replacement planning.
 ```
