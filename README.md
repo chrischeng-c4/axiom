@@ -11,7 +11,7 @@ details.
 |---------|------------|
 | [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is a project-iteration CLI that lets coding agents ship bounded, verified work without a human steering every step. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
-| [vat](apps/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [vat](apps/vat/README.md) | `vat` is a headless local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |
 | [loom](apps/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
 | [preview](apps/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
@@ -19,17 +19,18 @@ details.
 | [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom stack. |
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
-| [sift](projects/sift/README.md) | Sift is the GCP/GKE-first operational event platform for structured logs, traces, errors, metrics, audit, and change events. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
+| [sift](projects/sift/README.md) | Sift is the GCP/GKE-first operational event platform in the Axiom stack. |
 | [lumen](apps/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
 | [relay](apps/relay/README.md) | `relay` is the online single-cast pull work-queue broker in the Axiom stack (RabbitMQ/SQS-shaped): a producer publishes a task, a worker pulls (leases) it, runs it, and acks — each message is delivered exactly once to one of the competing consumers, then reclaimed (delete-on-ack). |
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [pgpool](apps/pgpool/README.md) | `pgpool` is the working app id for Axiom's Kubernetes-native PostgreSQL connection pooler. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
+| [workbench](apps/workbench/README.md) | Describe the agent-readable purpose of Workbench. |
 <!-- aw:projects-table:end -->
 
 ## Shared Libraries
