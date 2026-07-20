@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-17T09:58:47.088335+00:00"
-digest = "sha256:3f665d5b2bd27bdae98a7188940a57d5733ad2db6a8470704574d65f513fc822"
-source_digest = "sha256:3f665d5b2bd27bdae98a7188940a57d5733ad2db6a8470704574d65f513fc822"
-ir_digest = "sha256:d36a312cd44b853ad45a9cfdc55e782170f9a0333c8e6caffdbd6b032019478f"
+generated_at = "2026-07-20T08:41:32.427566+00:00"
+digest = "sha256:6431a78c177f9729368c4cb049e2fded037e8e0eebf9695f07266e66bb01c918"
+source_digest = "sha256:6431a78c177f9729368c4cb049e2fded037e8e0eebf9695f07266e66bb01c918"
+ir_digest = "sha256:865fabb55e69c5d707025253e4e9660614739a4a734c466740d01593d546fce4"
 
 [[files]]
 path = "README.md"
@@ -24,3 +24,9 @@ path = "logic/beam-high-throughput-four-pillar-architecture.md"
 digest = "sha256:23631b81845716566788f24465e4396865bc4f4cff5789812ca5acfa41210cbf"
 ir_digest = "sha256:3c495efffa7a09192815a2e9055da3ca8ade0961bca9c42ea32282224436fb8d"
 section_count = 4
+
+[[files]]
+path = "semantic/correct-ddd-search-metric-and-candidate-identity-semantics.md"
+digest = "sha256:ceadd7438403946fb82adcf8ad0d9b609268c72f1cadb2efb3cb8d4072ea7bc3"
+ir_digest = "sha256:903d4e9d40767e8b0ff7be8dc8963f55889686cdf38f7d01e4ab8b881878b205"
+section_count = 3
