@@ -27,7 +27,6 @@ impl FileExt for File {
 /// Infrastructure Adapter implementing VectorRepository using Direct Offset file reading.
 pub struct IoUringVectorRepository {
     file: Arc<File>,
-    path: PathBuf,
     #[cfg(target_os = "linux")]
     linux_backend: LinuxIoUringBackend,
 }
@@ -130,7 +129,6 @@ impl IoUringVectorRepository {
 
         Ok(Self {
             file,
-            path,
             #[cfg(target_os = "linux")]
             linux_backend,
         })
