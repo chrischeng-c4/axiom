@@ -1,41 +1,27 @@
-[project]
-name = "relay"
-cap_path = "README.md"
-label = "app:relay"
-
-[capability.profile]
-traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "primary_replicas", "stateful_storage"]
-
-[ec.efficiency]
-tool = "meter"
-meter = "apps/relay"
-command = "cd apps/relay && ../../target/debug/vat run meter-perf"
-
-[ec.security]
-tool = "guard"
-dir = "apps/relay"
-command = "cd apps/relay && ../../target/debug/vat run guard-security"
-
-[[workspaces]]
-name = "relay"
-paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p relay"
-codegen.profile = "rust/score-crate"
-
-# AW-EC-BEGIN
-[aw.ec.generated]
 version = 1
 project = "relay"
-generated_from_td_digest = "sha256:ff27e0db5218f533b26ded035d00aa436fd2b1e7aa0d85bc833bad861a2e28f2"
+ir_kind = "ec"
+ec_path = "apps/relay/external-contracts"
+inventory_path = "apps/relay/aw.toml"
+generated_at = "2026-07-20T13:45:05.482207+00:00"
+ir_digest = "sha256:f2ebb1db53e7c4bf5153e2507a58f6473dd2c7c00d07db14dde4b14f60ac2746"
+source_digest = "sha256:8642270034d3f2fa978ecb3daddd5e65c88433be1daa907610674633333f49eb"
 
-[[aw.ec.generated.cases]]
+[[sources]]
+path = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md"
+digest = "sha256:c16b42b7f5d33ca08c03bceadfccfd17b99d0c95c1b78019c4b17c3961a6e68e"
+
+[[sources]]
+path = "apps/relay/external-contracts/security-hardening/security/security-evidence.md"
+digest = "sha256:59eb8dfb5bb0f1870d7e0b43c4dc87cafb3825a9cfd22b54f95f0af510e89417"
+
+[[cases]]
 id = "relay-competitor-performance-behavior"
 capability_id = "competitor-performance"
 claim_id = "normalized-win-ratchet-decision-model"
 contract_id = "relay-work-queue-performance-workload-behavior"
-category = "behavior"
-td_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-behavior"
+dimension = "behavior"
+source_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-behavior"
 test_path = "apps/relay/tests/behavior_relay_competitor_performance_behavior.rs"
 command = "bash apps/relay/scripts/ec-evidence.sh performance-behavior"
 required_for_production = true
@@ -44,14 +30,17 @@ assertions = [
     "The normalized decision model fails both a pinned-ratio regression and loss of a must-beat cell; this behavior case does not claim that its hard-coded inputs are measured performance.",
     "The outer oracle requires all eleven named behavior tests and a non-zero execution count in each test binary, so a renamed or removed test cannot pass as a zero-match Cargo filter.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:715382f2ff1a4d4da0434ada14d9c57e72c8e3b023cef20f49fb909c1ccf52fb"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-competitor-performance-bounded-soak"
 capability_id = "competitor-performance"
 claim_id = "normalized-win-ratchet-decision-model"
 contract_id = "relay-performance-workload-stability"
-category = "stability"
-td_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-bounded-soak"
+dimension = "stability"
+source_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-bounded-soak"
 test_path = "apps/relay/tests/stability_relay_competitor_performance_bounded_soak.rs"
 command = "RELAY_SOAK_AUTOSTART=1 bash apps/relay/scripts/soak.sh"
 required_for_production = true
@@ -59,14 +48,17 @@ assertions = [
     "The bounded fixed-state publish, lease, heartbeat, and inspect workload completes for 60 seconds with a non-zero operation count and zero HTTP or lifecycle errors.",
     "The second observation window stays within the pinned RSS, file-descriptor, thread/task, and p99 latency growth ceilings.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:dd44bf35a7806625b10e788b6bf8089db0e1e796a153bdfc1949c310d54db205"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-competitor-performance-measured-durable-lifecycle"
 capability_id = "competitor-performance"
 claim_id = "normalized-win-ratchet-decision-model"
 contract_id = "relay-measured-durable-lifecycle-envelope"
-category = "efficiency"
-td_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-measured-durable-lifecycle"
+dimension = "efficiency"
+source_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-measured-durable-lifecycle"
 test_path = "apps/relay/tests/efficiency_relay_competitor_performance_measured_durable_lifecycle.rs"
 command = "bash apps/relay/scripts/ec-evidence.sh performance-efficiency"
 required_for_production = true
@@ -77,14 +69,17 @@ assertions = [
     "A test-owned outer oracle first proves its own zero-test and missing-marker rejection, requires both ignored test names, then accepts only exactly one executed gate and exactly one relay_perf_gate report marker before Meter records the same release invocation.",
     "RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly results remain advisory calibration; this local envelope does not assert an external-broker win.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e4dac2370a0d1711a53dbad41e0bd7a336975f94afeaa764d22d047332c522d2"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-security-hardening-auth-and-admission-behavior"
 capability_id = "security-hardening"
 claim_id = "request-limit-and-malformed-frame-negative-tests"
 contract_id = "relay-auth-rbac-and-admission-behavior"
-category = "behavior"
-td_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-auth-and-admission-behavior"
+dimension = "behavior"
+source_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-auth-and-admission-behavior"
 test_path = "apps/relay/tests/behavior_relay_security_hardening_auth_and_admission_behavior.rs"
 command = "bash apps/relay/scripts/ec-evidence.sh security-behavior"
 required_for_production = true
@@ -94,14 +89,17 @@ assertions = [
     "A configured one-write admission budget allows the first publish, rejects the second with 429 and Retry-After: 60, and never rate-limits health probes.",
     "The outer oracle requires all eight auth and two admission test names and independently rejects either suite when its executed count is zero.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ae800cfd81b554cd6e25f1d4a643c7b82a17fe477ab738c47fb987020d5b1fa1"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-security-hardening-guard-scan"
 capability_id = "security-hardening"
 claim_id = "guard-static-runtime-evidence"
 contract_id = "relay-guard-security-report"
-category = "security"
-td_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan"
+dimension = "security"
+source_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan"
 test_path = "apps/relay/tests/security_relay_security_hardening_guard_scan.rs"
 command = "cd apps/relay && ../../target/debug/vat run guard-security"
 required_for_production = true
@@ -110,14 +108,17 @@ assertions = [
     "guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail.",
     "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2bcbc2a4887ec0f109fb296d925078cab1c31a6a99090f0c891330bd0c2e460d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-security-hardening-negative-peer-and-kubernetes-boundaries"
 capability_id = "security-hardening"
 claim_id = "network-policy-and-peer-mtls-termination"
 contract_id = "relay-untrusted-peer-and-restricted-workload-security"
-category = "security"
-td_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-negative-peer-and-kubernetes-boundaries"
+dimension = "security"
+source_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-negative-peer-and-kubernetes-boundaries"
 test_path = "apps/relay/tests/security_relay_security_hardening_negative_peer_and_kubernetes_boundaries.rs"
 command = "bash apps/relay/scripts/ec-evidence.sh security-boundaries"
 required_for_production = true
@@ -127,14 +128,17 @@ assertions = [
     "The direct StatefulSet is non-root with a read-only root filesystem and durable PVC; the production overlay projects credentials read-only, enables NetworkPolicy and observability components, and does not apply an unsafe voter HPA.",
     "The outer oracle requires both named peer-mTLS tests and both named Kubernetes tests and rejects a zero-test result from either binary.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6479462c14afe94b6cd125ba404fec770eec3f4854d39f203d2d6c2ef42e8577"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "relay-security-hardening-rotation-and-peer-stability"
 capability_id = "security-hardening"
 claim_id = "bearer-auth-token-registry"
 contract_id = "relay-security-last-known-good-stability"
-category = "stability"
-td_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-rotation-and-peer-stability"
+dimension = "stability"
+source_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-rotation-and-peer-stability"
 test_path = "apps/relay/tests/stability_relay_security_hardening_rotation_and_peer_stability.rs"
 command = "bash apps/relay/scripts/ec-evidence.sh security-stability"
 required_for_production = true
@@ -143,22 +147,26 @@ assertions = [
     "The trusted three-peer required-mTLS group remains able to elect, replicate, converge, and shut down after the negative certificate-rejection case is present.",
     "The outer oracle requires all five reload tests plus the exact Relay rotation and trusted-peer tests, and each focused invocation must execute at least one test.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3bd4db5af577977f7fbf68a4d652256c5b58e606e98bc0774adcd982f0441d76"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "relay-guard-security"
 tool = "guard"
-path = "apps/relay/guard-relay-security.toml"
-td_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-guard-security"
-content_digest = "sha256:5509ae8a1a6fa3408c9b083bca2a183d9a5e44c0049400eb79c05acbe03aac7d"
+dimension = "security"
+source_ref = "apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-guard-security"
+manifest_path = "apps/relay/guard-relay-security.toml"
 command = "cd apps/relay && ../../target/debug/vat run guard-security"
-category = "security"
+content_digest = "sha256:5509ae8a1a6fa3408c9b083bca2a183d9a5e44c0049400eb79c05acbe03aac7d"
+digest = "sha256:9643fb044f7077c7c9074aa2286b382b5ce04496ffc5f3ff16ca2f6278729b62"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "relay-meter-performance"
 tool = "meter"
-path = "apps/relay/meter-relay-performance.toml"
-td_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-meter-performance"
-content_digest = "sha256:30ccedbe3f8baaf10e8f8d3b016f2624c931c7537887cef2a448738baca7d9da"
+dimension = "efficiency"
+source_ref = "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-meter-performance"
+manifest_path = "apps/relay/meter-relay-performance.toml"
 command = "cd apps/relay && ../../target/debug/vat run meter-perf"
-category = "efficiency"
-# AW-EC-END
+content_digest = "sha256:30ccedbe3f8baaf10e8f8d3b016f2624c931c7537887cef2a448738baca7d9da"
+digest = "sha256:75e5883051ece384e9828c53825633b711aa2d331a5211f523625f3ea65dc475"

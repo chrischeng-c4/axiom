@@ -1,23 +1,24 @@
-// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan
+// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-negative-peer-and-kubernetes-boundaries
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec relay-security-hardening-guard-scan
+// @ec relay-security-hardening-negative-peer-and-kubernetes-boundaries
 // @capability security-hardening
-// @claim guard-static-runtime-evidence
-// @contract relay-guard-security-report
+// @claim network-policy-and-peer-mtls-termination
+// @contract relay-untrusted-peer-and-restricted-workload-security
 // @category security
 // @required_for_production true
-// @command cd apps/relay && ../../target/debug/vat run guard-security
+// @command bash apps/relay/scripts/ec-evidence.sh security-boundaries
 // AW-EC-END
 
-// Contract: guard scan over apps/relay reports no untriaged Docker, Kubernetes, or static security findings.
-// Contract: guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail.
-// Contract: The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.
+// Contract: A client that trusts Relay's legitimate server CA but presents an identity signed by an attacker CA is rejected by the required-mTLS server handshake before HTTP or Raft routing.
+// Contract: Peers signed by the trusted CA still elect, replicate, and converge over the authenticated listener.
+// Contract: The direct StatefulSet is non-root with a read-only root filesystem and durable PVC; the production overlay projects credentials read-only, enables NetworkPolicy and observability components, and does not apply an unsafe voter HPA.
+// Contract: The outer oracle requires both named peer-mTLS tests and both named Kubernetes tests and rejects a zero-test result from either binary.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn relay_security_hardening_guard_scan() {
-    let command = "cd apps/relay && ../../target/debug/vat run guard-security";
-    let id = "relay-security-hardening-guard-scan";
+fn relay_security_hardening_negative_peer_and_kubernetes_boundaries() {
+    let command = "bash apps/relay/scripts/ec-evidence.sh security-boundaries";
+    let id = "relay-security-hardening-negative-peer-and-kubernetes-boundaries";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

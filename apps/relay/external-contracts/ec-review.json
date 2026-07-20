@@ -1,23 +1,19 @@
 {
   "version": 1,
   "project": "relay",
-  "source_digest": "sha256:28ef246d3dc8e4207c511f932a48923fe1f8dff4b8ef4d0f93481c00c19c314a",
-  "decision": "needs_revision",
+  "source_digest": "sha256:ff27e0db5218f533b26ded035d00aa436fd2b1e7aa0d85bc833bad861a2e28f2",
+  "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:relay_ec_review",
-  "reviewed_at": "2026-07-20T10:11:51.192910+00:00",
-  "summary": "The revised contracts now cover the RuntimeTool and SecurityTool dimension ceilings with concrete, independent runtime and negative-security oracles. Current targeted executions are non-empty and pass, including the release durable-performance envelope and attacker-CA rejection. The remaining defect is structural false-green protection: Cargo and meter return success for zero matching tests, but the EC runners do not independently require a non-zero executed-test count, so the declared zero-suite fail-closed behavior is not enforced.",
+  "reviewed_at": "2026-07-20T13:44:30.787615+00:00",
+  "summary": "Accepted for this digest. Relay's RuntimeTool performance contract has concrete behavior, measured durable efficiency, and bounded-soak stability cases; its SecurityTool contract has behavior, security, and stability cases including attacker-CA rejection and restricted Kubernetes assertions. The test-owned outer oracle uses the same checked functions in self-test and production modes to reject zero execution, missing required names, and missing/duplicate performance markers. Direct modes and retained VAT vat-1qgwonds guard-security+meter-perf evidence were non-empty and clean, and no remaining semantic, oracle-independence, loophole, or false-green defect was found.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
     "assertions_specific": true,
     "oracle_independent": true,
-    "loopholes_checked": false,
-    "false_green_risk_checked": false
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
   },
-  "findings": [
-    "Performance EC cases `relay-competitor-performance-behavior` and `relay-competitor-performance-measured-durable-lifecycle` / claim `normalized-win-ratchet-decision-model` do not fail closed when their Cargo filters execute zero tests. The exact-filter efficiency command can return exit 0 after a rename or removed `#[test]`, in which case `measured_durable_lifecycle_gate` never performs its one-report/non-zero-sample assertions; `meter test` only forwards the child exit code and does not reject a zero-test summary. Revise `apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md` and its vat runner so an outer oracle requires the expected named tests and a non-zero execution count (for the efficiency gate, exactly one passed gate plus the `relay_perf_gate` report marker) before accepting the measurement.",
-    "Security EC cases `relay-security-hardening-auth-and-admission-behavior`, `relay-security-hardening-negative-peer-and-kubernetes-boundaries`, `relay-security-hardening-guard-scan`, and `relay-security-hardening-rotation-and-peer-stability` do not enforce their claimed zero-suite failure. Their Cargo/meter commands pass when existing test binaries contain zero matching tests, and Guard treats the meter evidence as clean from exit status alone. Revise `apps/relay/external-contracts/security-hardening/security/security-evidence.md` and `guard-security` runner to assert the required named auth, admission, attacker-CA, trusted-peer, Kubernetes, and reload tests are present and that each required suite executes a non-zero count before Guard can report clean."
-  ],
-  "target_path": "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md"
+  "findings": []
 }

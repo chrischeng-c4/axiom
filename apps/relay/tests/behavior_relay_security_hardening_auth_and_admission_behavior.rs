@@ -1,23 +1,24 @@
-// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan
+// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-auth-and-admission-behavior
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec relay-security-hardening-guard-scan
+// @ec relay-security-hardening-auth-and-admission-behavior
 // @capability security-hardening
-// @claim guard-static-runtime-evidence
-// @contract relay-guard-security-report
-// @category security
+// @claim request-limit-and-malformed-frame-negative-tests
+// @contract relay-auth-rbac-and-admission-behavior
+// @category behavior
 // @required_for_production true
-// @command cd apps/relay && ../../target/debug/vat run guard-security
+// @command bash apps/relay/scripts/ec-evidence.sh security-behavior
 // AW-EC-END
 
-// Contract: guard scan over apps/relay reports no untriaged Docker, Kubernetes, or static security findings.
-// Contract: guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail.
-// Contract: The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.
+// Contract: Required auth returns 401 for missing or unknown bearer tokens and 403 when a reader attempts publish or a subject-scoped reader crosses its grant; the streaming consume route enforces the same boundary.
+// Contract: Valid subject writers/readers and wildcard administrators retain their intended publish, lease, ack, heartbeat, and batch behavior, while health, readiness, metrics, OpenAPI, and docs remain tokenless.
+// Contract: A configured one-write admission budget allows the first publish, rejects the second with 429 and Retry-After: 60, and never rate-limits health probes.
+// Contract: The outer oracle requires all eight auth and two admission test names and independently rejects either suite when its executed count is zero.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn relay_security_hardening_guard_scan() {
-    let command = "cd apps/relay && ../../target/debug/vat run guard-security";
-    let id = "relay-security-hardening-guard-scan";
+fn relay_security_hardening_auth_and_admission_behavior() {
+    let command = "bash apps/relay/scripts/ec-evidence.sh security-behavior";
+    let id = "relay-security-hardening-auth-and-admission-behavior";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
