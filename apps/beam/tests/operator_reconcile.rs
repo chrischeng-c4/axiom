@@ -36,7 +36,7 @@ fn test_beam_operator_render() {
     assert_eq!(svc["spec"]["ports"][0]["port"], 7373);
     assert_eq!(svc["spec"]["selector"]["app"], "my-beam");
 
-    let dep = objs.iter().find(|o| o["kind"] == "Deployment").expect("Deployment missing");
+    let dep = objs.iter().find(|o| o["kind"] == "StatefulSet").expect("StatefulSet missing");
     assert_eq!(dep["metadata"]["name"], "my-beam");
     assert_eq!(dep["spec"]["replicas"], 1);
     assert_eq!(dep["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 45);
@@ -55,7 +55,7 @@ fn test_beam_operator_readiness_and_status() {
 
     let targets = beam.readiness_targets();
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].kind, "Deployment");
+    assert_eq!(targets[0].kind, "StatefulSet");
     assert_eq!(targets[0].name, "my-beam");
 
     let mut ready_map = HashMap::new();
