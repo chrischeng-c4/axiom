@@ -1,6 +1,13 @@
 ---
 id: '766'
-summary: (fill)
+summary: Close Defer's scheduled HTTP dispatch contract with committed fencing, stable idempotency, exact target signing, bounded retries and DLQ, generated EC wrappers, and measured fault-soak and efficiency gates.
+capability_refs:
+  - id: http-dispatch-and-retries
+    role: primary
+    gap: http-target-attempt-contract
+    claim: http-target-attempt-contract
+    coverage: full
+    rationale: "Defines and verifies the externally observable HTTP attempt, signing, retry, lost-fence, terminal-state, efficiency, and stability contract."
 fill_sections: [logic, changes, unit-test]
 ---
 
