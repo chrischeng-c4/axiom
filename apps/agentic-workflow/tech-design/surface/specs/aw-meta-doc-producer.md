@@ -61,6 +61,37 @@ scenarios:
     then:
       - "the same META_DOC_PRODUCERS registry writes all single-product META-docs"
       - "legacy projects-table, trait-table, and ownership-matrix blocks use the registry"
+  - id: S6
+    title: stale-binary reprojection never destroys newer projection content (#1912)
+    given:
+      - "the checkout contains its own copy of templates/cli/mainthread/CLAUDE.md.tmpl"
+    when:
+      - "aw meta init or aw meta sync renders the repo-claude or repo-agents block"
+    then:
+      - "the live checkout template copy is rendered, never the binary's embedded include_str! snapshot"
+      - "projection content already matching the checkout template is left byte-unchanged"
+  - id: S7
+    title: content-regression guard blocks a destructive stale-binary rewrite
+    given:
+      - "no live checkout template copy is available so rendering falls back to the embedded snapshot"
+      - "the installed binary is provably behind the checkout's declared source version"
+      - "the fallback render would delete existing projection lines"
+    when:
+      - "aw meta sync runs without --force-stale"
+    then:
+      - "the write is refused with a content_regression_blocked finding naming the rebuild/upgrade remediation"
+      - "the existing projection file is left byte-unchanged"
+      - "--force-stale overrides the guard and lets the rewrite proceed"
+  - id: S8
+    title: check distinguishes binary-stale drift from genuine drift (#1912 R4)
+    given:
+      - "the embedded template snapshot is stale relative to the checkout, or the binary is behind the checkout's declared source version"
+    when:
+      - "aw meta check finds a resulting projection mismatch"
+    then:
+      - "the output's binary_stale field names the checkout source version or checkout HEAD"
+      - "every finding's remediation names rebuild (cargo install) or aw upgrade, never aw meta sync"
+      - "next names cargo install --path apps/agentic-workflow instead of aw meta sync"
 ```
 
 ## Schema
@@ -78,11 +109,19 @@ properties:
   action:
     enum: [meta_init, meta_sync, meta_check]
   status:
-    enum: [initialized, synchronized, clean, drift]
+    enum: [initialized, synchronized, clean, drift, binary_stale]
   repository_root:
     type: string
   repository_is_product:
     type: boolean
+  binary_stale:
+    description: >-
+      #1912 R4: set to the checkout's declared source version (semver-behind
+      signal) or the literal "checkout HEAD" (content-precise signal — the
+      embedded CLAUDE template snapshot differs from the checkout's live
+      copy) when the installed binary is provably behind the checkout.
+      Absent when the binary is not stale.
+    type: string
   projects:
     type: array
     items: { type: string }
@@ -103,7 +142,7 @@ properties:
       required: [code, path, message, remediation]
       properties:
         code:
-          enum: [managed_block_missing, managed_block_stale, managed_block_malformed, meta_doc_missing, meta_doc_unreadable, meta_doc_repository_unreadable, meta_doc_section_missing, project_agent_doc_forbidden, root_capabilities_requires_product, unexpected_root_meta_doc]
+          enum: [managed_block_missing, managed_block_stale, managed_block_malformed, meta_doc_missing, meta_doc_unreadable, meta_doc_repository_unreadable, meta_doc_section_missing, project_agent_doc_forbidden, root_capabilities_requires_product, unexpected_root_meta_doc, content_regression_blocked]
         path: { type: string }
         message: { type: string }
         remediation: { type: string }
@@ -113,7 +152,9 @@ properties:
       - type: object
         required: [command]
         properties:
-          command: { type: string, pattern: '^aw meta (check|sync)' }
+          # #1912 R4: `binary_stale` findings emit a rebuild command instead
+          # of `aw meta sync`/`aw meta check`.
+          command: { type: string, pattern: '^(aw meta (check|sync)|cargo install --path apps/agentic-workflow)' }
   terminal:
     oneOf:
       - type: "null"
@@ -217,6 +258,24 @@ requirementDiagram
     risk: medium
     verifymethod: test
   }
+  requirement checkout_template_sourcing {
+    id: UT7
+    text: "repo-claude/repo-agents rendering prefers a live checkout template copy over the binary's embedded snapshot, and the 2026-07-17 destructive-reprojection shape survives byte-for-byte (#1912 R2/AC1)"
+    risk: high
+    verifymethod: test
+  }
+  requirement content_regression_guard {
+    id: UT8
+    text: "a fallback-embedded rewrite that would delete existing content while the binary is provably behind the checkout is refused unless --force-stale is set (#1912 R3)"
+    risk: high
+    verifymethod: test
+  }
+  requirement binary_stale_diagnosis {
+    id: UT9
+    text: "aw meta check names rebuild/upgrade remediation, not aw meta sync, when the embedded template snapshot is stale (#1912 R4/AC3)"
+    risk: high
+    verifymethod: test
+  }
 ```
 
 ## Changes
@@ -284,5 +343,27 @@ changes:
     section: scenarios
     impl_mode: hand-written
     description: Register issue 1498 and its verification evidence under the agent-first CLI capability.
+  - path: apps/agentic-workflow/src/cli/meta.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: |
+      Issue #1912: source repo-claude/repo-agents rendering from the live
+      checkout copy of CLAUDE.md.tmpl when present instead of the binary's
+      embedded include_str! snapshot (R2); add a content-regression guard
+      that refuses a fallback-embedded rewrite that would delete existing
+      content while the binary is provably behind the checkout, with a
+      --force-stale override (R3); and add a binary_stale output field so
+      aw meta check routes to rebuild/upgrade remediation instead of aw meta
+      sync when the embedded snapshot itself is the source of drift (R4).
+  - path: apps/agentic-workflow/src/cli/drift.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+    description: |
+      Issue #1912 R1/R4: confirm meta.sync/meta.init are already classified
+      mutating in the #1417 skew gate (regression test), and add a
+      read-only binary_behind_checkout_source_version accessor reused by
+      aw meta check's stale-binary diagnosis.
 ```
 <!-- HANDWRITE-END -->
