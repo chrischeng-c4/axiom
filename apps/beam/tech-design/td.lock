@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T09:51:13.533958+00:00"
-digest = "sha256:cacc854c1cdcd753052f1d79b13936c30a4c10c50e2e0752a7eafc932c0d1f8b"
-source_digest = "sha256:cacc854c1cdcd753052f1d79b13936c30a4c10c50e2e0752a7eafc932c0d1f8b"
-ir_digest = "sha256:a12c40738d8c3c281978ddd075bdfa5c238ec52b222887981ed5211ee4634ff9"
+generated_at = "2026-07-20T09:51:23.166602+00:00"
+digest = "sha256:6fad9ce8c06531be0100d0f143cf8a6d18c81ba0500d84bc5e3477cd556f99ea"
+source_digest = "sha256:6fad9ce8c06531be0100d0f143cf8a6d18c81ba0500d84bc5e3477cd556f99ea"
+ir_digest = "sha256:4254bac0684e0166c8ccd521697c2c6831e56aa49c9460054a99a7f6d3aa58a5"
 
 [[files]]
 path = "README.md"
@@ -27,8 +27,8 @@ section_count = 4
 
 [[files]]
 path = "logic/converge-retired-paths-and-broken-evidence-references.md"
-digest = "sha256:091dd5eb9a4810a7d442fb365cc7bf35e4ab76a396187e6c52fa2c332847a639"
-ir_digest = "sha256:9d430d05886e9cd1535b236080dcfa93568deb7ac0e0772c1f97c775080495fe"
+digest = "sha256:dc3e9fe31df45a30d7de499d309180122ed5b45a6f199dd9887f0fdb33757bd8"
+ir_digest = "sha256:696bf7e80fd0ba97db22bc85a8c616355d0d6f12ce3201b66eb5b9a260e5a61a"
 section_count = 3
 
 [[files]]
