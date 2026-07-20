@@ -1,6 +1,30 @@
 ---
 id: '1841'
-summary: (fill)
+summary: >
+  Two or more asyncio.to_thread calls awaited via asyncio.gather could
+  silently lose a result slot (returning None instead of the worker's real
+  value) due to a TOCTOU race in the suspend/resume handshake between
+  to_thread_future_body and mb_await/await_asyncio_future: a live re-poll of
+  the awaited Future's state, instead of trusting the suspend_requested flag
+  recorded at suspend time, could desync the coroutine onto
+  mb_coroutine_step's fresh-start resume path instead of
+  mb_coroutine_send's resume-value path, so mb_coroutine_take_resume_value
+  defaulted to None. This TD confirms the root cause via code trace plus
+  empirical stress verification (100-round/8-worker stability soak, 5-round
+  behavior parity against a real CPython 3.12 control run, and a >=1.5x
+  multicore efficiency gate, all passing on current HEAD), documents the
+  already-landed fix (6e6524aa6: mb_coroutine_is_suspended reads the suspend
+  flag directly, plus a mb_coroutine_complete defense-in-depth guard), and
+  adds a follow-up hardening change closing a related mb_gather bookkeeping
+  leak (gathered coroutines'/tasks' registry entries were never
+  tombstoned), closing WI #1841.
+capability_refs:
+  - id: "mamba-core-semantics"
+    role: primary
+    gap: "parallel-to-thread-gather-preserves-every-result"
+    claim: "parallel-to-thread-gather-preserves-every-result"
+    coverage: partial
+    rationale: "Pins WI #1841's root-cause confirmation and fix design under mamba-core-semantics' Always-Free-Threaded work root 'Parallel to_thread gather preserves every result': every concurrently completed to_thread result now reaches its asyncio.gather slot exactly once, in order, verified via MAMBA-T1-FT-GATHER-RESULTS/-STABILITY/-EFFICIENCY."
 fill_sections: [logic, changes, unit-test]
 ---
 
