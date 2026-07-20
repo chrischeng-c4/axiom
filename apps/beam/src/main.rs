@@ -231,7 +231,7 @@ struct BenchArgs {
     persist: Option<String>,
 }
 
-// <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="#2149" reason="logic section in main.rs is hand-written pending codegen support">
 /// `beam serve` flags.
 #[derive(Args)]
 pub struct ServeArgs {
