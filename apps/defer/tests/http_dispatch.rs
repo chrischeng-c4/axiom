@@ -89,6 +89,7 @@ async fn ambiguous_target(
     StatusCode::NO_CONTENT
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the real target oracle for exact per-task method, header, body, retry identity, stable idempotency, and terminal success.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -195,6 +196,7 @@ async fn dispatches_real_http_and_retries_with_stable_task_idempotency() {
 
     target_server.abort();
 }
+// </HANDWRITE>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn accepted_http_with_lost_fence_is_retried_with_the_stable_key() {
