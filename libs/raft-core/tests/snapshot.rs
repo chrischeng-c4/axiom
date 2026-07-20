@@ -177,6 +177,7 @@ fn persisted_state_round_trips_the_snapshot() {
 
     let ps = c.nodes[&0].persisted();
     assert_eq!(ps.snapshot_index, 8);
+    assert_eq!(ps.commit_index, 10);
     assert!(!ps.snapshot.is_empty());
     assert_eq!(ps.log.len(), 2);
 

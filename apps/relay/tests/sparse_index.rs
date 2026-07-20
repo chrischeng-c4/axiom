@@ -11,11 +11,12 @@ use chrono::Utc;
 use relay::{Log, RelayCoreConfig};
 
 fn cfg(dir: &std::path::Path, segment_bytes: u64) -> RelayCoreConfig {
-    let mut c = RelayCoreConfig::default();
-    c.data_dir = dir.to_string_lossy().into_owned();
-    c.segment_bytes = segment_bytes;
-    c.ram_ring_entries = 2; // force disk-backed (sparse-indexed) reads
-    c
+    RelayCoreConfig {
+        data_dir: dir.to_string_lossy().into_owned(),
+        segment_bytes,
+        ram_ring_entries: 2, // force disk-backed (sparse-indexed) reads
+        ..RelayCoreConfig::default()
+    }
 }
 
 fn append(log: &mut Log, i: usize) {

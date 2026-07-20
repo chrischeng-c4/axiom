@@ -82,7 +82,6 @@ fn idempotent_dedupe() {
     assert_eq!(r.log_len("s").unwrap(), 1);
 }
 
-
 // case: competing — each message is leased to exactly one consumer.
 #[test]
 fn workqueue_single_delivery() {

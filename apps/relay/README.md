@@ -42,22 +42,22 @@ remain first-class domain roots.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| CLI Interface | 1204 | implemented | passing | conformance | not_ready | mandatory baseline: single `relay` bin — serve default plus spec/backup/k8s/dockerfile verbs and served OpenAPI |
-| CLI Standard Surface | 1204 | implemented | passing | conformance | not_ready | mandatory baseline: shared `cli-std` llm/upgrade/issue surface with build-stamp provenance |
-| Chainable Output Conformance | - | implemented | planned | smoke | not_ready | mandatory baseline: raw artifact streams stay unwrapped; `next:`/terminal markers on write/backup outputs remain open |
-| Competitive Broker Feature Parity | - | implemented | planned | dogfood | not_ready | mandatory baseline: RabbitMQ/NATS JetStream/Redis Streams work-queue replacement breadth; kind failover remains open |
-| Competitive Broker Performance | 125 | implemented | planned | dogfood | not_ready | mandatory baseline: vat-isolated meter throughput ratchet; external broker arena is advisory |
-| Long-Running Stability | - | implemented | passing | dogfood | not_ready | mandatory baseline: recovery, retention, lease reclaim, graceful drain, backup, and raft restart/failover |
-| Security Hardening | 1206 | implemented | passing | negative | not_ready | mandatory baseline: RELAY_AUTH bearer contract + tokenless probes + peer-TLS config shipped; negative/network-policy gates remain open |
-| HTTP/2 API List | 108 | implemented | passing | conformance | not_ready | mandatory baseline: concise h2c producer, worker, probe, and OpenAPI route list with an offline spec twin |
-| Standard Operational Endpoints | 1205 | implemented | passing | conformance | not_ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `relay spec` |
-| EC Gates Configured | 125 | implemented | passing | conformance | not_ready | mandatory baseline: aw.toml EC inventory, vat meter/guard runners, and external-contracts evidence stay wired |
-| Kubernetes-Native Deployment | 1208 | implemented | planned | dogfood | not_ready | mandatory baseline: RelaySpec CRD/operator/instance render, auto-mode StatefulSet topology, and kind failover smoke |
-| Primary Replicas | 1207 | implemented | planned | dogfood | not_ready | mandatory baseline: raft-runtime auto-mode leader/follower primary-replica topology |
-| Durable Ordered Log | - | implemented | passing | conformance | not_ready | domain: per-subject append, dedupe, and segment lifecycle |
-| Work Queue Lifecycle | - | implemented | passing | conformance | not_ready | domain: lease, heartbeat, ack, redelivery, and reconciler behavior |
-| HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | not_ready | domain: polyglot h2c worker contract |
-| Raft HA | 1207 | implemented | planned | dogfood | not_ready | domain: raft-runtime RelayStateMachine, auto-mode topology, applied-index floor, and kind failover |
+| CLI Interface | 1204 | implemented | passing | conformance | ready | single `relay` bin — serve default plus spec/backup/k8s/dockerfile verbs and served OpenAPI |
+| CLI Standard Surface | 1204 | implemented | passing | conformance | ready | shared `cli-std` llm/upgrade/issue surface with build-stamp provenance |
+| Chainable Output Conformance | - | implemented | passing | conformance | ready | raw artifact streams stay unwrapped and terminal write/backup/render paths use executable `next:` or explicit done markers |
+| Competitive Broker Feature Parity | - | implemented | verified | dogfood | ready | RabbitMQ/NATS JetStream/Redis Streams work-queue replacement breadth plus real three-voter Kind failover |
+| Competitive Broker Performance | 125 | implemented | passing | dogfood | ready | repeatable local lifecycle throughput gate and real-service comparison harness; claims remain workload-scoped |
+| Long-Running Stability | - | implemented | verified | dogfood | ready | recovery, bounded retention, lease reclaim, graceful drain, backup, two-cycle failover, and fixed-state 60-second error/RSS/FD/thread/p99 soak |
+| Security Hardening | 1206 | implemented | passing | conformance | ready | audited live-rotation bearer RBAC, admission limits, real peer mTLS, restricted K8s pods, Secret projection, and NetworkPolicy |
+| HTTP/2 API List | 108 | implemented | passing | conformance | ready | concise HTTP/1.1+h2c producer, bidi consumer, compatibility worker, probe, metrics, OpenAPI, and offline spec surfaces |
+| Standard Operational Endpoints | 1205 | implemented | passing | conformance | ready | one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` plus offline `relay spec` |
+| EC Gates Configured | 125 | implemented | passing | conformance | ready | aw.toml EC inventory, vat meter/guard runners, and external-contracts evidence stay wired |
+| Kubernetes-Native Deployment | 1208 | implemented | verified | dogfood | ready | layered Kustomize base/overlays/components, CRD/operator/instance, PDB/PVC/NetworkPolicy/observability, and Kind leader-failover proof |
+| Primary Replicas | 1207 | implemented | verified | dogfood | ready | every lifecycle mutation is Raft committed with node/epoch fencing, durable restart recovery, snapshots, and leader failover |
+| Durable Ordered Log | - | implemented | passing | conformance | ready | domain: per-subject append/batch append, dedupe, retention, sparse index, and segment lifecycle |
+| Work Queue Lifecycle | - | implemented | passing | conformance | ready | domain: committed lease/batch lease, heartbeat, ack/batch ack, redelivery, reconcile, and node/epoch fencing |
+| HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | ready | domain: polyglot h2c worker contract with preferred bidirectional consume and compatibility lease/ack routes |
+| Raft HA | 1207 | implemented | verified | dogfood | ready | RelayStateMachine, committed full lease lifecycle, auto-mode topology, applied-index floor, real mTLS, and Kind failover |
 
 ### CLI Interface
 
@@ -122,7 +122,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | raw-artifact-streams-stay-unwrapped | epic | 1208 | implemented | passing | conformance | apps/relay/tests/deploy_cli.rs; apps/relay/tests/spec_cli.rs |
 | shared-issue-upgrade-terminal-markers | epic | 1204 | implemented | passing | smoke | libs/cli-std/src |
-| next-markers-on-write-and-backup-outputs | epic | - | planned | planned | smoke | apps/relay/src/bin/relay.rs (write_or_print prints `wrote <path>` without a `next:` continuation) |
+| next-markers-on-write-and-backup-outputs | epic | - | implemented | passing | conformance | CLI contract tests cover artifact, backup, and terminal output paths |
 
 ### Competitive Broker Feature Parity
 
@@ -150,7 +150,7 @@ Gate Inventory:
 | in-process-raft-convergence | epic | - | implemented | passing | conformance | apps/relay/tests/raft_core.rs |
 | durable-raft-hard-state-restore | epic | - | implemented | passing | conformance | apps/relay/tests/raft_persistence.rs |
 | real-h2c-raft-cluster-smoke | epic | - | implemented | passing | dogfood | apps/relay/tests/raft_cluster.rs |
-| kubernetes-kind-failover-smoke | epic | - | implemented | planned | dogfood | apps/relay/scripts/kind-failover-smoke.sh; apps/relay/k8s |
+| kubernetes-kind-failover-smoke | epic | - | implemented | verified | dogfood | apps/relay/scripts/kind-failover-smoke.sh; apps/relay/k8s |
 
 ### Competitive Broker Performance
 
@@ -173,15 +173,15 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | o-1-lease-cursor-throughput | epic | - | implemented | passing | conformance | apps/relay/tests/work_queue_throughput.rs |
 | normalized-win-ratchet-decision-model | epic | 125 | implemented | passing | conformance | apps/relay/tests/perf_gate.rs |
-| vat-meter-throughput-gate | epic | 125 | implemented | planned | dogfood | apps/relay/vat.toml#meter-perf |
-| external-broker-comparison | epic | 125 | implemented | planned | dogfood | apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
+| vat-meter-throughput-gate | epic | 125 | implemented | passing | dogfood | `cd apps/relay && ../../target/debug/vat run meter-perf` (2026-07-17, exit 0); apps/relay/vat.toml#meter-perf |
+| external-broker-comparison | epic | 125 | implemented | passing | dogfood | 2026-07-17 real Relay/RabbitMQ/NATS bulk lifecycle calibration; apps/relay/docs/perf-gate.md; apps/relay/examples/bench_compare.rs; apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml |
 
 ### Long-Running Stability
 
 ID: long-running-stability
 Type: RuntimeTool
 Surfaces: CLI: `relay` - durable serve process with reconciler, graceful drain, and auto-mode failover.; K8s: `apps/relay/k8s` - StatefulSet-oriented raft deployment.; CLI: `relay backup` - consistent snapshot capture from a running node.
-EC Dimensions: stability: `cargo test -p relay --test durable --test segments --test reconciler --test raft_persistence --test raft_cluster` - recovery, retention, lease reclaim, and failover conformance
+EC Dimensions: stability: `cargo test -p relay --test durable --test segments --test reconciler --test raft_persistence --test raft_cluster` - recovery, retention, lease reclaim, and repeated failover conformance; dogfood: `RELAY_SOAK_AUTOSTART=1 bash apps/relay/scripts/soak.sh` - bounded error, RSS, FD, thread/task, and p99 plateaus
 Root WI: -
 Status: auditing
 Required Verification: conformance, dogfood
@@ -189,8 +189,14 @@ Promise:
 Run as a long-lived broker without losing committed entries, leaking stuck
 leases forever, or corrupting recovery state across restarts, segment rotation,
 graceful drains, and leader failover — with a backup/restore path for the rest.
+The 2026-07-17 default 60-second run completed 5,622 fixed-state operations
+with zero errors, RSS 14,352 -> 14,352 KiB, FD 14 -> 14, threads 11 -> 11,
+and inspect p99 1 -> 1 ms. The cluster gate recovers the first stopped node
+from its durable engine/Raft state before committing through a second leader
+loss.
 Gate Inventory:
 - apps/relay/tests/durable.rs; apps/relay/tests/segments.rs; apps/relay/tests/reconciler.rs; apps/relay/tests/raft_persistence.rs; apps/relay/tests/raft_cluster.rs; apps/relay/tests/backup.rs
+- apps/relay/scripts/soak.sh; libs/service-observability/scripts/soak-metrics.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -206,7 +212,7 @@ Gate Inventory:
 
 ID: security-hardening
 Type: RuntimeTool
-Surfaces: HTTP: `Authorization: Bearer` on the /v1 data plane - `RELAY_AUTH=off|required` + `RELAY_TOKEN_REGISTRY_FILE` role registry; probes stay tokenless.; Env: `RELAY_PEER_TLS_CERT|KEY|CA`, `RELAY_PEER_MTLS` - peer mTLS material validated fail-fast at startup.; Guard/Vat: `apps/relay/vat.toml#guard-security` - isolated guard scan with meter runtime evidence.; K8s: `apps/relay/k8s` - deployment boundary for future network policy and identity.
+Surfaces: HTTP: queue-scoped bearer RBAC with audited live registry rotation and bounded admission; peers: dedicated reloadable mTLS listener; K8s: read-only Secret projection, restricted pods, PDB and ingress NetworkPolicy.
 EC Dimensions: security: `cd apps/relay && ../../target/debug/vat run guard-security` - guard-owned static/runtime evidence for the in-process opaque payload boundary; behavior: `cargo test -p relay --test auth` - bearer authn/z conformance and the tokenless probe boundary
 Root WI: 1206
 Status: auditing
@@ -224,9 +230,9 @@ Gate Inventory:
 | opaque-payload-boundary | epic | - | implemented | passing | smoke | apps/relay/tests/relay_core.rs; apps/relay/tests/worker_loop.rs |
 | bearer-auth-token-registry | epic | 1206 | implemented | passing | conformance | apps/relay/tests/auth.rs; apps/relay/src/auth.rs |
 | peer-tls-material-validation | epic | 1209 | implemented | passing | conformance | apps/relay/src/peer_tls.rs; apps/relay/HA.md |
-| guard-static-runtime-evidence | epic | - | implemented | planned | negative | apps/relay/vat.toml#guard-security |
-| request-limit-and-malformed-frame-negative-tests | epic | - | planned | planned | negative | apps/relay/vat.toml#guard-security |
-| network-policy-and-peer-mtls-termination | epic | - | planned | planned | negative | pending raft-runtime TLS seam (peer RPCs stay cleartext h2c; see apps/relay/HA.md) |
+| guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && ../../target/debug/vat run guard-security` (2026-07-17, exit 0); apps/relay/vat.toml#guard-security |
+| request-limit-and-malformed-frame-negative-tests | epic | - | implemented | passing | negative | apps/relay/tests/service_admission.rs plus HTTP/auth/consume negative coverage |
+| network-policy-and-peer-mtls-termination | epic | - | implemented | passing | conformance | apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs |
 
 ### HTTP/2 API List
 
@@ -315,11 +321,11 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| statefulset-raft-service-topology | epic | - | implemented | planned | dogfood | apps/relay/k8s |
+| statefulset-raft-service-topology | epic | - | implemented | verified | dogfood | apps/relay/k8s; direct Kustomize and operator tests |
 | auto-mode-node-topology-config | epic | 1207 | implemented | passing | conformance | apps/relay/tests/raft_config.rs |
 | relayspec-crd-operator-instance-render | epic | 1208 | implemented | passing | conformance | apps/relay/tests/deploy_cli.rs; apps/relay/tests/operator.rs |
 | dockerfile-render-fixtures | epic | 1208 | implemented | passing | conformance | apps/relay/tests/deploy_cli.rs; apps/relay/Dockerfile |
-| kubernetes-kind-failover-smoke | epic | - | implemented | planned | dogfood | apps/relay/scripts/kind-failover-smoke.sh |
+| kubernetes-kind-failover-smoke | epic | - | implemented | verified | dogfood | apps/relay/scripts/kind-failover-smoke.sh |
 
 ### Primary Replicas
 
@@ -427,4 +433,4 @@ Gate Inventory:
 | in-process-raft-convergence | epic | - | implemented | passing | conformance | apps/relay/tests/raft_core.rs |
 | durable-raft-hard-state-restore | epic | - | implemented | passing | conformance | apps/relay/tests/raft_persistence.rs |
 | real-h2c-raft-cluster-smoke | epic | - | implemented | passing | dogfood | apps/relay/tests/raft_cluster.rs |
-| kubernetes-kind-failover-smoke | epic | - | implemented | planned | dogfood | apps/relay/scripts/kind-failover-smoke.sh; apps/relay/k8s |
+| kubernetes-kind-failover-smoke | epic | - | implemented | verified | dogfood | apps/relay/scripts/kind-failover-smoke.sh; apps/relay/k8s |

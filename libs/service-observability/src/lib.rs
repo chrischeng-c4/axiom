@@ -3,12 +3,15 @@
 //!
 //! This crate owns configuration, stable identity, structured logging,
 //! optional OTLP export, metric-provider semantics, and lifecycle connection
-//! counters. Protocol adapters such as HTTP remain in their protocol crates.
+//! counters. It also exposes safe, portable process-resource samples for
+//! service evidence. Protocol adapters such as HTTP remain in their protocol
+//! crates.
 
 pub mod config;
 pub mod jsonl;
 pub mod logging;
 pub mod metrics;
+pub mod process;
 
 pub use config::{LogFormat, ObservabilityConfig, ServiceIdentity};
 pub use jsonl::{
@@ -22,4 +25,5 @@ pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
 pub use metrics::{LifecycleMetrics, MetricsProvider};
+pub use process::{process_usage, ProcessUsage};
 // HANDWRITE-END

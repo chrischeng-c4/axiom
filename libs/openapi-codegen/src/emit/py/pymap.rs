@@ -54,10 +54,7 @@ fn base_expr(schema: &Schema, tm: &TypeMap) -> String {
 
     let types = schema.type_names();
     if types.len() > 1 {
-        let members = types
-            .iter()
-            .map(|t| scalar(t, schema))
-            .collect::<Vec<_>>();
+        let members = types.iter().map(|t| scalar(t, schema)).collect::<Vec<_>>();
         return union_expr(members);
     }
 
@@ -135,10 +132,7 @@ fn enum_literal(schema: &Schema) -> String {
 }
 
 fn union(items: &[RefOr<Schema>], tm: &TypeMap) -> String {
-    let members = items
-        .iter()
-        .map(|i| type_expr(i, tm))
-        .collect::<Vec<_>>();
+    let members = items.iter().map(|i| type_expr(i, tm)).collect::<Vec<_>>();
     union_expr(members)
 }
 

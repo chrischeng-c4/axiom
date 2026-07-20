@@ -10,7 +10,7 @@
 //! The daemon stays the single arbiter: callers register here as clients, they
 //! do **not** embed throttling logic of their own.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use crate::client::Client;
 use crate::protocol::{AcquireRequest, KillEnvelope, Request, Response};
@@ -113,7 +113,7 @@ pub async fn managed_run(
 /// Forward SIGINT/SIGTERM/SIGHUP to the child's process group so an
 /// interactive Ctrl-C still reaches it despite the process-group remap.
 fn spawn_signal_forwarder(child_pid: i32) -> tokio::task::JoinHandle<()> {
-    use tokio::signal::unix::{SignalKind, signal};
+    use tokio::signal::unix::{signal, SignalKind};
     tokio::spawn(async move {
         let (mut sigint, mut sigterm, mut sighup) = match (
             signal(SignalKind::interrupt()),

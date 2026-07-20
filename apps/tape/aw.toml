@@ -82,12 +82,12 @@ contract_id = "topic-replay-performance-local-and-nats-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-competitor-performance-claim-closure"
 test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_closure.rs"
-command = "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+command = "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture"
 required_for_production = true
 assertions = [
     "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.",
     "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
-    "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
+    "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -98,12 +98,12 @@ contract_id = "topic-replay-kafka-local-backlog-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
 test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
-command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
+command = "cargo test --release -p tape --test tape_vs_kafka -- --nocapture"
 required_for_production = true
 assertions = [
     "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.",
     "Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.",
-    "Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).",
+    "Tape's real h2c replay-stream latency is at least 1.5x faster than Kafka for the symmetric local backlog workload.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -130,12 +130,13 @@ contract_id = "topic-replay-nats-jetstream-local-backlog-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-nats-jetstream-replay-win"
 test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs"
-command = "cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+command = "cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture"
 required_for_production = true
 assertions = [
     "The test starts a real local nats-server with JetStream enabled.",
     "Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning.",
-    "Tape's zero-copy full-replay latency is at least 1.5x faster than NATS JetStream for the local backlog replay workload.",
+    "Tape's real h2c replay-stream latency is at least 1.5x faster than NATS JetStream for the symmetric local backlog workload.",
+    "The five-sample report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.",
 ]
 
 [[aw.ec.generated.cases]]

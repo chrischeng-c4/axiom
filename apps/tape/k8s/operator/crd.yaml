@@ -77,7 +77,7 @@ spec:
                 minimum: 0.0
               storage:
                 default: 10Gi
-                description: Per-pod journal (+ raft hard state + applied-index marker) PVC size. Defaults to `10Gi`.
+                description: Per-pod journal plus shared Raft hard-state/log/snapshot PVC size. Defaults to `10Gi`.
                 type: string
               storageClass:
                 description: PVC StorageClass for the journal disk. Unset means the cluster default.

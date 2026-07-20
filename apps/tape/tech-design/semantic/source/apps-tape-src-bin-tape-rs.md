@@ -25,7 +25,7 @@ capability_refs:
     claim: "topic-subscription-resource-contract"
     gap: "topic-subscription-resource-contract"
     coverage: partial
-    rationale: "The binary creates and inspects local pull/push topic delivery resources."
+    rationale: "The binary creates and inspects local pull-only topic delivery resources."
 fill_sections: [overview, logic, unit-test, changes]
 ---
 
@@ -57,10 +57,9 @@ flowchart TD
     cli["tape CLI"] --> append["append: load store -> append event -> save -> print next replay"]
     cli --> replay["replay: load store -> print events -> next: done"]
     cli --> checkpoint["checkpoint get|put: read or advance durable cursor"]
-    cli --> subscription["subscription create|list|show|delete: persist topic delivery metadata"]
-    subscription --> pull["--pull uses the subscription name as the existing checkpoint identity"]
-    subscription --> push["--push stores endpoint metadata only; no delivery worker"]
-    subscription --> pull["pull --limit reads a bounded checkpoint window; ack advances it explicitly"]
+    cli --> subscription["subscription create|list|show|delete: persist named pull cursor metadata"]
+    subscription --> pull_identity["create uses the subscription name as the existing checkpoint identity; no mode flag"]
+    pull_identity --> pull_window["pull --limit reads a bounded checkpoint window; ack advances it explicitly"]
     cli --> spec["spec: print routes/openapi/schema"]
     cli --> std["llm/upgrade/issue: delegate to cli-std"]
 ```
@@ -78,7 +77,7 @@ flowchart TD
     test --> subscriptiontest["subscription_cli_surface and subscription_resource_roundtrip"]
     help --> surface["standard and Tape-specific commands visible"]
     roundtrip --> workflow["local file-backed workflow passes"]
-    subscriptiontest --> subscriptionproof["pull/push resource forms and next markers are stable"]
+    subscriptiontest --> subscriptionproof["pull-only resources and next markers are stable; push flags are rejected"]
     test --> pullack["pull_subscription_cli_roundtrip proves pull then explicit ack"]
 ```
 
@@ -101,7 +100,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add subscription create/list/show/delete with mutually exclusive pull/push configuration and file-backed journal persistence (#1254)."
+    description: "Add pull-only subscription create/list/show/delete with file-backed journal persistence and no delivery-mode flags (#1254)."
   - path: apps/tape/src/bin/tape.rs
     action: modify
     section: logic

@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#logic
-// HANDWRITE-BEGIN gap="missing-generator:logic:a53592d8" tracker="pending-tracker" reason="TapeCommand::Append { topic, key, payload, timestamp_ms } / TapeCommand::CheckpointPut { topic, consumer, offset, updated_at_ms } (the replicated commands, both time fields resolved by the caller before proposing so every replica computes the identical value); TapeOutcome::{Appended(TapeEvent), Checkpoint(Result<ConsumerCheckpoint, TapeError>)} (local-only, claimed from an OutcomeWindow, never serialized over the wire); TapeStateMachine (apply = lock the shared Arc<Mutex<TapeJournal>> and call the unchanged journal.append / journal.put_checkpoint_at, stash the outcome, persist the fsynced applied-<node>.idx marker; snapshot/restore = whole-journal serde_json tagged with the applied index; applied_index recovered from the marker at construction); TapeRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, propose_append/propose_checkpoint = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors, host_config(snapshot_every))."
+// HANDWRITE-BEGIN gap="missing-generator:logic:a53592d8" tracker="pending-tracker" reason="Tape's deterministic Raft commands/outcomes, whole-journal snapshots, shared RaftStore recovery, proposal dedupe, and single-group wrapper remain service-owned domain integration."
 //! raft-runtime-backed consensus for tape (#1327).
 //!
 //! `apps/tape`'s journal is wired as a [`raft_runtime::RaftStateMachine`] so HA
@@ -14,33 +14,31 @@
 //! (`replay` / `checkpoint_get`) stay node-local against the same shared
 //! journal the state machine mutates.
 //!
-//! Restart honesty: the host cold-replays resident committed entries into the
-//! state machine. tape's journal is pure-append (no delete-on-ack), so a naive
-//! replay of an `Append` is merely wasteful, not lossy or duplicating (offsets
-//! are assigned by journal length at apply time, and the marker below
-//! prevents replaying an already-applied entry at all) -- but a naive replay
-//! of a `CheckpointPut` could re-run an already-applied checkpoint against a
-//! journal whose end offset changed, corrupting the stale/beyond-end
-//! invariants. [`TapeStateMachine`] therefore persists its applied index to a
-//! small fsynced marker file in the raft data dir (relay #1207's proven
-//! recipe, not keep's derive-at-recovery) and skips entries at or below the
-//! recovered floor.
+//! Restart honesty: `RaftStore` persists the commit watermark with hard state,
+//! so the host cold-replays every resident committed entry into a fresh state
+//! machine before accepting new proposals. Host snapshots restore the whole
+//! journal before log tailing. Old `applied-*.idx`/`snapshot-*.json` files are
+//! read only as a migration path; new runs do not duplicate generic commit
+//! persistence or per-apply fsyncs inside Tape.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::Router;
 use raft_runtime::{
     ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow,
-    PeerTransport, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
+    PeerTransport, ProposalCache, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use storage_durable::atomic_write;
 
-use crate::{ConsumerCheckpoint, TapeError, TapeEvent, TapeJournal};
+use crate::{
+    ConsumerCheckpoint, RetentionOutcome, RetentionPolicy, Subscription, SubscriptionAckError,
+    SubscriptionError, TapeError, TapeEvent, TapeJournal,
+};
 
 /// How many applied entries between host snapshots (log compaction; arms
 /// InstallSnapshot for a lagging/fresh replica).
@@ -58,6 +56,8 @@ pub enum TapeCommand {
         key: Option<String>,
         payload: serde_json::Value,
         timestamp_ms: u64,
+        #[serde(default)]
+        applied_at_ms: u64,
     },
     CheckpointPut {
         topic: String,
@@ -65,15 +65,51 @@ pub enum TapeCommand {
         offset: u64,
         updated_at_ms: u64,
     },
+    SubscriptionCreate {
+        topic: String,
+        name: String,
+    },
+    SubscriptionDelete {
+        topic: String,
+        name: String,
+    },
+    SubscriptionAck {
+        topic: String,
+        name: String,
+        offset: u64,
+        updated_at_ms: u64,
+    },
+    RetentionPut {
+        topic: String,
+        policy: RetentionPolicy,
+        now_ms: u64,
+    },
 }
 
 /// The local-only apply outcome, claimed from an [`OutcomeWindow`] by the
 /// proposing handler. Never serialized over the wire -- only [`TapeCommand`]
 /// crosses the raft log.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TapeOutcome {
     Appended(TapeEvent),
     Checkpoint(Result<ConsumerCheckpoint, TapeError>),
+    SubscriptionCreated(Result<Subscription, SubscriptionError>),
+    SubscriptionDeleted(Result<Subscription, SubscriptionError>),
+    SubscriptionAcked(Result<ConsumerCheckpoint, SubscriptionAckError>),
+    RetentionUpdated(RetentionOutcome),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ProposalId {
+    node: NodeId,
+    session: u64,
+    sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TapeEnvelope {
+    proposal_id: ProposalId,
+    command: TapeCommand,
 }
 
 /// Whole-journal snapshot tagged with the raft applied index. A full-state
@@ -83,6 +119,8 @@ pub enum TapeOutcome {
 pub(crate) struct JournalSnapshot {
     up_to: Index,
     journal: TapeJournal,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    completed_proposals: Vec<(ProposalId, TapeOutcome)>,
 }
 
 /// Serialize the SAME whole-journal [`JournalSnapshot`] shape
@@ -92,7 +130,11 @@ pub(crate) struct JournalSnapshot {
 /// runner ships are the exact bytes a raft group would snapshot.
 pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result<Vec<u8>> {
     let journal = journal.lock().expect("journal mutex poisoned").clone();
-    Ok(serde_json::to_vec(&JournalSnapshot { up_to, journal })?)
+    Ok(serde_json::to_vec(&JournalSnapshot {
+        up_to,
+        journal,
+        completed_proposals: Vec::new(),
+    })?)
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1812" reason="Tape delegates the generic marker and snapshot atomic-write mechanics to storage-durable while retaining JournalSnapshot serialization and recovery ordering.">
@@ -124,22 +166,14 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
     }
 
     let raft_dir = data_dir.join("raft");
-    std::fs::create_dir(&raft_dir)
-        .with_context(|| format!("create bootstrap raft dir {}", raft_dir.display()))?;
-    let marker = raft_dir.join(format!("applied-{node_id}.idx"));
-    let snapshot_path = snapshot_path_for(&marker);
-    let snapshot_bytes =
-        serde_json::to_vec(&snapshot).context("encode bootstrap JournalSnapshot")?;
-
-    // Publish the snapshot before its floor marker. A crash after the first
-    // rename is still safe: TapeStateMachine::new sees the snapshot and its
-    // own `up_to`; it must never see a marker that claims an absent snapshot.
-    atomic_write(&snapshot_path, &snapshot_bytes, FsyncPolicy::Always)?;
-    atomic_write(
-        &marker,
-        snapshot.up_to.to_string().as_bytes(),
+    let store = RaftStore::open(
+        raft_dir
+            .to_str()
+            .context("raft data dir is not valid UTF-8")?,
+        node_id,
         FsyncPolicy::Always,
     )?;
+    store.seed_snapshot(snapshot.up_to, 0, bytes.to_vec())?;
     Ok(())
 }
 // </HANDWRITE>
@@ -151,28 +185,16 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
 /// append-ordering, retention, and stale-checkpoint semantics are unchanged --
 /// and stashes the outcome in an [`OutcomeWindow`] keyed by raft index so the
 /// proposing handler can return the real domain result (read-your-write). The
-/// applied index is mirrored to a fsynced marker file: the restart floor.
-///
-/// Restart durability (beyond the floor): unlike relay's engine, which
-/// persists directly to its OWN disk segments independent of raft, tape's
-/// journal here is purely in-memory -- the raft log resident on disk is not
-/// itself replayed once an entry is at/below the recovered floor (that is the
-/// whole point of the floor: it stops double-apply). So the floor alone would
-/// silently lose journal content across a real process restart. To close
-/// that gap without waiting on raft-runtime's own (peer-to-peer-only)
-/// InstallSnapshot plumbing, [`Self::persist_marker`] also writes a
-/// full-journal snapshot file (`snapshot-<node>.json`, sibling to the
-/// marker), and [`Self::new`] restores it before recovering the floor -- a
-/// restart therefore recovers the SAME journal content the previous run had,
-/// not just its raft bookkeeping.
+/// applied index is tracked in memory while shared Raft persistence owns new
+/// restart recovery. The optional marker/sibling snapshot fields below exist
+/// solely to adopt data produced by the pre-shared-persistence implementation.
 pub struct TapeStateMachine {
     journal: Arc<Mutex<TapeJournal>>,
     applied: AtomicU64,
-    /// `applied-<node>.idx` in the raft data dir; `None` = floor is in-memory
-    /// only (embedded/test single-process use) and no snapshot is persisted
-    /// either.
+    /// Legacy `applied-<node>.idx` migration source. New runs do not write it.
     marker: Option<PathBuf>,
     outcomes: Mutex<OutcomeWindow<TapeOutcome>>,
+    completed: Mutex<ProposalCache<ProposalId, TapeOutcome>>,
 }
 
 /// The sibling snapshot file path for a given marker path
@@ -191,14 +213,12 @@ fn snapshot_path_for(marker: &Path) -> PathBuf {
 }
 
 impl TapeStateMachine {
-    /// Wrap `journal` as the group's state machine. When `marker` is set,
-    /// recovers a previous run's full journal content from the sibling
-    /// snapshot file (if one was persisted) and, either way, the applied
-    /// floor from the marker file itself (a snapshot always implies its own
-    /// `up_to` floor, so this is really "prefer the snapshot's floor, fall
-    /// back to the bare marker when no snapshot exists yet").
+    /// Wrap `journal` as the group's state machine. `marker` names only the
+    /// legacy migration files; current RaftStore log/snapshot recovery is the
+    /// durable source for new data.
     pub fn new(journal: Arc<Mutex<TapeJournal>>, marker: Option<PathBuf>) -> Result<Arc<Self>> {
         let mut applied = 0u64;
+        let mut recovered_completed = Vec::new();
         if let Some(path) = &marker {
             let snap_path = snapshot_path_for(path);
             match std::fs::read(&snap_path) {
@@ -209,20 +229,28 @@ impl TapeStateMachine {
                         })?;
                     *journal.lock().expect("journal mutex poisoned") = snap.journal;
                     applied = snap.up_to;
+                    // Installed below after `Self` is constructed.
+                    recovered_completed = snap.completed_proposals;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e).context("read journal snapshot"),
             }
-            // The marker floor wins if it is ahead of the snapshot's `up_to`
-            // (e.g. a snapshot write failed on a later apply than the last
-            // successful one) -- never regress the floor.
+            // The journal snapshot is authoritative. A marker without the
+            // matching state must never advance the apply floor or committed
+            // events would disappear after restart.
             match std::fs::read_to_string(path) {
                 Ok(s) => {
                     let marker_floor = s
                         .trim()
                         .parse::<u64>()
                         .with_context(|| format!("corrupt applied marker {}", path.display()))?;
-                    applied = applied.max(marker_floor);
+                    if marker_floor != applied {
+                        tracing::warn!(
+                            marker_floor,
+                            snapshot_floor = applied,
+                            "raft: applied marker disagrees with journal snapshot; replaying from snapshot floor"
+                        );
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e).context("read applied marker"),
@@ -233,45 +261,25 @@ impl TapeStateMachine {
             applied: AtomicU64::new(applied),
             marker,
             outcomes: Mutex::new(OutcomeWindow::default()),
+            completed: Mutex::new({
+                let mut cache = ProposalCache::default();
+                cache.restore(recovered_completed);
+                cache
+            }),
         }))
-    }
-
-    /// Durably record the applied floor AND the full journal snapshot
-    /// (atomic temp-write + fsync + rename, same recipe for both files).
-    /// Best-effort: a persist failure degrades to at-least-once replay /
-    /// stale-content recovery on the next restart (logged), it never stalls
-    /// the apply loop.
-    ///
-    /// Writing the whole journal on every apply is a deliberate
-    /// correctness-first tradeoff for this slice (proving no committed event
-    /// loss matters more than write amplification here); throttling this to
-    /// every `SNAPSHOT_EVERY` applies, mirroring raft-runtime's own log
-    /// compaction cadence, is a reasonable follow-up once tape's journals are
-    /// large enough for it to matter.
-    fn persist_marker(&self, index: Index) {
-        let Some(path) = &self.marker else { return };
-        if let Err(e) = atomic_write(path, index.to_string().as_bytes(), FsyncPolicy::Always) {
-            tracing::warn!(index, error = %e, "raft: applied-marker persist failed (floor stale-low; entries at/below it may re-apply on restart)");
-        }
-
-        let snap_path = snapshot_path_for(path);
-        let write_snapshot = || -> Result<()> {
-            let journal = self.journal.lock().expect("journal mutex poisoned").clone();
-            let bytes = serde_json::to_vec(&JournalSnapshot {
-                up_to: index,
-                journal,
-            })?;
-            atomic_write(&snap_path, &bytes, FsyncPolicy::Always)
-        };
-        if let Err(e) = write_snapshot() {
-            tracing::warn!(index, error = %e, "raft: journal-snapshot persist failed (restart may recover stale journal content)");
-        }
     }
 
     /// Remove and return the apply outcome at `index` (the proposing handler
     /// claims it once; unclaimed outcomes age out).
     pub fn claim_outcome(&self, index: Index) -> Option<TapeOutcome> {
         self.outcomes.lock().expect("outcome window").claim(index)
+    }
+
+    /// Resolve a committed proposal by its stable id. Unlike the transient
+    /// index window, this cache survives ambiguous transport retries and is
+    /// snapshotted with the state machine.
+    fn proposal_outcome(&self, id: &ProposalId) -> Option<TapeOutcome> {
+        self.completed.lock().expect("completed proposals").get(id)
     }
 
     /// The journal this state machine applies into.
@@ -282,45 +290,120 @@ impl TapeStateMachine {
 
 impl RaftStateMachine for TapeStateMachine {
     fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
-        // Restart floor: entries at or below the recovered marker were
-        // already applied by a previous run -- skip them so cold-replay never
-        // double-applies an append or re-runs a checkpoint out of order.
+        // Legacy migration floor: entries represented by an imported app
+        // snapshot were already applied. New stores start at zero and replay
+        // their shared persisted commit range normally.
         if index <= self.applied.load(Ordering::Acquire) && self.marker.is_some() {
             return Ok(());
         }
-        match serde_json::from_slice::<TapeCommand>(command) {
-            Ok(TapeCommand::Append {
-                topic,
-                key,
-                payload,
-                timestamp_ms,
-            }) => {
+        let (proposal_id, decoded) = match serde_json::from_slice::<TapeEnvelope>(command) {
+            Ok(envelope) => (Some(envelope.proposal_id), Ok(envelope.command)),
+            Err(envelope_error) => (
+                None,
+                serde_json::from_slice::<TapeCommand>(command).map_err(|_| envelope_error),
+            ),
+        };
+        let cached = proposal_id
+            .as_ref()
+            .and_then(|id| self.completed.lock().expect("completed proposals").get(id));
+        let outcome = match (cached, decoded) {
+            (Some(outcome), _) => Some(outcome),
+            (
+                None,
+                Ok(TapeCommand::Append {
+                    topic,
+                    key,
+                    payload,
+                    timestamp_ms,
+                    applied_at_ms,
+                }),
+            ) => {
                 let mut journal = self.journal.lock().expect("journal mutex poisoned");
-                let event = journal.append(topic, key, payload, Some(timestamp_ms));
-                drop(journal);
-                let mut w = self.outcomes.lock().expect("outcome window");
-                w.insert(index, TapeOutcome::Appended(event));
-                w.advance(index);
+                let applied_at_ms = if applied_at_ms == 0 {
+                    timestamp_ms
+                } else {
+                    applied_at_ms
+                };
+                let event = journal.append_at(topic, key, payload, timestamp_ms, applied_at_ms);
+                Some(TapeOutcome::Appended(event))
             }
-            Ok(TapeCommand::CheckpointPut {
-                topic,
-                consumer,
-                offset,
-                updated_at_ms,
-            }) => {
+            (
+                None,
+                Ok(TapeCommand::CheckpointPut {
+                    topic,
+                    consumer,
+                    offset,
+                    updated_at_ms,
+                }),
+            ) => {
                 let mut journal = self.journal.lock().expect("journal mutex poisoned");
                 let result = journal.put_checkpoint_at(topic, consumer, offset, updated_at_ms);
-                drop(journal);
-                let mut w = self.outcomes.lock().expect("outcome window");
-                w.insert(index, TapeOutcome::Checkpoint(result));
-                w.advance(index);
+                Some(TapeOutcome::Checkpoint(result))
             }
-            Err(e) => {
-                tracing::warn!(index, error = %e, "raft: undecodable command (entry no-ops)")
+            (None, Ok(TapeCommand::SubscriptionCreate { topic, name })) => {
+                let mut journal = self.journal.lock().expect("journal mutex poisoned");
+                Some(TapeOutcome::SubscriptionCreated(
+                    journal.create_subscription(topic, name),
+                ))
             }
+            (None, Ok(TapeCommand::SubscriptionDelete { topic, name })) => {
+                let mut journal = self.journal.lock().expect("journal mutex poisoned");
+                Some(TapeOutcome::SubscriptionDeleted(
+                    journal.delete_subscription(&topic, &name),
+                ))
+            }
+            (
+                None,
+                Ok(TapeCommand::SubscriptionAck {
+                    topic,
+                    name,
+                    offset,
+                    updated_at_ms,
+                }),
+            ) => {
+                let mut journal = self.journal.lock().expect("journal mutex poisoned");
+                let valid = journal
+                    .require_pull_subscription(&topic, &name)
+                    .map(|_| ())
+                    .map_err(SubscriptionAckError::from);
+                let result = match valid {
+                    Ok(()) => journal
+                        .put_checkpoint_at(topic, name, offset, updated_at_ms)
+                        .map_err(SubscriptionAckError::from),
+                    Err(error) => Err(error),
+                };
+                Some(TapeOutcome::SubscriptionAcked(result))
+            }
+            (
+                None,
+                Ok(TapeCommand::RetentionPut {
+                    topic,
+                    policy,
+                    now_ms,
+                }),
+            ) => {
+                let mut journal = self.journal.lock().expect("journal mutex poisoned");
+                Some(TapeOutcome::RetentionUpdated(
+                    journal.put_retention(topic, policy, now_ms),
+                ))
+            }
+            (None, Err(e)) => {
+                tracing::warn!(index, error = %e, "raft: undecodable command (entry no-ops)");
+                None
+            }
+        };
+        if let Some(outcome) = outcome {
+            if let Some(id) = proposal_id {
+                self.completed
+                    .lock()
+                    .expect("completed proposals")
+                    .insert(id, outcome.clone());
+            }
+            let mut window = self.outcomes.lock().expect("outcome window");
+            window.insert(index, outcome);
+            window.advance(index);
         }
         self.applied.store(index, Ordering::Release);
-        self.persist_marker(index);
         Ok(())
     }
 
@@ -329,14 +412,22 @@ impl RaftStateMachine for TapeStateMachine {
         Ok(serde_json::to_vec(&JournalSnapshot {
             up_to: self.applied_index(),
             journal,
+            completed_proposals: self
+                .completed
+                .lock()
+                .expect("completed proposals")
+                .snapshot(),
         })?)
     }
 
     fn restore(&self, snapshot: &[u8]) -> Result<()> {
         let snap: JournalSnapshot = serde_json::from_slice(snapshot)?;
         *self.journal.lock().expect("journal mutex poisoned") = snap.journal;
+        self.completed
+            .lock()
+            .expect("completed proposals")
+            .restore(snap.completed_proposals);
         self.applied.store(snap.up_to, Ordering::Release);
-        self.persist_marker(snap.up_to);
         Ok(())
     }
 
@@ -350,12 +441,15 @@ impl RaftStateMachine for TapeStateMachine {
 pub struct TapeRaft {
     host: RaftHost,
     sm: Arc<TapeStateMachine>,
+    node_id: NodeId,
+    session: u64,
+    proposal_sequence: AtomicU64,
 }
 
 // <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="#1805" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
 impl TapeRaft {
-    /// Spawn the group for node `node_id`, persisting raft hard state + the
-    /// applied marker under `raft_dir` (created if needed). `peers` maps the
+    /// Spawn the group for node `node_id`, persisting shared Raft hard state,
+    /// commit watermark, log, and snapshots under `raft_dir`. `peers` maps the
     /// other members to base URLs (empty => single-node).
     pub fn spawn(
         journal: Arc<Mutex<TapeJournal>>,
@@ -428,7 +522,21 @@ impl TapeRaft {
                 cfg,
             ),
         };
-        Ok(TapeRaft { host, sm })
+        static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let session = wall
+            ^ ((std::process::id() as u64) << 32)
+            ^ NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+        Ok(TapeRaft {
+            host,
+            sm,
+            node_id,
+            session,
+            proposal_sequence: AtomicU64::new(1),
+        })
     }
 
     /// Spawn from a k8s-derived [`ClusterTopology`] (the auto-mode serve
@@ -479,6 +587,12 @@ impl TapeRaft {
         }
     }
 
+    /// Drain the shared Raft host's in-flight peer RPCs before its h2 client
+    /// and peer listener are torn down.
+    pub async fn shutdown(&self) -> Result<()> {
+        self.host.shutdown().await
+    }
+
     /// Peer raft RPCs + leader forwarding + `/raftz`. The h2c compatibility
     /// path merges this onto the public app; mTLS serves it independently.
     pub fn router(&self) -> Router {
@@ -500,9 +614,14 @@ impl TapeRaft {
             key,
             payload,
             timestamp_ms,
+            applied_at_ms: crate::now_ms(),
         };
-        let index = self.host.propose(serde_json::to_vec(&cmd)?).await?;
-        Ok((index, self.sm.claim_outcome(index)))
+        let (index, proposal_id) = self.propose(cmd).await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
     }
 
     /// Propose a checkpoint-put and claim the outcome once THIS node applied
@@ -520,8 +639,98 @@ impl TapeRaft {
             offset,
             updated_at_ms,
         };
-        let index = self.host.propose(serde_json::to_vec(&cmd)?).await?;
-        Ok((index, self.sm.claim_outcome(index)))
+        let (index, proposal_id) = self.propose(cmd).await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
+    }
+
+    pub async fn propose_subscription_create(
+        &self,
+        topic: String,
+        name: String,
+    ) -> Result<(Index, Option<TapeOutcome>)> {
+        let (index, proposal_id) = self
+            .propose(TapeCommand::SubscriptionCreate { topic, name })
+            .await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
+    }
+
+    pub async fn propose_subscription_delete(
+        &self,
+        topic: String,
+        name: String,
+    ) -> Result<(Index, Option<TapeOutcome>)> {
+        let (index, proposal_id) = self
+            .propose(TapeCommand::SubscriptionDelete { topic, name })
+            .await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
+    }
+
+    pub async fn propose_subscription_ack(
+        &self,
+        topic: String,
+        name: String,
+        offset: u64,
+        updated_at_ms: u64,
+    ) -> Result<(Index, Option<TapeOutcome>)> {
+        let (index, proposal_id) = self
+            .propose(TapeCommand::SubscriptionAck {
+                topic,
+                name,
+                offset,
+                updated_at_ms,
+            })
+            .await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
+    }
+
+    pub async fn propose_retention(
+        &self,
+        topic: String,
+        policy: RetentionPolicy,
+        now_ms: u64,
+    ) -> Result<(Index, Option<TapeOutcome>)> {
+        let (index, proposal_id) = self
+            .propose(TapeCommand::RetentionPut {
+                topic,
+                policy,
+                now_ms,
+            })
+            .await?;
+        let outcome = self
+            .sm
+            .proposal_outcome(&proposal_id)
+            .or_else(|| self.sm.claim_outcome(index));
+        Ok((index, outcome))
+    }
+
+    async fn propose(&self, command: TapeCommand) -> Result<(Index, ProposalId)> {
+        let envelope = TapeEnvelope {
+            proposal_id: ProposalId {
+                node: self.node_id,
+                session: self.session,
+                sequence: self.proposal_sequence.fetch_add(1, Ordering::Relaxed),
+            },
+            command,
+        };
+        let proposal_id = envelope.proposal_id.clone();
+        let index = self.host.propose(serde_json::to_vec(&envelope)?).await?;
+        Ok((index, proposal_id))
     }
 
     pub async fn is_leader(&self) -> bool {
@@ -535,6 +744,12 @@ impl TapeRaft {
     /// Highest raft index this node's journal has applied.
     pub fn applied_index(&self) -> Index {
         self.sm.applied_index()
+    }
+
+    /// Capture the exact state-machine snapshot, including the bounded
+    /// proposal-outcome cache needed for ambiguous retry idempotency.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>> {
+        self.sm.snapshot()
     }
 
     /// The journal this group replicates into.
@@ -560,6 +775,7 @@ mod tests {
             key: None,
             payload: serde_json::json!({"n": 1}),
             timestamp_ms: 100,
+            applied_at_ms: 100,
         };
         sm.apply(1, &serde_json::to_vec(&cmd).unwrap()).unwrap();
         assert_eq!(sm.applied_index(), 1);
@@ -613,27 +829,23 @@ mod tests {
     }
 
     #[test]
-    fn applied_floor_recovered_from_marker_skips_stale_replay() {
+    fn legacy_snapshot_floor_is_still_read_during_migration() {
         let dir = std::env::temp_dir().join(format!("tape-sm-marker-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("applied-0.idx");
-
-        {
-            let sm = TapeStateMachine::new(journal(), Some(marker.clone())).unwrap();
-            let cmd = TapeCommand::Append {
-                topic: "orders".into(),
-                key: None,
-                payload: serde_json::json!({"n": 1}),
-                timestamp_ms: 100,
-            };
-            sm.apply(1, &serde_json::to_vec(&cmd).unwrap()).unwrap();
-            assert_eq!(sm.applied_index(), 1);
-        }
-
-        // Fresh state machine over a fresh (empty) journal recovers BOTH the
-        // floor AND the actual journal content from the sibling snapshot file
-        // persist_marker wrote alongside the marker -- a real restart must
-        // not lose committed content, only avoid double-applying it.
+        let legacy = journal();
+        legacy
+            .lock()
+            .unwrap()
+            .append("orders", None, serde_json::json!({"n": 1}), Some(100));
+        let bytes = serde_json::to_vec(&JournalSnapshot {
+            up_to: 1,
+            journal: legacy.lock().unwrap().clone(),
+            completed_proposals: Vec::new(),
+        })
+        .unwrap();
+        std::fs::write(snapshot_path_for(&marker), bytes).unwrap();
+        std::fs::write(&marker, b"1").unwrap();
         let sm2 = TapeStateMachine::new(journal(), Some(marker.clone())).unwrap();
         assert_eq!(sm2.applied_index(), 1);
         assert_eq!(sm2.journal().lock().unwrap().end_offset("orders"), 1);
@@ -643,6 +855,7 @@ mod tests {
             key: None,
             payload: serde_json::json!({"n": 1}),
             timestamp_ms: 100,
+            applied_at_ms: 100,
         };
         sm2.apply(1, &serde_json::to_vec(&cmd).unwrap()).unwrap();
         // Skipped: re-applying the same (already-recovered) index does not

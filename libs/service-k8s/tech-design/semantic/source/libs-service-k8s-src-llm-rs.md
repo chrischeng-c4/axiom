@@ -60,6 +60,17 @@ StatefulSet-style serving fleets, headless/client Services, PodDisruptionBudget,
 CronJob backup runners, and PVC resize helpers. It does not decide service CRD
 field names or lifecycle policy on its own.
 
+## Stateful capacity axes
+Storage and compute scale independently. `plan_shard_split` plans one new
+physical shard when the busiest shard is strictly above 1 GiB by default.
+`plan_replica_layer` uses CPU and memory utilization to plan a complete
+replica-per-shard layer, never a partial StatefulSet pod total.
+
+Both functions are decisions, not actuators. A service must finish its
+domain-safe routing-map cutover and data movement before applying a shard-count
+change, and must finish the Raft membership transition before applying a
+replica-layer change.
+
 ## Reconcile contract
 The controller applies the currently rendered children and reports readiness.
 It is not a garbage collector for every prior child shape a service ever
@@ -81,6 +92,9 @@ mod tests {
         assert_eq!(topic.id, "operator");
         assert!(topic.body.contains("ManagedService"));
         assert!(topic.body.contains("server-side apply"));
+        assert!(topic.body.contains("strictly above 1 GiB"));
+        assert!(topic.body.contains("CPU and memory"));
+        assert!(topic.body.contains("Raft membership transition"));
     }
 }
 ````

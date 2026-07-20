@@ -3500,7 +3500,11 @@ pub fn lower_module_repl(
     lowerer.lower(module);
     if lowerer.errors.is_empty() {
         for (&sym_id, (name, ty)) in prev_syms {
-            lowerer.result.sym_names.entry(sym_id).or_insert_with(|| name.clone());
+            lowerer
+                .result
+                .sym_names
+                .entry(sym_id)
+                .or_insert_with(|| name.clone());
             lowerer.result.sym_types.entry(sym_id).or_insert(*ty);
         }
         // Merge local_names into result.sym_names instead of overwriting.
@@ -4128,10 +4132,7 @@ impl<'a> AstLowerer<'a> {
                             .declaration_symbol(stmt)
                             .expect("function declarations must be preregistered")
                     });
-                    let declaration_sym = self
-                        .checker
-                        .declaration_symbol(stmt)
-                        .unwrap_or(bind_sym);
+                    let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or(bind_sym);
                     let repeated = self.active_runtime_rebound_names.contains(name);
                     // PEP 695 desugaring now places `T = __mb_pep695_typevar__`
                     // after the `def`, but the resolver still sees that later
@@ -4222,14 +4223,7 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     } else {
-                        self.lower_fn(
-                            declaration_sym,
-                            name,
-                            params,
-                            return_ty,
-                            body,
-                            stmt.span,
-                        )
+                        self.lower_fn(declaration_sym, name, params, return_ty, body, stmt.span)
                     };
                     let mut declared_sig = func_sig_meta(self, params, return_ty, &param_info);
                     self.active_type_params = saved_tps;
@@ -4347,16 +4341,10 @@ impl<'a> AstLowerer<'a> {
                             .declaration_symbol(stmt)
                             .expect("function declarations must be preregistered")
                     });
-                    let declaration_sym = self
-                        .checker
-                        .declaration_symbol(stmt)
-                        .unwrap_or(bind_sym);
+                    let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or(bind_sym);
                     let repeated = self.active_runtime_rebound_names.contains(name);
-                    self.module_del_stmt_names.extend(
-                        type_params
-                            .iter()
-                            .map(|param| param.name.clone()),
-                    );
+                    self.module_del_stmt_names
+                        .extend(type_params.iter().map(|param| param.name.clone()));
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
                     self.func_param_info
@@ -4395,14 +4383,7 @@ impl<'a> AstLowerer<'a> {
                             stmt.span,
                         )
                     } else {
-                        self.lower_fn(
-                            declaration_sym,
-                            name,
-                            params,
-                            return_ty,
-                            body,
-                            stmt.span,
-                        )
+                        self.lower_fn(declaration_sym, name, params, return_ty, body, stmt.span)
                     };
                     let mut declared_sig = func_sig_meta(self, params, return_ty, &param_info);
                     self.active_type_params = saved_tps;
@@ -4511,10 +4492,7 @@ impl<'a> AstLowerer<'a> {
                             .declaration_symbol(stmt)
                             .expect("class declarations must be preregistered")
                     });
-                    let declaration_sym = self
-                        .checker
-                        .declaration_symbol(stmt)
-                        .unwrap_or(bind_sym);
+                    let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or(bind_sym);
                     self.collect_class_stmt(
                         name,
                         declaration_sym,
@@ -5848,8 +5826,7 @@ impl<'a> AstLowerer<'a> {
                         .entry(mname.to_string())
                         .or_insert_with(|| self.local_names.get(mname.as_str()).copied());
                     self.local_names.insert(mname.to_string(), method_sym);
-                    self.local_types
-                        .insert(method_sym, self.checker.tcx.int());
+                    self.local_types.insert(method_sym, self.checker.tcx.int());
                     method_name_map.push((mname.to_string(), method_sym));
                     let method_is_decorated = !decorators.is_empty();
                     if self.in_function_body {
@@ -6276,10 +6253,7 @@ impl<'a> AstLowerer<'a> {
                     .sym_names
                     .entry(sym)
                     .or_insert_with(|| name.clone());
-                let declaration_sym = self
-                    .checker
-                    .declaration_symbol(stmt)
-                    .unwrap_or(sym);
+                let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or(sym);
                 let class_sym = self.collect_class_stmt(
                     name,
                     declaration_sym,
@@ -7169,10 +7143,9 @@ impl<'a> AstLowerer<'a> {
                             .expect("module function declarations must be preregistered")
                     })
                 };
-                let declaration_sym = self
-                    .checker
-                    .declaration_symbol(stmt)
-                    .unwrap_or_else(|| self.fresh_function_impl_symbol(name, self.checker.tcx.any()));
+                let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or_else(|| {
+                    self.fresh_function_impl_symbol(name, self.checker.tcx.any())
+                });
                 let overload_decorated = decorators
                     .iter()
                     .any(|d| decorator_is_typing_overload(&d.node));
@@ -7212,11 +7185,7 @@ impl<'a> AstLowerer<'a> {
                     self.func_return_tys.insert(fn_sym, any_ty);
                     self.func_return_tys.insert(func.name, any_ty);
                     func.is_generator = contains_yield(body);
-                    attach_entry_types(
-                        &mut declared_sig,
-                        &func.params,
-                        !func.is_generator,
-                    );
+                    attach_entry_types(&mut declared_sig, &func.params, !func.is_generator);
                     self.result
                         .func_sigs
                         .insert(func.name.0, declared_sig.clone());
@@ -7264,10 +7233,9 @@ impl<'a> AstLowerer<'a> {
                             .expect("module function declarations must be preregistered")
                     })
                 };
-                let declaration_sym = self
-                    .checker
-                    .declaration_symbol(stmt)
-                    .unwrap_or_else(|| self.fresh_function_impl_symbol(name, self.checker.tcx.any()));
+                let declaration_sym = self.checker.declaration_symbol(stmt).unwrap_or_else(|| {
+                    self.fresh_function_impl_symbol(name, self.checker.tcx.any())
+                });
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -10596,7 +10564,11 @@ impl<'a> AstLowerer<'a> {
                     let consistent = per_name_consistent.get(name).copied().unwrap_or(true);
                     if !consistent {
                         let sym = self.define_local(name, any_ty);
-                        fn widen_binding(pattern: &mut HirPattern, symbol: SymbolId, any_ty: TypeId) {
+                        fn widen_binding(
+                            pattern: &mut HirPattern,
+                            symbol: SymbolId,
+                            any_ty: TypeId,
+                        ) {
                             match pattern {
                                 HirPattern::Capture(sym, ty) if *sym == symbol => *ty = any_ty,
                                 HirPattern::Or(patterns) | HirPattern::Sequence(patterns) => {
@@ -10684,10 +10656,7 @@ impl<'a> AstLowerer<'a> {
                         Some((field, hp))
                     })
                     .collect();
-                HirPattern::Class {
-                    class,
-                    args,
-                }
+                HirPattern::Class { class, args }
             }
             ast::Pattern::Constructor { path, fields } => {
                 // PEP 634: a dotted name WITHOUT parentheses is a VALUE
@@ -10736,10 +10705,7 @@ impl<'a> AstLowerer<'a> {
                         (format!("_{i}"), HirPattern::Capture(sym, ty))
                     })
                     .collect();
-                HirPattern::Class {
-                    class,
-                    args,
-                }
+                HirPattern::Class { class, args }
             }
             ast::Pattern::Star(name) => {
                 if let Some(n) = name {
@@ -12597,11 +12563,7 @@ mod tests {
 
     #[test]
     fn test_lower_nested_generic_class_base_uses_enclosing_class_namespace_read() {
-        fn contains_deferred_class_name_read(
-            expr: &HirExpr,
-            class_name: &str,
-            name: &str,
-        ) -> bool {
+        fn contains_deferred_class_name_read(expr: &HirExpr, class_name: &str, name: &str) -> bool {
             match expr {
                 HirExpr::Call { func, args, .. } => {
                     matches!(
@@ -12677,7 +12639,11 @@ mod tests {
         let inner = hir
             .classes
             .iter()
-            .find(|class| hir.sym_names.get(&class.name).is_some_and(|name| name == "Inner"))
+            .find(|class| {
+                hir.sym_names
+                    .get(&class.name)
+                    .is_some_and(|name| name == "Inner")
+            })
             .expect("Inner class should be present");
         let runtime_bases = inner
             .runtime_base_list_expr

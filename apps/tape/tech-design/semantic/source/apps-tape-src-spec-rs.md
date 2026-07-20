@@ -46,15 +46,12 @@ schemas:
   - title: ReplayResponse
     type: object
     required: [events]
-  - title: DeliveryConfig
-    type: oneOf
-    variants: [pull, push-with-endpoint]
   - title: SubscriptionCreateRequest
     type: object
-    required: [name, delivery]
+    required: [name]
   - title: Subscription
     type: object
-    required: [topic, name, delivery]
+    required: [topic, name]
   - title: SubscriptionListResponse
     type: object
     required: [subscriptions]
@@ -110,7 +107,7 @@ changes:
     action: modify
     section: schema
     impl_mode: hand-written
-    description: "Declare subscription routes and pull/push delivery schemas in offline routes, OpenAPI, JSON Schema, and LLM API wording (#1254); live h2c handlers remain out of scope."
+    description: "Declare subscription routes and pull-only delivery schemas in offline routes, OpenAPI, JSON Schema, and LLM API wording (#1254); push/lease/consumer-group modes are absent."
   - path: apps/tape/src/spec.rs
     action: modify
     section: schema

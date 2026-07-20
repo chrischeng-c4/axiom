@@ -77,6 +77,12 @@ pub struct RelaySpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret: Option<String>,
 
+    /// Secret containing `tls.crt`, `tls.key`, and `ca.crt` for authenticated
+    /// Raft peer traffic on the dedicated 7001 listener. Omit only for local
+    /// cleartext development clusters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_tls_secret: Option<String>,
+
     /// Optional scheduled backup (#1209). When set, the operator renders a
     /// `<name>-backup` CronJob (see [`super::render`]) invoking `relay
     /// backup` on this schedule against the deployment's own

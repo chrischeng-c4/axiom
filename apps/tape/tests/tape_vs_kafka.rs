@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:aa79af6d" tracker="#1482" reason="New dedicated external test (mirrors apps/tape/tests/tape_vs_nats_jetstream.rs): spawns a real single-node Kafka broker in KRaft mode via `docker run apache/kafka:3.9.0` (no ZooKeeper), skips gracefully if Docker is unavailable, publishes a 20,000-event / 128-byte-payload backlog with a real pure-Rust rskafka producer, replays it from the beginning with a real rskafka consumer, and compares against Tape's TapeJournal::replay_refs zero-copy replay via tape::bench::external_replay_win / verify_external_replay_win with a required_ratio calibrated from an actual measured run."
+// HANDWRITE-BEGIN gap="missing-generator:logic:aa79af6d" tracker="#1482" reason="Real-service release benchmark: Tape h2c replay stream versus a single-node Kafka KRaft broker over the same 20,000-event / 128-byte-payload durable backlog."
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -8,20 +8,17 @@ use rskafka::client::partition::{Compression, UnknownTopicHandling};
 use rskafka::client::ClientBuilder;
 use rskafka::record::Record;
 use serde_json::json;
-use tape::TapeJournal;
+
+mod support;
 
 const EVENTS: usize = 20_000;
 const PAYLOAD_BYTES: usize = 128;
-// Calibrated from a real measured run against `apache/kafka:3.9.0` in KRaft
-// mode on this workload shape (20,000 events, 128-byte JSON payload):
-// tape_replay_us=692 vs kafka_replay_us=82884, a ~119.8x measured ratio.
-// Tape's zero-copy `replay_refs` reads directly out of process memory while
-// the rskafka consumer round-trips fetch_records over a live TCP connection
-// to the broker, so the win margin is much larger here than the NATS
-// JetStream peer (which pushes messages over an in-process subscription).
-// 20x is kept well below the measured 119.8x so the test does not flake on
-// slower CI hosts while still asserting a real, substantial win.
-const REQUIRED_REPLAY_RATIO: f64 = 20.0;
+// Corrected 2026-07-17 calibration starts both real network services and
+// validates the complete replay: latest run Tape 11,907us versus Kafka
+// 34,156us (2.87x).
+// The old 20x gate compared in-process Tape memory with a network Kafka client
+// and was invalid. Keep a conservative 1.5x floor under the symmetric test.
+const REQUIRED_REPLAY_RATIO: f64 = 1.5;
 
 struct KafkaContainer {
     name: String,
@@ -39,13 +36,18 @@ impl Drop for KafkaContainer {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tape_beats_kafka_on_local_backlog_replay() {
+    if cfg!(debug_assertions) {
+        eprintln!("release-only competitor gate: rerun with `cargo test --release`");
+        return;
+    }
     let Some((container, bootstrap)) = spawn_kafka_broker().await else {
         eprintln!("skipping tape_beats_kafka_on_local_backlog_replay: docker/apache/kafka:3.9.0 unavailable");
         return;
     };
 
     let payload = payload(PAYLOAD_BYTES);
-    let tape_replay_us = tape_replay_us(EVENTS, payload.clone());
+    let (tape, tape_url) = support::spawn_tape_service(EVENTS, payload.clone()).await;
+    let tape_replay_us = support::tape_service_replay_us(&tape_url, EVENTS).await;
     let kafka_replay_us = kafka_replay_us(&bootstrap, EVENTS, payload.to_string()).await;
     let report = tape::bench::external_replay_win(
         "Kafka (KRaft, single-node)",
@@ -55,28 +57,13 @@ async fn tape_beats_kafka_on_local_backlog_replay() {
         tape_replay_us,
         kafka_replay_us,
         REQUIRED_REPLAY_RATIO,
-        "apps/tape/tests/tape_vs_kafka.rs starts a real apache/kafka:3.9.0 KRaft broker via docker and compares its consumer replay to Tape zero-copy replay_refs",
+        "apps/tape/tests/tape_vs_kafka.rs starts real Tape h2c and apache/kafka:3.9.0 KRaft services, then downloads and validates the same durable 20k-event replay across both network boundaries",
     );
 
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
     tape::bench::verify_external_replay_win(&report).expect("Tape beats Kafka replay");
+    drop(tape);
     drop(container);
-}
-
-fn tape_replay_us(events: usize, payload: serde_json::Value) -> u128 {
-    let mut journal = TapeJournal::default();
-    for i in 0..events {
-        journal.append(
-            "orders.created",
-            Some(format!("orders.created.{i}")),
-            payload.clone(),
-            Some(i as u64),
-        );
-    }
-    let started = Instant::now();
-    let replayed = journal.replay_refs("orders.created", Some(0), None, Some(events));
-    assert_eq!(replayed.len(), events);
-    started.elapsed().as_micros().max(1)
 }
 
 async fn kafka_replay_us(bootstrap: &str, events: usize, payload: String) -> u128 {
@@ -152,14 +139,13 @@ async fn kafka_replay_us(bootstrap: &str, events: usize, payload: String) -> u12
 const KAFKA_HOST_PORT: u16 = 9092;
 
 async fn spawn_kafka_broker() -> Option<(KafkaContainer, String)> {
-    if Command::new("docker")
+    if !Command::new("docker")
         .args(["info"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
-        == false
     {
         return None;
     }

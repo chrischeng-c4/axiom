@@ -11,11 +11,12 @@ use chrono::Utc;
 use relay::{Log, RelayCoreConfig};
 
 fn seg_cfg(dir: &std::path::Path, segment_bytes: u64) -> RelayCoreConfig {
-    let mut cfg = RelayCoreConfig::default();
-    cfg.data_dir = dir.to_string_lossy().into_owned();
-    cfg.segment_bytes = segment_bytes;
-    cfg.ram_ring_entries = 4; // force disk-backed reads alongside segmentation
-    cfg
+    RelayCoreConfig {
+        data_dir: dir.to_string_lossy().into_owned(),
+        segment_bytes,
+        ram_ring_entries: 4, // force disk-backed reads alongside segmentation
+        ..RelayCoreConfig::default()
+    }
 }
 
 fn append(log: &mut Log, i: usize) {
@@ -110,13 +111,22 @@ fn ack_mode_truncates_acked_prefix() {
     log.truncate_below_acked(12).unwrap();
 
     let start = log.start_seq();
-    assert!(start > 0, "acked-prefix segments reclaimed, start_seq advanced");
-    assert!(start <= 12, "never drops the segment holding seq 12 or beyond");
+    assert!(
+        start > 0,
+        "acked-prefix segments reclaimed, start_seq advanced"
+    );
+    assert!(
+        start <= 12,
+        "never drops the segment holding seq 12 or beyond"
+    );
     assert!(
         count_segments(dir.path()) < before,
         "old segment files deleted"
     );
-    assert!(log.entry(start - 1).unwrap().is_none(), "below start is gone");
+    assert!(
+        log.entry(start - 1).unwrap().is_none(),
+        "below start is gone"
+    );
     assert_eq!(
         log.entry(12).unwrap().unwrap().seq,
         12,

@@ -133,9 +133,10 @@ fn summarize(phase: &str, ops: usize, batch: usize, elapsed: Duration, mut lat_u
     };
     let unit = if batch > 1 { "batch" } else { "op" };
     println!(
-        "  {phase:9} {:>11.0} msg/s   p50 {:>6}us/{unit}   p99 {:>7}us   p99.9 {:>7}us   ({:.2}s)",
+        "  {phase:9} {:>11.0} msg/s   p50 {:>6}us/{unit}   p95 {:>7}us   p99 {:>7}us   p99.9 {:>7}us   ({:.2}s)",
         ops as f64 / elapsed.as_secs_f64(),
         pct(0.50),
+        pct(0.95),
         pct(0.99),
         pct(0.999),
         elapsed.as_secs_f64(),
@@ -149,8 +150,10 @@ async fn bench_engine(args: &Args, plan: &Plan) -> Result<()> {
     let data_dir = tempfile::Builder::new()
         .prefix("relay-bench-engine-")
         .tempdir()?;
-    let mut config = RelayCoreConfig::default();
-    config.data_dir = data_dir.path().to_string_lossy().into_owned();
+    let config = RelayCoreConfig {
+        data_dir: data_dir.path().to_string_lossy().into_owned(),
+        ..RelayCoreConfig::default()
+    };
     println!("  (engine durable data dir -> {})", config.data_dir);
     let relay = Arc::new(Relay::new(config));
     let start = Instant::now();

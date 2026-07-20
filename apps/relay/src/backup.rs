@@ -9,10 +9,9 @@
 //! `service_k8s::render::backup_cron_job`) or invoked ad hoc via the CLI
 //! (lumen #808 pattern).
 //!
-//! Restore is a library-side `load_live` MERGE: feed the artifact to
-//! `crate::raft::load_snapshot_bytes` on a fresh node — idempotent per
-//! `message_id`, leases/acks are node-local and not in the snapshot, so
-//! restored work redelivers (at-least-once).
+//! Restore is library-side exact state replacement: feed the artifact to
+//! `crate::raft::load_snapshot_bytes`. Log sequence space, committed offsets,
+//! active fenced leases, and delayed/retry state survive the round trip.
 
 pub use service_backup::{
     fetch_admin_snapshot as fetch_snapshot_bytes, run_admin_snapshot_backup as run_backup,

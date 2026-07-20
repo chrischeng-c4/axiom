@@ -1670,20 +1670,15 @@ fn global_ref_for_callable(value: MbValue) -> Option<(String, String)> {
 fn global_ref_for_type_object(value: MbValue) -> Option<(String, String)> {
     let ptr = value.as_ptr()?;
     let (module, name) = unsafe {
-        let ObjData::Instance {
-            class_name,
-            fields,
-        } = &(*ptr).data
-        else {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
             return None;
         };
         if class_name != "type" {
             return None;
         }
         let name = instance_field_str(fields, "__name__")?;
-        let module = instance_field_str(fields, "__module__").unwrap_or_else(|| {
-            super::super::closure::current_active_module_name()
-        });
+        let module = instance_field_str(fields, "__module__")
+            .unwrap_or_else(|| super::super::closure::current_active_module_name());
         (module, name)
     };
     if module.is_empty() || name.is_empty() || !module_attr_is_same(&module, &name, value) {

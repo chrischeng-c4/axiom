@@ -98,11 +98,11 @@ single node), `prod` (3-replica raft-HA group, auth required), `template`
 keep the CR name `tape` — `tape serve` derives raft peer DNS as
 `tape-<ordinal>.<peer-service>`.
 
-> **Note (#1328):** the CRD/operator/instance render path and its offline
-> render tests are implemented and verified; there is no live kind-cluster
-> failover proof yet (deferred — no cluster was available in that slice). Do
-> not claim live-cluster dogfood evidence beyond the offline render/CLI
-> gates until that follow-up lands.
+> **Live proof (#1590):** the disposable Kind gate builds the real image,
+> reconciles a Tape instance through the operator, appends to PVC-backed
+> storage, replaces the pod, and verifies replay from the retained PVC. Raft
+> repeated-leader-loss evidence remains the real h2c integration gate; the Kind
+> proof intentionally covers the operator/PVC replacement boundary.
 
 ---
 
@@ -142,6 +142,7 @@ Registered in `src/server.rs` (standard probes via the shared
 | `GET /openapi.json`, `GET /docs` | OpenAPI 3 + Swagger UI. | no |
 | `POST /topics/{topic}/append` | Append one event envelope. | per `TAPE_AUTH` (write) |
 | `GET /topics/{topic}/replay` | Replay by offset or timestamp. | per `TAPE_AUTH` (read) |
+| `GET /topics/{topic}/replay/stream` | Compact read-only h2c bulk replay. | per `TAPE_AUTH` (read) |
 | `PUT /topics/{topic}/consumers/{consumer}/checkpoint` | Advance a consumer cursor. | per `TAPE_AUTH` (write) |
 | `GET /admin/backup` | Stream a whole-journal snapshot (#1329). | per `TAPE_AUTH` (needs `admin` role on `*` when `--auth required`) |
 

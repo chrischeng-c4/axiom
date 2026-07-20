@@ -76,8 +76,7 @@ use crate::api::{
     ShardMapVersionMismatch, WriteBackend,
 };
 use crate::routing::{
-    merge_shard_search_responses, search_request_offset, SearchShardTarget,
-    VirtualBucketShardMap,
+    merge_shard_search_responses, search_request_offset, SearchShardTarget, VirtualBucketShardMap,
 };
 use crate::storage::Engine;
 use crate::types::{

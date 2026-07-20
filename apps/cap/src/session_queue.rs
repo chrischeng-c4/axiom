@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 const SESSION_ENV: &str = "CAP_SESSION_ID";
 const QUEUE_DIR_ENV: &str = "CAP_SESSION_QUEUE_DIR";

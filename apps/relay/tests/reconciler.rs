@@ -159,7 +159,10 @@ fn redelivery_backoff_is_exponential() {
             .is_none(),
         "within the 1s backoff the entry is withheld"
     );
-    let l2 = r.lease("q", "c", t1 + ChronoDuration::seconds(2)).unwrap().unwrap();
+    let l2 = r
+        .lease("q", "c", t1 + ChronoDuration::seconds(2))
+        .unwrap()
+        .unwrap();
     assert_eq!(l2.attempt, 2, "re-leased after the backoff, attempt bumped");
 
     // Attempt 2: expire + reconcile -> backoff doubles to 2s.
@@ -171,7 +174,10 @@ fn redelivery_backoff_is_exponential() {
             .is_none(),
         "1s < the 2s backoff for attempt 2"
     );
-    let l3 = r.lease("q", "c", t2 + ChronoDuration::seconds(3)).unwrap().unwrap();
+    let l3 = r
+        .lease("q", "c", t2 + ChronoDuration::seconds(3))
+        .unwrap()
+        .unwrap();
     assert_eq!(l3.attempt, 3, "leasable only after the doubled backoff");
 }
 // HANDWRITE-END

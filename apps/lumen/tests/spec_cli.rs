@@ -979,8 +979,7 @@ fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
     let live = openapi_json();
     assert_eq!(
-        committed,
-        live,
+        committed, live,
         "clients/openapi.json is stale: regenerate via \
          `./target/debug/lumen spec --format openapi > clients/openapi.json` \
          (CONTRIBUTING.md DX convention: offline-contract must not lag the live surface)"

@@ -11,9 +11,11 @@ use chrono::Utc;
 use relay::{Log, RelayCoreConfig};
 
 fn disk_cfg(dir: &std::path::Path, ring: u64, dedupe_window: u64) -> RelayCoreConfig {
-    let mut cfg = RelayCoreConfig::default();
-    cfg.data_dir = dir.to_string_lossy().into_owned();
-    cfg.ram_ring_entries = ring;
+    let mut cfg = RelayCoreConfig {
+        data_dir: dir.to_string_lossy().into_owned(),
+        ram_ring_entries: ring,
+        ..RelayCoreConfig::default()
+    };
     cfg.dedupe.window_entries = dedupe_window;
     cfg
 }

@@ -264,9 +264,7 @@ impl Substitution {
                     tcx,
                     visiting_param_packs,
                 ));
-                if new_args == source.args
-                    && new_display_arg_count == source.display_arg_count
-                {
+                if new_args == source.args && new_display_arg_count == source.display_arg_count {
                     return ty;
                 }
 
@@ -341,8 +339,7 @@ impl Substitution {
                 }
             }
             Ty::Tuple(ref elems) => {
-                let new_elems =
-                    self.apply_type_list_inner(elems, tcx, visiting_param_packs);
+                let new_elems = self.apply_type_list_inner(elems, tcx, visiting_param_packs);
                 if new_elems == *elems {
                     ty
                 } else {
@@ -359,8 +356,7 @@ impl Substitution {
                 let bound_var = param_spec.filter(|var| {
                     self.param_packs.contains_key(var) && visiting_param_packs.insert(*var)
                 });
-                let new_params =
-                    self.apply_type_list_inner(params, tcx, visiting_param_packs);
+                let new_params = self.apply_type_list_inner(params, tcx, visiting_param_packs);
                 let new_ret = self.apply_inner(ret, tcx, visiting_param_packs);
                 let new_signature = signature.as_ref().map(|params| {
                     params
@@ -462,20 +458,12 @@ impl Substitution {
             } => {
                 let new_user = user.as_ref().map(|user| super::ty::UserClass {
                     symbol: user.symbol,
-                    args: self.apply_type_list_inner(
-                        &user.args,
-                        tcx,
-                        visiting_param_packs,
-                    ),
+                    args: self.apply_type_list_inner(&user.args, tcx, visiting_param_packs),
                 });
                 let new_external = external.as_ref().map(|external| super::ty::ExternalClass {
                     module: external.module.clone(),
                     name: external.name.clone(),
-                    args: self.apply_type_list_inner(
-                        &external.args,
-                        tcx,
-                        visiting_param_packs,
-                    ),
+                    args: self.apply_type_list_inner(&external.args, tcx, visiting_param_packs),
                 });
                 let new_fields: Vec<_> = fields
                     .iter()
@@ -575,9 +563,7 @@ pub fn bind_explicit_type_args_without_bounds(
         let required = generic_params
             .params
             .iter()
-            .filter(|param| {
-                param.kind != TypeVarKind::TypeVarTuple && !param.default.is_present()
-            })
+            .filter(|param| param.kind != TypeVarKind::TypeVarTuple && !param.default.is_present())
             .count();
         let mut errors = Vec::new();
         if supplied.len() < required {
@@ -603,18 +589,12 @@ pub fn bind_explicit_type_args_without_bounds(
             resolved.push(concrete);
         }
         let pack_start = pack_index.min(supplied.len());
-        let pack_end = supplied
-            .len()
-            .saturating_sub(trailing)
-            .max(pack_start);
+        let pack_end = supplied.len().saturating_sub(trailing).max(pack_start);
         let pack = TypePack {
             types: supplied[pack_start..pack_end].to_vec(),
         };
         resolved.extend(pack.types.iter().copied());
-        subst.insert_type_pack(
-            generic_params.params[pack_index].id,
-            pack,
-        );
+        subst.insert_type_pack(generic_params.params[pack_index].id, pack);
         for (offset, param) in generic_params.params[pack_index + 1..].iter().enumerate() {
             let index = pack_end + offset;
             let concrete = supplied
@@ -819,9 +799,12 @@ fn unify_ordered_type_sequence_for_inference(
         .enumerate()
         .filter_map(|(index, ty)| match tcx.get(*ty) {
             Ty::Unpack(var)
-                if type_vars.iter().any(|param| {
-                    param.id == *var && param.kind == TypeVarKind::TypeVarTuple
-                }) => Some((index, *var)),
+                if type_vars
+                    .iter()
+                    .any(|param| param.id == *var && param.kind == TypeVarKind::TypeVarTuple) =>
+            {
+                Some((index, *var))
+            }
             _ => None,
         })
         .collect();
@@ -846,10 +829,7 @@ fn unify_ordered_type_sequence_for_inference(
         ));
         return true;
     }
-    for (expected, actual) in expected[..unpack_index]
-        .iter()
-        .zip(&actual[..unpack_index])
-    {
+    for (expected, actual) in expected[..unpack_index].iter().zip(&actual[..unpack_index]) {
         unify_for_inference_inner(
             *expected, *actual, type_vars, subst, conflicts, tcx, visiting,
         );
@@ -881,8 +861,7 @@ fn unify_ordered_type_sequence_for_inference(
                     && !matches!(tcx.get(*captured), Ty::Any | Ty::Error)
                 {
                     *slot = *captured;
-                } else if existing != captured
-                    && !matches!(tcx.get(*captured), Ty::Any | Ty::Error)
+                } else if existing != captured && !matches!(tcx.get(*captured), Ty::Any | Ty::Error)
                 {
                     incompatible = true;
                     break;
@@ -1205,14 +1184,16 @@ fn unify_for_inference_step(
             }
             let actual =
                 callable_param_pack(arg_params, arg_variadic, arg_signature, arg_param_spec);
-            let expected_types: Vec<_> =
-                expected.params.iter().map(|param| param.ty).collect();
-            if is_exact_positional_param_pack(&expected)
-                && is_exact_positional_param_pack(&actual)
+            let expected_types: Vec<_> = expected.params.iter().map(|param| param.ty).collect();
+            if is_exact_positional_param_pack(&expected) && is_exact_positional_param_pack(&actual)
             {
                 if unify_ordered_type_sequence_for_inference(
                     &expected_types,
-                    &actual.params.iter().map(|param| param.ty).collect::<Vec<_>>(),
+                    &actual
+                        .params
+                        .iter()
+                        .map(|param| param.ty)
+                        .collect::<Vec<_>>(),
                     type_vars,
                     subst,
                     conflicts,
@@ -2559,7 +2540,12 @@ mod tests {
         let ts = TypeVarId(1);
         let unpack = tcx.intern(Ty::Unpack(ts));
         let expected = tcx.intern(Ty::Tuple(vec![tcx.int(), unpack, tcx.bool()]));
-        let actual = tcx.intern(Ty::Tuple(vec![tcx.int(), tcx.str(), tcx.float(), tcx.bool()]));
+        let actual = tcx.intern(Ty::Tuple(vec![
+            tcx.int(),
+            tcx.str(),
+            tcx.float(),
+            tcx.bool(),
+        ]));
         let mut params = GenericParams::new();
         params.add_param(
             "Ts",
@@ -2820,12 +2806,8 @@ mod tests {
             TypeParamDefault::None,
         );
 
-        let (subst, conflicts) = infer_type_args(
-            &params,
-            &[expected, expected],
-            &[unknown, concrete],
-            &tcx,
-        );
+        let (subst, conflicts) =
+            infer_type_args(&params, &[expected, expected], &[unknown, concrete], &tcx);
         assert!(conflicts.is_empty(), "unexpected conflicts: {conflicts:?}");
         assert_eq!(subst.get_type_pack(ts).unwrap().types, vec![tcx.str()]);
     }
@@ -2848,7 +2830,8 @@ mod tests {
             TypeParamDefault::None,
         );
 
-        let (_, conflicts) = infer_type_args(&params, &[expected, expected], &[first, second], &tcx);
+        let (_, conflicts) =
+            infer_type_args(&params, &[expected, expected], &[first, second], &tcx);
         assert_eq!(conflicts.len(), 1);
         assert!(conflicts[0].contains("conflicting ordered type packs"));
     }
@@ -2891,16 +2874,12 @@ mod tests {
         let int = tcx.int();
         let str_ = tcx.str();
         let bool_ = tcx.bool();
-        let (subst, resolved, errors) =
-            bind_explicit_type_args(&gp, &[int, str_, bool_], &mut tcx);
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[int, str_, bool_], &mut tcx);
         assert!(errors.is_empty());
         assert_eq!(resolved, vec![int, str_, bool_]);
         assert_eq!(subst.get(TypeVarId(0)), Some(int));
         assert_eq!(subst.get(TypeVarId(2)), Some(bool_));
-        assert_eq!(
-            subst.get_type_pack(TypeVarId(1)).unwrap().types,
-            vec![str_]
-        );
+        assert_eq!(subst.get_type_pack(TypeVarId(1)).unwrap().types, vec![str_]);
 
         let (zero, zero_resolved, zero_errors) =
             bind_explicit_type_args(&gp, &[int, bool_], &mut tcx);
@@ -2917,7 +2896,10 @@ mod tests {
         assert_eq!(many_resolved, vec![int, str_, float, bool_]);
         assert_eq!(many.get(TypeVarId(0)), Some(int));
         assert_eq!(many.get(TypeVarId(2)), Some(bool_));
-        assert_eq!(many.get_type_pack(TypeVarId(1)).unwrap().types, vec![str_, float]);
+        assert_eq!(
+            many.get_type_pack(TypeVarId(1)).unwrap().types,
+            vec![str_, float]
+        );
 
         let head = tcx.intern(Ty::TypeVar(TypeVarId(0)));
         let unpack = tcx.intern(Ty::Unpack(TypeVarId(1)));
@@ -3011,8 +2993,7 @@ mod tests {
 
         let int = tcx.int();
         let str_ = tcx.str();
-        let (subst, resolved, errors) =
-            bind_explicit_type_args(&gp, &[int, str_], &mut tcx);
+        let (subst, resolved, errors) = bind_explicit_type_args(&gp, &[int, str_], &mut tcx);
         assert!(errors.is_empty());
         assert_eq!(resolved, vec![int, str_]);
         assert_eq!(subst.get(TypeVarId(0)), Some(int));

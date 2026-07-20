@@ -4,10 +4,10 @@
 ## Brief
 
 `service-observability` is the protocol-neutral composition owner for service
-logging, optional OTLP tracing, stable resource identity, metric providers, and
-server lifecycle connection metrics. HTTP request and route adaptation remains
-in `service-http`; Prometheus primitives and encoding remain in
-`metrics-prometheus`.
+logging, optional OTLP tracing, stable resource identity, metric providers,
+server lifecycle connection metrics, and bounded-soak resource sampling. HTTP
+request and route adaptation remains in `service-http`; Prometheus primitives
+and encoding remain in `metrics-prometheus`.
 
 ## Structured stdout contract
 
@@ -45,8 +45,10 @@ Promise:
 Services can compose one typed observability contract regardless of wire
 protocol. OTLP failures retain structured logging; lifecycle connection events
 render through the canonical Prometheus encoder without duplicating metric
-primitives or HTTP policy.
-Gate Inventory: `cargo test -p service-observability`; libs/service-observability/src/lib.rs
+primitives or HTTP policy. Service-specific soak runners share portable
+RSS/FD/thread/p99 sampling and plateau assertions while retaining ownership of
+their domain workload.
+Gate Inventory: `cargo test -p service-observability`; `bash -n libs/service-observability/scripts/soak-metrics.sh`; libs/service-observability/src/lib.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

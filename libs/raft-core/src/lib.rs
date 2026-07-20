@@ -38,7 +38,11 @@ pub type Index = u64;
 
 /// Logical ticks before a voter starts an election (distinct per node so the
 /// deterministic simulation does not livelock on split votes).
-const ELECTION_MIN: u64 = 10;
+// With raft-runtime's 20ms production tick this is a one-second minimum.
+// Stateful adopters persist proposals before releasing the node lock; a
+// 200ms election window made ordinary bursts of durable fsyncs look like a
+// failed leader and caused avoidable term churn.
+const ELECTION_MIN: u64 = 50;
 /// Ticks between leader heartbeats / replication pushes.
 const HEARTBEAT_TIMEOUT: u64 = 3;
 
@@ -61,6 +65,12 @@ pub struct PersistedState {
     pub term: Term,
     pub voted_for: Option<NodeId>,
     pub log: Vec<RaftEntry>,
+    /// Highest index known committed when the hard state was saved. Persisting
+    /// this lets a cold host replay committed resident entries before serving
+    /// reads, rather than waiting for a new-term proposal to re-establish the
+    /// commit watermark.
+    #[serde(default)]
+    pub commit_index: Index,
     #[serde(default)]
     pub snapshot_index: Index,
     #[serde(default)]
@@ -269,8 +279,14 @@ impl RaftNode {
         node.snapshot_index = state.snapshot_index;
         node.snapshot_term = state.snapshot_term;
         node.snapshot = state.snapshot;
-        node.commit_index = node.snapshot_index;
+        node.commit_index = state
+            .commit_index
+            .max(node.snapshot_index)
+            .min(node.last_index());
         node.last_applied = node.snapshot_index;
+        if node.snapshot_index > 0 && !node.snapshot.is_empty() {
+            node.installed_snapshot = Some(node.snapshot.clone());
+        }
         node
     }
 
@@ -280,6 +296,7 @@ impl RaftNode {
             term: self.current_term,
             voted_for: self.voted_for,
             log: self.log.clone(),
+            commit_index: self.commit_index,
             snapshot_index: self.snapshot_index,
             snapshot_term: self.snapshot_term,
             snapshot: self.snapshot.clone(),
@@ -606,12 +623,17 @@ impl RaftNode {
                 && self.term_at(req.prev_log_index) != req.prev_log_term)
         {
             let term = self.current_term;
+            // Report the greatest prefix this request can safely assume did
+            // not match. The leader uses this both as a fast backoff hint and
+            // to discard a failure response that arrived after a newer
+            // successful AppendEntries response for the same peer.
+            let match_index = req.prev_log_index.saturating_sub(1).min(self.last_index());
             self.send(
                 leader,
                 RaftMsg::AppendResp(AppendResp {
                     term,
                     success: false,
-                    match_index: 0,
+                    match_index,
                 }),
             );
             return;
@@ -657,8 +679,13 @@ impl RaftNode {
             return;
         }
         if resp.success {
-            self.match_index.insert(from, resp.match_index);
-            self.next_index.insert(from, resp.match_index + 1);
+            // Multiple h2 requests to one peer can complete out of order.
+            // Replication progress is monotonic: a stale success must never
+            // move match_index/next_index behind a newer acknowledgement.
+            let matched = self.match_index.entry(from).or_insert(0);
+            *matched = (*matched).max(resp.match_index);
+            let next = self.next_index.entry(from).or_insert(1);
+            *next = (*next).max(matched.saturating_add(1));
             let old = self.commit_index;
             self.maybe_commit();
             if self.commit_index > old {
@@ -669,9 +696,16 @@ impl RaftNode {
             }
         } else {
             // Log mismatch: back off and retry (snapshot kicks in once next falls
-            // to or below the compaction point).
+            // to or below the compaction point). Ignore a delayed failure for
+            // a prefix a newer response already proved replicated.
+            if resp.match_index < *self.match_index.get(&from).unwrap_or(&0) {
+                return;
+            }
             let n = self.next_index.entry(from).or_insert(1);
-            *n = (*n).saturating_sub(1).max(1);
+            *n = (*n)
+                .saturating_sub(1)
+                .min(resp.match_index.saturating_add(1))
+                .max(1);
             self.send_append_to(from);
         }
     }

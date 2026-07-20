@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
-use tape::{spec, SubscriptionDelivery, TapeJournal};
+use tape::{spec, TapeJournal};
 
 #[derive(Parser)]
 #[command(name = "tape", version, about = "tape - topic replay journal service")]
@@ -24,7 +24,7 @@ enum Command {
     Replay(ReplayArgs),
     /// Manage durable consumer replay checkpoints.
     Checkpoint(CheckpointArgs),
-    /// Manage named topic delivery resources (pull checkpoints or push endpoint metadata).
+    /// Manage named caller-driven topic pull cursors.
     Subscription(SubscriptionArgs),
     /// Serve the topic journal over HTTP (h2c + HTTP/1.1 on one port).
     Serve(ServeArgs),
@@ -128,7 +128,7 @@ struct SubscriptionArgs {
 
 #[derive(Subcommand)]
 enum SubscriptionCommand {
-    /// Create a topic delivery resource with pull or push configuration.
+    /// Create a caller-driven pull subscription.
     Create(SubscriptionCreateArgs),
     /// List the delivery resources for one topic.
     List(SubscriptionListArgs),
@@ -146,14 +146,8 @@ enum SubscriptionCommand {
 struct SubscriptionCreateArgs {
     /// Topic that owns the subscription.
     topic: String,
-    /// Subscription name. Pull subscriptions use this as their checkpoint consumer name.
+    /// Subscription name, also used as the durable checkpoint consumer name.
     name: String,
-    /// Use the existing durable checkpoint API as the pull cursor.
-    #[arg(long, conflicts_with = "push")]
-    pull: bool,
-    /// Persist a push callback endpoint without starting a delivery worker.
-    #[arg(long, value_name = "ENDPOINT", required_unless_present = "pull")]
-    push: Option<String>,
     /// Journal file. Defaults to `.tape/journal.json`.
     #[arg(long, default_value = ".tape/journal.json")]
     store: PathBuf,
@@ -217,6 +211,11 @@ struct ServeArgs {
     /// listener closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "TAPE_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// Log output format. Kubernetes uses `json` for the shared
+    /// `axiom.service.log.v1` collector contract; local development defaults
+    /// to the human-readable formatter.
+    #[arg(long, env = "TAPE_LOG_FORMAT", value_enum, default_value_t = LogFormat::Pretty)]
+    log_format: LogFormat,
     /// OTLP gRPC endpoint for opt-in shared trace export. Unset preserves
     /// logging-only startup; requires the `otel` build feature to export.
     #[arg(long, env = "TAPE_OTLP_ENDPOINT")]
@@ -231,8 +230,8 @@ struct ServeArgs {
     /// startup) when `--auth required`.
     #[arg(long, env = "TAPE_TOKEN_REGISTRY_FILE")]
     token_registry_file: Option<PathBuf>,
-    /// Durable directory for raft hard state + the applied-index marker
-    /// (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
+    /// Durable directory for shared Raft hard state, committed log, and
+    /// snapshots (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
     /// in single-node mode it selects `journal.json` unless `--store` is
     /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
@@ -250,6 +249,12 @@ struct ServeArgs {
     /// `TAPE_PEER_MTLS=on`. The public h2c port remains unchanged.
     #[arg(long, env = "TAPE_RAFT_PORT", default_value_t = 7138)]
     raft_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogFormat {
+    Pretty,
+    Json,
 }
 
 /// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
@@ -707,17 +712,8 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
 fn subscription(args: SubscriptionArgs) -> Result<()> {
     match args.command {
         SubscriptionCommand::Create(args) => {
-            let delivery = if args.pull {
-                SubscriptionDelivery::Pull
-            } else {
-                SubscriptionDelivery::Push {
-                    endpoint: args
-                        .push
-                        .expect("clap requires --push when --pull is absent"),
-                }
-            };
             let mut journal = load_journal(&args.store)?;
-            let subscription = journal.create_subscription(args.topic, args.name, delivery)?;
+            let subscription = journal.create_subscription(args.topic, args.name)?;
             save_journal(&args.store, &journal)?;
             println!(
                 "{}",
@@ -752,9 +748,7 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
                         args.name, args.topic
                     )
                 })?;
-            let checkpoint = matches!(&subscription.delivery, SubscriptionDelivery::Pull)
-                .then(|| journal.checkpoint(&subscription.topic, &subscription.name))
-                .flatten();
+            let checkpoint = journal.checkpoint(&subscription.topic, &subscription.name);
             println!(
                 "{}",
                 serde_json::to_string_pretty(
@@ -818,11 +812,15 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
 /// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
 /// SIGTERM-aware graceful drain (`--grace-secs`).
 async fn serve_main(args: ServeArgs) -> Result<()> {
+    let log_format = match args.log_format {
+        LogFormat::Pretty => service_http::LogFormat::Pretty,
+        LogFormat::Json => service_http::LogFormat::Json,
+    };
     let tracing_config = service_http::HttpConfig::new(
         "127.0.0.1",
         0,
         "info",
-        service_http::LogFormat::Pretty,
+        log_format,
         args.grace_secs,
         0,
         args.otlp_endpoint.clone(),
@@ -873,7 +871,10 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         // replacement becomes visible to the live data-plane middleware
         // without restarting the Tape pod. Invalid replacements remain on the
         // shared last-known-good snapshot and emit redacted audit events.
-        let _ = service_auth::spawn_registry_file_watcher(state.verifier(), path);
+        std::mem::drop(service_auth::spawn_registry_file_watcher(
+            state.verifier(),
+            path,
+        ));
         tracing::info!(
             path = %path.display(),
             "watching bearer token registry for credential rotation"

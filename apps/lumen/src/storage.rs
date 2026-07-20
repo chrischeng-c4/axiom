@@ -18663,7 +18663,10 @@ mod offset_sort_guard_tests {
         let resp = e.search("c", r).expect("native sorted offset succeeds");
         assert_eq!(ids(&resp), ["d2", "d3"]);
         assert_eq!(resp.total, 5);
-        assert!(resp.cursor.is_none(), "an offset jump does not emit a cursor");
+        assert!(
+            resp.cursor.is_none(),
+            "an offset jump does not emit a cursor"
+        );
     }
 
     #[test]

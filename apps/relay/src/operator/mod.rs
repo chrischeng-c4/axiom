@@ -27,33 +27,8 @@ pub use reconcile::run;
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Relay::crd()).expect("CRD serializes to JSON");
-    normalize_kubernetes_schema_formats(&mut crd);
-    serde_yaml::to_string(&crd).expect("CRD serializes")
-}
-
-/// Recursively rewrite unsigned-int formats (`uint32`/`uint64`) — which are not
-/// in the Kubernetes structural-schema format vocabulary — to a plain integer
-/// with a `minimum: 0` floor, so the generated CRD applies cleanly.
-fn normalize_kubernetes_schema_formats(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            if matches!(
-                map.get("format").and_then(|v| v.as_str()),
-                Some("uint32" | "uint64")
-            ) {
-                map.remove("format");
-                map.entry("minimum").or_insert_with(|| serde_json::json!(0));
-            }
-            for child in map.values_mut() {
-                normalize_kubernetes_schema_formats(child);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for child in items {
-                normalize_kubernetes_schema_formats(child);
-            }
-        }
-        _ => {}
-    }
+    service_k8s::crd::normalize_unsigned_integer_formats(&mut crd);
+    let yaml = serde_yaml::to_string(&crd).expect("CRD serializes");
+    service_k8s::crd::quote_yaml_1_1_boolean_like_strings(&yaml)
 }
 // HANDWRITE-END

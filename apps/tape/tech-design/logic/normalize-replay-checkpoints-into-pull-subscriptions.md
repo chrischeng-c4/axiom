@@ -23,10 +23,10 @@ nodes:
     label: "oversized request returns SubscriptionError::PullBatchTooLarge without replaying or advancing state"
   resolve_pull:
     kind: decision
-    label: "topic/name resolves to SubscriptionDelivery::Pull"
+    label: "topic/name resolves to an existing pull-only Subscription"
   mode_error:
     kind: terminal
-    label: "missing or push resource returns SubscriptionError; push remains endpoint metadata only"
+    label: "missing resource returns SubscriptionError"
   replay_window:
     kind: process
     label: "read checkpoint offset or 0, then replay the bounded event window; next_offset is last event offset + 1 or cursor when empty"
@@ -41,13 +41,13 @@ nodes:
     label: "checkpoint success is the durable ack; stale and beyond-end errors propagate unchanged through SubscriptionAckError"
   inventory:
     kind: terminal
-    label: "offline spec declares pull and ack route schemas; live h2c handlers, leases, push workers, and raft cursor consensus stay excluded"
+    label: "served and offline specs declare pull and ack routes; leases, push, consumer groups, and executor ownership stay excluded"
 edges:
   - { from: pull_request, to: validate_limit }
   - { from: validate_limit, to: limit_error, label: "limit > 1000" }
   - { from: validate_limit, to: resolve_pull, label: "bounded" }
-  - { from: resolve_pull, to: mode_error, label: "missing or push" }
-  - { from: resolve_pull, to: replay_window, label: "pull" }
+  - { from: resolve_pull, to: mode_error, label: "missing" }
+  - { from: resolve_pull, to: replay_window, label: "exists" }
   - { from: replay_window, to: pull_result }
   - { from: pull_result, to: ack_request }
   - { from: ack_request, to: ack_result }
@@ -56,13 +56,13 @@ edges:
 flowchart TD
     pull_request["PullSubscriptionBatch from topic/name checkpoint cursor"] --> validate_limit{"limit <= 1000; default 100?"}
     validate_limit -->|oversized| limit_error(["PullBatchTooLarge; no state changes"])
-    validate_limit -->|bounded| resolve_pull{"subscription delivery=pull?"}
-    resolve_pull -->|missing or push| mode_error(["SubscriptionError; no delivery"])
-    resolve_pull -->|pull| replay_window["replay bounded window from checkpoint or 0; compute next_offset"]
+    validate_limit -->|bounded| resolve_pull{"pull subscription exists?"}
+    resolve_pull -->|missing| mode_error(["SubscriptionError; no delivery"])
+    resolve_pull -->|exists| replay_window["replay bounded window from checkpoint or 0; compute next_offset"]
     replay_window --> pull_result(["events/cursor/next_offset; pull never advances cursor"])
     pull_result --> ack_request["ack validates pull then delegates to put_checkpoint"]
     ack_request --> ack_result(["durable ack or stale/beyond-end rejection"])
-    ack_result --> inventory(["offline pull/ack schema only; no h2c/lease/push/raft implementation"])
+    ack_result --> inventory(["pull/ack schema only; no lease/push/consumer-group ownership"])
 ```
 
 ## Unit Test
@@ -92,19 +92,19 @@ requirements:
     verify: cargo test -p tape --test cli_contract pull_subscription_cli_roundtrip -- --exact
   inventory_scope:
     id: R5
-    text: "Offline routes/OpenAPI/JSON Schema declare pull and ack contracts while live h2c delivery, push workers, and raft cursor consensus remain unclaimed."
+    text: "Live routes/OpenAPI/JSON Schema declare pull and ack contracts while push, leases, consumer groups, and executor ownership remain absent."
     kind: contract
     risk: medium
     verify: cargo test -p tape --test cli_contract pull_subscription_spec_inventory -- --exact
   performance_scope:
     id: R6
-    text: "The local performance gate remains the bounded pull/replay path and does not claim push delivery reliability or uncalibrated peer wins."
+    text: "The local performance gate remains the bounded pull/replay path and does not add push delivery or claim uncalibrated peer wins."
     kind: regression
     risk: medium
     verify: cargo test -p tape --test tape_perf_gate -- --nocapture
   pull_ack_safety:
     id: R2
-    text: "Subscription ack only accepts pull resources and preserves stale and beyond-end checkpoint rejection semantics."
+    text: "Subscription ack requires an existing pull subscription and preserves stale and beyond-end checkpoint rejection semantics."
     kind: regression
     risk: high
     verify: cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact
@@ -137,7 +137,7 @@ changes:
     action: modify
     section: schema
     impl_mode: hand-written
-    description: "Add offline topic subscription pull/ack route inventory and PullSubscriptionBatch/PullAck schemas. Do not add matching server.rs h2c handlers. generator gap: missing-generator:openapi:tape-pull-subscription (#1255)."
+    description: "Add topic subscription pull/ack routes and PullSubscriptionBatch/PullAck schemas to both served and offline contracts. Pull stays side-effect-free; ack uses the committed checkpoint command in replica mode. generator gap: missing-generator:openapi:tape-pull-subscription (#1255)."
   - path: apps/tape/tests/cli_contract.rs
     action: modify
     section: unit-test

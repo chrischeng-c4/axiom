@@ -62,11 +62,10 @@ flowchart TD
     endcheck -->|yes| stalecheck{"offset >= existing cursor?"}
     stalecheck -->|no| stale["StaleCheckpoint"]
     stalecheck -->|yes| store["store ConsumerCheckpoint"]
-    subscription["create_subscription(topic, name, delivery)"] --> unique{"unique topic/name and valid push endpoint?"}
+    subscription["create_subscription(topic, name)"] --> unique{"unique topic/name?"}
     unique -->|yes| substore["store Subscription metadata without moving checkpoint"]
     unique -->|no| suberror["SubscriptionError"]
     substore --> pull["pull name remains the existing checkpoint consumer identity"]
-    substore --> push["push endpoint is stored only; no worker sends requests"]
     pull --> batch["pull_subscription reads <= MAX_PULL_BATCH events without moving cursor"]
     batch --> ack["ack_subscription reuses put_checkpoint stale/beyond-end guards"]
 ```
@@ -112,7 +111,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add local Subscription delivery metadata and CRUD; pull resources preserve existing checkpoints and push endpoints remain declarative (#1254)."
+    description: "Add pull-only Subscription metadata and CRUD; resources preserve existing checkpoints and expose no push/lease/consumer-group mode (#1254)."
   - path: apps/tape/src/lib.rs
     action: modify
     section: logic

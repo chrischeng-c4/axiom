@@ -339,7 +339,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         Case::new(
             "grep-fixed-boundary-large",
-            vec!["grep", "-F", "CROSS-CHUNK-NEEDLE", fixture.grep_boundary_file()],
+            vec![
+                "grep",
+                "-F",
+                "CROSS-CHUNK-NEEDLE",
+                fixture.grep_boundary_file(),
+            ],
             "/usr/bin/grep",
             vec!["-F", "CROSS-CHUNK-NEEDLE", fixture.grep_boundary_file()],
         ),
@@ -7247,7 +7252,10 @@ impl Fixture {
         grep_boundary.write_all(&vec![b'a'; 8190])?;
         writeln!(grep_boundary, "CROSS-CHUNK-NEEDLE")?;
         for idx in 0..30_000 {
-            writeln!(grep_boundary, "plain payload {idx:05} without the search term")?;
+            writeln!(
+                grep_boundary,
+                "plain payload {idx:05} without the search term"
+            )?;
         }
         let grep_binary_file = data.join("grep-binary.bin");
         let mut grep_binary = vec![b'A'; 1024 * 1024];

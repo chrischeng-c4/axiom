@@ -3817,10 +3817,43 @@ dependencies = [
 name = "defer"
 version = "0.4.9"
 dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base64 0.22.1",
+ "build-stamp",
+ "cclab-openapi-codegen",
  "chrono",
+ "clap",
+ "cli-std",
+ "hmac 0.12.1",
+ "k8s-openapi",
+ "kube",
+ "metrics-prometheus",
+ "peer-tls",
+ "raft-runtime",
+ "rcgen",
+ "redis",
+ "relay",
+ "reqwest 0.12.28",
+ "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "service-auth",
+ "service-backup",
+ "service-executor",
+ "service-http",
+ "service-k8s",
+ "service-observability",
+ "sha2 0.10.9",
+ "storage-durable",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
 ]
 
 [[package]]
@@ -10933,6 +10966,7 @@ dependencies = [
  "peer-tls",
  "raft-core",
  "raft-runtime",
+ "rcgen",
  "redis",
  "reqwest 0.12.28",
  "rustls 0.23.40",
@@ -10946,6 +10980,7 @@ dependencies = [
  "service-k8s",
  "tempfile",
  "tokio",
+ "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
  "transport-h2c",
@@ -12141,6 +12176,14 @@ dependencies = [
  "tokio",
  "urlencoding",
  "wiremock",
+]
+
+[[package]]
+name = "service-executor"
+version = "0.4.8"
+dependencies = [
+ "futures",
+ "tokio",
 ]
 
 [[package]]

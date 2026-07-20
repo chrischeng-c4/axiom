@@ -1,4 +1,4 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:80f2de20" tracker="pending-tracker" reason="New archetype-required HA doc: auto-mode (REPLICAS_PER_SHARD>1 flips raft), RelayStateMachine (publish replication, snapshot/compaction, fsynced applied-index marker), node-local lease/ack at-least-once failover limitation, RELAY_PEERS override, operator CR as the production HA path, backup/restore semantics, peer-TLS surface + raft-runtime TLS seam gap." -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:80f2de20" tracker="pending-tracker" reason="Relay HA contract: auto-mode, fully committed work-queue lifecycle, snapshots/applied floor, operator topology, backup/recovery, and shared authenticated peer transport." -->
 # relay — high availability (#1207)
 
 relay's HA is **auto-mode raft** on the shared `libs/raft-runtime` driver (WI
@@ -17,9 +17,10 @@ engine writes. Replica mode turns on when the StatefulSet scales out —
 Service for peer DNS), and spawns one `RaftHost` for the whole node.
 
 - relay is a **single-group** adopter (like lumen, unlike keep's
-  host-per-shard): one raft group replicates every subject's publishes.
-- Peer RPCs (`/raft/*`, `/raftz`) ride the serve port as tokenless cluster
-  traffic — one port, no separate peer listener.
+  host-per-shard): one raft group replicates every subject's queue lifecycle.
+- With peer mTLS enabled, peer RPCs (`/raft/*`, `/raftz`) use the dedicated
+  authenticated listener (default 7001); local development may explicitly use
+  the cleartext serve port.
 - `RELAY_PEERS=host:port,...` overrides peer DNS to run a multi-node group on
   one machine (the local/dev cluster recipe; proven by
   `tests/raft_cluster.rs`).
@@ -28,16 +29,15 @@ Service for peer DNS), and spawns one `RaftHost` for the whole node.
 
 `src/raft.rs` wires the engine as a `raft_runtime::RaftStateMachine`:
 
-- **Command = `PubCommand`** `{subject, message_id, payload, headers,
-  priority, not_before}` — a multi-subject publish, one raft log entry per
-  message. Publishes route through `host.propose` (leader appends; a follower
-  publish is forwarded to the leader), commit, then the sole applier publishes
-  idempotently through the engine.
+- **Command = `RelayCommand`** — publish, lease/batch lease, ack/batch ack,
+  release, heartbeat, and reconcile all route through `host.propose`. The
+  proposer resolves time and executor identity before commit; every state
+  machine applies identical transitions.
 - **Snapshot / compaction** come from the host: every `SNAPSHOT_EVERY` (1024)
-  applied entries the state machine serializes the **live (un-acked) backlog**
-  — delete-on-ack means capture cost tracks consumer lag, not publish volume —
-  and the host compacts the log; a lagging or fresh replica is caught up via
-  InstallSnapshot instead of full replay.
+  applied entries the state machine serializes the **live queue state**:
+  original seq/next-seq, un-acked entries, leases, fencing epochs, committed
+  offsets, retry/delay state, and recent proposal outcomes. Restore replaces
+  local state exactly before log tailing resumes.
 - **Fsynced applied-index marker**: relay's engine is delete-on-ack with a
   bounded dedupe window, so cold-replaying an already-acked committed publish
   would resurrect finished work. The state machine persists its applied index
@@ -47,19 +47,13 @@ Service for peer DNS), and spawns one `RaftHost` for the whole node.
   advances, so the floor never runs ahead of engine state; a crash between the
   two at worst re-applies one entry still inside the dedupe window.
 
-## The honest limitation — leases/acks are node-local
+## Committed delivery ownership
 
-Replication scope is **publishes only** (deliberate, unchanged from the old
-driver). Leases, acks, heartbeats, and consume state stay node-local, fenced
-per node by lease epochs. On failover:
-
-- work that was leased-but-unacked on the old leader **redelivers**;
-- acked work a follower has not yet trimmed via a snapshot install can
-  redeliver too.
-
-Delivery across failover is therefore **at-least-once** — workers must stay
-idempotent (they already must be, for lease-expiry redelivery). Committed
-publishes are never lost.
+The assignment commits before Relay sends a work frame. Each lease carries an
+executor node and monotonic epoch; ack, nack, and heartbeat must match both.
+Another replica cannot concurrently lease the same entry or complete an old
+owner's work. Delivery remains **at-least-once** because an external worker may
+finish while its result is ambiguous, and expiry intentionally redelivers.
 
 ## Production path — the operator CR
 
@@ -73,8 +67,10 @@ The production HA deployment is the operator, not hand-applied YAML:
   env auto-mode reads (plus `RELAY_BIND`/`RELAY_DATA_DIR`/`RELAY_GRACE_SECS`,
   `/healthz`/`/readyz` probes, PVC storage, and opt-in auth Secret wiring).
 
-`k8s/` stays a single-node direct install for kind/smoke
-(`scripts/kind-failover-smoke.sh`).
+`k8s/` provides a layered direct base plus dev/staging/prod/template overlays;
+the production operator CR remains the authoritative HA topology.
+`scripts/kind-failover-smoke.sh` drives a disposable three-voter leader-kill
+proof with the same standard topology variables.
 
 ## Backup / restore
 
@@ -85,18 +81,18 @@ format shared with InstallSnapshot). `relay backup --url http://<node>:7000
 `--features backup`) ships it to a `service-backup` sink; the endpoint needs
 `admin` on `*` when auth is required (`--token` / `RELAY_BACKUP_TOKEN`; the
 operator injects it from `spec.backup.adminTokenSecret` and renders a
-`<name>-backup` CronJob). Restore feeds the artifact to `load_live` on a fresh
-node — an idempotent per-`message_id` merge. Leases are node-local, so
-restored work redelivers (at-least-once, same rule as failover).
+`<name>-backup` CronJob). Restore feeds the artifact to `load_live` for exact
+state replacement, preserving queue sequence space and committed ownership.
 
-## Peer TLS — config surface now, transport seam pending
+## Peer TLS
 
 Replica mode loads peer mTLS material via `peer-tls`:
 `RELAY_PEER_TLS_CERT` / `RELAY_PEER_TLS_KEY` / `RELAY_PEER_TLS_CA`
 (+ `RELAY_PEER_MTLS=on` to require client certs). Serve validates the material
 fail-fast at startup — partial config or a mis-pointed path exits nonzero.
-**Honest limit:** raft-runtime's h2c peer transport has no TLS seam yet, so mTLS
-termination is not applied to `/raft/*` traffic — peer RPCs stay cleartext h2c
-inside the cluster until the shared seam lands (tracked as a raft-runtime gap;
-relay adopts it the release it exists).
+`raft-runtime::PeerTransport` serves `/raft/*` on the dedicated listener with
+mutual identity validation and dials every peer over the same reloadable
+certificate snapshot. Unknown CAs, wrong server identities, expired chains,
+and malformed rotations fail closed before the Raft router. Plain h2c remains
+available only when peer mTLS is explicitly disabled for local development.
 <!-- HANDWRITE-END -->

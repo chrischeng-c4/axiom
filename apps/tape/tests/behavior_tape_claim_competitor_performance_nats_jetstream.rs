@@ -7,16 +7,17 @@
 // @contract topic-replay-nats-jetstream-local-backlog-win
 // @category efficiency
 // @required_for_production true
-// @command cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture
+// @command cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture
 // AW-EC-END
 
 // Contract: The test starts a real local nats-server with JetStream enabled.
 // Contract: Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning.
-// Contract: Tape's zero-copy full-replay latency is at least 1.5x faster than NATS JetStream for the local backlog replay workload.
+// Contract: Tape's real h2c replay-stream latency is at least 1.5x faster than NATS JetStream for the symmetric local backlog workload.
+// Contract: The five-sample report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_performance_nats_jetstream_replay_win() {
-    let command = "cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture";
+    let command = "cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture";
     let id = "tape-competitor-performance-nats-jetstream-replay-win";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

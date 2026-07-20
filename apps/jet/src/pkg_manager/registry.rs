@@ -1068,10 +1068,11 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/test-pkg"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(metadata_body("test-pkg", "1.0.0", &tarball_url)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(metadata_body(
+                "test-pkg",
+                "1.0.0",
+                &tarball_url,
+            )))
             .mount(&server)
             .await;
 
@@ -1110,10 +1111,11 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/test-pkg"))
             .and(header("authorization", "Bearer secret-token"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(metadata_body("test-pkg", "1.0.0", &tarball_url)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(metadata_body(
+                "test-pkg",
+                "1.0.0",
+                &tarball_url,
+            )))
             .mount(&server)
             .await;
 
@@ -1141,10 +1143,11 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/public-pkg"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(metadata_body("public-pkg", "1.0.0", &tarball_url)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(metadata_body(
+                "public-pkg",
+                "1.0.0",
+                &tarball_url,
+            )))
             .mount(&server)
             .await;
 
@@ -1183,10 +1186,11 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/test-pkg"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(metadata_body("test-pkg", "2.0.0", &tarball_url)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(metadata_body(
+                "test-pkg",
+                "2.0.0",
+                &tarball_url,
+            )))
             .mount(&server)
             .await;
 

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
 pub const DEFAULT_PRIORITY: u8 = 10;
 
@@ -10,7 +11,7 @@ pub type TaskId = String;
 pub type QueueName = String;
 pub type AttemptId = String;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Target {
     pub url: String,
     #[serde(default = "default_method")]
@@ -23,7 +24,7 @@ fn default_method() -> String {
     "POST".to_string()
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CreateTask {
     pub task_id: TaskId,
     pub target: Target,
@@ -44,7 +45,7 @@ fn default_max_attempts() -> u32 {
     3
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct QueuePolicy {
     pub max_in_flight: usize,
     pub max_dispatch_per_tick: usize,
@@ -67,20 +68,15 @@ impl Default for QueuePolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum QueueControlState {
+    #[default]
     Running,
     Paused,
     Disabled,
 }
 
-impl Default for QueueControlState {
-    fn default() -> Self {
-        Self::Running
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct QueueSnapshot {
     pub queue: QueueName,
     pub control_state: QueueControlState,
@@ -91,11 +87,13 @@ pub struct QueueSnapshot {
     pub terminal_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum TaskStatus {
     Scheduled,
     Leased {
         attempt_id: AttemptId,
+        executor_node: u64,
+        epoch: u64,
         expires_at: DateTime<Utc>,
     },
     Succeeded,
@@ -112,17 +110,37 @@ pub struct DispatchLease {
     pub payload: serde_json::Value,
     pub priority: u8,
     pub attempt: u32,
+    /// Stable across every retry of this logical task.
+    pub idempotency_key: String,
+    pub executor_node: u64,
+    pub epoch: u64,
     pub leased_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One externally observed HTTP result to commit against its fenced lease.
+/// The proposer resolves `completed_at`; replicas only apply these bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptSettlement {
+    pub attempt_id: AttemptId,
+    pub epoch: u64,
+    pub completed_at: DateTime<Utc>,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettlementOutcome {
+    Acked(bool),
+    Nacked(Option<NackOutcome>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NackOutcome {
     Retried { next_at: DateTime<Utc> },
     DeadLettered,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchedulerError {
     #[error("queue `{0}` is not configured")]
     QueueMissing(String),

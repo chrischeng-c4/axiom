@@ -1045,10 +1045,7 @@ print(Decorated)
         result.expect("repeated class definitions should run from source");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            [
-                "False", "True", "False", "1", "two", "C", "C", "True", "False", "True",
-                "42"
-            ]
+            ["False", "True", "False", "1", "two", "C", "C", "True", "False", "True", "42"]
         );
     }
 
@@ -1114,7 +1111,14 @@ print(second)
         result.expect("each class statement execution should allocate a fresh identity");
         assert_eq!(
             captured.lines().collect::<Vec<_>>(),
-            ["False", "True", "False", "True", "<C instance>", "<C instance>"]
+            [
+                "False",
+                "True",
+                "False",
+                "True",
+                "<C instance>",
+                "<C instance>"
+            ]
         );
     }
 
@@ -1478,7 +1482,9 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error.to_string().contains("__class__ not set defining 'Value'"),
+            error
+                .to_string()
+                .contains("__class__ not set defining 'Value'"),
             "unexpected error: {error}"
         );
     }
@@ -1561,7 +1567,9 @@ class Value(metaclass=ValueMeta):
         crate::runtime::cleanup_all_runtime_state();
 
         assert!(
-            error.to_string().contains("__classcell__ must be a nonlocal cell"),
+            error
+                .to_string()
+                .contains("__classcell__ must be a nonlocal cell"),
             "unexpected error: {error}"
         );
     }

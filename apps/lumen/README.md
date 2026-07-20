@@ -74,7 +74,7 @@ agent integration remain first-class domain roots.
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
-| Stateful Service Workload | #1553 | implemented | verified | smoke | ready | mandatory stateful profile: composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots |
+| Stateful Service Workload | #2144 | implemented | verified | smoke | ready | mandatory stateful profile: active TD verification linkage #2144 composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots; original projection #1553 remains closed historical provenance |
 | Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
 | Agent Task Navigation | 1683 | verified | passing | conformance | ready | non-domain DX baseline: typed offline task manifest and runbooks generated from the DX contract, runtime field capabilities, and canonical OpenAPI surface |
 
@@ -624,7 +624,8 @@ Gate Inventory:
 
 ID: stateful-service-workload
 Type: Service
-Root WI: #1553
+Root WI: #2144
+Historical WI: #1553 (closed; original capability projection)
 Status: verified
 Surfaces: Durable index and checkpoint state plus stateful deployment:
 `apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-runtime`,
@@ -651,7 +652,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| stateful-service-workload-projection | change | #1553 | implemented | passing | smoke | `aw capability check --project lumen --skip-issue-inventory`; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
+| stateful-service-workload-projection | change | #2144 | implemented | passing | smoke | `aw capability check --project lumen --skip-issue-inventory`; primary TD verification linkage is #2144; closed #1553 remains historical projection provenance; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
 
 ### Developer & Agent Experience
 

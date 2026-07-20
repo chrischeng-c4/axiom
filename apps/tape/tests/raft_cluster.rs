@@ -5,8 +5,9 @@
 //! Mirrors relay's `tests/raft_cluster.rs` (#544) shape: election, a leader
 //! append applied on every node's journal, a follower append forwarded by
 //! the host, a direct follower peer-route POST answering 421, leader kill
-//! re-electing with no committed loss, and the snapshot/compaction path — a
-//! fresh node catches up via InstallSnapshot instead of full log replay.
+//! re-electing with no committed loss, a recovered node catching up before a
+//! second leader loss, and the snapshot/compaction path — a fresh node catches
+//! up via InstallSnapshot instead of full log replay.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,9 +17,14 @@ use raft_runtime::Membership;
 use tape::raft::TapeRaft;
 use tape::TapeJournal;
 
+// h2's in-process client pool can otherwise tear down active streams while
+// three independent nine-node test tasks are shutting down concurrently.
+static CLUSTER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Node {
     raft: Arc<TapeRaft>,
     serve: tokio::task::JoinHandle<()>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 /// An in-process group: every node's listener + URL is bound up-front so peer
@@ -81,17 +87,45 @@ impl Cluster {
             .unwrap(),
         );
         let app = raft.router();
-        let listener = self.listeners[id].take().expect("listener unused");
+        let listener = match self.listeners[id].take() {
+            Some(listener) => listener,
+            None => {
+                // A deliberately late node must be connection-refused before
+                // it joins, not TCP-connected to a bound-but-unserved socket:
+                // timing out an h2 handshake is not a real absent-pod shape.
+                let address = self.urls[&(id as u64)]
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .parse::<std::net::SocketAddr>()
+                    .unwrap();
+                let listener = std::net::TcpListener::bind(address).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                tokio::net::TcpListener::from_std(listener).unwrap()
+            }
+        };
+        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let serve = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
         });
-        self.nodes[id] = Some(Node { raft, serve });
+        self.nodes[id] = Some(Node {
+            raft,
+            serve,
+            shutdown: Some(shutdown),
+        });
     }
 
     fn start_all(&mut self, snapshot_every: u64) {
         for id in 0..self.nodes.len() {
             self.start_node(id, snapshot_every);
         }
+    }
+
+    fn leave_listener_unbound_until_start(&mut self, id: usize) {
+        drop(self.listeners[id].take());
     }
 
     fn raft(&self, id: usize) -> &Arc<TapeRaft> {
@@ -101,10 +135,35 @@ impl Cluster {
     /// Abort the node's serve loop and drop its host (tick/pump abort on
     /// drop) -- an in-process stand-in for a killed node; `raft_failover.rs`
     /// covers the real `kill -9` subprocess case.
-    fn kill(&mut self, id: usize) {
-        if let Some(n) = self.nodes[id].take() {
+    async fn kill(&mut self, id: usize) {
+        if let Some(mut n) = self.nodes[id].take() {
+            // Deliberately abrupt for the failover case. The separate
+            // subprocess test covers an actual SIGKILL.
+            n.shutdown.take();
             n.serve.abort();
+            let _ = n.serve.await;
+            n.raft.shutdown().await.unwrap();
         }
+    }
+
+    async fn shutdown(mut self) {
+        for node in self.nodes.iter().flatten() {
+            node.raft.shutdown().await.unwrap();
+        }
+        for node in &mut self.nodes {
+            if let Some(mut node) = node.take() {
+                if let Some(shutdown) = node.shutdown.take() {
+                    let _ = shutdown.send(());
+                }
+                let _ = node.serve.await;
+            }
+        }
+        // Dropping reqwest clients schedules their pooled h2 connection
+        // drivers to close. Give those drivers one bounded turn before this
+        // test's Tokio runtime is torn down; otherwise h2 debug assertions can
+        // observe bookkeeping streams while the runtime is aborting them.
+        drop(self.client);
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     fn live(&self) -> impl Iterator<Item = (usize, &Node)> {
@@ -125,9 +184,22 @@ impl Cluster {
 
     async fn wait_leader(&self) -> usize {
         let deadline = Instant::now() + Duration::from_secs(8);
+        let mut stable = None;
+        let mut samples = 0;
         loop {
             if let Some(i) = self.leader().await {
-                return i;
+                if stable == Some(i) {
+                    samples += 1;
+                } else {
+                    stable = Some(i);
+                    samples = 1;
+                }
+                if samples >= 3 {
+                    return i;
+                }
+            } else {
+                stable = None;
+                samples = 0;
             }
             assert!(Instant::now() < deadline, "no leader elected");
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -202,9 +274,11 @@ async fn propose(raft: &TapeRaft, n: i64) -> tape::raft::TapeOutcome {
 /// Exactly one leader; a leader append applies on every node's journal; a
 /// follower append is forwarded by the host; a direct follower peer-route
 /// POST answers 421 not-leader; killing the leader re-elects with no
-/// committed loss and the group keeps accepting appends.
+/// committed loss; the stopped node restarts from durable state, catches up,
+/// and the group keeps accepting appends after a second leader loss.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn three_node_group_elects_replicates_forwards_and_fails_over() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
     let mut c = Cluster::prepare(3).await;
     c.start_all(1024);
 
@@ -240,20 +314,23 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
     let resp = c
         .client
         .post(format!("{}/raft/publish", c.urls[&(follower as u64)]))
-        .body(serde_json::to_vec(&tape::raft::TapeCommand::Append {
-            topic: "orders".to_string(),
-            key: None,
-            payload: serde_json::json!({ "n": 99 }),
-            timestamp_ms: 100,
-        })
-        .unwrap())
+        .body(
+            serde_json::to_vec(&tape::raft::TapeCommand::Append {
+                topic: "orders".to_string(),
+                key: None,
+                payload: serde_json::json!({ "n": 99 }),
+                timestamp_ms: 100,
+                applied_at_ms: 100,
+            })
+            .unwrap(),
+        )
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::MISDIRECTED_REQUEST);
 
     // Kill the leader -> survivors re-elect and keep the committed entries.
-    c.kill(leader);
+    c.kill(leader).await;
     let new_leader = c.wait_leader().await;
     assert_ne!(new_leader, leader);
     let out = propose(c.raft(new_leader), 3).await;
@@ -264,12 +341,114 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
     c.wait_converged(3).await;
     c.wait_payloads(&[1, 2, 3]).await;
 
+    // Restart the original leader on the same durable raft directory. It must
+    // recover/catch up before another leader is removed.
+    c.start_node(leader, 1024);
+    c.wait_payloads(&[1, 2, 3]).await;
+
+    let second_leader = c.wait_leader().await;
+    c.kill(second_leader).await;
+    let third_leader = c.wait_leader().await;
+    assert_ne!(third_leader, second_leader);
+    let out = propose(c.raft(third_leader), 4).await;
+    match out {
+        tape::raft::TapeOutcome::Appended(event) => assert_eq!(event.payload["n"], 4),
+        _ => panic!("expected Appended outcome"),
+    }
+    c.wait_payloads(&[1, 2, 3, 4]).await;
+
     for (i, _) in c.live() {
         let got = c.payload_ns(i);
-        for want in [1, 2, 3] {
+        for want in [1, 2, 3, 4] {
             assert!(got.contains(&want), "node {i} holds n={want}");
         }
     }
+    c.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pull_subscription_metadata_and_explicit_ack_converge() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
+    let mut c = Cluster::prepare(3).await;
+    c.start_all(1024);
+    let leader = c.wait_leader().await;
+    let follower = c.live().map(|(id, _)| id).find(|id| *id != leader).unwrap();
+
+    let (_, created) = c
+        .raft(leader)
+        .propose_subscription_create("orders".into(), "audit".into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        created,
+        Some(tape::raft::TapeOutcome::SubscriptionCreated(Ok(_)))
+    ));
+    propose(c.raft(leader), 1).await;
+    propose(c.raft(leader), 2).await;
+    c.wait_converged(2).await;
+
+    for (_, node) in c.live() {
+        let journal = node.raft.journal();
+        let journal = journal.lock().unwrap();
+        let batch = journal
+            .pull_subscription("orders", "audit", Some(2))
+            .unwrap();
+        assert_eq!(batch.cursor, 0);
+        assert_eq!(batch.next_offset, 2);
+        assert_eq!(batch.events.len(), 2);
+    }
+
+    let (_, acked) = c
+        .raft(follower)
+        .propose_subscription_ack("orders".into(), "audit".into(), 2, 200)
+        .await
+        .unwrap();
+    assert!(matches!(
+        acked,
+        Some(tape::raft::TapeOutcome::SubscriptionAcked(Ok(_)))
+    ));
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if c.live().all(|(_, node)| {
+            node.raft
+                .journal()
+                .lock()
+                .unwrap()
+                .checkpoint("orders", "audit")
+                .is_some_and(|checkpoint| checkpoint.offset == 2)
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "subscription ack did not converge"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let (_, retained) = c
+        .raft(leader)
+        .propose_retention(
+            "orders".into(),
+            tape::RetentionPolicy {
+                min_offset: Some(2),
+                max_age_seconds: None,
+                protected_consumers: vec!["audit".into()],
+            },
+            300,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        retained,
+        Some(tape::raft::TapeOutcome::RetentionUpdated(_))
+    ));
+    let appended = propose(c.raft(follower), 3).await;
+    match appended {
+        tape::raft::TapeOutcome::Appended(event) => assert_eq!(event.offset, 2),
+        other => panic!("expected append after retention, got {other:?}"),
+    }
+    c.shutdown().await;
 }
 
 /// With a small SnapshotPolicy threshold the leader compacts its raft log, so
@@ -278,8 +457,10 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
 /// whole-journal dump) and then tails the remaining entries.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fresh_node_catches_up_via_install_snapshot() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
     let mut c = Cluster::prepare(3).await;
     // Node 2 stays down; 2 of 3 voters still form a quorum.
+    c.leave_listener_unbound_until_start(2);
     c.start_node(0, 8);
     c.start_node(1, 8);
     let leader = c.wait_leader().await;
@@ -312,5 +493,6 @@ async fn fresh_node_catches_up_via_install_snapshot() {
     for i in 0..20 {
         assert!(got.contains(&i), "fresh node holds n={i}");
     }
+    c.shutdown().await;
 }
 // HANDWRITE-END

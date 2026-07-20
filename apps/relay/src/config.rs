@@ -11,21 +11,16 @@ use serde::{Deserialize, Serialize};
 /// Durability flush policy for the on-disk log segments.
 ///
 /// @spec apps/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#config
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FsyncPolicy {
     /// `sync_all` after every append (strongest, slowest).
     Always,
     /// Flush the writer on every append; defer the OS fsync to `Interval`.
+    #[default]
     Interval,
     /// Leave flushing to the OS page cache (fastest, weakest).
     Os,
-}
-
-impl Default for FsyncPolicy {
-    fn default() -> Self {
-        FsyncPolicy::Interval
-    }
 }
 
 /// Idempotent at-least-once append window: how long a `MessageId` is remembered.

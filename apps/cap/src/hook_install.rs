@@ -17,8 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
-use serde_json::{Value as JsonValue, json};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value as JsonValue};
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

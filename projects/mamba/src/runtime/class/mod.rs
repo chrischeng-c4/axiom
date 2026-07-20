@@ -24,12 +24,12 @@ mod generator_attrs;
 mod mappingproxy;
 mod memoryview;
 
-pub use cells::{mb_class_bind_classcell, mb_class_mark_classcell_required};
 pub(crate) use cells::record_classcell_value_for_type_new;
 use cells::{
     classcell_marker, classcell_required_for, clear_classcell_state,
     validate_classcell_after_metaclass_new,
 };
+pub use cells::{mb_class_bind_classcell, mb_class_mark_classcell_required};
 pub(crate) use descriptors::{
     classmethod_descriptor_get, is_member_descriptor, make_member_descriptor,
     member_descriptor_delete, member_descriptor_get, member_descriptor_set,
@@ -1963,9 +1963,9 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
     }
     let was_typeddict = class_is_typeddict_or_descendant(&class_name);
     if was_typeddict
-        && !bases.iter().any(|base| {
-            base == "TypedDict" || class_mro_any(base, |parent| parent == "TypedDict")
-        })
+        && !bases
+            .iter()
+            .any(|base| base == "TypedDict" || class_mro_any(base, |parent| parent == "TypedDict"))
     {
         bases.insert(0, "TypedDict".to_string());
     }
@@ -2015,7 +2015,6 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
             .unwrap_or_default()
     });
     install_abc_mixins(&class_name, &mro);
-
 }
 
 /// R10: Store class keyword arguments for __init_subclass__ dispatch.
@@ -2080,8 +2079,7 @@ fn build_kwargs_dict(kwargs: &HashMap<String, MbValue>) -> MbValue {
 fn class_base_accepts_kwargs_without_init_subclass(base_name: &str) -> bool {
     matches!(base_name, "typing.Generic" | "typing.typing.Generic")
         || class_is_typeddict_or_descendant(base_name)
-        || typinganndata_helper_class_name(base_name)
-            .is_some_and(class_is_typeddict_or_descendant)
+        || typinganndata_helper_class_name(base_name).is_some_and(class_is_typeddict_or_descendant)
 }
 
 fn class_is_typeddict_or_descendant(class_name: &str) -> bool {
@@ -2415,9 +2413,11 @@ pub fn mb_deferred_class_name_read(class_name: MbValue, name: MbValue) -> MbValu
         return value;
     }
     let meta = CLASS_REGISTRY.with(|reg| {
-        reg.borrow()
-            .get(&class_name)
-            .and_then(|cls| cls.metaclass.clone().or_else(|| inherited_metaclass_for_bases(&cls.bases)))
+        reg.borrow().get(&class_name).and_then(|cls| {
+            cls.metaclass
+                .clone()
+                .or_else(|| inherited_metaclass_for_bases(&cls.bases))
+        })
     });
     if let Some(meta_name) = meta {
         let prepared = mb_call_metaclass_prepare(
@@ -14938,8 +14938,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // Builtin type objects: PEP 585 generics subscript into
                     // aliases (list[int]); non-generic scalars raise (#22).
                     if class_name == "type" {
-                        let tn =
-                            super::builtins::type_object_registry_key(obj).unwrap_or_default();
+                        let tn = super::builtins::type_object_registry_key(obj).unwrap_or_default();
                         match tn.as_str() {
                             "list" | "dict" | "set" | "frozenset" | "tuple" | "type" => {
                                 return super::stdlib::typing_mod::pep585_subscript(obj, key);
@@ -16217,9 +16216,7 @@ pub fn mb_obj_str(obj: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 let display_name = class_display_name(class_name);
-                return MbValue::from_ptr(MbObject::new_str(format!(
-                    "<{display_name} instance>"
-                )));
+                return MbValue::from_ptr(MbObject::new_str(format!("<{display_name} instance>")));
             }
         }
     }

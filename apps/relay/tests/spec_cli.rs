@@ -90,7 +90,7 @@ fn spec_gen_writes_a_client_for_every_language() {
     for lang in ["ts", "py", "rust"] {
         let dir = tempfile::tempdir().expect("tempdir");
         let out = dir.path().join(lang);
-        let _ = stdout(&[
+        let output = stdout(&[
             "spec",
             "gen",
             "--lang",
@@ -98,6 +98,7 @@ fn spec_gen_writes_a_client_for_every_language() {
             "--out",
             out.to_str().unwrap(),
         ]);
+        assert!(output.lines().any(|line| line == "next: done"));
         let files: Vec<_> = std::fs::read_dir(&out)
             .expect("client output dir")
             .filter_map(|e| e.ok())

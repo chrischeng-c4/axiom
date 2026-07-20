@@ -41,9 +41,13 @@
 //! [`Role::covers`].
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use service_auth::{AuthError, Role, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims};
+use service_auth::{
+    AuditedRoleMapPrincipal, AuthError, ReloadableRoleMapVerifier, Role, TokenClaims,
+    TracingAuthEventSink,
+};
 
 /// Auth-mode env var (`off`|`disabled`|`required`), surfaced as `--auth`.
 pub const AUTH_MODE_ENV: &str = "RELAY_AUTH";
@@ -98,8 +102,12 @@ impl AuthConfig {
 
     /// The verifier the data-plane `auth_middleware` runs: the shared static
     /// role-map over this registry (the `open()` shape when auth is off).
-    pub fn verifier(&self) -> StaticRoleMapVerifier {
-        StaticRoleMapVerifier::new(self.required, self.tokens.clone())
+    pub fn verifier(&self) -> ReloadableRoleMapVerifier {
+        ReloadableRoleMapVerifier::with_sink(
+            self.required,
+            self.tokens.clone(),
+            Arc::new(TracingAuthEventSink),
+        )
     }
 }
 
@@ -112,7 +120,7 @@ impl AuthConfig {
 /// `{"error": "forbidden", "message": ...}` shape (consistent with the #1205
 /// `ApiErr` envelope family).
 pub fn authorize(
-    principal: &RoleMapPrincipal,
+    principal: &AuditedRoleMapPrincipal,
     subject: &str,
     needed: Role,
 ) -> Result<(), AuthError> {

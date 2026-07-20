@@ -376,9 +376,8 @@ mod courier_tests {
     #[test]
     fn resolve_courier_token_returns_none_when_env_unset_or_blank() {
         assert_eq!(resolve_courier_token_from(|_| None), None);
-        let blank = resolve_courier_token_from(|v| {
-            (v == "AXIOM_COURIER_TOKEN").then(|| "".to_string())
-        });
+        let blank =
+            resolve_courier_token_from(|v| (v == "AXIOM_COURIER_TOKEN").then(|| "".to_string()));
         assert_eq!(blank, None);
     }
 }

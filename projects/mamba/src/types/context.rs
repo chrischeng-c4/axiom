@@ -1,7 +1,7 @@
 use super::stdlib_typespec::StrSpecId;
 use super::ty::{
-    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypePack, TypeParamDefault,
-    TypeVarId, TypeVarKind,
+    AliasInstanceId, ExternalValue, ParamPack, Ty, TypeId, TypePack, TypeParamDefault, TypeVarId,
+    TypeVarKind,
 };
 use crate::resolve::SymbolId;
 use std::collections::{HashMap, HashSet};
@@ -254,14 +254,13 @@ impl TypeContext {
             return false;
         }
         let instance = &self.alias_instances[id.0 as usize];
-        self.alias_target_undo
-            .push((
-                id,
-                instance.target,
-                instance.deferred_target.clone(),
-                instance.rejected,
-                instance.resolving,
-            ));
+        self.alias_target_undo.push((
+            id,
+            instance.target,
+            instance.deferred_target.clone(),
+            instance.rejected,
+            instance.resolving,
+        ));
         true
     }
 
@@ -472,15 +471,14 @@ impl TypeContext {
                         })
                         || visit(tcx, origin, *ret, seen)
                 }
-                Ty::External(ExternalValue::Callable(callable)) => callable
-                    .receiver
-                    .as_ref()
-                    .is_some_and(|receiver| {
+                Ty::External(ExternalValue::Callable(callable)) => {
+                    callable.receiver.as_ref().is_some_and(|receiver| {
                         receiver
                             .args
                             .iter()
                             .any(|arg| visit(tcx, origin, *arg, seen))
-                    }),
+                    })
+                }
                 Ty::Class {
                     user,
                     external,
@@ -488,9 +486,7 @@ impl TypeContext {
                     ..
                 } => {
                     user.as_ref().is_some_and(|user| {
-                        user.args
-                            .iter()
-                            .any(|arg| visit(tcx, origin, *arg, seen))
+                        user.args.iter().any(|arg| visit(tcx, origin, *arg, seen))
                     }) || external.as_ref().is_some_and(|external| {
                         external
                             .args
@@ -500,11 +496,9 @@ impl TypeContext {
                         .iter()
                         .any(|(_, field)| visit(tcx, origin, *field, seen))
                 }
-                Ty::Enum { variants, .. } => variants.iter().any(|(_, fields)| {
-                    fields
-                        .iter()
-                        .any(|field| visit(tcx, origin, *field, seen))
-                }),
+                Ty::Enum { variants, .. } => variants
+                    .iter()
+                    .any(|(_, fields)| fields.iter().any(|field| visit(tcx, origin, *field, seen))),
                 Ty::Never
                 | Ty::None
                 | Ty::Bool
@@ -590,9 +584,7 @@ impl TypeContext {
                 .args
                 .iter()
                 .any(|arg| self.contains_type_var(*arg)),
-            Ty::List(item) | Ty::Set(item) | Ty::TypeObject(item) => {
-                self.contains_type_var(*item)
-            }
+            Ty::List(item) | Ty::Set(item) | Ty::TypeObject(item) => self.contains_type_var(*item),
             Ty::Dict(key, value) => self.contains_type_var(*key) || self.contains_type_var(*value),
             Ty::Tuple(items) | Ty::Union(items) => {
                 items.iter().any(|item| self.contains_type_var(*item))
@@ -606,22 +598,16 @@ impl TypeContext {
             } => {
                 params.iter().any(|param| self.contains_type_var(*param))
                     || signature.as_ref().is_some_and(|params| {
-                        params
-                            .iter()
-                            .any(|param| self.contains_type_var(param.ty))
+                        params.iter().any(|param| self.contains_type_var(param.ty))
                     })
                     || self.contains_type_var(*ret)
                     || param_spec.is_some()
             }
-            Ty::External(ExternalValue::Callable(callable)) => callable
-                .receiver
-                .as_ref()
-                .is_some_and(|receiver| {
-                    receiver
-                        .args
-                        .iter()
-                        .any(|arg| self.contains_type_var(*arg))
-                }),
+            Ty::External(ExternalValue::Callable(callable)) => {
+                callable.receiver.as_ref().is_some_and(|receiver| {
+                    receiver.args.iter().any(|arg| self.contains_type_var(*arg))
+                })
+            }
             Ty::Class {
                 user,
                 external,
@@ -631,10 +617,7 @@ impl TypeContext {
                 user.as_ref()
                     .is_some_and(|user| user.args.iter().any(|arg| self.contains_type_var(*arg)))
                     || external.as_ref().is_some_and(|external| {
-                        external
-                            .args
-                            .iter()
-                            .any(|arg| self.contains_type_var(*arg))
+                        external.args.iter().any(|arg| self.contains_type_var(*arg))
                     })
                     || fields
                         .iter()
@@ -1249,13 +1232,7 @@ mod tests {
         );
         let outer = tcx.begin_alias_target_transaction();
         let inner = tcx.begin_alias_target_transaction();
-        tcx.defer_alias_target(
-            specialized,
-            template,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
+        tcx.defer_alias_target(specialized, template, Vec::new(), Vec::new(), Vec::new());
         assert!(tcx.deferred_alias_target(specialized).is_some());
         tcx.finish_alias_target_transaction(inner, true);
         assert!(tcx.deferred_alias_target(specialized).is_some());

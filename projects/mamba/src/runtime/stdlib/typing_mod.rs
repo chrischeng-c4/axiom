@@ -321,7 +321,9 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
                         .unwrap()
                         .iter()
                         .filter_map(|(k, v)| match k {
-                            crate::runtime::dict_ops::DictKey::Str(name) => Some((name.clone(), *v)),
+                            crate::runtime::dict_ops::DictKey::Str(name) => {
+                                Some((name.clone(), *v))
+                            }
                             _ => None,
                         })
                         .collect(),

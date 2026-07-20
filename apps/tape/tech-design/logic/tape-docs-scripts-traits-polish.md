@@ -12,8 +12,8 @@ summary: >
   bearer-auth flags (#1326), backup/restore (#1329), and raft HA env
   contract (#1327); the benchmarks page documents the existing
   `apps/tape/tests/tape_perf_gate.rs` local regression gate and
-  `apps/tape/tests/tape_vs_nats_jetstream.rs` real-NATS-JetStream replay win
-  gate without inventing new benchmark classes. Adds
+  `apps/tape/tests/tape_vs_nats_jetstream.rs` and `tape_vs_kafka.rs`
+  symmetric real-service replay gates. Adds
   `apps/tape/scripts/dev-single.sh` (single-node local dev, embedded
   journal) and `apps/tape/scripts/dev-cluster.sh` (3-node local raft
   cluster using the real `TAPE_DATA_DIR`/`TAPE_PEER_SERVICE`/`TAPE_PEERS`
@@ -59,7 +59,7 @@ nodes:
     label: "docs/deployment-handoff.md documents the real dockerfile+k8s-operator path (#1328), bearer-auth flags (#1326), backup/restore (#1329), and raft HA env contract (#1327)"
   benchmarks_doc:
     kind: process
-    label: "docs/benchmarks-scale.md documents the existing tests/tape_perf_gate.rs local regression gate and tests/tape_vs_nats_jetstream.rs real-NATS-JetStream replay win gate, no new benchmark classes invented"
+    label: "docs/benchmarks-scale.md documents the local regression gate plus release h2c replay gates against real NATS JetStream and Kafka KRaft"
   dev_single_script:
     kind: process
     label: "scripts/dev-single.sh boots one tape serve process locally with an embedded file-backed journal"
@@ -117,10 +117,10 @@ requirements:
     verify: manual doc review against apps/tape/src/bin/tape.rs flag surface
   benchmarks_scale_doc:
     id: R2
-    text: "apps/tape/docs/benchmarks-scale.md documents the existing tape_perf_gate.rs and tape_vs_nats_jetstream.rs gates without inventing new benchmark classes."
+    text: "apps/tape/docs/benchmarks-scale.md documents the local tape_perf_gate plus symmetric release real-service NATS JetStream and Kafka KRaft gates."
     kind: functional
     risk: low
-    verify: cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream -- --nocapture
+    verify: cargo test -p tape --test tape_perf_gate -- --nocapture; cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture; cargo test --release -p tape --test tape_vs_kafka -- --nocapture
   dev_single_script:
     id: R3
     text: "apps/tape/scripts/dev-single.sh boots a single-node tape serve process locally."
@@ -154,7 +154,7 @@ requirements:
 ---
 flowchart TD
     r1[R1 deployment handoff doc] --> manual_review_bin_tape_rs_flags[manual review vs apps/tape/src/bin/tape.rs flags]
-    r2[R2 benchmarks scale doc] --> cargo_test_perf_gate_jetstream[cargo test -p tape --test tape_perf_gate --test tape_vs_nats_jetstream]
+    r2[R2 benchmarks scale doc] --> cargo_test_perf_gate_jetstream[local gate plus release NATS and Kafka real-service gates]
     r3[R3 dev-single.sh] --> manual_run_dev_single[manual run + curl /healthz]
     r4[R4 dev-cluster.sh] --> manual_run_dev_cluster[manual run + cross-node curl convergence]
     r5[R5 README consistency] --> manual_diff_review_readme[manual diff review of README.md]
@@ -175,7 +175,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New docs page (mirrors apps/lumen/docs/benchmarks-scale.md shape, scoped to tape's actual gates): documents apps/tape/tests/tape_perf_gate.rs (local append/replay/checkpoint regression budget, no external peer win claims) and apps/tape/tests/tape_vs_nats_jetstream.rs (real nats-server -js 20k-event 128-byte-payload backlog replay, Tape zero-copy replay_refs >=1.5x win), how to reproduce both, and the explicit not-yet-calibrated peer list (Kafka/Redpanda/Pulsar/RabbitMQ Streams). No new benchmark classes invented."
+    description: "Benchmark handoff now documents the local append/replay/checkpoint regression budget plus symmetric release real-service h2c replay gates against NATS JetStream and Kafka KRaft (1.5x floors). Redpanda, Pulsar, and RabbitMQ Streams remain uncalibrated and unclaimed."
   - path: apps/tape/scripts/dev-single.sh
     action: create
     section: logic

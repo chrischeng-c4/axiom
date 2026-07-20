@@ -12,9 +12,15 @@ fn local_replay_perf_gate_passes_without_external_win_claims() {
         "Tape must not claim Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams wins without calibrated peer runs"
     );
     for peer in report.peers {
-        if peer.replay_baseline {
-            assert_eq!(peer.status, "not_calibrated");
-            assert!(!peer.win_claim);
+        if !peer.replay_baseline {
+            continue;
+        }
+        assert!(!peer.win_claim);
+        match peer.peer {
+            "Kafka topic log" | "NATS JetStream stream" => {
+                assert_eq!(peer.status, "calibrated_separate_gate")
+            }
+            _ => assert_eq!(peer.status, "not_calibrated"),
         }
     }
 }
@@ -31,8 +37,9 @@ fn tape_bench_cli_reports_calibration_status() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("local_regression_passed_external_broker_wins_not_calibrated"));
+    assert!(stdout.contains("local_regression_passed_external_wins_require_separate_gates"));
     assert!(stdout.contains("Kafka topic log"));
+    assert!(stdout.contains("calibrated_separate_gate"));
     assert!(stdout.contains("not_calibrated"));
     assert!(stdout.contains("RabbitMQ topic exchange"));
     assert!(stdout.contains("not_a_replay_baseline"));

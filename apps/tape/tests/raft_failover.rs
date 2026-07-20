@@ -10,6 +10,8 @@ use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use futures::{StreamExt, TryStreamExt};
+
 struct Node {
     child: Child,
     bind: String,
@@ -38,6 +40,12 @@ fn free_addr() -> String {
 }
 
 fn spawn_node(id: u32, bind: &str, data_dir: &std::path::Path, peers_csv: &str) -> Node {
+    let child_log = std::env::var("TAPE_CHILD_RUST_LOG").unwrap_or_else(|_| "warn".into());
+    let stderr = if std::env::var_os("TAPE_TEST_LOG").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    };
     let child = Command::new(env!("CARGO_BIN_EXE_tape"))
         .arg("serve")
         .arg("--bind")
@@ -51,9 +59,9 @@ fn spawn_node(id: u32, bind: &str, data_dir: &std::path::Path, peers_csv: &str) 
         .env("TAPE_PEER_SERVICE", "tape")
         .env("TAPE_PEERS", peers_csv)
         .env("TAPE_AUTH", "off")
-        .env("RUST_LOG", "warn")
+        .env("RUST_LOG", child_log)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .spawn()
         .expect("spawn tape serve subprocess");
     Node {
@@ -84,14 +92,21 @@ async fn is_leader(client: &reqwest::Client, base: &str) -> bool {
     body["is_leader"].as_bool().unwrap_or(false)
 }
 
-async fn wait_leader<'a>(client: &reqwest::Client, bases: &[&'a str], deadline: Instant) -> &'a str {
+async fn wait_leader<'a>(
+    client: &reqwest::Client,
+    bases: &[&'a str],
+    deadline: Instant,
+) -> &'a str {
     loop {
         for base in bases {
             if is_leader(client, base).await {
                 return base;
             }
         }
-        assert!(Instant::now() < deadline, "no leader elected among {bases:?}");
+        assert!(
+            Instant::now() < deadline,
+            "no leader elected among {bases:?}"
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -222,6 +237,83 @@ async fn kill_9_leader_survivors_reelect_with_no_committed_event_loss() {
         if i != leader_idx {
             let _ = n.child.kill();
             let _ = n.child.wait();
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_ingress_across_all_replicas_commits_without_raft_timeouts() {
+    const EVENTS: usize = 256;
+    const CONCURRENCY: usize = 64;
+
+    let binds: Vec<String> = (0..3).map(|_| free_addr()).collect();
+    let peers_csv = binds.join(",");
+    let dirs: Vec<tempfile::TempDir> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let nodes: Vec<Node> = (0..3u32)
+        .map(|i| spawn_node(i, &binds[i as usize], dirs[i as usize].path(), &peers_csv))
+        .collect();
+    let client = reqwest::Client::builder()
+        .http2_prior_knowledge()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for node in &nodes {
+        wait_healthy(&client, &node.base_url(), deadline).await;
+    }
+    let base_urls: Vec<String> = nodes.iter().map(Node::base_url).collect();
+    let base_refs: Vec<&str> = base_urls.iter().map(String::as_str).collect();
+    wait_leader(
+        &client,
+        &base_refs,
+        Instant::now() + Duration::from_secs(15),
+    )
+    .await;
+
+    let writes = futures::stream::iter(0..EVENTS)
+        .map(|n| {
+            let client = client.clone();
+            let base = base_urls[n % base_urls.len()].clone();
+            async move {
+                let response = append(&client, &base, n as i64).await;
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                anyhow::ensure!(
+                    status.is_success(),
+                    "append {n} via {base}: {status} {body}"
+                );
+                Ok::<_, anyhow::Error>(())
+            }
+        })
+        .buffer_unordered(CONCURRENCY)
+        .try_collect::<Vec<_>>()
+        .await;
+    if let Err(error) = writes {
+        for base in &base_urls {
+            let status = match client.get(format!("{base}/raftz")).send().await {
+                Ok(response) => response.text().await.ok(),
+                Err(_) => None,
+            };
+            eprintln!("raft status {base}: {status:?}");
+        }
+        panic!("concurrent append failed: {error:#}");
+    }
+
+    let converge_deadline = Instant::now() + Duration::from_secs(15);
+    for base in &base_urls {
+        loop {
+            let got = replayed_ns(&client, base).await;
+            if got.len() == EVENTS {
+                break;
+            }
+            assert!(
+                Instant::now() < converge_deadline,
+                "{base} converged to {}/{} concurrent events",
+                got.len(),
+                EVENTS
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 }

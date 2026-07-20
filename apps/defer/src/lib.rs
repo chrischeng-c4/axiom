@@ -6,12 +6,25 @@
 //! priority matters, queue policy owns dispatch rate/concurrency, and leased
 //! attempts end in ack, retry, cancellation, or dead-letter.
 
+pub mod auth;
+pub mod dispatch;
+pub mod metrics;
+pub mod openapi;
+#[cfg(feature = "operator")]
+pub mod operator;
+pub mod peer_tls;
+pub mod raft;
 pub mod scheduler;
+pub mod server;
 pub mod types;
 
+pub use auth::AuthConfig;
+pub use dispatch::{DispatchDisposition, DispatchReport, HttpDispatcher, TargetSigningKey};
+pub use raft::{DeferCommand, DeferOutcome, DeferRaft, DeferStateMachine};
 pub use scheduler::DeferScheduler;
 pub use types::{
-    CreateTask, DispatchLease, NackOutcome, QueueControlState, QueuePolicy, QueueSnapshot,
-    SchedulerError, SchedulerResult, Target, TaskStatus, DEFAULT_PRIORITY,
+    AttemptSettlement, CreateTask, DispatchLease, NackOutcome, QueueControlState, QueuePolicy,
+    QueueSnapshot, SchedulerError, SchedulerResult, SettlementOutcome, Target, TaskStatus,
+    DEFAULT_PRIORITY,
 };
 // HANDWRITE-END

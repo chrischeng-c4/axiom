@@ -13,6 +13,7 @@ use std::time::Duration;
 use chrono::Utc;
 
 use crate::engine::Relay;
+use crate::raft::RelayRaft;
 
 /// Handle to a running reconciler; drop or [`stop`](ReconcilerHandle::stop) to
 /// end the background sweep.
@@ -47,6 +48,20 @@ pub fn spawn_reconciler(relay: Arc<Relay>, interval: Duration) -> ReconcilerHand
             tick.tick().await;
             // The engine is internally synchronized (per-shard locking).
             let _reclaimed = relay.reconcile(Utc::now());
+        }
+    });
+    ReconcilerHandle { task }
+}
+
+/// Spawn the same liveness sweep in replica mode. Expiry is proposer-resolved
+/// and committed, so every replica reclaims exactly the same assignments.
+pub fn spawn_replicated_reconciler(raft: Arc<RelayRaft>, interval: Duration) -> ReconcilerHandle {
+    let task = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let _ = raft.reconcile(Utc::now()).await;
         }
     });
     ReconcilerHandle { task }

@@ -7,7 +7,7 @@
 //! lets library consumers decide whether to spawn `cap daemon run`, shell out
 //! to `cap`, or degrade without a daemon.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 

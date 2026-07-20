@@ -31,7 +31,7 @@ fill_sections: [overview, unit-test, changes]
 `apps/tape/tests/cli_contract.rs` verifies the binary-visible contract for
 the bootstrap Tape CLI and offline spec.
 It also verifies the topic subscription resource slice: pull checkpoint
-compatibility, push endpoint metadata only, and declared API inventory.
+compatibility, absence of push/mode flags, and declared API inventory.
 Pull reads are bounded and do not advance their cursor until the matching
 explicit ack command succeeds.
 
@@ -46,7 +46,7 @@ flowchart TD
     test["cargo test -p tape --test cli_contract -- --nocapture"] --> help["compiled tape --help exposes command groups"]
     test --> spec["spec routes list API inventory"]
     test --> workflow["append/replay/checkpoint commands round-trip temp store"]
-    test --> subscriptions["subscription pull/push create/list/show/delete round-trip temp store"]
+    test --> subscriptions["pull-only subscription create/list/show/delete round-trip temp store; push rejected"]
     test --> subscription_spec["subscription routes/OpenAPI/JSON Schema are declared"]
     test --> pullack["bounded pull then explicit ack continues at the next checkpoint offset"]
 ```

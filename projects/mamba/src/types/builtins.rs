@@ -22,8 +22,7 @@ impl TypeChecker {
         let bytearray_ty = self.external_class_instance("builtins", "bytearray", Vec::new());
         let complex_ty = self.external_class_instance("builtins", "complex", Vec::new());
         let memoryview_ty = self.external_class_instance("builtins", "memoryview", Vec::new());
-        let frozenset_ty =
-            self.external_class_instance("builtins", "frozenset", vec![any]);
+        let frozenset_ty = self.external_class_instance("builtins", "frozenset", vec![any]);
         let range_ty = self.external_class_instance("builtins", "range", Vec::new());
         let slice_ty = self.external_class_instance("builtins", "slice", Vec::new());
 

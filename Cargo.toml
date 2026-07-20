@@ -50,6 +50,7 @@ members = [
     "libs/service-observability",
     "libs/service-auth",
     "libs/service-backup",
+    "libs/service-executor",
     "libs/storage-durable",
     "libs/peer-tls",
     "libs/metrics-prometheus",

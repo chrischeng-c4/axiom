@@ -89,7 +89,7 @@ const INDEX_STRIDE: Seq = 64;
 
 /// Whether `seq` is sampled into the sparse index for a segment based at `base`.
 fn is_indexed(seq: Seq, base: Seq) -> bool {
-    seq == base || (seq - base) % INDEX_STRIDE == 0
+    seq == base || (seq - base).is_multiple_of(INDEX_STRIDE)
 }
 
 impl Log {
@@ -232,6 +232,74 @@ impl Log {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Replace the durable log with a snapshot tail while preserving its
+    /// original sequence space. `entries` must be contiguous and end exactly
+    /// at `next_seq`; an empty tail is valid and still retains the next
+    /// monotonic sequence after a fully acknowledged snapshot.
+    pub(crate) fn restore_entries(
+        &mut self,
+        entries: &[LogEntry],
+        next_seq: Seq,
+    ) -> io::Result<()> {
+        let base = entries.first().map(|entry| entry.seq).unwrap_or(next_seq);
+        if entries
+            .iter()
+            .enumerate()
+            .any(|(offset, entry)| entry.seq != base + offset as u64)
+            || base + entries.len() as u64 != next_seq
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "snapshot log entries are not a contiguous tail ending at next_seq",
+            ));
+        }
+        if entries
+            .iter()
+            .any(|entry| entry.subject != self.subject || entry.shard != self.shard)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "snapshot log entry belongs to a different subject or shard",
+            ));
+        }
+
+        if let Some(mut writer) = self.writer.take() {
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+        }
+        for segment in self.segments.drain(..) {
+            match std::fs::remove_file(&segment.path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.index.clear();
+        self.ring.clear();
+        self.dedupe.clear();
+        self.dedupe_order.clear();
+        self.active_bytes = 0;
+        self.start_seq = base;
+        self.len = base;
+        if self.dir.is_some() {
+            self.start_new_segment(base)?;
+        }
+
+        for entry in entries {
+            let outcome = self.append_at(
+                &entry.message_id,
+                entry.payload.clone(),
+                entry.headers.clone(),
+                entry.not_before,
+                entry.priority,
+                entry.appended_at,
+            )?;
+            debug_assert_eq!(outcome.seq, entry.seq);
+            debug_assert!(!outcome.deduped);
+        }
+        Ok(())
     }
 
     /// Earliest still-available seq (entries below it have been pruned).
