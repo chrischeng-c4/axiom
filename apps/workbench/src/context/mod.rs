@@ -1,5 +1,6 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:6fd8b17e" tracker="pending-tracker" reason="Define renderer requests, structured documents, deterministic registry selection, error isolation, fallback, and path confinement."
 pub mod aw;
+pub mod derived_page;
 pub mod git;
 pub mod graph;
 pub mod markdown;
@@ -13,6 +14,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 pub use aw::{AwArtifactKind, AwTypedRenderer};
+pub use derived_page::DerivedPageContextRenderer;
 pub use git::GitRenderer;
 pub use graph::GraphContextRenderer;
 pub use markdown::MarkdownRenderer;
@@ -97,6 +99,7 @@ impl ContextRequest {
 #[serde(rename_all = "snake_case")]
 pub enum ContextDocumentKind {
     AwTyped,
+    DerivedPage,
     Graph,
     Markdown,
     Git,
@@ -191,6 +194,7 @@ impl RendererRegistry {
     pub fn production() -> Self {
         let mut registry = Self::new();
         registry.register(GraphContextRenderer::new());
+        registry.register(DerivedPageContextRenderer::new());
         registry.register(AwTypedRenderer::new());
         registry.register(MarkdownRenderer::new());
         registry.register(GitRenderer::new());

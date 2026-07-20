@@ -20,8 +20,7 @@ use super::{
     ContextRequest, ContextTarget, RendererError, RendererSupport,
 };
 
-pub const DERIVED_PAGE_PAYLOAD_RELATIVE_PATH: &str =
-    "llm-wiki-out/workbench-pages.json";
+pub const DERIVED_PAGE_PAYLOAD_RELATIVE_PATH: &str = "llm-wiki-out/workbench-pages.json";
 pub const MAX_DERIVED_PAGE_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_SECTIONS: usize = 512;
 const MAX_CITATIONS_PER_SECTION: usize = 16;
@@ -231,9 +230,7 @@ fn validate_payload(payload: &DerivedPagePayload, root: &Path) -> Result<(), Ren
                 section.id
             )));
         }
-        if section.citations.is_empty()
-            || section.citations.len() > MAX_CITATIONS_PER_SECTION
-        {
+        if section.citations.is_empty() || section.citations.len() > MAX_CITATIONS_PER_SECTION {
             return Err(RendererError::new(format!(
                 "each section needs 1..={MAX_CITATIONS_PER_SECTION} citations"
             )));
@@ -245,11 +242,13 @@ fn validate_payload(payload: &DerivedPagePayload, root: &Path) -> Result<(), Ren
                 "an extracted section must identify exactly one citation",
             ));
         }
-        if matches!(section.freshness, PageFreshness::Stale | PageFreshness::Unknown)
-            && section
-                .freshness_note
-                .as_deref()
-                .is_none_or(|note| note.trim().is_empty())
+        if matches!(
+            section.freshness,
+            PageFreshness::Stale | PageFreshness::Unknown
+        ) && section
+            .freshness_note
+            .as_deref()
+            .is_none_or(|note| note.trim().is_empty())
         {
             return Err(RendererError::new(
                 "stale and unknown freshness need a visible explanation",
@@ -296,9 +295,7 @@ fn provenance_item(
         ProvenanceClassification::Extracted => {
             ContextProvenanceItem::extracted(provider, citations[0].clone())
         }
-        ProvenanceClassification::Inferred => {
-            ContextProvenanceItem::inferred(provider, citations)
-        }
+        ProvenanceClassification::Inferred => ContextProvenanceItem::inferred(provider, citations),
         ProvenanceClassification::Ambiguous => {
             ContextProvenanceItem::ambiguous(provider, citations)
         }
@@ -318,7 +315,7 @@ fn render_payload(
         let view = provenance_item(
             payload.provider.clone(),
             section.classification,
-            section.citations,
+            section.citations.clone(),
         )
         .resolve(request.root());
         sections_html.push_str(&render_section(
@@ -357,9 +354,10 @@ fn render_section(
     navigation: &mut Vec<ContextNavigation>,
     canonical_sources: &mut BTreeSet<PathBuf>,
 ) -> String {
-    let freshness_note = section.freshness_note.as_deref().unwrap_or(
-        "provider reported this page section current; source remains authoritative",
-    );
+    let freshness_note = section
+        .freshness_note
+        .as_deref()
+        .unwrap_or("provider reported this page section current; source remains authoritative");
     let freshness_badge = format!(
         "Provider-reported {} · {}",
         section.freshness.label(),

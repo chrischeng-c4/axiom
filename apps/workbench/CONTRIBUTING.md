@@ -120,6 +120,24 @@ registered AW-like renderers usable. Tests must use a local registry sentinel
 instead of importing the concrete AW renderer. Rendering and refresh are
 read-only and must not invoke a provider or mutate repository/AW state.
 
+The optional derived-page compatibility gate is:
+
+```bash
+cargo test -p workbench --test derived_page_context_adapter -- --nocapture
+```
+
+The adapter owns only `workbench.derived-page-context.v1`; LLM-Wiki is a
+reference-only interaction input. Do not copy or depend on its implementation,
+schema, or license-covered source. Keep payloads at or below one MiB, bound
+section bodies and citations, reject duplicate ids, traversal, invalid spans,
+and symlink escape, and sanitize derived Markdown. Every section must expose a
+canonical citation or a visible inferred/ambiguous badge, retain every input,
+and label provider-reported freshness as current, stale, or unknown. Stale and
+unknown states require a visible explanation. Provider absence, malformed
+data, and read failure must leave Markdown, Git, the native PTY, and a local
+AW-like registry sentinel usable. Rendering must not invoke providers, import
+the concrete AW renderer in this test, or mutate repository/AW state.
+
 The release-grade assembled journey gate is:
 
 ```bash

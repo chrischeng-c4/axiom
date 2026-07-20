@@ -5,8 +5,7 @@ use tempfile::TempDir;
 use workbench::{
     context::{
         derived_page::{
-            DerivedPageContextRenderer, DerivedPagePayloadSource,
-            MAX_DERIVED_PAGE_PAYLOAD_BYTES,
+            DerivedPageContextRenderer, DerivedPagePayloadSource, MAX_DERIVED_PAGE_PAYLOAD_BYTES,
         },
         ContextDocument, ContextDocumentKind, ContextProvenance, ContextRenderer, ContextRequest,
         RendererError, RendererRegistry, RendererSupport,
@@ -14,8 +13,7 @@ use workbench::{
     native_agent_pty::{PtyCommand, PtyRuntime, PtySize},
 };
 
-const PAGE_FIXTURE: &str =
-    include_str!("fixtures/derived-page/llm-wiki-out/workbench-pages.json");
+const PAGE_FIXTURE: &str = include_str!("fixtures/derived-page/llm-wiki-out/workbench-pages.json");
 const LIB_FIXTURE: &str = include_str!("fixtures/derived-page/src/lib.rs");
 const ARCHITECTURE_FIXTURE: &str = include_str!("fixtures/derived-page/docs/architecture.md");
 
@@ -85,8 +83,9 @@ impl ContextRenderer for SentinelRenderer {
 
     fn supports(&self, request: &ContextRequest) -> RendererSupport {
         match request.target() {
-            workbench::context::ContextTarget::File(path)
-                if path == Path::new("sentinel.aw") => RendererSupport::Supported,
+            workbench::context::ContextTarget::File(path) if path == Path::new("sentinel.aw") => {
+                RendererSupport::Supported
+            }
             _ => RendererSupport::Unsupported,
         }
     }
@@ -152,7 +151,10 @@ fn renders_canonical_citation_or_visible_inference_for_every_section() {
         );
         for citation in section["citations"].as_array().unwrap() {
             let path = citation["relative_path"].as_str().unwrap();
-            assert!(article.contains(path), "section {id} omitted citation {path}");
+            assert!(
+                article.contains(path),
+                "section {id} omitted citation {path}"
+            );
         }
     }
     for freshness in ["Current", "Stale", "Unknown"] {
@@ -163,7 +165,9 @@ fn renders_canonical_citation_or_visible_inference_for_every_section() {
             "missing {freshness} freshness disclosure"
         );
     }
-    assert!(document.body_html.contains("Raw repository sources remain authoritative"));
+    assert!(document
+        .body_html
+        .contains("Raw repository sources remain authoritative"));
     assert!(document.body_html.contains("&lt;script&gt;"));
     assert!(!document.body_html.contains("<script"));
     assert!(!document.body_html.contains("javascript:"));
@@ -322,7 +326,7 @@ fn payload_limits_freshness_and_citation_confinement_fail_closed() {
         .contains("confined"));
 
     let unexplained_stale = PAGE_FIXTURE.replacen(
-        "\"freshnessNote\": \"architecture source changed after the provider snapshot\",",
+        "architecture source changed after the provider snapshot",
         "",
         1,
     );

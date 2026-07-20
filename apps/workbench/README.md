@@ -137,6 +137,23 @@ produce a warning and fall through to AW, Markdown, or Git context without
 affecting the native PTY. Rendering is a fresh read and never mutates the
 provider output, repository, or AW lifecycle.
 
+## Optional Derived-Page Context
+
+Repositories may export `llm-wiki-out/workbench-pages.json` using the bounded
+`workbench.derived-page-context.v1` compatibility contract. Workbench renders
+the page as a disposable read model: every section keeps its raw-source
+citations, extracted/inferred/ambiguous authority badge, and an explicit
+provider-reported current, stale, or unknown freshness state. Canonical
+citations become navigation, but repository sources and executable gates
+remain authoritative.
+
+The adapter is compatible with page-shaped LLM-Wiki output without importing,
+copying, or invoking LLM-Wiki implementation or schemas. Missing payloads are
+simply unsupported. Malformed, oversized, unsafe, or failed reads become
+warnings and fall through to AW, Markdown, or Git context without affecting
+the native PTY. Markdown content is sanitized, refresh is a bounded fresh read,
+and neither provider output nor repository/AW state is mutated.
+
 ## Production Journey
 
 The assembled desktop path now starts with a registered canonical folder,
@@ -177,5 +194,6 @@ cargo test -p workbench --test generic_context_renderers -- --nocapture
 cargo test -p workbench --test aw_typed_renderer -- --nocapture
 cargo test -p workbench --test context_provenance -- --nocapture
 cargo test -p workbench --test graph_context_adapter -- --nocapture
+cargo test -p workbench --test derived_page_context_adapter -- --nocapture
 cargo test -p workbench --test production_journey -- --nocapture
 ```
