@@ -1,7 +1,14 @@
 ---
 id: '2213'
-summary: (fill)
+summary: Close the Defer CLI interface claim with exact command grammar, zero-network llm, exact OpenAPI TypeScript codegen, checked deployment renders, and bounded release efficiency and stability oracles.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: cli-interface
+    role: primary
+    gap: defer-cli-convention-and-task-verbs
+    claim: defer-cli-convention-and-task-verbs
+    coverage: full
+    rationale: "Defines and verifies the externally observable Defer CLI behavior, efficiency, and stability contract without changing delayed-task domain logic."
 ---
 
 ## Logic
