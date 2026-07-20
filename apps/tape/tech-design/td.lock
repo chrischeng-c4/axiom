@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-20T06:14:18.150223+00:00"
-digest = "sha256:d76eb1507516e67933f317a4ff261c26dbf266b2353ca7524662e54a745d3556"
-source_digest = "sha256:d76eb1507516e67933f317a4ff261c26dbf266b2353ca7524662e54a745d3556"
-ir_digest = "sha256:a3d4eb8fe2dc4d18a8abd74cd9d1bd33366e35a03d22d3f067f9eb5bebd3c804"
+generated_at = "2026-07-20T06:34:31.410788+00:00"
+digest = "sha256:fdeba8d5919cc358ac9fa1430b9994bc63a91016147c1edfc6e500e1580627e6"
+source_digest = "sha256:fdeba8d5919cc358ac9fa1430b9994bc63a91016147c1edfc6e500e1580627e6"
+ir_digest = "sha256:0e4705418cfceaeebf24e86a654ba81644cf569493fee7227d55fe5de88d7658"
 
 [[files]]
 path = "README.md"
@@ -69,8 +69,8 @@ section_count = 3
 
 [[files]]
 path = "logic/eliminate-production-ec-false-green-paths.md"
-digest = "sha256:39632d0cb0a864de0a03b994e3841cfdf1908d6e0992767162c36b806438aa39"
-ir_digest = "sha256:98353e350d1b5748230daafe845b500d17bed63d24ed4391769de8e6a23391f6"
+digest = "sha256:19d32f895bb22358d2074391a4d34004d3d4d6596a74461502f9559d0899e29a"
+ir_digest = "sha256:648724f6781bef2333aeb72d46beb82dad052da70fcfaa67fcc099b56cf52c51"
 section_count = 3
 
 [[files]]
