@@ -50,3 +50,57 @@ Workbench uses the explicit OSC 7 current-directory protocol: `ESC ] 7 ; file://
 The PTY command environment discloses `WORKBENCH_CWD_TELEMETRY=osc7-file-uri-v1`. Integrated shells emit one frame after each successful directory transition; deterministic fixtures call the same `cwd_telemetry_frame` encoder. Failed `cd` operations emit ordinary error text but no successful frame. Direct vendor CLIs remain authoritative and may opt into the same terminal protocol without Workbench scraping their display output.
 
 The tracker has no mutable access to `ShellState`; the registered folder list and selected launch id remain identity/launch configuration while active cwd is ephemeral runtime context. Tests retain a registry snapshot across successful and failed real-PTY transitions and assert byte-for-byte equality. Renderer selection remains outside this WI.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: Cargo.lock
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Record the Workbench direct URL parser dependency in the lock graph.
+  - path: apps/workbench/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the workspace URL parser for strict file-URI telemetry decoding.
+  - path: apps/workbench/src/cwd_context.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Decode bounded OSC 7 frames and own validated ephemeral active-cwd context updates.
+  - path: apps/workbench/src/native_agent_pty.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: impl PtyRuntime
+    description: Disclose the supported cwd telemetry protocol in every PTY child environment.
+  - path: apps/workbench/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run
+    description: Export the active cwd-context telemetry boundary from the Workbench host crate.
+  - path: apps/workbench/tests/pty_cwd_context.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove real-PTY nested cwd transitions, fragmented telemetry, invalid transitions, prompt non-scraping, and folder-registry immutability.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document OSC 7 authority, validation, and separation of active cwd from registered launch folders.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Advance the authoritative-cwd-context work root and register its verification gate.
+  - path: apps/workbench/CONTRIBUTING.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Record the real PTY cwd-context test and forbid prompt or ordinary-output path scraping.
+```
