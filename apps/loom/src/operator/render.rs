@@ -7,7 +7,7 @@
 //! headless + client Services, a ServiceAccount, a PDB, and (when a backup
 //! schedule is set) a snapshot-upload CronJob.
 
-use operator::render::{self, CronJob, RenderCtx, ShardedStatefulSet};
+use service_k8s::render::{self, CronJob, RenderCtx, ShardedStatefulSet};
 use serde_json::{json, Value};
 
 use crate::operator::crd::Loom;

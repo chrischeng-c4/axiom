@@ -49,7 +49,7 @@ struct LoomSnapshot {
     runs: Vec<WorkflowRun>,
 }
 
-/// loom's [`raft_host::RaftStateMachine`]: the replicated run map. `apply` folds
+/// loom's [`raft_runtime::RaftStateMachine`]: the replicated run map. `apply` folds
 /// committed [`Command`]s into the map; `snapshot`/`restore` carry the map +
 /// applied index (for compaction, install-snapshot, and durable recovery).
 ///
@@ -124,8 +124,8 @@ impl LoomSm {
     }
 }
 
-impl raft_host::RaftStateMachine for LoomSm {
-    fn apply(&self, index: raft_host::Index, command: &[u8]) -> anyhow::Result<()> {
+impl raft_runtime::RaftStateMachine for LoomSm {
+    fn apply(&self, index: raft_runtime::Index, command: &[u8]) -> anyhow::Result<()> {
         // The leader's blank term-marker entry (empty command) is a no-op.
         if !command.is_empty() {
             match Command::decode(command) {
@@ -154,19 +154,19 @@ impl raft_host::RaftStateMachine for LoomSm {
         Ok(())
     }
 
-    fn applied_index(&self) -> raft_host::Index {
+    fn applied_index(&self) -> raft_runtime::Index {
         self.applied.load(Ordering::Acquire)
     }
 }
 
 /// A raft-replicated [`RunStore`](crate::store::RunStore) over the shared
-/// [`raft_host::RaftHost`]. Writes (`put`/`delete`) propose a [`Command`] and
+/// [`raft_runtime::RaftHost`]. Writes (`put`/`delete`) propose a [`Command`] and
 /// return after the local SM applies it (read-your-write); reads serve from the
 /// applied map. Single-node by default (its own majority, no transport); pass
 /// peers for a multi-voter HA group. Peer transport, snapshot, and log
 /// compaction come from the host.
 pub struct RaftRunStore {
-    host: Arc<raft_host::RaftHost>,
+    host: Arc<raft_runtime::RaftHost>,
     sm: Arc<LoomSm>,
 }
 
@@ -174,9 +174,9 @@ impl RaftRunStore {
     /// Build a raft store for node `id` with `membership` + `peers`, persisting
     /// the raft log and the materialized snapshot under `dir`.
     pub fn new(
-        id: raft_host::NodeId,
-        membership: raft_host::Membership,
-        peers: HashMap<raft_host::NodeId, String>,
+        id: raft_runtime::NodeId,
+        membership: raft_runtime::Membership,
+        peers: HashMap<raft_runtime::NodeId, String>,
         dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
         let dir = dir.as_ref();
@@ -185,14 +185,14 @@ impl RaftRunStore {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("raft dir path is not valid UTF-8"))?;
         let sm = LoomSm::new(Some(dir.join("runs.snapshot.json")));
-        let store = raft_host::RaftStore::open(dir_str, id, raft_host::FsyncPolicy::Always)?;
-        let host = raft_host::RaftHost::spawn(
+        let store = raft_runtime::RaftStore::open(dir_str, id, raft_runtime::FsyncPolicy::Always)?;
+        let host = raft_runtime::RaftHost::spawn(
             id,
             membership,
             peers,
             store,
-            sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
-            raft_host::HostConfig::default(),
+            sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+            raft_runtime::HostConfig::default(),
         );
         Ok(Self { host: Arc::new(host), sm })
     }
@@ -202,7 +202,7 @@ impl RaftRunStore {
     pub fn single_node(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         Self::new(
             0,
-            raft_host::Membership { voters: vec![0], learners: vec![] },
+            raft_runtime::Membership { voters: vec![0], learners: vec![] },
             HashMap::new(),
             dir,
         )
@@ -211,18 +211,18 @@ impl RaftRunStore {
     /// Multi-voter cluster from an explicit peer map (local multi-node testing,
     /// `LOOM_CLUSTER_PEERS`): voters `0..n_voters`.
     pub fn cluster(
-        id: raft_host::NodeId,
+        id: raft_runtime::NodeId,
         n_voters: u64,
-        peers: HashMap<raft_host::NodeId, String>,
+        peers: HashMap<raft_runtime::NodeId, String>,
         dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
-        Self::new(id, raft_host::auto_membership(n_voters), peers, dir)
+        Self::new(id, raft_runtime::auto_membership(n_voters), peers, dir)
     }
 
     /// k8s auto-mode: derive node id / membership / peers from the StatefulSet
-    /// downward API via [`raft_host::ClusterTopology`].
+    /// downward API via [`raft_runtime::ClusterTopology`].
     pub fn from_topology(
-        topo: raft_host::ClusterTopology,
+        topo: raft_runtime::ClusterTopology,
         dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
         Self::new(topo.node_id, topo.membership, topo.peers, dir)
@@ -261,7 +261,7 @@ mod tests {
     use super::*;
     use raft_core::{auto_membership, NodeId, RaftEntry, RaftNode};
     // Bring the SM trait into scope so the in-process cluster can call `apply`.
-    use raft_host::RaftStateMachine as _;
+    use raft_runtime::RaftStateMachine as _;
 
     /// An in-process raft cluster with a [`LoomSm`] per node — proves loom's
     /// command semantics replicate + converge under `raft_core` consensus.

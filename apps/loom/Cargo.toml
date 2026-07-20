@@ -59,7 +59,7 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 # Shared operator scaffold: ManagedService, render helpers (sharded StatefulSet
 # with the downward-API env raft-host reads), leader-election, the controller.
-operator = { path = "../../libs/operator", optional = true }
+service-k8s = { path = "../../libs/service-k8s", optional = true }
 # Shared backup contract: destination/policy/sink/runner for `loom backup`.
 service-backup = { path = "../../libs/service-backup", optional = true }
 tracing-subscriber = { workspace = true, optional = true }
@@ -71,7 +71,7 @@ raft-core = { path = "../../libs/raft-core" }
 # snapshot + log compaction, read-your-write propose, and k8s auto-mode. loom
 # supplies a `RaftStateMachine` (LoomSm) and gets HA + the backup layer for
 # free — replacing loom's two hand-rolled raft stacks.
-raft-host = { path = "../../libs/raft-host" }
+raft-runtime = { path = "../../libs/raft-runtime" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
 claim-token = { path = "../../libs/claim-token" }
 # Standard agent-facing CLI ops — llm/upgrade/issue (#475). Offline paths
@@ -89,7 +89,7 @@ operator = [
   "dep:kube",
   "dep:k8s-openapi",
   "dep:schemars",
-  "dep:operator",
+  "dep:service-k8s",
   "dep:service-backup",
   "dep:tracing-subscriber",
 ]
