@@ -83,7 +83,6 @@ changes:
     anchor: gpu_matches_cpu_oracle
     description: "Panic on missing GPU adapter when `BEAM_REQUIRED_GATES` is set, and emit JSON evidence."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
