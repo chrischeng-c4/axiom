@@ -26,7 +26,6 @@ flowchart TD
     relocate --> remove_aw[Remove .aw/]
     remove_aw --> update_refs([Update refs])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
