@@ -61,7 +61,6 @@ flowchart TD
     T --> W["MAMBA-T1-FT-GATHER-EFFICIENCY: speedup=3.756x,\nprocess cpu/wall=3.688, both well above the required 1.50x\ngate on this 10-logical-CPU host, inside its peak-RSS bound (AC4)"]
     T --> X["test_to_thread_parallelizes_direct_function_pointer_calls\n(asyncio_mod.rs:2041-2094 -- the exact two-worker gather scenario\nthe bug title's asyncio_mod.rs:2070 line cites) run 230x total\n(80x debug + 150x release) directly against the compiled test\nbinary: 230/230 pass, PARALLEL_PEAK>=2 confirming genuine overlap\nevery time; zero reproductions of the drop symptom found"]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
