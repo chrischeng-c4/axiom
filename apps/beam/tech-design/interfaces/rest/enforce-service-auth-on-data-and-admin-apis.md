@@ -41,7 +41,6 @@ flowchart TD
     enforce_limits --> execute_api[Execute API]
     execute_api --> done([Return Response])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
