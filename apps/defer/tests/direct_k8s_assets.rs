@@ -5,6 +5,60 @@ fn yaml(input: &str) -> Value {
     serde_yaml::from_str(input).expect("manifest parses")
 }
 
+fn yaml_documents(input: &str) -> Vec<Value> {
+    input
+        .split("\n---\n")
+        .filter(|document| !document.trim().is_empty())
+        .map(yaml)
+        .collect()
+}
+
+fn named<'a>(objects: &'a [Value], kind: &str, name: &str) -> &'a Value {
+    objects
+        .iter()
+        .find(|object| object["kind"] == kind && object["metadata"]["name"] == name)
+        .unwrap_or_else(|| panic!("missing {kind}/{name}"))
+}
+
+fn render_kustomize(profile: &str) -> Vec<Value> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(profile);
+    let output = std::process::Command::new("kubectl")
+        .arg("kustomize")
+        .arg(&path)
+        .output()
+        .unwrap_or_else(|error| {
+            panic!("kubectl is required to render {}: {error}", path.display())
+        });
+    assert!(
+        output.status.success(),
+        "{} must render: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    yaml_documents(&String::from_utf8(output.stdout).unwrap())
+}
+
+fn assert_connected_services_and_pdb(resources: &[Value]) {
+    let selector = yaml("{app: defer, role: server}");
+    let headless = named(resources, "Service", "defer-headless");
+    assert_eq!(headless["spec"]["clusterIP"], "None");
+    assert_eq!(headless["spec"]["publishNotReadyAddresses"], true);
+    assert_eq!(&headless["spec"]["selector"], &selector);
+    assert_eq!(
+        headless["spec"]["ports"],
+        yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}, {name: raft, port: 7142, targetPort: raft, protocol: TCP}]")
+    );
+    let client = named(resources, "Service", "defer");
+    assert_eq!(&client["spec"]["selector"], &selector);
+    assert_eq!(
+        client["spec"]["ports"],
+        yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}]")
+    );
+    let pdb = named(resources, "PodDisruptionBudget", "defer");
+    assert_eq!(pdb["spec"]["maxUnavailable"], 0);
+    assert_eq!(&pdb["spec"]["selector"]["matchLabels"], &selector);
+}
+
 #[test]
 fn direct_base_is_a_restricted_durable_singleton() {
     let statefulset = yaml(include_str!("../k8s/base/statefulset.yaml"));
@@ -25,6 +79,12 @@ fn direct_base_is_a_restricted_durable_singleton() {
     assert_eq!(container["command"][1], "serve");
     assert_eq!(container["ports"][0]["containerPort"], 7141);
     assert_eq!(container["ports"][1]["containerPort"], 7142);
+    assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
+    assert_eq!(container["readinessProbe"]["httpGet"]["port"], "http");
+    assert_eq!(container["livenessProbe"]["httpGet"]["path"], "/healthz");
+    assert_eq!(container["livenessProbe"]["httpGet"]["port"], "http");
+    assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
+    assert_eq!(container["startupProbe"]["failureThreshold"], 120);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(
         container["securityContext"]["allowPrivilegeEscalation"],
@@ -50,6 +110,41 @@ fn direct_base_is_a_restricted_durable_singleton() {
             .iter()
             .any(|entry| entry["name"] == name && entry["value"] == value));
     }
+
+    let data_mounts = container["volumeMounts"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter(|mount| mount["name"] == "data")
+        .collect::<Vec<_>>();
+    assert_eq!(data_mounts.len(), 1);
+    assert_eq!(data_mounts[0]["mountPath"], "/data");
+    let claim = &statefulset["spec"]["volumeClaimTemplates"][0];
+    assert_eq!(claim["metadata"]["name"], "data");
+    assert_eq!(claim["spec"]["accessModes"], yaml("[ReadWriteOnce]"));
+
+    let services = yaml_documents(include_str!("../k8s/base/service.yaml"));
+    assert_eq!(services.len(), 2);
+    let selector = yaml("{app: defer, role: server}");
+    let headless = named(&services, "Service", "defer-headless");
+    assert_eq!(headless["spec"]["clusterIP"], "None");
+    assert_eq!(headless["spec"]["publishNotReadyAddresses"], true);
+    assert_eq!(&headless["spec"]["selector"], &selector);
+    assert_eq!(
+        headless["spec"]["ports"],
+        yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}, {name: raft, port: 7142, targetPort: raft, protocol: TCP}]")
+    );
+    let client = named(&services, "Service", "defer");
+    assert_eq!(&client["spec"]["selector"], &selector);
+    assert_eq!(
+        client["spec"]["ports"],
+        yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}]")
+    );
+
+    let pdb = yaml(include_str!("../k8s/base/pdb.yaml"));
+    assert_eq!(pdb["kind"], "PodDisruptionBudget");
+    assert_eq!(pdb["spec"]["maxUnavailable"], 0);
+    assert_eq!(&pdb["spec"]["selector"]["matchLabels"], &selector);
 }
 
 #[test]
@@ -83,24 +178,11 @@ fn prod_profile_uses_security_components_without_voter_hpa() {
 // <HANDWRITE gap="missing-generator:e2e-test:defer-rendered-prod-security" tracker="#2215" reason="Render the composed production overlay so disconnected or invalid security patches cannot pass raw-string checks.">
 #[test]
 fn prod_profile_renders_the_connected_security_boundary() {
-    let overlay = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("k8s/overlays/prod");
-    let output = std::process::Command::new("kubectl")
-        .arg("kustomize")
-        .arg(&overlay)
-        .output()
-        .expect("kubectl is required to verify the production Kustomize overlay");
-    assert!(
-        output.status.success(),
-        "production overlay must render: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let rendered = String::from_utf8(output.stdout).unwrap();
-    let resources: Vec<serde_yaml::Value> = rendered
-        .split("\n---\n")
-        .filter(|document| !document.trim().is_empty())
-        .map(|document| serde_yaml::from_str(document).unwrap())
-        .collect();
+    let base = render_kustomize("k8s/base");
+    assert_connected_services_and_pdb(&base);
+    let resources = render_kustomize("k8s/overlays/prod");
     assert!(!resources.is_empty());
+    assert_connected_services_and_pdb(&resources);
     assert!(!resources
         .iter()
         .any(|resource| resource["kind"] == "HorizontalPodAutoscaler"));
