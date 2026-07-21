@@ -47,6 +47,7 @@ fn production() -> Defer {
     .unwrap()
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the exact six-object production graph, three-replica StatefulSet relationships, connected security secrets, and backup CronJob oracle.">
 #[test]
 fn production_render_composes_shared_stateful_primitives() {
     let objects = operator::render::render(&production());
@@ -198,6 +199,7 @@ fn production_render_composes_shared_stateful_primitives() {
         json!({"name": "backup-token", "key": "token"})
     );
 }
+// </HANDWRITE>
 
 #[test]
 fn generated_crd_is_structural_and_includes_backup_and_signing() {
