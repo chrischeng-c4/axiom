@@ -13,11 +13,13 @@ fn yaml_documents(input: &str) -> Vec<Value> {
         .collect()
 }
 
-fn named<'a>(objects: &'a [Value], kind: &str, name: &str) -> &'a Value {
-    objects
+fn unique_named<'a>(objects: &'a [Value], kind: &str, name: &str) -> &'a Value {
+    let matches = objects
         .iter()
-        .find(|object| object["kind"] == kind && object["metadata"]["name"] == name)
-        .unwrap_or_else(|| panic!("missing {kind}/{name}"))
+        .filter(|object| object["kind"] == kind && object["metadata"]["name"] == name)
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 1, "expected exactly one {kind}/{name}");
+    matches[0]
 }
 
 fn render_kustomize(profile: &str) -> Vec<Value> {
@@ -40,23 +42,30 @@ fn render_kustomize(profile: &str) -> Vec<Value> {
 
 fn assert_connected_services_and_pdb(resources: &[Value]) {
     let selector = yaml("{app: defer, role: server}");
-    let headless = named(resources, "Service", "defer-headless");
+    let statefulset = unique_named(resources, "StatefulSet", "defer");
+    assert_eq!(statefulset["spec"]["selector"]["matchLabels"], selector);
+    assert_eq!(
+        statefulset["spec"]["template"]["metadata"]["labels"],
+        statefulset["spec"]["selector"]["matchLabels"]
+    );
+    let workload_selector = &statefulset["spec"]["selector"]["matchLabels"];
+    let headless = unique_named(resources, "Service", "defer-headless");
     assert_eq!(headless["spec"]["clusterIP"], "None");
     assert_eq!(headless["spec"]["publishNotReadyAddresses"], true);
-    assert_eq!(&headless["spec"]["selector"], &selector);
+    assert_eq!(&headless["spec"]["selector"], workload_selector);
     assert_eq!(
         headless["spec"]["ports"],
         yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}, {name: raft, port: 7142, targetPort: raft, protocol: TCP}]")
     );
-    let client = named(resources, "Service", "defer");
-    assert_eq!(&client["spec"]["selector"], &selector);
+    let client = unique_named(resources, "Service", "defer");
+    assert_eq!(&client["spec"]["selector"], workload_selector);
     assert_eq!(
         client["spec"]["ports"],
         yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}]")
     );
-    let pdb = named(resources, "PodDisruptionBudget", "defer");
+    let pdb = unique_named(resources, "PodDisruptionBudget", "defer");
     assert_eq!(pdb["spec"]["maxUnavailable"], 0);
-    assert_eq!(&pdb["spec"]["selector"]["matchLabels"], &selector);
+    assert_eq!(&pdb["spec"]["selector"]["matchLabels"], workload_selector);
 }
 
 #[test]
@@ -126,7 +135,7 @@ fn direct_base_is_a_restricted_durable_singleton() {
     let services = yaml_documents(include_str!("../k8s/base/service.yaml"));
     assert_eq!(services.len(), 2);
     let selector = yaml("{app: defer, role: server}");
-    let headless = named(&services, "Service", "defer-headless");
+    let headless = unique_named(&services, "Service", "defer-headless");
     assert_eq!(headless["spec"]["clusterIP"], "None");
     assert_eq!(headless["spec"]["publishNotReadyAddresses"], true);
     assert_eq!(&headless["spec"]["selector"], &selector);
@@ -134,7 +143,7 @@ fn direct_base_is_a_restricted_durable_singleton() {
         headless["spec"]["ports"],
         yaml("[{name: http, port: 7141, targetPort: http, protocol: TCP}, {name: raft, port: 7142, targetPort: raft, protocol: TCP}]")
     );
-    let client = named(&services, "Service", "defer");
+    let client = unique_named(&services, "Service", "defer");
     assert_eq!(&client["spec"]["selector"], &selector);
     assert_eq!(
         client["spec"]["ports"],
