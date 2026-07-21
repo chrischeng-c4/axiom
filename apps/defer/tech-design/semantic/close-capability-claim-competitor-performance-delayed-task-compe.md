@@ -1,7 +1,14 @@
 ---
 id: '2217'
-summary: (fill)
+summary: Close Defer competitor performance with a release-mode same-host Relay ceiling that enforces identical durable lifecycle work, exact completed counts and serialized payload bytes, positive finite metrics, an explicit no-overclaim scope, and a hard 0.80 throughput ratio.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: competitor-performance
+    role: primary
+    gap: delayed-task-competitor-performance-baseline
+    claim: delayed-task-competitor-performance-baseline
+    coverage: full
+    rationale: "Defines the executable efficiency oracle and its workload, metric, threshold, and scope boundaries without treating a local sibling comparison as Cloud Tasks performance."
 ---
 
 ## Logic
