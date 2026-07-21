@@ -3,3 +3,53 @@ id: '2217'
 summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: defer-competitor-performance-ceiling-verification
+entry: parse_contract
+nodes:
+  parse_contract: { kind: start, label: "parse exact local benchmark and scope contract" }
+  contract_ok: { kind: decision, label: "workload metrics threshold and no-overclaim fields exact?" }
+  run_defer: { kind: process, label: "complete Defer durable enqueue lease ack batches" }
+  defer_ok: { kind: decision, label: "exact counts settlements samples and metrics positive?" }
+  run_relay: { kind: process, label: "complete Relay durable enqueue lease ack batches" }
+  relay_ok: { kind: decision, label: "exact counts acknowledgements samples and metrics positive?" }
+  compare: { kind: process, label: "compute Defer to Relay throughput ratio" }
+  ratio_ok: { kind: decision, label: "finite ratio at least zero point eight?" }
+  emit: { kind: process, label: "emit numeric report with explicit same-host scope" }
+  fail: { kind: terminal, label: "performance ceiling contract fails closed" }
+  verified: { kind: terminal, label: "bounded local implementation overhead verified" }
+edges:
+  - { from: parse_contract, to: contract_ok }
+  - { from: contract_ok, to: run_defer, label: "yes" }
+  - { from: contract_ok, to: fail, label: "no" }
+  - { from: run_defer, to: defer_ok }
+  - { from: defer_ok, to: run_relay, label: "yes" }
+  - { from: defer_ok, to: fail, label: "no" }
+  - { from: run_relay, to: relay_ok }
+  - { from: relay_ok, to: compare, label: "yes" }
+  - { from: relay_ok, to: fail, label: "no" }
+  - { from: compare, to: ratio_ok }
+  - { from: ratio_ok, to: emit, label: "yes" }
+  - { from: ratio_ok, to: fail, label: "no" }
+  - { from: emit, to: verified }
+---
+flowchart TD
+    parse_contract([parse benchmark contract]) --> contract_ok{contract exact?}
+    contract_ok -->|yes| run_defer[run exact Defer durable lifecycle]
+    contract_ok -->|no| fail([fail closed])
+    run_defer --> defer_ok{Defer counts and metrics exact?}
+    defer_ok -->|yes| run_relay[run exact Relay durable lifecycle]
+    defer_ok -->|no| fail
+    run_relay --> relay_ok{Relay counts and metrics exact?}
+    relay_ok -->|yes| compare[compute throughput ratio]
+    relay_ok -->|no| fail
+    compare --> ratio_ok{ratio at least zero point eight?}
+    ratio_ok -->|yes| emit[emit scoped numeric report]
+    ratio_ok -->|no| fail
+    emit --> verified([local overhead ceiling verified])
+```
