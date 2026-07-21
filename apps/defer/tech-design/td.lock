@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-21T02:39:14.993775+00:00"
-digest = "sha256:94e6a95ec6a4670e041bb3fb91a59bf60f0cd7ac06e251fb98bea1de25950721"
-source_digest = "sha256:94e6a95ec6a4670e041bb3fb91a59bf60f0cd7ac06e251fb98bea1de25950721"
-ir_digest = "sha256:2ca9f347f35a40a6b5f15b7d247a01f7a6c2ed0b468c6b55194d5d96e26d617b"
+generated_at = "2026-07-21T05:09:15.223955+00:00"
+digest = "sha256:25b74c5a082e6e9a414f4eebf7f741f3cf520fb9291a1169f2ff96c4ff3fd84c"
+source_digest = "sha256:25b74c5a082e6e9a414f4eebf7f741f3cf520fb9291a1169f2ff96c4ff3fd84c"
+ir_digest = "sha256:1fea7b1a75a5d1706c7decab5ec17e772c229130aa4ffd7a0b45003f05a2f670"
 
 [[files]]
 path = "README.md"
@@ -71,6 +71,12 @@ section_count = 3
 path = "semantic/close-capability-claim-long-running-stability-delayed-task-soak.md"
 digest = "sha256:9fd63bac466e27255eb1876fc1a07387e38febdeda1bd7a5a45e2a4b9f497caa"
 ir_digest = "sha256:82092331136dd3f2a7bde89ed8e3ca70f0cf33498fd89d89780eb02b94bdceee"
+section_count = 3
+
+[[files]]
+path = "semantic/close-capability-claim-primary-replicas-raft-backed-task-schedul.md"
+digest = "sha256:dc362c4886a85fb880bd86d055b558933a45a9d63c7c03e91c557a3715f3d083"
+ir_digest = "sha256:23aedd36ba7627d672ef695e937426fca68d6dfe7ffdaf847422661eb5bb201e"
 section_count = 3
 
 [[files]]
