@@ -177,6 +177,9 @@ fn candidate_reason(
     if matches!(status, Status::Snapshot) && !args.include_snapshots {
         return (false, "snapshot_retained".to_string());
     }
+    if matches!(status, Status::Interrupted { .. }) && !args.include_failed {
+        return (false, "interrupted_retained".to_string());
+    }
     if matches!(status, Status::Exited { code } if *code != 0) && !args.include_failed {
         return (false, "failed_retained".to_string());
     }
@@ -216,8 +219,19 @@ fn status_label(status: &Status) -> String {
     match status {
         Status::Created => "created".to_string(),
         Status::Running => "running".to_string(),
+        Status::Interrupted { signal, .. } => {
+            format!("interrupted:{}", interrupt_signal_name(*signal))
+        }
         Status::Exited { code } => format!("exited:{code}"),
         Status::Snapshot => "snapshot".to_string(),
+    }
+}
+
+fn interrupt_signal_name(signal: i32) -> &'static str {
+    match signal {
+        libc::SIGINT => "SIGINT",
+        libc::SIGTERM => "SIGTERM",
+        _ => "signal",
     }
 }
 

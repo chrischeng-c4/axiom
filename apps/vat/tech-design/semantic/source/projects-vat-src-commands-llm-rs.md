@@ -87,6 +87,12 @@ evidence afterward.
 - If you only need one ad-hoc command, use `vat run -- <command>`.
 - `vat run` prints sparse JSONL checkpoints; the final line has
   `"type":"result"`.
+- SIGINT/SIGTERM cleanup is owned by the running VAT process. The first signal
+  wins; VAT stops runners first, then VAT-owned services in reverse order with
+  bounded TERM/grace/KILL/reap/PGID-absence proof. It persists terminal
+  `interrupted` state with no child PID and exits 130/143. Interrupted evidence
+  is retained for `vat state`/`vat gc`; explicit `external` services and
+  unrelated listeners are never signalled.
 - After a retained run, inspect `vat state <id>`, `vat diff <id>`, and
   `vat logs <id> [runner|service-id]`.
 - Every `vat k8s` command requires an independently installed `kubectl` first

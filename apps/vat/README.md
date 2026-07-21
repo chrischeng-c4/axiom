@@ -56,6 +56,7 @@ Gate Inventory:
 | Host-process execution and GPU visibility | epic | - | implemented | verified | smoke | `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal apps/vat/README.md apps/vat/src/gpu.rs` |
 | Agent-legible state and diff surface | epic | - | implemented | verified | smoke | `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured apps/vat/README.md` |
 | Local agent test runner protocol | epic | #4152 | implemented | verified | smoke | `cargo test -p vat vat_toml_runner -- --nocapture` |
+| Interrupt-safe owned process cleanup | change | #2394 | implemented | verified | smoke | `cargo test -p vat --test vat_signal_cleanup -- --test-threads=1` proves real SIGINT/SIGTERM cleanup for configured and direct runs. |
 | Production-like integration scenarios | change | #701 | implemented | verified | smoke | `cargo test -p vat --test vat_toml_runner scenario_ -- --nocapture` |
 | Local Kubernetes cluster service and `vat cluster` | change | #141 | implemented | verified | smoke | `cargo test -p vat --test vat_cluster -- --nocapture` |
 | GCP / Firebase emulator service presets | change | #143 | implemented | verified | smoke | `cargo test -p vat --test vat_emulators -- --nocapture` |
@@ -590,7 +591,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat fork <id>` | Copy-on-write a new **runnable** working copy. |
 | `vat snapshot <id>` | Copy-on-write a **frozen** restore point. |
 | `vat rm <id>` | Delete a vat and its workspace. |
-| `vat gc [--execute]` | Report retained vat disk usage and prune old workspaces. Dry-run by default; protects running/snapshot/failed/newest vats unless explicit flags opt in. |
+| `vat gc [--execute]` | Report retained vat disk usage and prune old workspaces. Dry-run by default; protects running/snapshot/failed/interrupted/newest vats unless explicit flags opt in. |
 | `vat gpu` | Report the GPU every vat on this host can reach. |
 | `vat cluster create\|ls\|delete\|kubeconfig` | Manage standalone local Kubernetes clusters (kind/k3d/minikube), independent of a run. |
 
@@ -606,7 +607,7 @@ vat gc --keep-last 5                  # dry-run: keep the newest 5 vats
 vat gc --execute --keep-last 5        # delete non-running, non-snapshot,
                                       # non-failed candidates
 vat gc --execute --include-failed --keep-last 5
-                                      # also prune failed retained runs
+                                      # also prune failed/interrupted retained runs
 vat gc --apparent --json              # also walk files for apparent size
 ```
 
@@ -615,6 +616,18 @@ hundreds of vats exist. Add `--measure` when you need `disk_size_bytes` from
 `du -sk`. Add `--apparent` only when you need file-length totals; it walks every
 retained rootfs and is slower on large stores. APFS/reflink clones can make
 apparent size much larger than physical blocks.
+
+### Interrupt cleanup
+
+`vat run` installs scoped SIGINT/SIGTERM cancellation before it owns children.
+The first signal wins; the handler only records it, while the run thread stops
+runner process groups first and VAT-owned services in reverse start order. Each
+group receives TERM, a bounded grace period, KILL when still present, leader
+reaping, and an explicit PGID-absence check before terminal metadata is written.
+Direct and configured runs then persist `status.state = "interrupted"` with the
+signal and reason, clear child PIDs, retain the VAT as failure evidence, and
+exit 130 for SIGINT or 143 for SIGTERM. Explicit `external` services and other
+unrelated listeners are observed only and are never signalled by this cleanup.
 
 ## vat.toml
 
