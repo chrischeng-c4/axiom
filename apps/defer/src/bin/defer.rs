@@ -510,7 +510,7 @@ fn llm(args: LlmArgs) -> Result<()> {
     Ok(())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Own the offline OpenAPI/routes projection and exact nine-operation route twin emitted from the Defer CLI.">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2219" reason="Own the offline OpenAPI/routes projection and exact nine-operation route twin emitted from the Defer CLI.">
 fn spec(args: SpecArgs) -> Result<()> {
     let json = defer::openapi::openapi().to_pretty_json()?;
     if let Some(SpecSubcommand::Gen(args)) = args.gen {
