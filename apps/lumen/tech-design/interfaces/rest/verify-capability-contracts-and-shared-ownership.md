@@ -69,25 +69,25 @@ id: lumen-capability-shared-ownership-verification
 requirements:
   full_machine_verification:
     id: R4
-    text: "Capability verification and full AW health verification run with current tests, traceability, codegen, cold-build, and evidence checks before the child records passed or tracked_skip."
+    text: "After the structural gate, verified capability and full AW health checks provide current test, traceability, codegen, cold-build, and evidence results for the terminal decision."
     kind: integration
     risk: high
     verify: aw capability check --project lumen --verify --write-evidence && aw health --project lumen full --verify-traceability --verify-cb --verify-cold --verify-tests
-  platform_mechanisms_delegate_to_shared_owners:
-    id: R2
-    text: "CLI, HTTP, auth, observability, Kubernetes rendering, Raft hosting, and peer identity are delegated to their canonical shared libraries at Lumen's real integration seams."
-    kind: regression
-    risk: high
-    verify: capability_shared_ownership::platform_mechanisms_delegate_to_shared_owners
-  shared_failures_are_not_skippable:
+  ownership_partition_is_total_and_disjoint:
     id: R3
-    text: "The ownership inventory classifies shared mechanisms separately from Lumen domain policy so a shared failure cannot be represented as an app-domain tracked skip."
+    text: "The verified ownership inventory assigns every checked concern exactly once to shared mechanism or Lumen domain policy, preventing a shared failure from becoming an app-domain tracked skip."
     kind: regression
     risk: high
     verify: capability_shared_ownership::shared_and_domain_ownership_are_total_and_disjoint
+  platform_mechanisms_delegate_to_shared_owners:
+    id: R2
+    text: "CLI, HTTP, auth, observability, Kubernetes rendering, Raft hosting, and peer identity delegate to their canonical shared libraries at the actual Lumen integration seams."
+    kind: regression
+    risk: high
+    verify: capability_shared_ownership::platform_mechanisms_delegate_to_shared_owners
   trait_profile_requires_shared_baselines:
     id: R1
-    text: "Lumen's configured service, long-running, CLI-facing, network-exposed, stateful-storage, and agent-facing traits resolve to a current capability contract and executable verification sequence."
+    text: "The Lumen service trait profile resolves to the declared capability roots and the exact verified capability plus health gate sequence remains executable."
     kind: functional
     risk: high
     verify: capability_shared_ownership::trait_profile_requires_shared_service_baselines
@@ -95,6 +95,6 @@ requirements:
 flowchart TD
     r1[R1 trait profile requires shared baselines] --> capability_shared_ownership_trait_profile_requires_shared_service_baselines[capability_shared_ownership::trait_profile_requires_shared_service_baselines]
     r2[R2 platform mechanisms delegate to shared owners] --> capability_shared_ownership_platform_mechanisms_delegate_to_shared_owners[capability_shared_ownership::platform_mechanisms_delegate_to_shared_owners]
-    r3[R3 shared failures are not skippable] --> capability_shared_ownership_shared_and_domain_ownership_are_total_and_disjoint[capability_shared_ownership::shared_and_domain_ownership_are_total_and_disjoint]
+    r3[R3 ownership partition is total and disjoint] --> capability_shared_ownership_shared_and_domain_ownership_are_total_and_disjoint[capability_shared_ownership::shared_and_domain_ownership_are_total_and_disjoint]
     r4[R4 full machine verification] --> aw_capability_check_project_lumen_verify_write_evidence_aw_health_project_lumen_full_verify_traceability_verify_cb_verify_cold_verify_tests[aw capability check --project lumen --verify --write-evidence && aw health --project lumen full --verify-traceability --verify-cb --verify-cold --verify-tests]
 ```
