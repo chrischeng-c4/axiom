@@ -10,76 +10,69 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: phase-stable-soak-rss-window-sampling
-entry: capture_window
+entry: open_sampler_session
 nodes:
-  capture_window:
+  open_sampler_session:
     kind: start
-    label: "caller supplies a live pid, window seconds, and sample cadence for one steady window"
+    label: "caller opens one RSS sampler session for a live pid, window seconds, and sample cadence"
   validate_inputs:
     kind: decision
-    label: "pid reachable and cadence/window/sample path valid?"
+    label: "pid reachable and cadence/window valid?"
   start_sampler:
     kind: process
-    label: "create a sampler session token plus temp sample artifact, register EXIT/INT/TERM cleanup, and launch a background loop that polls service_soak_rss_kb at the fixed cadence"
+    label: "service_soak_rss_sampler_start creates a session token, temp sample artifact, and background sampler loop with EXIT/INT/TERM cleanup"
   run_window:
     kind: process
-    label: "caller runs its existing bounded workload while the sampler session appends one RSS integer per line for the whole window"
+    label: "caller runs its existing bounded workload while the sampler appends one RSS integer per line for the whole window"
   stop_sampler:
     kind: process
-    label: "caller closes the sampler session; the helper terminates and waits for the background sampler before returning"
-  validate_series:
-    kind: decision
-    label: "pid stayed alive, every sample is a non-negative integer, and coverage reached ceil(window_secs / sample_interval_secs)?"
+    label: "service_soak_rss_sampler_stop consumes the token, terminates and waits for the sampler, then validates the captured series"
   summarize:
     kind: process
-    label: "sort the series and emit count, min, median, and max as deterministic integers"
+    label: "reduce the validated series to deterministic count=min=median=max integer fields"
   compare_windows:
     kind: process
-    label: "compare summary medians with existing integer percent-growth semantics and leave the caller threshold outside the shared library"
+    label: "service_soak_rss_window_growth_pct compares the two window medians with existing integer percentage semantics"
   fail_closed:
     kind: terminal
-    label: "exit non-zero and leave no sampler process behind"
+    label: "non-zero exit with no sampler process left behind"
   window_summary_ready:
     kind: terminal
-    label: "validated window summary is ready for a caller-owned plateau policy"
+    label: "session summary is ready for a caller-owned RSS threshold"
   plateau_ready:
     kind: terminal
-    label: "shared oracle reports median drift for a caller-owned RSS threshold"
+    label: "shared oracle reports median drift without owning the caller threshold"
 edges:
-  - { from: capture_window, to: validate_inputs }
+  - { from: open_sampler_session, to: validate_inputs }
   - { from: validate_inputs, to: fail_closed, label: "no" }
   - { from: validate_inputs, to: start_sampler, label: "yes" }
   - { from: start_sampler, to: run_window }
   - { from: run_window, to: stop_sampler }
-  - { from: stop_sampler, to: validate_series }
-  - { from: validate_series, to: fail_closed, label: "no" }
-  - { from: validate_series, to: summarize, label: "yes" }
+  - { from: stop_sampler, to: fail_closed, label: "invalid or missing coverage" }
+  - { from: stop_sampler, to: summarize, label: "validated" }
   - { from: summarize, to: window_summary_ready }
   - { from: window_summary_ready, to: compare_windows }
   - { from: compare_windows, to: plateau_ready }
 ---
 flowchart TD
-    start[caller requests one steady RSS window] --> inputs{pid, cadence, and window valid?}
+    start[open RSS sampler session] --> inputs{pid, cadence, and window valid?}
     inputs -->|no| fail([fail closed and clean up sampler])
-    inputs -->|yes| sampler[start sampler session and arm cleanup]
+    inputs -->|yes| sampler[start sampler session token]
     sampler --> workload[caller runs bounded workload]
-    workload --> stop[caller closes session; helper stops sampler]
-    stop --> validate{numeric samples and enough coverage?}
-    validate -->|no| fail
-    validate -->|yes| summary[emit count, min, median, max]
-    summary --> oracle[compare window medians with integer growth semantics]
+    workload --> stop[stop session and validate series]
+    stop --> summary[emit count min median max]
+    summary --> oracle[compare two window medians]
     oracle --> ready([caller applies its own RSS threshold])
 ```
 
 Contract invariants:
 
-- `libs/service-observability/scripts/soak-metrics.sh` remains the shared process-metric owner. It adds an explicit sampler start/stop/summary lifecycle plus the plateau helper without taking ownership of any app workload, duration policy, or growth threshold.
-- The new sampler session owns its lifecycle. Start returns a session token or handle for the caller's current window, creates the temporary sample artifact, records one RSS value per line at a fixed cadence for the whole measured window, and stop or the registered cleanup hook always kills and waits for the background sampler before returning, even when the caller is interrupted with `INT` or `TERM`.
-- Sampling fails closed when the measured pid disappears before window completion, `service_soak_rss_kb` returns a non-numeric value, or the captured series does not reach `ceil(window_secs / sample_interval_secs)` samples. A missing or malformed series never degrades to a best-effort endpoint comparison.
-- Window summaries are deterministic integer records. `count`, `min`, `median`, and `max` come from sorting the captured series; odd counts take the middle element, and even counts average the two middle elements with shell-integer division semantics so later growth math stays stable.
-- Plateau comparison is median-to-median only. `service_soak_percent_growth` keeps its current integer percentage semantics, but the shared RSS oracle feeds it each window summary's median instead of one endpoint reading. A bounded transient spike therefore affects `max` while a sustained allocation increase moves `median` and can breach the caller-owned limit.
-- Deterministic shell coverage exercises three cases: a fixed numeric series with a transient spike (`100 100 500 100 100`), a sustained-growth pair (`100` median to `120` median), and a real bounded child process whose sampler is cleaned up on both normal completion and forced interruption.
-
+- `libs/service-observability/scripts/soak-metrics.sh` remains the shared process-metric owner. It adds an explicit `start -> stop -> summarize -> compare` RSS lifecycle and keeps app workloads, duration policy, and growth thresholds caller-owned.
+- `service_soak_rss_sampler_start` opens one sampler session for one steady window. The returned session token identifies the target pid, the temp sample artifact, and the sampler pid so callers can run their existing loops without `eval`, `sh -c`, or a library-owned workload callback.
+- `service_soak_rss_sampler_stop` is the only normal close path for a session token. It always kills and waits for the background sampler, validates that the series contains only non-negative integer RSS values, and rejects windows whose coverage is below `ceil(window_secs / sample_interval_secs)` or whose target pid disappeared before the window finished.
+- A registered cleanup hook owns abnormal teardown. `EXIT`, `INT`, and `TERM` all resolve any live session token, kill the sampler, wait for it, and return non-zero instead of leaving a detached sampler process behind.
+- Session summaries are deterministic integer records with `count`, `min`, `median`, and `max` fields. Sorting defines the reduction order; odd counts take the middle element, and even counts average the two middle elements with shell-integer division semantics so later growth math stays stable.
+- `service_soak_rss_window_growth_pct` compares two window summaries by feeding their medians into the existing integer percentage calculation. A transient spike therefore raises `max` but not `median`, while sustained growth moves the second-window median and can breach the caller-owned plateau policy.
 ## Changes
 <!-- type: changes lang: yaml -->
 
