@@ -330,6 +330,38 @@ pub fn analyze_used_exports_from_with_raw_facts_provider(
                                     .collect()
                             };
                             if to_add.is_empty() {
+                                // #2267 — a live barrel's `export * from`
+                                // line is a real structural edge to
+                                // `target_path` even when nothing currently
+                                // demands a specific name through it: touch
+                                // `used` (an empty entry, no name) so the
+                                // target is discoverable as reachable,
+                                // without claiming any export of it is
+                                // actually used. `.or_default()` alone never
+                                // inserts a name, so Step 4's elimination
+                                // check below is unaffected — an empty entry
+                                // and a missing one both still read as "not
+                                // used" there, so a genuinely dead leaf
+                                // (like this one) is still eliminated.
+                                // `compute_transform_survivors`, however,
+                                // predicts `transform_modules`' survivor set
+                                // from `used_exports.keys()` alone, so
+                                // skipping this touch left every
+                                // zero-current-demand reexport target
+                                // invisible to it — `transform_modules`
+                                // never transformed the module at all (no
+                                // `CompiledModule` ever created for it), yet
+                                // the barrel's still-unpruned dual
+                                // default+wildcard re-export glue kept
+                                // referencing its numeric id, tripping
+                                // `Bundler::check_referenced_module_emission`'s
+                                // referenced-but-unemitted guard (GH #2267).
+                                // Gated on the barrel itself being live —
+                                // an unreachable barrel's re-export lines
+                                // are correctly still inert.
+                                if live.contains(path.as_path()) {
+                                    used.entry(target_path).or_default();
+                                }
                                 continue;
                             }
                             let entry = used.entry(target_path.clone()).or_default();
@@ -367,9 +399,15 @@ pub fn analyze_used_exports_from_with_raw_facts_provider(
                         // wrapper elsewhere in the graph — `clampWrapper`
                         // then called `(0, _clamp.default)(...)` against a
                         // module the bundle never actually shipped).
-                        // We hold off on creating the `used[target]`
-                        // entry until we know we have at least one name
-                        // to insert — same rationale as the Star arm.
+                        // We hold off on claiming any *name* used on the
+                        // `used[target]` entry until we know we have at
+                        // least one to insert — same rationale as the Star
+                        // arm — but (#2267) still touch the entry itself
+                        // (empty, no name) below when nothing qualifies, so
+                        // the target stays discoverable as reachable; see
+                        // the Star arm's `to_add.is_empty()` branch above
+                        // for the full rationale, which applies identically
+                        // here.
                         let to_add: Vec<String> = if barrel_used.contains("*") {
                             pairs.into_iter().map(|(leaf_name, _)| leaf_name).collect()
                         } else {
@@ -385,6 +423,9 @@ pub fn analyze_used_exports_from_with_raw_facts_provider(
                                 .collect()
                         };
                         if to_add.is_empty() {
+                            if live.contains(path.as_path()) {
+                                used.entry(target_path).or_default();
+                            }
                             continue;
                         }
                         let entry = used.entry(target_path).or_default();
@@ -3580,6 +3621,103 @@ export {
                 .contains(&PathBuf::from("/fixture/leaf.js")),
             "leaf.js must not be eliminated: {:?}",
             result.eliminated_modules,
+        );
+    }
+
+    /// #2267: `@mui/system/esm/index.js` repeats the dual re-export idiom
+    /// `export { default as X } from './x'; export * from './x';` for
+    /// dozens of leaves. When nothing currently demands a name through
+    /// *either* face of one specific leaf (no consumer imports its default
+    /// alias, and no consumer imports any of its other named exports)
+    /// while the barrel itself is live (a *sibling* leaf's exports genuinely
+    /// are demanded through it), the fixed point used to leave that leaf
+    /// with no `used_exports` entry at all — not even an empty one. That
+    /// missing entry made `compute_transform_survivors` (bundler/mod.rs)
+    /// treat the leaf as unreachable and skip transforming it outright,
+    /// while the barrel's still-unprunable-in-that-state dual re-export
+    /// glue (`dce::eliminate_unused_reexport_assignments`'s `stars_resolvable`
+    /// poisons to `false` the moment one star id can't resolve to a path)
+    /// kept referencing its numeric module id verbatim, tripping
+    /// `Bundler::check_referenced_module_emission`'s referenced-but-
+    /// unemitted guard on a real `jet build` (8 modules under
+    /// `@mui/system/esm/index.js`, repro: `cargo test -p jet --test
+    /// transform_cache`). This test pins the fix at the analysis layer: the
+    /// leaf must be *discoverable* (a `used_exports` key must exist) even
+    /// with zero named demand, without claiming any of its exports are
+    /// actually used — an empty set is what a genuinely dead leaf must
+    /// still show, since Step 4's elimination logic downstream
+    /// (`apply_tree_shaking` in bundler/mod.rs) depends on that same
+    /// emptiness to correctly drop it from the final bundle.
+    #[test]
+    fn dual_default_and_wildcard_reexport_keeps_unconsumed_target_discoverable_when_barrel_is_live()
+    {
+        let entry = PathBuf::from("/fixture/entry.js");
+        let barrel = PathBuf::from("/fixture/barrel.js");
+        let consumed_leaf = PathBuf::from("/fixture/consumed_leaf.js");
+        let dropped_leaf = PathBuf::from("/fixture/dropped_leaf.js");
+        let modules = vec![
+            (
+                entry.clone(),
+                "import { Consumed, ConsumedNamed } from './barrel';\n\
+                 console.log(Consumed, ConsumedNamed);\n"
+                    .to_string(),
+            ),
+            (
+                barrel.clone(),
+                // The exact dual idiom from the #2267 repro, applied to two
+                // sibling leaves — one actually consumed, one not.
+                "export { default as Consumed } from './consumed_leaf';\n\
+                 export * from './consumed_leaf';\n\
+                 export { default as Dropped } from './dropped_leaf';\n\
+                 export * from './dropped_leaf';\n"
+                    .to_string(),
+            ),
+            (
+                consumed_leaf.clone(),
+                "export const ConsumedNamed = 1;\nexport default 2;\n".to_string(),
+            ),
+            (
+                dropped_leaf.clone(),
+                "export const DroppedNamed = 3;\nexport default 4;\n".to_string(),
+            ),
+        ];
+
+        let result = analyze_used_exports_from(&modules, &entry, None).unwrap();
+
+        // Sanity: the barrel itself must actually be live (consumed_leaf's
+        // names are genuinely demanded through it) — otherwise this test
+        // would not be exercising the "barrel is live but leaf has zero
+        // current named demand" condition the fix gates on.
+        let consumed_used = result
+            .used_exports
+            .get(&consumed_leaf)
+            .expect("consumed_leaf must be live — it is actually imported");
+        assert!(consumed_used.contains("default"), "{consumed_used:?}");
+        assert!(consumed_used.contains("ConsumedNamed"), "{consumed_used:?}");
+
+        // The actual #2267 assertion: dropped_leaf is re-exported through
+        // the exact same dual idiom, from the exact same live barrel, but
+        // nothing imports its default alias ("Dropped") or any of its named
+        // exports ("DroppedNamed") — it must still be *discoverable* as
+        // reachable (present in used_exports, even with an empty name set),
+        // not silently absent the way it was pre-fix.
+        let dropped_used = result.used_exports.get(&dropped_leaf).unwrap_or_else(|| {
+            panic!(
+                "#2267 regression: dropped_leaf must still get a used_exports \
+                 entry (even if empty) once its barrel is live via a sibling \
+                 export — a missing entry is exactly what made \
+                 compute_transform_survivors skip transforming it while its \
+                 dual re-export glue kept referencing its module id, tripping \
+                 the referenced-but-unemitted guard. used_exports={:?}",
+                result.used_exports
+            )
+        });
+        assert!(
+            dropped_used.is_empty(),
+            "dropped_leaf's exports are genuinely never named-demanded — the \
+             entry must stay empty (not resurrect it as \"used\"), so Step 4's \
+             elimination logic still correctly drops it from the final bundle: \
+             got {dropped_used:?}"
         );
     }
 

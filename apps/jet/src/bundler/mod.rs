@@ -2776,7 +2776,36 @@ impl Bundler {
             referencers.dedup();
         }
 
-        Err(format_unemitted_module_reference_error(&by_id))
+        Err(format_unemitted_module_reference_error(
+            &by_id,
+            &self.module_id_path_map(),
+        ))
+    }
+
+    /// #2267 — best-effort `module id -> path` lookup used only to enrich
+    /// [`format_unemitted_module_reference_error`]'s diagnostic: a dangling
+    /// id by itself doesn't tell a reader which of the referencer's several
+    /// dozen imports actually went missing. Reconstructed from `self.graph`
+    /// using the exact same id-assignment order `transform_modules` uses —
+    /// position in `ModuleGraph::topological_sort()`, falling back to
+    /// graph insertion order via `all_node_ids()` on a cycle, mirroring
+    /// `transform_modules`'s own `sorted_ids`/`module_map` construction —
+    /// so an id here always resolves to the same path the rest of the
+    /// pipeline would have assigned it. Unit tests that call
+    /// `check_referenced_module_emission` directly against a hand-built
+    /// `modules` slice (no `build_graph` call, so `self.graph` is still
+    /// empty) simply get an empty map back; the formatter falls back to a
+    /// placeholder rather than failing.
+    fn module_id_path_map(&self) -> HashMap<usize, PathBuf> {
+        let graph = self.graph.read();
+        let ids = match graph.topological_sort() {
+            Ok(ids) => ids,
+            Err(_cycle_paths) => graph.all_node_ids(),
+        };
+        ids.into_iter()
+            .enumerate()
+            .filter_map(|(idx, id)| graph.get_node(id).map(|node| (idx, node.path.clone())))
+            .collect()
     }
 
     /// #2141 — node_modules-scoped resolution cache. Eligibility is
@@ -4929,8 +4958,14 @@ fn format_unresolved_require_fallback_error(deps: &[UnresolvedDependency]) -> an
 /// #2261 round 3 — formats [`Bundler::check_referenced_module_emission`]'s
 /// violations: one entry per missing module id, listing every module whose
 /// emitted code referenced it (deduplicated, sorted for determinism).
+///
+/// #2267 — `id_to_path` (see [`Bundler::module_id_path_map`]) additionally
+/// names the *missing* module's own path when the graph can still resolve
+/// it, instead of leaving a reader to cross-reference a bare numeric id by
+/// hand against a multi-hundred-module graph.
 fn format_unemitted_module_reference_error(
     by_id: &std::collections::BTreeMap<usize, Vec<PathBuf>>,
+    id_to_path: &HashMap<usize, PathBuf>,
 ) -> anyhow::Error {
     let mut msg = String::from(
         "Module graph inconsistency at codegen time — `jet build` cannot continue. \
@@ -4941,9 +4976,14 @@ fn format_unemitted_module_reference_error(
          reachable. Please report this as a jet bug:\n",
     );
     for (id, referencers) in by_id {
+        let target = id_to_path
+            .get(id)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unresolved — not present in module graph>".to_string());
         msg.push_str(&format!(
-            "  • module {} — referenced from: {}\n",
+            "  • module {} ({}) — referenced from: {}\n",
             id,
+            target,
             referencers
                 .iter()
                 .map(|p| p.display().to_string())
