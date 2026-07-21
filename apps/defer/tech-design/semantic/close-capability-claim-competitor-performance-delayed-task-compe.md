@@ -53,7 +53,6 @@ flowchart TD
     ratio_ok -->|no| fail
     emit --> verified([local overhead ceiling verified])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
