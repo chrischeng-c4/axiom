@@ -3,9 +3,9 @@ project = "defer"
 ir_kind = "ec"
 ec_path = "apps/defer/external-contracts"
 inventory_path = "apps/defer/aw.toml"
-generated_at = "2026-07-21T00:40:43.143614+00:00"
-ir_digest = "sha256:1195155d05813ddf4a19f0c55ec815fa67900b4ea47d30bcfeaeec27fc38b702"
-source_digest = "sha256:8a2d125a2aec7bbef3dfc61a67972ea8729a2d877f85d5bd6bbda2c3fd5e153c"
+generated_at = "2026-07-21T02:16:19.711157+00:00"
+ir_digest = "sha256:609eb03c9c043dce1cde12196296fd7d47204a31a23747304d4d0a31806399cc"
+source_digest = "sha256:222b87f68ce34c45c9acac98320e726c6d09ad4c6fc8d30208b097147139a578"
 tool_contracts = []
 
 [[sources]]
@@ -31,6 +31,10 @@ digest = "sha256:ea4c2bd0397508da8974d8b9213d17e409b434d2a5c983c2656b47f9b1e473a
 [[sources]]
 path = "apps/defer/external-contracts/behavior/2219.md"
 digest = "sha256:4f1c2f7b191ee2cec87cd67f5972c7b4cf91126a6d4ee049dd7774e913629fdc"
+
+[[sources]]
+path = "apps/defer/external-contracts/behavior/2220.md"
+digest = "sha256:2ca94d814435f95d2e3440d7ae917e009c27409d618e022cfd51d4ffd96753f2"
 
 [[sources]]
 path = "apps/defer/external-contracts/behavior/766.md"
@@ -456,6 +460,63 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:5538904745f79aadd88f9e5e928e806d0f215367c9de52d8203dc8121bfe4cb3"
+
+[[cases]]
+id = "defer-kubernetes-cli-layered-artifacts"
+capability_id = "kubernetes-native-deployment"
+claim_id = "dedicated-task-service-topology"
+contract_id = "cli-owned-image-crd-operator-and-instance-layers"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2220.md#defer-kubernetes-cli-layered-artifacts"
+test_path = "apps/defer/tests/behavior_defer_kubernetes_cli_layered_artifacts.rs"
+command = "cargo test -p defer --test cli_contract deploy_artifacts_render_by_lifecycle_layer -- --nocapture"
+required_for_production = true
+assertions = [
+    "The shipped Defer CLI independently renders source and release Dockerfiles with executable entrypoints, a structural Defer CRD, an operator Deployment in the requested namespace with downward-API pod identity, and a production Defer instance with three replicas per shard and scheduled backup configuration; every command exit status is checked before content.",
+    "The release Dockerfile is version-bound to the current Defer package, so a stale image artifact or a renderer that emits only Kubernetes YAML cannot satisfy the lifecycle-layer contract.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b6a3a6622383785bd2b8d85b74e41a4b166063001f17be66924819d056c5a0ed"
+
+[[cases]]
+id = "defer-kubernetes-kind-pvc-recovery"
+capability_id = "kubernetes-native-deployment"
+claim_id = "dedicated-task-service-topology"
+contract_id = "operator-reconcile-pvc-replacement-and-domain-recovery"
+dimension = "stability"
+source_ref = "apps/defer/external-contracts/behavior/2220.md#defer-kubernetes-kind-pvc-recovery"
+test_path = "apps/defer/tests/stability_defer_kubernetes_kind_pvc_recovery.rs"
+command = "bash apps/defer/scripts/kind-e2e.sh"
+required_for_production = true
+assertions = [
+    "The gate requires Docker, Kind, kubectl, curl, and jq; it creates a disposable cluster, builds and loads the real source image, installs the Defer CRD and operator, and observes the reconciled single-shard StatefulSet probes and /data mount, exact headless peer and client Service selectors/ports, maxUnavailable=1 PDB, and a Bound PVC with exact 1Gi requested and provisioned capacity before domain mutation.",
+    "Two future-scheduled tasks committed through the public batch API are visible before pod deletion; replacement must produce a different pod UID, regain readiness, and recover the same queue inventory and task identity from PVC-backed Raft state.",
+    "After replacement, queue pause and task cancellation must commit and remain readable with exact terminal accounting; success also requires deleting the disposable Kind cluster and proving its name absent unless explicit preservation is requested.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3d95db04e6283b05b82d64e0cbef02275feaf6e3d67b0692ec139e400767c715"
+
+[[cases]]
+id = "defer-kubernetes-rendered-stateful-topology"
+capability_id = "kubernetes-native-deployment"
+claim_id = "dedicated-task-service-topology"
+contract_id = "direct-and-operator-stateful-resource-invariants"
+dimension = "behavior"
+source_ref = "apps/defer/external-contracts/behavior/2220.md#defer-kubernetes-rendered-stateful-topology"
+test_path = "apps/defer/tests/behavior_defer_kubernetes_rendered_stateful_topology.rs"
+command = "cargo test -p defer --features operator --test direct_k8s_assets --test operator -- --nocapture"
+required_for_production = true
+assertions = [
+    "The direct Kustomize base is exactly one durable voter whose StatefulSet names defer-headless, exposes HTTP 7141 and Raft 7142, wires readiness/liveness/startup probes, mounts the data claim exactly once at /data, requests a named 10Gi ReadWriteOnce PVC, and uses restricted non-root security; its exact headless and client Service selectors/ports and maxUnavailable=0 PDB must match the pod selector.",
+    "The composed production overlay renders successfully with a 100Gi PVC, token Secret projection, ServiceMonitor, NetworkPolicy, and no voter HorizontalPodAutoscaler; raw-string presence or an unconnected patch cannot pass.",
+    "With the real operator feature enabled, the exact six-object production graph contains a three-replica StatefulSet tied to the jobs-headless Service, exact peer/client selectors and HTTP/Raft ports, maxUnavailable=1 PDB, probes and /data claim, connected token/signing/peer-TLS volumes, mounts, and env paths, plus a backup CronJob whose token Secret and destination are exact; the structural CRD contains signing and backup fields.",
+    "Both test binaries must execute non-zero tests; compiling the operator test with its cfg disabled fails this contract.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1ab34d0d65c148cb5f35e5c6ecfc6806bd8fd9a5e79389a1af9c2c7c69ea3a83"
 
 [[cases]]
 id = "defer-security-admission-boundary"
