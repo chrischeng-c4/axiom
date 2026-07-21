@@ -4,6 +4,218 @@
 # Shared bounded-soak measurements. Callers own the domain workload and source
 # this file for portable process/resource sampling and plateau assertions.
 
+service_soak_rss_sampler_expected_count() {
+  local window_secs="$1"
+  local sample_interval_secs="$2"
+  (( window_secs > 0 )) || return 1
+  (( sample_interval_secs > 0 )) || return 1
+  echo $(( (window_secs + sample_interval_secs - 1) / sample_interval_secs ))
+}
+
+service_soak_rss_sampler_start() {
+  local pid="$1"
+  local window_secs="$2"
+  local sample_interval_secs="$3"
+  local dir
+  local samples
+  local status
+  local sampler_pid
+  local token
+  local expected_count
+  [[ "$pid" =~ ^[0-9]+$ ]] || {
+    echo "invalid pid: ${pid}" >&2
+    return 1
+  }
+  expected_count="$(service_soak_rss_sampler_expected_count "${window_secs}" "${sample_interval_secs}")" || {
+    echo "invalid sampler window or cadence" >&2
+    return 1
+  }
+  kill -0 "$pid" 2>/dev/null || {
+    echo "pid ${pid} is not reachable" >&2
+    return 1
+  }
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/service-soak-rss.XXXXXX")" || return 1
+  samples="${dir}/samples"
+  status="${dir}/status"
+  : >"${samples}"
+  : >"${status}"
+  _service_soak_rss_sampler_loop "$pid" "$window_secs" "$sample_interval_secs" "$samples" "$status" &
+  sampler_pid=$!
+  token="${pid}:${samples}:${status}:${sampler_pid}:${window_secs}:${sample_interval_secs}:${expected_count}"
+  SERVICE_SOAK_RSS_LAST_TOKEN="${token}"
+  SERVICE_SOAK_RSS_ACTIVE_TOKEN="${token}"
+  if (( BASH_SUBSHELL == 0 )); then
+    trap '_service_soak_rss_sampler_exit_cleanup' EXIT
+    trap '_service_soak_rss_sampler_signal_cleanup INT 130' INT
+    trap '_service_soak_rss_sampler_signal_cleanup TERM 143' TERM
+  fi
+  echo "${token}"
+}
+
+_service_soak_rss_sampler_loop() {
+  local pid="$1"
+  local window_secs="$2"
+  local sample_interval_secs="$3"
+  local samples="$4"
+  local status="$5"
+  local started_at
+  local deadline
+  local now
+  local rss
+  started_at="$(date +%s)"
+  deadline=$(( started_at + window_secs ))
+  while :; do
+    now="$(date +%s)"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "pid_missing=1" >>"${status}"
+      break
+    fi
+    rss="$(service_soak_rss_kb "$pid")"
+    [[ "${rss}" =~ ^[0-9]+$ ]] || {
+      echo "invalid_sample=${rss}" >>"${status}"
+      break
+    }
+    echo "${rss}" >>"${samples}"
+    (( now + sample_interval_secs > deadline )) && break
+    sleep "${sample_interval_secs}"
+  done
+}
+
+service_soak_rss_sampler_stop() {
+  local token="$1"
+  local pid samples status sampler_pid window_secs sample_interval_secs expected_count
+  local rc=0
+  IFS=: read -r pid samples status sampler_pid window_secs sample_interval_secs expected_count <<<"${token}"
+  [[ -n "${pid}" && -n "${samples}" && -n "${status}" && -n "${sampler_pid}" ]] || {
+    echo "invalid sampler token" >&2
+    return 1
+  }
+  _service_soak_rss_sampler_cleanup "${token}" 1
+  _service_soak_rss_sampler_validate_series "${pid}" "${samples}" "${status}" "${expected_count}" "${window_secs}" || rc=$?
+  rm -rf "$(dirname "${samples}")"
+  return "${rc}"
+}
+
+_service_soak_rss_sampler_cleanup() {
+  local token="$1"
+  local keep_artifacts="${2:-0}"
+  local pid samples status sampler_pid window_secs sample_interval_secs expected_count
+  IFS=: read -r pid samples status sampler_pid window_secs sample_interval_secs expected_count <<<"${token}"
+  [[ -n "${sampler_pid}" ]] || return 0
+  if kill -0 "${sampler_pid}" 2>/dev/null; then
+    kill "${sampler_pid}" 2>/dev/null || true
+  fi
+  wait "${sampler_pid}" 2>/dev/null || true
+  if [[ "${SERVICE_SOAK_RSS_ACTIVE_TOKEN:-}" == "${token}" ]]; then
+    unset SERVICE_SOAK_RSS_ACTIVE_TOKEN
+    trap - EXIT INT TERM
+  fi
+  if (( keep_artifacts == 0 )); then
+    rm -rf "$(dirname "${samples}")"
+  fi
+}
+
+_service_soak_rss_sampler_exit_cleanup() {
+  [[ -n "${SERVICE_SOAK_RSS_ACTIVE_TOKEN:-}" ]] || return 0
+  _service_soak_rss_sampler_cleanup "${SERVICE_SOAK_RSS_ACTIVE_TOKEN}" 0
+}
+
+_service_soak_rss_sampler_signal_cleanup() {
+  local signal="$1"
+  local code="$2"
+  if [[ -n "${SERVICE_SOAK_RSS_ACTIVE_TOKEN:-}" ]]; then
+    _service_soak_rss_sampler_cleanup "${SERVICE_SOAK_RSS_ACTIVE_TOKEN}" 0
+  fi
+  exit "${code}"
+}
+
+_service_soak_rss_sampler_validate_series() {
+  local pid="$1"
+  local samples="$2"
+  local status="$3"
+  local expected_count="$4"
+  local window_secs="$5"
+  local count
+  [[ -f "${samples}" && -f "${status}" ]] || {
+    echo "missing sampler artifacts" >&2
+    return 1
+  }
+  if [[ -s "${status}" ]]; then
+    if rg -q '^pid_missing=1$' "${status}"; then
+      echo "pid ${pid} disappeared before ${window_secs}s window completed" >&2
+      return 1
+    fi
+    if rg -q '^invalid_sample=' "${status}"; then
+      echo "invalid RSS sample captured" >&2
+      return 1
+    fi
+  fi
+  if rg -n -v '^[0-9]+$' "${samples}" >/dev/null; then
+    echo "series contains non-numeric RSS values" >&2
+    return 1
+  fi
+  count="$(awk 'END { print NR + 0 }' "${samples}")"
+  (( count >= expected_count )) || {
+    echo "sample coverage ${count} below required ${expected_count}" >&2
+    return 1
+  }
+}
+
+service_soak_rss_window_summary() {
+  local samples="$1"
+  awk '
+    /^[0-9]+$/ { value[++count] = $1; next }
+    NF { invalid = 1 }
+    END {
+      if (invalid || count == 0) exit 1
+      for (i = 1; i <= count; i += 1) {
+        for (j = i + 1; j <= count; j += 1) {
+          if (value[j] < value[i]) {
+            tmp = value[i]
+            value[i] = value[j]
+            value[j] = tmp
+          }
+        }
+      }
+      min = value[1]
+      max = value[count]
+      if (count % 2 == 1) {
+        median = value[(count + 1) / 2]
+      } else {
+        median = int((value[count / 2] + value[(count / 2) + 1]) / 2)
+      }
+      printf "count=%d min=%d median=%d max=%d\n", count, min, median, max
+    }
+  ' "${samples}"
+}
+
+service_soak_summary_field() {
+  local summary="$1"
+  local field="$2"
+  awk -v key="${field}" '
+    {
+      for (i = 1; i <= NF; i += 1) {
+        split($i, pair, "=")
+        if (pair[1] == key) {
+          print pair[2]
+          exit 0
+        }
+      }
+      exit 1
+    }
+  ' <<<"${summary}"
+}
+
+service_soak_rss_window_growth_pct() {
+  local before_summary="$1"
+  local after_summary="$2"
+  local before_median
+  local after_median
+  before_median="$(service_soak_summary_field "${before_summary}" median)" || return 1
+  after_median="$(service_soak_summary_field "${after_summary}" median)" || return 1
+  service_soak_percent_growth "${before_median}" "${after_median}"
+}
+
 service_soak_rss_kb() {
   ps -o rss= -p "$1" 2>/dev/null | tr -d ' '
 }
