@@ -51,3 +51,28 @@ flowchart TD
     offline_ok -->|no| fail
     bind_one_port -->|ownership boundary| shared([shared libraries unchanged])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/src/bin/defer.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: spec
+    reason: "Own the offline OpenAPI/routes projection and exact nine-operation route twin emitted from the Defer CLI."
+  - path: apps/defer/tests/http_api.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live
+    reason: "Own the one-listener HTTP/1.1 and h2c probes, canonical served OpenAPI equality, exact nine-operation inventory, stateful route journeys, and backup recovery oracle."
+  - path: apps/defer/tests/cli_contract.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: offline_spec_and_typed_client_generation_use_one_contract
+    reason: "Own semantic equality of offline and canonical OpenAPI, the exact routes twin, and exact TypeScript, Python, and Rust client file and symbol inventories."
+```
