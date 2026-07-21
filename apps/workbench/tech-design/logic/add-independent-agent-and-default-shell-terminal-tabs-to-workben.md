@@ -108,3 +108,56 @@ changes:
     impl_mode: hand-written
     description: Record multi-tab PTY isolation, host-shell, no-auto-launch, accessibility, viewport, and evidence verification rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-terminal-tabs-verification
+requirements:
+  accessible_plus_and_keyboard:
+    id: R5
+    text: "The plus control adds and selects an idle shell tab, tabs expose selected and lifecycle text, keyboard navigation is complete, focus is visible, and constrained widths scroll without clipping."
+    kind: accessibility
+    risk: high
+    verify: tests/production_journey.rs::production_ui_quality_journey_passes
+  default_profiles_are_idle:
+    id: R1
+    text: "The center pane presents Claude Code, Codex, AGY, and Shell in that order, selects without launching, and invokes a process only from explicit Start."
+    kind: contract
+    risk: high
+    verify: tests/terminal_tabs.rs::default_tabs_are_ordered_and_never_auto_launch
+  default_shell_and_cwd:
+    id: R2
+    text: "The shell profile resolves the host default rather than hard-coding zsh and every profile starts a real PTY at the selected canonical folder."
+    kind: platform
+    risk: high
+    verify: tests/terminal_tabs.rs::default_shell_uses_host_contract_and_selected_folder_cwd
+  independent_sessions:
+    id: R3
+    text: "Two or more terminal tab ids retain independent real PTY children, transcripts, cwd, input, exit, interrupt, resize, and termination state without cross-tab replacement."
+    kind: concurrency
+    risk: high
+    verify: tests/terminal_tabs.rs::tab_sessions_are_independent_and_commands_are_scoped
+  production_handler_and_evidence:
+    id: R6
+    text: "The exact production Tauri handler carries tab ids for launch, poll, input, resize, interrupt, and terminate while existing desktop, PTY, context, efficiency, stability, and evidence gates remain passing."
+    kind: e2e
+    risk: high
+    verify: tests/production_journey.rs::production_tauri_ipc_bridge_journey_passes
+  safe_tab_identity:
+    id: R4
+    text: "Empty, oversized, or unsafe tab ids fail before process launch, while an exited tab may be explicitly relaunched without leaking its previous child."
+    kind: failure-recovery
+    risk: high
+    verify: tests/terminal_tabs.rs::tab_identity_and_relaunch_fail_closed
+---
+flowchart TD
+    r1[R1 default profiles are idle] --> tests_terminal_tabs_rs_default_tabs_are_ordered_and_never_auto_launch[tests/terminal_tabs.rs::default_tabs_are_ordered_and_never_auto_launch]
+    r2[R2 default shell and cwd] --> tests_terminal_tabs_rs_default_shell_uses_host_contract_and_selected_folder_cwd[tests/terminal_tabs.rs::default_shell_uses_host_contract_and_selected_folder_cwd]
+    r3[R3 independent sessions] --> tests_terminal_tabs_rs_tab_sessions_are_independent_and_commands_are_scoped[tests/terminal_tabs.rs::tab_sessions_are_independent_and_commands_are_scoped]
+    r4[R4 safe tab identity] --> tests_terminal_tabs_rs_tab_identity_and_relaunch_fail_closed[tests/terminal_tabs.rs::tab_identity_and_relaunch_fail_closed]
+    r5[R5 accessible plus and keyboard] --> tests_production_journey_rs_production_ui_quality_journey_passes[tests/production_journey.rs::production_ui_quality_journey_passes]
+    r6[R6 production handler and evidence] --> tests_production_journey_rs_production_tauri_ipc_bridge_journey_passes[tests/production_journey.rs::production_tauri_ipc_bridge_journey_passes]
+```
