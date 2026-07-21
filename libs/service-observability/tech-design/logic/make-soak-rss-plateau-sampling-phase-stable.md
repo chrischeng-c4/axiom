@@ -82,14 +82,13 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Add the explicit RSS sampler start/stop/summary lifecycle, validated count/min/median/max reduction, median-to-median plateau comparison, and cleanup that never leaves a background sampler running.
+    description: Add the session-token RSS sampler start/stop lifecycle, validated count/min/median/max reduction, median-to-median growth oracle, and cleanup that never leaves a background sampler running.
   - path: libs/service-observability/tests/soak_metrics_window_contract.sh
     action: create
     section: unit-test
     impl_mode: hand-written
     description: Prove transient-spike median stability, sustained-growth breach behavior, malformed or insufficient sample failures, and real-child sampler cleanup on both normal completion and interruption.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
