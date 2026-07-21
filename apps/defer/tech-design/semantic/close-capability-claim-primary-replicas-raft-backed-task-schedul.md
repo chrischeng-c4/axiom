@@ -55,3 +55,40 @@ flowchart TD
     peer_ok -->|yes| verified([primary-replicas claim externally verified])
     peer_ok -->|no| fail
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/tests/raft_scheduler.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: committed_scheduler_converges_and_fences_cross_replica_effects
+    reason: "Own the primary observable that a follower-forwarded lease records executor identity and epoch, rejects stale settlement, survives leader loss, and completes the committed task lifecycle after reassignment."
+  - path: apps/defer/tests/raft_scheduler.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: dead_letter_terminal_state_converges_and_survives_restart
+    reason: "Own the same-directory restart and snapshot oracle that preserves terminal scheduler state and converged queue counts across replicas."
+  - path: apps/defer/tests/raft_peer_mtls.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: trusted_defer_peers_replicate_scheduler_state_over_mtls
+    reason: "Own the positive peer-identity oracle that trusted Defer voters replicate committed scheduler state over the shared authenticated peer transport."
+  - path: apps/defer/tests/raft_peer_mtls.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: untrusted_defer_peer_certificate_is_rejected
+    reason: "Own the negative client-identity oracle that required peer mTLS rejects an attacker-CA client certificate before the Raft router handles the request."
+  - path: apps/defer/tests/raft_peer_mtls.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: untrusted_defer_server_certificate_is_rejected
+    reason: "Own the negative server-identity oracle that the client side of required peer mTLS rejects an attacker-CA server while the Defer client identity remains otherwise trusted."
+```
