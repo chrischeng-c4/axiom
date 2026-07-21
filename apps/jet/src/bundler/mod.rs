@@ -1101,6 +1101,30 @@ impl Bundler {
         let modules = self.apply_tree_shaking(modules, &entry);
         lap("tree_shaking");
 
+        // #2261 round 3 — consistency guard: every module id any surviving
+        // module's emitted `_r(<id>)` / `require(<id>)` call references must
+        // itself be present in this same final module set. Wired AFTER
+        // `apply_tree_shaking` rather than immediately after
+        // `transform_modules` (unlike the sibling
+        // `check_unresolved_require_fallbacks` above, whose string-literal
+        // fallback `require('specifier')` calls are a `transform_modules`-
+        // time codegen artifact tree shaking never touches) on purpose: tree
+        // shaking's own re-export-glue pruning
+        // (`dce::eliminate_require_reexports_to_eliminated_modules`, run
+        // inside `apply_tree_shaking`) legitimately rewrites retained
+        // modules' code to drop `require(<id>)` references into modules it
+        // eliminates — e.g. react-router-dom's compiled
+        // `export * from "react-router"` glue references react-router's
+        // module id right up until tree shaking prunes that glue down to
+        // the concretely-used names. That is a normal, self-correcting
+        // mid-pipeline state, not a bug, so checking immediately after
+        // `transform_modules` false-positives on real builds. Once the
+        // module set is truly final — the same set `generate_bundle` is
+        // about to emit — a dangling reference can only mean a genuine
+        // split-brain between some analysis pass's specifier resolution and
+        // the module graph's, not a pruning-ordering artifact.
+        self.check_referenced_module_emission(&modules)?;
+
         let mut output = self.generate_bundle(modules, has_cycle)?;
         lap("generate_bundle");
 
@@ -2681,6 +2705,80 @@ impl Bundler {
         Err(format_unresolved_require_fallback_error(&deps))
     }
 
+    /// #2261 round 3 — "class-killer" consistency guard: after
+    /// `transform_modules` returns, every module id any surviving module's
+    /// own generated code references via a runtime require call
+    /// (`_r(<id>)`/`require(<id>)`, bare or property-accessed alike — see
+    /// [`scope_hoist_opt::find_all_required_module_ids`]) must itself be
+    /// the `id` of some `CompiledModule` also present in that same
+    /// `modules` slice. This catches every future split-brain between "the
+    /// graph/transform decided this edge is live and emitted a reference
+    /// to it" and "some other analysis pass decided the target is dead and
+    /// skipped transforming/emitting it" — regardless of which of jet's
+    /// several independent specifier-resolution call sites drifts next.
+    /// Round 3's own root cause (`compute_transform_survivors`'s liveness
+    /// pre-pass disagreeing with `build_graph`'s own resolution, fixed by
+    /// [`Self::resolve_specifier_for_analysis`]) is exactly one instance of
+    /// this class — this guard does not depend on knowing the mechanism,
+    /// so it also catches whichever resolution copy drifts next.
+    ///
+    /// Deliberately runs on the flat `modules: &[CompiledModule]` list
+    /// `transform_modules` produces, immediately after it returns and
+    /// before `apply_tree_shaking`/`generate_bundle` ever run — i.e.
+    /// before chunk splitting or registry-residency decisions exist at
+    /// all. That timing is what makes the "same-output-set" scoping a
+    /// dynamic/lazy-chunk-aware version of this check would otherwise need
+    /// (a target legitimately living in a *different* physical chunk file
+    /// than its referencer, reached at runtime through `_r`'s
+    /// `__jet__.require` registry-fallback branch rather than a same-file
+    /// local map — see `generate_bundle`'s
+    /// `__jet__.define`/`__jet__.require` chunk-registry shapes)
+    /// unnecessary, rather than something this guard has to compute
+    /// itself: at this point in the pipeline there is only one flat output
+    /// set, full stop — `generate_bundle`'s later chunk/registry placement
+    /// decisions operate entirely over whatever `modules` already
+    /// contains, so any id present in `modules` here is guaranteed to end
+    /// up emitted *somewhere* reachable through `_r`, in whichever chunk
+    /// `generate_bundle` decides — same-chunk flat region or a separate
+    /// lazy chunk's own `__jet__.define` block alike, indistinguishably as
+    /// far as this guard is concerned. The bug this guard exists to catch
+    /// is strictly narrower and earlier than any chunk-placement question:
+    /// an id that never became a member of `modules` in the first place,
+    /// despite a surviving module's transformed code still pointing at it.
+    ///
+    /// @issue #2261
+    fn check_referenced_module_emission(&self, modules: &[CompiledModule]) -> Result<()> {
+        use rayon::prelude::*;
+
+        let emitted_ids: HashSet<usize> = modules.iter().map(|m| m.id).collect();
+
+        let per_module_violations: Vec<Vec<(usize, PathBuf)>> = modules
+            .par_iter()
+            .map(|module| {
+                scope_hoist_opt::find_all_required_module_ids(&module.code)
+                    .into_iter()
+                    .filter(|id| !emitted_ids.contains(id))
+                    .map(|id| (id, module.path.clone()))
+                    .collect()
+            })
+            .collect();
+
+        let mut by_id: std::collections::BTreeMap<usize, Vec<PathBuf>> =
+            std::collections::BTreeMap::new();
+        for (id, referencer) in per_module_violations.into_iter().flatten() {
+            by_id.entry(id).or_default().push(referencer);
+        }
+        if by_id.is_empty() {
+            return Ok(());
+        }
+        for referencers in by_id.values_mut() {
+            referencers.sort();
+            referencers.dedup();
+        }
+
+        Err(format_unemitted_module_reference_error(&by_id))
+    }
+
     /// #2141 — node_modules-scoped resolution cache. Eligibility is
     /// deliberately narrow and two-sided:
     ///
@@ -2774,6 +2872,43 @@ impl Bundler {
         }
 
         Ok(final_path)
+    }
+
+    /// #2261 round 3 — shared specifier-to-module-path resolver for the
+    /// tree-shake analysis passes (`compute_transform_survivors`'s
+    /// liveness pre-pass and `apply_tree_shaking`'s recompute branch).
+    /// Both passes need a `Fn(&str, &Path) -> Option<PathBuf>` closure to
+    /// hand to `tree_shake::analyze_used_exports_from_*`, and both used to
+    /// call `self.resolver.resolve` directly — a second, independent
+    /// resolution of the same specifier that `build_graph` already
+    /// resolved once via `resolve_dependency` to mint every graph node's
+    /// canonical `path`. That duplication is a real bug, not just
+    /// redundant work: `ModuleResolver::resolve`'s raw `ResolvedModule.path`
+    /// is not guaranteed to already be the absolute, lexically-normalized
+    /// form `resolve_dependency` guarantees (it explicitly joins a
+    /// relative result onto `current_dir()` and runs
+    /// `normalize_bundler_path_lexical`), and `resolve_package`'s
+    /// node_modules walk-up additionally has hoisting-preference tiers
+    /// (singleton / same-version / nearest) that a second, independent
+    /// call site risks resolving through a different tier than the one
+    /// `build_graph` actually used for this module's node, in a
+    /// pnpm-style layout with more than one on-disk route to the same
+    /// package. Either divergence makes the caller's result fail to
+    /// string-match `ModuleLookup::by_path`'s keys (which are exactly
+    /// `graph.get_node(id)?.path`, normalized) even though the specifier
+    /// genuinely does resolve — a reachable module then gets no static
+    /// edge into it in the analysis, gets misjudged dead, and
+    /// `transform_modules` skips transforming (and therefore emitting) a
+    /// module the flattened output still references by numeric id
+    /// (repro: `react-router/dom`'s nested exports-map subpath, reached
+    /// both directly and through `react-router-dom`'s own re-export).
+    /// Routing both passes through `resolve_dependency` instead makes
+    /// their view of the graph provably the same as the graph's own view,
+    /// by construction, not by coincidence — and it is a persistent-cache
+    /// hit for every edge `build_graph` already walked, so it costs no
+    /// more than the raw call did.
+    fn resolve_specifier_for_analysis(&self, spec: &str, importer: &Path) -> Option<PathBuf> {
+        self.resolve_dependency(&importer.to_path_buf(), spec).ok()
     }
 
     /// Pre-transform liveness pre-pass for the survivors-only transform
@@ -2911,13 +3046,14 @@ impl Bundler {
             self.persistent_cache.insert_analysis(key, raw.clone());
             raw
         };
-        let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
-            self.resolver
-                .resolve(spec, importer)
-                .ok()
-                .filter(|r| !r.is_external)
-                .map(|r| r.path)
-        };
+        // #2261 round 3 — see `resolve_specifier_for_analysis`'s doc comment
+        // for why this must go through `resolve_dependency` rather than a
+        // second, independent `self.resolver.resolve` call: this pre-pass's
+        // whole job is deciding whether a module is reachable from `entry`,
+        // and it can only agree with `build_graph`'s own answer if it
+        // resolves specifiers exactly the way `build_graph` did.
+        let resolve_specifier =
+            |spec: &str, importer: &Path| self.resolve_specifier_for_analysis(spec, importer);
         match tree_shake::analyze_used_exports_from_with_raw_facts_provider(
             &module_pairs,
             &entry,
@@ -3734,13 +3870,18 @@ impl Bundler {
                 })
                 .collect();
 
-            let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
-                self.resolver
-                    .resolve(spec, importer)
-                    .ok()
-                    .filter(|r| !r.is_external)
-                    .map(|r| r.path)
-            };
+            // #2261 round 3 — see `resolve_specifier_for_analysis`'s doc
+            // comment. This recompute branch only runs when the survivors
+            // filter didn't already populate `self.shake_analysis`
+            // (`JET_NO_SURVIVOR_FILTER=1`, or a fresh recompute forced by
+            // `JET_DOUBLE_SHAKE_ANALYSIS=1`), but it must resolve
+            // specifiers exactly like `compute_transform_survivors` did to
+            // avoid the same split-brain — manifesting here as an
+            // already-emitted module's exports getting misjudged dead and
+            // stripped, rather than the module never getting emitted at
+            // all.
+            let resolve_specifier =
+                |spec: &str, importer: &Path| self.resolve_specifier_for_analysis(spec, importer);
             let implicit_edges = self.implicit_edges.lock().clone();
             match tree_shake::analyze_used_exports_from_with_implicit_edges(
                 &module_pairs,
@@ -4779,6 +4920,35 @@ fn format_unresolved_require_fallback_error(deps: &[UnresolvedDependency]) -> an
             d.specifier,
             d.importer.display(),
             d.reason,
+        ));
+    }
+    msg.push_str("See: https://github.com/chrischeng-c4/axiom/issues/2261");
+    anyhow::anyhow!(msg)
+}
+
+/// #2261 round 3 — formats [`Bundler::check_referenced_module_emission`]'s
+/// violations: one entry per missing module id, listing every module whose
+/// emitted code referenced it (deduplicated, sorted for determinism).
+fn format_unemitted_module_reference_error(
+    by_id: &std::collections::BTreeMap<usize, Vec<PathBuf>>,
+) -> anyhow::Error {
+    let mut msg = String::from(
+        "Module graph inconsistency at codegen time — `jet build` cannot continue. \
+         The following module id(s) are referenced by other modules' emitted `_r(id)` \
+         calls but were never themselves transformed/emitted — some analysis pass (tree \
+         shaking's liveness pre-pass, barrel-demand narrowing, or another specifier \
+         resolution copy) disagreed with the module graph about whether the module is \
+         reachable. Please report this as a jet bug:\n",
+    );
+    for (id, referencers) in by_id {
+        msg.push_str(&format!(
+            "  • module {} — referenced from: {}\n",
+            id,
+            referencers
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
         ));
     }
     msg.push_str("See: https://github.com/chrischeng-c4/axiom/issues/2261");
@@ -6049,6 +6219,141 @@ mod resolved_path_tests {
         assert_eq!(resolved, normalize_bundler_path_lexical(&target));
         assert!(!resolved.to_string_lossy().contains("/../"));
     }
+
+    /// #2261 round 3 — proves the persistent-resolution-cache scope
+    /// collision that makes a raw `ModuleResolver::resolve` call disagree
+    /// with what `resolve_dependency` (and therefore `build_graph`'s real
+    /// edges) actually resolved, and proves `resolve_specifier_for_
+    /// analysis` no longer can.
+    ///
+    /// `node_modules_scope_realpath` (the persistent cache's key) collapses
+    /// to a *package's* own root regardless of which file inside that
+    /// package is asking — so two different files nested at two different
+    /// depths inside the same host package (`host-pkg/index.js` and
+    /// `host-pkg/deep/index.js` below) share one persistent-cache scope
+    /// even though a fresh, uncached walk-up from each file's own directory
+    /// can legitimately land on two different physical copies of the same
+    /// bare specifier (`target-pkg`'s outer, hoisted copy vs. its own
+    /// nested, closer copy — hoisting only reconciles same-*version*
+    /// copies, so two different versions do not converge). Whichever file
+    /// `resolve_dependency` resolves *first* for that shared scope wins the
+    /// persistent-cache entry for every other file in the same package,
+    /// even ones whose own true nearest match differs — exactly the
+    /// "referenced by consumers yet its body is emitted nowhere" shape
+    /// from #2261's corpus, since a raw resolver call bypasses that cache
+    /// and answers a different, graph-inconsistent question.
+    #[test]
+    fn resolve_specifier_for_analysis_agrees_with_resolve_dependency_across_persistent_cache_scope_collision(
+    ) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Outer, hoisted copy of target-pkg (version 1.0.0).
+        let outer_pkg = root.join("node_modules/target-pkg");
+        std::fs::create_dir_all(&outer_pkg).unwrap();
+        std::fs::write(
+            outer_pkg.join("package.json"),
+            r#"{"name":"target-pkg","version":"1.0.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(outer_pkg.join("index.js"), "export const MARKER = 'root';").unwrap();
+
+        // host-pkg, with two importers at two different nesting depths.
+        let host_pkg = root.join("node_modules/host-pkg");
+        std::fs::create_dir_all(&host_pkg).unwrap();
+        std::fs::write(
+            host_pkg.join("package.json"),
+            r#"{"name":"host-pkg","version":"1.0.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        let a_path = host_pkg.join("index.js");
+        std::fs::write(&a_path, "import 'target-pkg'; import './deep';").unwrap();
+
+        let deep_dir = host_pkg.join("deep");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+        let b_path = deep_dir.join("index.js");
+        std::fs::write(&b_path, "import 'target-pkg';").unwrap();
+
+        // Nested copy of target-pkg (version 2.0.0, DIFFERENT from the
+        // outer copy so hoisting's same-version reconciliation cannot
+        // collapse the two back together), reachable only from `b_path`'s
+        // own walk-up — never from `a_path`'s.
+        let nested_pkg = deep_dir.join("node_modules/target-pkg");
+        std::fs::create_dir_all(&nested_pkg).unwrap();
+        std::fs::write(
+            nested_pkg.join("package.json"),
+            r#"{"name":"target-pkg","version":"2.0.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            nested_pkg.join("index.js"),
+            "export const MARKER = 'nested';",
+        )
+        .unwrap();
+
+        // The persistent resolution cache `resolve_dependency` consults is
+        // a no-op unless `cache_project_root` is set (only `jet build`'s
+        // one-shot CLI path sets it for a real build) — without this, every
+        // call below would do an independent fresh walk-up and the
+        // divergence this test exists to prove could never occur.
+        let bundler = Bundler::new(BundleOptions {
+            cache_project_root: Some(root.to_path_buf()),
+            ..BundleOptions::default()
+        })
+        .unwrap();
+        let outer_index = normalize_bundler_path_lexical(&outer_pkg.join("index.js"));
+        let nested_index = normalize_bundler_path_lexical(&nested_pkg.join("index.js"));
+
+        // Simulates build_graph visiting `a_path`'s edge first: its own
+        // walk-up never descends into `host-pkg/deep/node_modules`, so it
+        // can only find the outer copy, and that resolution populates the
+        // persistent cache under host-pkg's shared scope.
+        let a_resolved = bundler.resolve_dependency(&a_path, "target-pkg").unwrap();
+        assert_eq!(a_resolved, outer_index);
+
+        // `b_path` shares host-pkg's persistent-cache scope with `a_path`
+        // (both are nested inside the same enclosing package), so
+        // resolve_dependency — the exact function build_graph uses to mint
+        // every real edge — reuses `a_path`'s cached answer here too,
+        // "smearing" the outer copy onto `b_path` even though `b_path`'s
+        // own nested copy is physically closer.
+        let b_resolved_via_graph = bundler.resolve_dependency(&b_path, "target-pkg").unwrap();
+        assert_eq!(
+            b_resolved_via_graph, a_resolved,
+            "persistent cache must smear a_path's answer onto b_path (same host-pkg scope) \
+             for this test to exercise the real divergence build_graph produces"
+        );
+
+        // The pre-#2261-round-3 analysis closures called
+        // `ModuleResolver::resolve` directly, which never consults the
+        // persistent cache at all: a fresh, independent walk-up from
+        // `b_path` correctly (in isolation) finds the nested copy —
+        // disagreeing with what resolve_dependency just decided for the
+        // exact same (specifier, importer) pair above.
+        let b_resolved_via_raw_resolver = bundler.resolver.resolve("target-pkg", &b_path).unwrap();
+        assert_eq!(
+            b_resolved_via_raw_resolver.path, nested_index,
+            "sanity: a raw, uncached resolve() call must independently find b_path's own \
+             nearest (nested) copy to prove the old closure really did disagree with the graph"
+        );
+        assert_ne!(
+            b_resolved_via_raw_resolver.path, b_resolved_via_graph,
+            "bug reproduced: raw resolver.resolve() disagrees with what resolve_dependency \
+             (and therefore build_graph's real edge) already decided for b_path"
+        );
+
+        // The fix: resolve_specifier_for_analysis must always agree with
+        // resolve_dependency, because it now literally is the same call —
+        // the tree-shake analysis's view of "where does this edge point"
+        // can no longer diverge from the graph's own view.
+        let b_resolved_via_analysis_helper =
+            bundler.resolve_specifier_for_analysis("target-pkg", &b_path);
+        assert_eq!(
+            b_resolved_via_analysis_helper,
+            Some(b_resolved_via_graph),
+            "fixed: resolve_specifier_for_analysis must always agree with resolve_dependency"
+        );
+    }
 }
 
 /// Pins the #1317 behaviour: `jet build` must fail loudly when a bare
@@ -6424,6 +6729,107 @@ mod unresolved_require_fallback_tests {
             .bundle(entry)
             .await
             .expect("declared external must continue to allow the codegen string-require fallback");
+    }
+}
+
+/// #2261 round 3 — `Bundler::check_referenced_module_emission`, the
+/// "class-killer" consistency guard: whatever *causes* a referenced module
+/// to go unemitted (round 3's own root cause was
+/// `compute_transform_survivors`'s analysis-side resolution disagreeing
+/// with the graph — see [`resolve_specifier_for_analysis`]'s test module),
+/// this guard must independently catch the resulting dangling `_r(id)`
+/// reference directly from `modules: &[CompiledModule]`, without needing
+/// to reproduce whichever resolution mechanism dropped the module in the
+/// first place.
+#[cfg(test)]
+mod referenced_module_emission_tests {
+    use super::*;
+
+    fn module(id: usize, path: &str, code: &str) -> CompiledModule {
+        CompiledModule {
+            id,
+            path: PathBuf::from(path),
+            code: code.to_string(),
+            source_map: None,
+            dependencies: Vec::new(),
+            hash: String::new(),
+        }
+    }
+
+    #[test]
+    fn dangling_bare_reference_to_never_emitted_module_fails_build() {
+        let bundler = Bundler::new(types::BundleOptions::default()).unwrap();
+        // Module 999 ("dom-export", matching #2261's own corpus symptom) is
+        // referenced but never itself present in `modules` — exactly the
+        // survivors-filter-excluded-the-target shape.
+        let modules = vec![module(0, "/app/src/main.js", "var x = _r(999);")];
+
+        let err = bundler
+            .check_referenced_module_emission(&modules)
+            .expect_err("a reference to a never-emitted module id must fail the build");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("999"),
+            "diagnostic must name the missing module id, got: {msg}"
+        );
+        assert!(
+            msg.contains("main.js"),
+            "diagnostic must name the referencing module, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn dangling_property_accessed_reference_also_fails_build() {
+        let bundler = Bundler::new(types::BundleOptions::default()).unwrap();
+        // `_r(id)["name"]` is a different call shape than a bare `_r(id)`
+        // (see `collect_bare_require_module_ids`'s own bare-vs-property-
+        // access distinction) — this guard must catch this shape too,
+        // since it is exactly how a named import of a missing export
+        // compiles (matching react-router/dom's own
+        // `_r(1133)["HydratedRouter"]`-shaped reference in the real
+        // corpus).
+        let modules = vec![module(
+            0,
+            "/app/src/main.js",
+            "var HydratedRouter = _r(1133)[\"HydratedRouter\"];",
+        )];
+
+        let err = bundler
+            .check_referenced_module_emission(&modules)
+            .expect_err("a property-accessed reference to a missing module must also fail");
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("1133"), "got: {msg}");
+    }
+
+    #[test]
+    fn every_referenced_module_present_succeeds() {
+        let bundler = Bundler::new(types::BundleOptions::default()).unwrap();
+        let modules = vec![
+            module(0, "/app/src/main.js", "var x = _r(1);"),
+            module(1, "/app/src/dep.js", "exports.x = 1;"),
+        ];
+
+        bundler
+            .check_referenced_module_emission(&modules)
+            .expect("every referenced id is present in the same output set — must succeed");
+    }
+
+    #[test]
+    fn specifier_mentioned_only_in_a_comment_or_string_is_not_a_reference() {
+        let bundler = Bundler::new(types::BundleOptions::default()).unwrap();
+        // Mirrors round 2's own real-world trap (react-router's runtime
+        // error text contains the literal substring `_r(` / module ids in
+        // prose) — text that merely *mentions* the shape inside a
+        // string/comment must never be misread as a real reference.
+        let modules = vec![module(
+            0,
+            "/app/src/main.js",
+            "// see _r(999) in the docs for details\nvar note = 'call _r(999) manually';",
+        )];
+
+        bundler
+            .check_referenced_module_emission(&modules)
+            .expect("a comment/string mention of the `_r(id)` shape must not be flagged");
     }
 }
 

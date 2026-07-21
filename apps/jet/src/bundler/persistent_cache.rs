@@ -264,8 +264,27 @@ pub const SCANNER_VERSION: u32 = 1;
 /// [`analysis_fingerprint`] alongside the sorted `defines` set, and
 /// checked once at load — see the module doc comment's "Analysis section"
 /// heading.
+///
+/// #2261 round 3 bumped this 1 -> 2: `tree_shake::extract_export_names`
+/// (one of `compute_raw_module_facts`'s pure extractors, feeding
+/// `RawModuleFacts::exports`) scanned `export { ... }` one physical line
+/// at a time, so a brace list wrapped across multiple lines — prettier's
+/// default output once the list is long enough, e.g. react-router's built
+/// `dist/development/index.mjs`, whose bare (no `from`) `export { ... };`
+/// list spans 130 lines — silently contributed zero names. A module whose
+/// only public surface is such a list therefore analyzed as exporting
+/// nothing, so re-export propagation could never mark it used, and it was
+/// dropped from the survivors set entirely (caught downstream by
+/// `Bundler::check_referenced_module_emission`'s referenced-but-unemitted
+/// guard). The fix is content-only — same specifier-level facts shape,
+/// corrected extraction — so a [`StoredAnalysisEntry`] computed by a
+/// pre-fix binary decodes cleanly and matches every key field despite
+/// carrying a wrong `exports` list, the same failure class the module doc
+/// comment's "Analysis section" heading and [`TRANSFORM_CACHE_SCHEMA`]'s
+/// #2261 round 2 bump describe; this bump forces one cold, full
+/// re-analysis on every existing install's next build.
 /// @issue #2141
-pub const ANALYSIS_VERSION: u32 = 1;
+pub const ANALYSIS_VERSION: u32 = 2;
 
 /// Bumped whenever the resolution *algorithm* changes in a way that could
 /// make an old [`ResolutionValue`] no longer a safe reuse for the same

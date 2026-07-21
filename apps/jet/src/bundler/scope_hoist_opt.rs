@@ -7556,6 +7556,95 @@ pub fn find_unresolved_require_fallback_calls(code: &str) -> Vec<String> {
     found
 }
 
+/// #2261 round 3 — collects every module id a module's own generated code
+/// references via a runtime require call, `_r(<id>)` or `require(<id>)`
+/// alike, in *any* call shape: a bare call (`_r(1133)`) and a call
+/// immediately followed by a property access (`_r(1133)["propName"]`) both
+/// count identically, unlike [`collect_bare_require_module_ids`], which
+/// deliberately counts only the bare shape for its own narrower DCE
+/// purpose. This collector's only question is "does this code reference id
+/// X at all", so every shape that proves the answer is yes must be
+/// included.
+///
+/// Used by `Bundler::check_referenced_module_emission` (the #2261 round 3
+/// "class-killer" consistency guard) to verify every id a surviving
+/// module's code points at was itself also transformed into the same
+/// output set — see that function's doc comment for the full contract.
+///
+/// Shares the same string/template-literal/regex-literal/comment-aware
+/// walk every other scanner in this module uses, via
+/// [`match_require_call_any`]/[`is_require_call_ident_at`], so an id
+/// merely *mentioned* inside a string/comment/regex can never
+/// false-positive here either.
+pub fn find_all_required_module_ids(code: &str) -> HashSet<usize> {
+    if !code.contains("_r(") && !code.contains("require(") {
+        return HashSet::new();
+    }
+
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut ids = HashSet::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_require_call_ident_at(b, i) {
+            if let Some((module_id, after_require)) = match_require_call_any(b, i) {
+                if let Ok(id) = module_id.parse::<usize>() {
+                    ids.insert(id);
+                }
+                i = after_require;
+                prev = b')';
+                continue;
+            }
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    ids
+}
+
 #[cfg(test)]
 mod interop_thunk_registry_residency_tests {
     use super::*;

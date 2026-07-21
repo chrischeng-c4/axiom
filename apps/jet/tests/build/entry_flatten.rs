@@ -1849,4 +1849,218 @@ async fn entry_flatten_resolves_nested_exports_map_condition_subpath_through_ree
 
     Ok(())
 }
+
+// ── multi-line bare export lists through a star re-export (#2261 round 3) ──
+//
+// react-router@7.18.1's own built `dist/development/index.mjs` re-exports
+// every public name it only ever *imports* (never locally declares) via one
+// long, bare (no `from` clause) `export { ... };` list — prettier's default
+// wrapping once the list is long enough (react-router's real list spans 130
+// lines). `tree_shake::extract_export_names` (feeding
+// `RawModuleFacts::exports`, the analysis layer's only view of "what does
+// this module export") scanned `export { ... }` one physical source line at
+// a time: every continuation line after `export {` matched neither the
+// single-line name-extraction branch nor found a `}` on that same line, so
+// the entire multi-line block silently contributed zero names. With
+// `all_exports[barrel-core] == []`, the star-reexport propagation fixed
+// point in `analyze_used_exports_from_with_raw_facts_provider` (for
+// `barrel-dom`'s `export * from 'barrel-core';`) always computed an empty
+// `leaf_exports ∩ barrel_used` intersection and never created a
+// `used_exports[barrel-core]` entry, so `compute_transform_survivors`
+// dropped `barrel-core` from the survivors set entirely — even though
+// `barrel-dom`'s compiled glue still contains a numeric `require(<id>)` call
+// into it (proving it's genuinely reachable). Round 3's
+// `Bundler::check_referenced_module_emission` consistency guard turns that
+// silent drop into a loud build failure; the real fix is
+// `extract_export_names` accumulating continuation lines until the closing
+// `}` is found (the same pattern `logical_import_lines` already uses for
+// multi-line `import { ... } from '...'`).
+//
+// Unlike the neighboring nested-exports-map fixture above, this bug lives in
+// tree-shaking's analysis pre-pass rather than the entry-flatten path, so a
+// plain `jet build` (no `--splitting`) reproduces it directly.
+
+/// Writes a `barrel-dom` -> `barrel-core` package chain shaped like
+/// react-router-dom -> react-router's real built output: `barrel-core`'s
+/// `index.js` imports two functions from a sibling chunk, then re-exports
+/// them via one **bare, multi-line** `export { ... };` list (no `from`
+/// clause, closing `}` on its own line — prettier's wrapping once a list
+/// has 3+ names) instead of declaring them locally. `barrel-dom` re-exports
+/// the whole thing wildcard-style (`export * from 'barrel-core';`), exactly
+/// like react-router-dom's `export * from "react-router"`. The app entry
+/// imports the two names through `barrel-dom` and *calls* them (not just
+/// references them) so the real-browser assertion proves genuine runtime
+/// wiring, not merely that the build didn't crash.
+fn write_multiline_bare_export_barrel_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("node_modules/barrel-core")).expect("create barrel-core");
+    fs::write(
+        dir.join("node_modules/barrel-core/package.json"),
+        r#"{"name":"barrel-core","version":"1.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write barrel-core package.json");
+    fs::write(
+        dir.join("node_modules/barrel-core/chunk.js"),
+        r#"export function greet(name) {
+  return 'HELLO_' + name;
+}
+export function farewell(name) {
+  return 'BYE_' + name;
+}
+"#,
+    )
+    .expect("write barrel-core chunk.js");
+    // The bug: `greet`/`farewell` are never declared in this file — they are
+    // only imported, then re-exported via a bare (no `from`) list whose
+    // closing `}` lives on its own physical line.
+    fs::write(
+        dir.join("node_modules/barrel-core/index.js"),
+        r#"import {
+  greet,
+  farewell
+} from './chunk.js';
+
+export {
+  greet,
+  farewell
+};
+"#,
+    )
+    .expect("write barrel-core index.js");
+
+    fs::create_dir_all(dir.join("node_modules/barrel-dom")).expect("create barrel-dom");
+    fs::write(
+        dir.join("node_modules/barrel-dom/package.json"),
+        r#"{"name":"barrel-dom","version":"1.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write barrel-dom package.json");
+    fs::write(
+        dir.join("node_modules/barrel-dom/index.js"),
+        "export * from 'barrel-core';\n",
+    )
+    .expect("write barrel-dom index.js");
+
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { greet, farewell } from 'barrel-dom';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' + greet('WORLD') + '_' + farewell('WORLD') + '</div>';
+"#,
+    )
+    .expect("write entry");
+}
+
+/// #2261 round 3 — a package's only public surface may be a **bare,
+/// multi-line** `export { ... };` re-export list (no `from` clause, closing
+/// `}` on its own line) rather than named local declarations or a
+/// single-line list. Tree-shaking's analysis pre-pass
+/// (`tree_shake::extract_export_names`) must still see every name so a
+/// downstream `export * from '...'` barrel can propagate usage through it —
+/// not silently record zero exports and let `compute_transform_survivors`
+/// drop the module while other compiled code still calls into it by
+/// numeric id (a referenced-but-never-emitted module, caught loudly by
+/// `Bundler::check_referenced_module_emission` rather than crashing at
+/// runtime with a black page).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_flatten_resolves_multiline_bare_export_list_via_star_reexport() -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_multiline_bare_export_barrel_fixture(fixture);
+
+    // The build itself must succeed: pre-fix, `barrel-core` is dropped from
+    // the survivors set while `barrel-dom`'s compiled glue still calls into
+    // it by numeric id, and `check_referenced_module_emission` turns that
+    // into a loud build failure rather than a silent black page.
+    require_success(
+        run_jet(fixture, ["build"])?,
+        "build (multi-line bare export barrel fixture)",
+    )?;
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "build must emit dist/index.html"
+    );
+
+    let dist = fixture.join("dist");
+
+    // (a) Static guard (module presence, cheap, no browser required):
+    // `barrel-core`'s real function bodies must have been emitted, not just
+    // referenced — the exact "referenced but never emitted" failure this
+    // bug produced before the analysis fix (and that the consistency guard
+    // above would otherwise have to catch at build time).
+    let emitted = dist_js_files_containing(&dist, "HELLO_");
+    assert!(
+        !emitted.is_empty(),
+        "expected barrel-core's greet() body ('HELLO_') to be emitted \
+         somewhere in dist — the module must survive tree-shaking's \
+         analysis pre-pass, not just be referenced by numeric id from \
+         barrel-dom's compiled glue"
+    );
+
+    // (b) Dynamic proof: the app must actually boot and render in a real
+    // Chromium, proving the re-exported functions are correctly wired
+    // through the star-reexport barrel, not merely present as inert text.
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping real-browser half of \
+             entry_flatten_resolves_multiline_bare_export_list_via_star_reexport: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<Option<String>, anyhow::Error>(output_text)
+    })
+    .await;
+
+    let output_text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "entry_flatten_resolves_multiline_bare_export_list_via_star_reexport \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        output_text.as_deref(),
+        Some("HELLO_WORLD_BYE_WORLD"),
+        "app must boot rendering both functions re-exported through the \
+         bare multi-line export list and the star-reexport barrel \
+         (#2261 round 3)"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END

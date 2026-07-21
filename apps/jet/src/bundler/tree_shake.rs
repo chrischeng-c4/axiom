@@ -540,8 +540,9 @@ fn is_single_line_removable_export(line: &str) -> bool {
 /// Extract ESM export names from source.
 fn extract_export_names(source: &str, _is_typescript: bool) -> Vec<String> {
     let mut names = Vec::new();
+    let mut lines = source.lines();
 
-    for line in source.lines() {
+    while let Some(line) = lines.next() {
         let trimmed = line.trim();
         if let Some(name) = extract_single_export_name(trimmed) {
             names.push(name);
@@ -549,10 +550,25 @@ fn extract_export_names(source: &str, _is_typescript: bool) -> Vec<String> {
         if trimmed.starts_with("export default") {
             names.push("default".to_string());
         }
-        // export { a, b, c }
+        // export { a, b, c } [from '...'] — the brace list may be wrapped
+        // across multiple physical lines (prettier's default wrapping for
+        // 3+ named exports, the same shape `logical_import_lines` already
+        // joins for multi-line `import { ... } from '...'`). Accumulate
+        // continuation lines until the closing `}` is found so names
+        // aren't silently dropped when the list doesn't fit on one line —
+        // e.g. react-router's built `index.mjs`, whose bare (no `from`)
+        // `export { ... };` list spans 130 lines (#2261 round 3).
         if trimmed.starts_with("export {") {
-            if let Some(brace_end) = trimmed.find('}') {
-                let inner = &trimmed[8..brace_end]; // skip "export {"
+            let mut joined = trimmed.to_string();
+            while !joined.contains('}') {
+                let Some(next_line) = lines.next() else {
+                    break;
+                };
+                joined.push(' ');
+                joined.push_str(strip_line_comment(next_line).trim());
+            }
+            if let Some(brace_end) = joined.find('}') {
+                let inner = &joined[8..brace_end]; // skip "export {"
                 for name in inner.split(',') {
                     let name = name.trim();
                     // Handle "name as alias" — the export name is the alias
@@ -2887,6 +2903,48 @@ const internal = 2;
     #[test]
     fn test_extract_export_braces() {
         let source = "export { foo, bar as baz };\n";
+        let names = extract_export_names(source, false);
+        assert!(names.contains(&"foo".to_string()));
+        assert!(names.contains(&"baz".to_string()));
+    }
+
+    /// #2261 round 3: a bare (no `from`) multi-line `export { ... };` list
+    /// — prettier's default wrapping once the list is long enough, exactly
+    /// the shape react-router's built `dist/development/index.mjs` uses to
+    /// re-export names it only ever `import`s (never locally declares) —
+    /// must still yield every name, not just names that happen to share a
+    /// physical line with `export {`/`}`.
+    #[test]
+    fn test_extract_export_braces_multiline_no_from_clause() {
+        let source = r#"
+import {
+  Route,
+  Routes,
+  BrowserRouter
+} from "./chunk-XXXX.mjs";
+export {
+  BrowserRouter,
+  Route,
+  Routes
+};
+"#;
+        let names = extract_export_names(source, false);
+        assert!(names.contains(&"BrowserRouter".to_string()));
+        assert!(names.contains(&"Route".to_string()));
+        assert!(names.contains(&"Routes".to_string()));
+    }
+
+    /// Sibling of the no-`from` case: a multi-line `export { ... } from
+    /// '...';` re-export list must also survive the closing `}` living on
+    /// a different physical line than the trailing `from` clause.
+    #[test]
+    fn test_extract_export_braces_multiline_with_from_clause() {
+        let source = r#"
+export {
+  foo,
+  bar as baz
+} from "./mod";
+"#;
         let names = extract_export_names(source, false);
         assert!(names.contains(&"foo".to_string()));
         assert!(names.contains(&"baz".to_string()));
