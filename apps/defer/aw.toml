@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "defer"
-generated_from_td_digest = "sha256:ea406245b377a06be7ca43b0a23493cc6aa5883ac8f4abf14b12781cf8d48bc4"
+generated_from_td_digest = "sha256:5a0e35239e7567d4347f247ae05ca933d322fc5ea8a07765bdd37198daa0656a"
 
 [[aw.ec.generated.cases]]
 id = "defer-cli-interface-conformance"
@@ -115,6 +115,24 @@ assertions = [
     "A parsed machine-readable contract names Google Cloud Tasks as the sole managed-HTTP-push semantic competitor, classifies Celery and Sidekiq exactly as category mismatches, and requires one unique four-field row for each of the exact 15 capabilities.",
     "The exact DLQ row records that Cloud Tasks deletes retry-exhausted tasks while Defer intentionally retains an explicit replicated DeadLettered terminal; official RetryConfig and Cloud-Tasks-versus-Pub/Sub references remain named in the artifact.",
     "Force-run bypass, arbitrary worker execution, cron composition, and workflows retain exact exclusion rationales; complete assertions keep real Cloud Tasks performance unproven, VAT protocol-only, and Relay a non-substitute local overhead ceiling capped at 20%.",
+]
+
+[[aw.ec.generated.cases]]
+id = "defer-competitor-performance-durable-lifecycle-ceiling"
+capability_id = "competitor-performance"
+claim_id = "delayed-task-competitor-performance-baseline"
+contract_id = "same-host-durable-lifecycle-throughput-overhead-ceiling"
+category = "efficiency"
+td_ref = "apps/defer/external-contracts/behavior/2217.md#defer-competitor-performance-durable-lifecycle-ceiling"
+test_path = "apps/defer/tests/efficiency_defer_competitor_performance_durable_lifecycle_ceiling.rs"
+command = "cargo test --release -p defer --test relay_performance_ceiling -- --ignored --nocapture"
+required_for_production = true
+assertions = [
+    "The explicitly unignored release-mode oracle completes exactly 1,000 items for both Defer and Relay in ten 100-item batches with the same exactly asserted 128-byte serialized JSON payload, one Raft voter, fsync-always durability, and durable enqueue -> committed lease -> committed ack lifecycle.",
+    "Every batch hard-asserts created/published and leased counts; Defer additionally requires exactly 100 settlement outcomes and every outcome Acked(true), Relay requires exactly 100 acknowledgements, and accumulated completed and latency-sample counts must each equal 1,000 before throughput is calculated.",
+    "Before emitting JSON, both sides independently require finite positive throughput, CPU, and disk amplification plus non-zero p50/p95/p99 batch-lifecycle latency, process-shared RSS, and durable disk bytes; any command error, failed count or settlement, missing sample, zero metric, NaN, infinity, or zero-operation run fails closed.",
+    "The measured defer_to_relay_ratio must be at least the emitted minimum_ratio of 0.80, bounding Defer's additional ETA, queue-control, permit, retry, DLQ, and terminal-state overhead to no more than 20% under this identical local workload.",
+    "The command parses an exact machine-readable benchmark contract and emits matching scope fields: Relay is the performance comparator, scope is same-host-sibling-implementation-ceiling, RSS is process-shared-not-component-isolated, the dated observation is non-authoritative, and both Cloud Tasks performance and universal superiority claims are false.",
 ]
 
 [[aw.ec.generated.cases]]
