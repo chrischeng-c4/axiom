@@ -83,7 +83,6 @@ changes:
     anchor: assert_operator_topology
     reason: "Own the real disposable Kind topology, PVC-backed pod replacement, recovered task state, post-recovery mutation, and cleanup journey."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
