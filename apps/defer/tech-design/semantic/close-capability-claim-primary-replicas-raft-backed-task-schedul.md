@@ -91,7 +91,6 @@ changes:
     anchor: untrusted_defer_server_certificate_is_rejected
     reason: "Own the negative server-identity oracle that the client side of required peer mTLS rejects an attacker-CA server while the Defer client identity remains otherwise trusted."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
