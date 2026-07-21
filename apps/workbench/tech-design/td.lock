@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T20:37:31.894946+00:00"
-digest = "sha256:77904c43906805ee14e2b16394382d2cc5688eed6437854fb394da4a35e8493a"
-source_digest = "sha256:77904c43906805ee14e2b16394382d2cc5688eed6437854fb394da4a35e8493a"
-ir_digest = "sha256:311716f56d69a62a3b87623031f84dde7315a6ad25c214f109527ebb431d90fb"
+generated_at = "2026-07-21T02:31:38.019005+00:00"
+digest = "sha256:9e88742247601c3eb99be22148e08e5d8a825d1137ff9d5069707ac3f2157417"
+source_digest = "sha256:9e88742247601c3eb99be22148e08e5d8a825d1137ff9d5069707ac3f2157417"
+ir_digest = "sha256:e06d0009e85432cf676f0cc4216315abc25e12b390e2b0f21a697b8b3383b401"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -29,6 +29,12 @@ section_count = 3
 path = "logic/add-an-optional-llm-wiki-compatible-derived-page-context-adapter.md"
 digest = "sha256:7e3628e5bd9cff6a74560f9d12a3a60c978d1358c960e2b77bcca486c0b6361c"
 ir_digest = "sha256:40e0b4fb3c787082b7585b2d2ee88168418c1e1650380ed6e77bf05383fc423d"
+section_count = 3
+
+[[files]]
+path = "logic/add-independent-agent-and-default-shell-terminal-tabs-to-workben.md"
+digest = "sha256:f6335aa4102f462451e219fe52960caedccf2fbca65157879c2a89459bab4c00"
+ir_digest = "sha256:8c85c2e85ede313234415bc3204631bdcc9687b94c9c0ae8d8c8e1c9a0ede1de"
 section_count = 3
 
 [[files]]
