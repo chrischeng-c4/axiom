@@ -69,6 +69,7 @@ fn sample_process() -> (f64, u64) {
     (usage.cpu_seconds, usage.rss_bytes)
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the release-mode oracle for exact same-host workload identity, completed-operation cardinality, positive finite metrics, explicit no-overclaim scope, and the hard Defer-to-Relay ratio threshold.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "performance gate: run explicitly on an otherwise idle host"]
 async fn defer_stays_within_twenty_percent_of_relay_scheduler_ceiling() {
@@ -319,4 +320,5 @@ async fn defer_stays_within_twenty_percent_of_relay_scheduler_ceiling() {
     defer.shutdown().await.unwrap();
     relay.shutdown().await.unwrap();
 }
+// </HANDWRITE>
 // HANDWRITE-END
