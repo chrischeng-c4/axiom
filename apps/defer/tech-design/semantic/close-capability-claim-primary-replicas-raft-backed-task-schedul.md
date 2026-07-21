@@ -1,7 +1,14 @@
 ---
 id: '2221'
-summary: (fill)
+summary: Close Defer primary-replicas claim with committed scheduler recovery, repeated failover, snapshot state, fence ownership, and peer mTLS verification.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: primary-replicas
+    role: primary
+    gap: raft-backed-task-scheduler
+    claim: raft-backed-task-scheduler
+    coverage: full
+    rationale: "Binds Defer's existing three-voter scheduler recovery, snapshot, repeated failover, fence ownership, and peer-mTLS oracles to the primary-replicas claim while shared consensus and transport mechanics remain in libs."
 ---
 
 ## Logic
