@@ -554,8 +554,9 @@ fn spec(args: SpecArgs) -> Result<()> {
                 "routes": [
                     "PUT /v1/queues/{queue}", "GET /v1/queues/{queue}",
                     "POST /v1/queues/{queue}/control", "POST /v1/queues/{queue}/tasks",
+                    "POST /v1/queues/{queue}/tasks:batch",
                     "GET /v1/queues/{queue}/tasks/{task_id}", "DELETE /v1/queues/{queue}/tasks/{task_id}",
-                    "POST /v1/queues/{queue}/dispatch"
+                    "POST /v1/queues/{queue}/dispatch", "GET /admin/backup"
                 ]
             }))?
         ),

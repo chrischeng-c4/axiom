@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "defer",
-  "source_digest": "sha256:5a0e35239e7567d4347f247ae05ca933d322fc5ea8a07765bdd37198daa0656a",
+  "source_digest": "sha256:edbc5a3cb6ba7ad795d63f6d24e9a90cc2806980d5d7460acdeeaf761b635900",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2217-revision-2",
-  "reviewed_at": "2026-07-21T00:01:18.604248+00:00",
-  "summary": "Accepted after independent re-review. The hardened release benchmark now proves exact 1,000-item completion on both Defer and Relay through per-batch cardinality and actual completion counters, uses an asserted exactly 128-byte serialized JSON payload for both sides and disk amplification, fails closed on every required missing/zero/non-finite metric, and hard-enforces the independent Relay ratio ceiling at 0.80. A parsed machine-readable benchmark contract and matching emitted scope fields constrain the evidence to a same-host sibling implementation comparison with process-shared RSS, a non-authoritative dated observation, no Cloud Tasks performance result, and no universal superiority claim.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2219",
+  "reviewed_at": "2026-07-21T00:39:07.918913+00:00",
+  "summary": "Accepted. The two behavior cases close the HTTP/2 API-list claim with independent exact-operation oracles: one real service listener is exercised by HTTP/1.1 and prior-knowledge h2c clients, every advertised domain operation performs a concrete stateful journey, backup bytes restore terminal state into a fresh Raft store, and served/offline OpenAPI remain equal to the canonical IR. The offline gate also pins the exact routes output and exact TypeScript, Python, and Rust file/symbol inventories, including Python sync/async clients and the batch-task path. Both declared commands passed independently with non-zero test counts.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/defer/external-contracts/behavior/2217.md"
+  "target_path": "apps/defer/external-contracts/behavior/2219.md"
 }
