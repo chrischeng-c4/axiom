@@ -10,6 +10,106 @@ fn defer() -> Command {
     Command::new(env!("CARGO_BIN_EXE_defer"))
 }
 
+const EXPECTED_DOMAIN_OPERATIONS: &[&str] = &[
+    "DELETE /v1/queues/{queue}/tasks/{task_id}",
+    "GET /admin/backup",
+    "GET /v1/queues/{queue}",
+    "GET /v1/queues/{queue}/tasks/{task_id}",
+    "POST /v1/queues/{queue}/control",
+    "POST /v1/queues/{queue}/dispatch",
+    "POST /v1/queues/{queue}/tasks",
+    "POST /v1/queues/{queue}/tasks:batch",
+    "PUT /v1/queues/{queue}",
+];
+
+fn chainable_json(output: std::process::Output, surface: &str) -> serde_json::Value {
+    assert!(
+        output.status.success(),
+        "{surface} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json = stdout
+        .strip_suffix("next: done\n")
+        .expect("chainable JSON ends with the terminal marker")
+        .trim_end();
+    serde_json::from_str(json).unwrap_or_else(|error| panic!("{surface} JSON: {error}"))
+}
+
+fn assert_exact_domain_operations(spec: &serde_json::Value) {
+    let paths = spec["paths"].as_object().expect("OpenAPI paths object");
+    let mut actual = Vec::new();
+    for (path, item) in paths {
+        let item = item.as_object().expect("OpenAPI path item");
+        for method in [
+            "delete", "get", "head", "options", "patch", "post", "put", "trace",
+        ] {
+            if item.contains_key(method) {
+                actual.push(format!("{} {path}", method.to_ascii_uppercase()));
+            }
+        }
+    }
+    actual.sort();
+    assert_eq!(
+        actual,
+        EXPECTED_DOMAIN_OPERATIONS
+            .iter()
+            .map(|operation| (*operation).to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn assert_generated_client(
+    lang: &str,
+    expected_files: &[&str],
+    client_file: &str,
+    symbols: &[&str],
+) {
+    let out = tempfile::tempdir().unwrap();
+    let generated = defer()
+        .args([
+            "spec",
+            "gen",
+            "--lang",
+            lang,
+            "--out",
+            out.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{lang} generation failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let mut actual = out
+        .path()
+        .read_dir()
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    actual.sort();
+    let mut expected = expected_files
+        .iter()
+        .map(|file| (*file).to_string())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(actual, expected, "{lang} generated file inventory");
+    let client = std::fs::read_to_string(out.path().join(client_file)).unwrap();
+    for symbol in symbols {
+        assert!(
+            client.contains(symbol),
+            "{lang} generated client missing {symbol}"
+        );
+    }
+    assert!(
+        String::from_utf8(generated.stdout)
+            .unwrap()
+            .ends_with("next: done\n"),
+        "{lang} generation must emit a terminal marker"
+    );
+}
+
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2213" reason="Own the fail-closed behavior oracle for exact command grammar, offline llm, exact TypeScript client generation, and deployment-render exit status.">
 #[test]
 fn help_exposes_standard_and_domain_surfaces() {
@@ -183,62 +283,102 @@ fn llm_outline_advertises_cross_scope_topics_and_terminates() {
 
 #[test]
 fn offline_spec_and_typed_client_generation_use_one_contract() {
-    let output = defer()
-        .args(["spec", "--format", "openapi"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("/v1/queues/{queue}/tasks"));
-    assert!(stdout.contains("next: done"));
-
-    let out = tempfile::tempdir().unwrap();
-    let generated = defer()
-        .args([
-            "spec",
-            "gen",
-            "--lang",
-            "ts",
-            "--out",
-            out.path().to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        generated.status.success(),
-        "{}",
-        String::from_utf8_lossy(&generated.stderr)
+    let offline = chainable_json(
+        defer()
+            .args(["spec", "--format", "openapi"])
+            .output()
+            .unwrap(),
+        "defer spec --format openapi",
     );
-    let mut actual = out
-        .path()
-        .read_dir()
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    actual.sort();
+    let canonical = serde_json::to_value(defer::openapi::openapi()).unwrap();
     assert_eq!(
-        actual,
-        [
+        offline, canonical,
+        "offline CLI spec must equal canonical IR"
+    );
+    assert_exact_domain_operations(&offline);
+
+    let routes = chainable_json(
+        defer()
+            .args(["spec", "--format", "routes"])
+            .output()
+            .unwrap(),
+        "defer spec --format routes",
+    );
+    assert_eq!(
+        routes["routes"],
+        serde_json::json!([
+            "PUT /v1/queues/{queue}",
+            "GET /v1/queues/{queue}",
+            "POST /v1/queues/{queue}/control",
+            "POST /v1/queues/{queue}/tasks",
+            "POST /v1/queues/{queue}/tasks:batch",
+            "GET /v1/queues/{queue}/tasks/{task_id}",
+            "DELETE /v1/queues/{queue}/tasks/{task_id}",
+            "POST /v1/queues/{queue}/dispatch",
+            "GET /admin/backup"
+        ])
+    );
+
+    assert_generated_client(
+        "ts",
+        &[
             "client.ts",
             "hooks.ts",
             "index.ts",
             "runtime.ts",
-            "types.ts"
-        ]
+            "types.ts",
+        ],
+        "client.ts",
+        &[
+            "createDeferClient",
+            "adminBackup()",
+            "queueGet(data",
+            "queuePut(data",
+            "queueControl(data",
+            "dispatchOne(data",
+            "taskCreate(data",
+            "taskStatus(data",
+            "taskCancel(data",
+            "taskCreateBatch(data",
+            "/v1/queues/${data.path.queue}/tasks:batch",
+        ],
     );
-    let client = std::fs::read_to_string(out.path().join("client.ts")).unwrap();
-    for symbol in [
-        "createDeferClient",
-        "taskCreate(data",
-        "taskStatus(data",
-        "taskCancel(data",
-        "/v1/queues/${data.path.queue}/tasks",
-    ] {
-        assert!(client.contains(symbol), "generated client missing {symbol}");
-    }
-    assert!(String::from_utf8(generated.stdout)
-        .unwrap()
-        .contains("next: done"));
+    assert_generated_client(
+        "py",
+        &["__init__.py", "client.py", "h2c_runtime.py", "models.py"],
+        "client.py",
+        &[
+            "class Client:",
+            "class AsyncClient:",
+            "def admin_backup(",
+            "def queue_get(",
+            "def queue_put(",
+            "def queue_control(",
+            "def dispatch_one(",
+            "def task_create(",
+            "def task_status(",
+            "def task_cancel(",
+            "def task_create_batch(",
+            "/v1/queues/{queue}/tasks:batch",
+        ],
+    );
+    assert_generated_client(
+        "rust",
+        &["client.rs", "mod.rs", "models.rs"],
+        "client.rs",
+        &[
+            "pub fn admin_backup(",
+            "pub fn queue_get(",
+            "pub fn queue_put(",
+            "pub fn queue_control(",
+            "pub fn dispatch_one(",
+            "pub fn task_create(",
+            "pub fn task_status(",
+            "pub fn task_cancel(",
+            "pub fn task_create_batch(",
+            "/v1/queues/{}/tasks:batch",
+        ],
+    );
 }
 
 // HANDWRITE-END
