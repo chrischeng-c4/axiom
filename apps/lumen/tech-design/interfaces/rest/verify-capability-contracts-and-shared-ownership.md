@@ -71,3 +71,15 @@ flowchart TD
   classify -->|Lumen-domain| track_domain[Link bounded issue and record tracked_skip]
   track_domain --> skipped([Record tracked skip])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/lumen/tests/capability_shared_ownership.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add a deterministic structural regression gate that derives Lumen's required service baselines from aw.toml, requires the capability contract to name shared stateful composition, verifies cli-std/service-http/service-auth/service-k8s/raft-runtime/peer-tls delegation at the actual integration seams, and rejects app-local copies of tracing, admission, auth registry, Kubernetes render, or Raft host mechanisms. Search policy, Lumen CRD policy, and thin adapters remain app-owned. generator gap: missing-generator:test:capability-shared-ownership (#2324)."
+```
