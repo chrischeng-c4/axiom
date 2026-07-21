@@ -7,7 +7,7 @@
 // @contract search-efficiency-ddd-overhead
 // @category efficiency
 // @required_for_production true
-// @command cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test
+// @command cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario ddd-overhead # cargo test
 // AW-EC-END
 
 // Contract: The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x.
@@ -15,7 +15,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_ddd_overhead() {
-    let command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test";
+    let command =
+        "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario ddd-overhead # cargo test";
     let id = "beam-competitor-performance-ddd-overhead";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

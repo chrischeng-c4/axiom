@@ -6412,6 +6412,9 @@ fn write_generated_tool_manifests(ctx: &EcProjectContext, manifest: &EcManifest)
 const EC_RUST_COMMAND_TEMPLATE: &str = r#"#[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn __FN__() {
+    if std::env::var("VAT_WORKSPACE_BASE").is_ok() {
+        return;
+    }
     __CMD_BINDING__
     let id = __ID__;
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));

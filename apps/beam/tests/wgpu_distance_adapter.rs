@@ -7,7 +7,15 @@ use beam::infrastructure::wgpu_engine::WgpuDistanceEngine;
 
 async fn test_metric_batching(metric: Metric) {
     let ctx = GpuContext::new().map(Arc::new);
-    let engine = WgpuDistanceEngine::new(ctx.clone());
+    let Some(ref gpu_ctx) = ctx else {
+        if std::env::var("BEAM_REQUIRED_GATES").is_ok() {
+            panic!("honest-gate-failure: required GPU context is missing");
+        } else {
+            eprintln!("no GPU adapter; skipping test_metric_batching for {metric:?}");
+            return;
+        }
+    };
+    let engine = WgpuDistanceEngine::new(Some(Arc::clone(gpu_ctx)));
     let cpu_engine = WgpuDistanceEngine::new(None);
 
     let dim = 128;

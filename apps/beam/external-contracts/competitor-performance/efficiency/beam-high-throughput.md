@@ -25,7 +25,7 @@ e2e_tests:
     contract_id: search-efficiency-ddd-overhead
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_ddd_overhead.rs
-    command: "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
+    command: "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario ddd-overhead # cargo test"
     assertions:
       - "The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x."
       - "Dynamic dispatch overhead of the VectorRepository and DistanceCalculator traits does not exceed 30% of total query latency."
@@ -36,7 +36,7 @@ e2e_tests:
     contract_id: search-efficiency-batched-rag-throughput
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_pipeline_overlap.rs
-    command: "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
+    command: "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario pipeline-overlap # cargo test"
     assertions:
       - "Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations."
       - "The total elapsed time for pipelined execution is shorter than sequential execution of the same batches."
@@ -47,7 +47,7 @@ e2e_tests:
     contract_id: search-efficiency-memory-footprint
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_out_of_core.rs
-    command: "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
+    command: "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario out-of-core # cargo test"
     assertions:
       - "Host RAM consumption is bounded and does not grow linearly with the number of vectors stored in the IoUringVectorRepository."
       - "The peak VRAM allocation remains bounded within the GPU context limit during active query batches."
@@ -58,7 +58,7 @@ e2e_tests:
     contract_id: search-efficiency-gpu-scaling
     category: efficiency
     test_path: apps/beam/tests/benchmark_beam_competitor_performance_gpu_batching.rs
-    command: "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
+    command: "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test"
     assertions:
       - "The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1."
       - "The GPU distance engine demonstrates at least 1.5x throughput (QPS) advantage over CPU distance calculations for a batch size of 128."

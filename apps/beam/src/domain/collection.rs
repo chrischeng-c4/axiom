@@ -37,8 +37,10 @@ impl HnswNavigator {
     /// Traverse the HNSW graph in RAM to find the approximate neighborhood of candidates.
     pub fn find_candidates(&self, _query: &[f32], k: usize) -> Vec<String> {
         // Returns the candidate external IDs. In a full production implementation,
-        // this walks the CPU HNSW graph. For simulation/test, we return dummy candidate IDs.
-        (0..k).map(|i| format!("vector_{i}")).collect()
+        // this walks the CPU HNSW graph. For simulation/test, we return all candidate IDs in the collection.
+        // Fall back to k if node_count is not initialized (e.g. in mock tests).
+        let count = if self.node_count == 0 { k } else { self.node_count };
+        (0..count).map(|i| format!("vector_{i}")).collect()
     }
 }
 

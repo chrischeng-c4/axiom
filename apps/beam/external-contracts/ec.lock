@@ -3,13 +3,13 @@ project = "beam"
 ir_kind = "ec"
 ec_path = "apps/beam/external-contracts"
 inventory_path = "apps/beam/aw.toml"
-generated_at = "2026-07-20T16:43:45.044860+00:00"
-ir_digest = "sha256:f89aebf6947cdcdf04d58176798b70fe503d6d17aae5917b898127d989641e35"
-source_digest = "sha256:e219439e2c3af1693fee541d40daec080cbbf7cf4ad238bb88a3e15c46d16285"
+generated_at = "2026-07-21T04:05:56.510233+00:00"
+ir_digest = "sha256:aeab91237fd1783eb8082057cda933b015926fa92aad9a2f4ac9c81b10b84e0c"
+source_digest = "sha256:2c2d9aef920f0de98208415abf1373c008299d489a3c5e69b1040182b6a023ef"
 
 [[sources]]
 path = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md"
-digest = "sha256:92c011b5550f34989c6458af6d12991a52cfa673c9c05696cf962a95f6c5680c"
+digest = "sha256:80cd2a113cb8a3bf56c779096e2ff52c92122528ba8f840f4607442a73ee3dc3"
 
 [[cases]]
 id = "beam-competitor-performance-ddd-overhead"
@@ -19,7 +19,7 @@ contract_id = "search-efficiency-ddd-overhead"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-ddd-overhead"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_ddd_overhead.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario ddd-overhead # cargo test"
 required_for_production = true
 assertions = [
     "The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x.",
@@ -27,7 +27,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e5625c669ef0baab017ac368598735561dca0a04ee1351541174aaf9aa729d9b"
+digest = "sha256:2e9604126348c88bd96e97aad7799e3b3669c79c6e1ee55d814e96e10f2cdc14"
 
 [[cases]]
 id = "beam-competitor-performance-gpu-batch-scaling"
@@ -37,7 +37,7 @@ contract_id = "search-efficiency-gpu-scaling"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-gpu-batch-scaling"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_gpu_batching.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test"
 required_for_production = true
 assertions = [
     "The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1.",
@@ -46,7 +46,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c1530a3fc4826cd4cb9864e5469a50361b30707299d4c962f1a4874aabbde424"
+digest = "sha256:700c3875f1de17c8d2386dc34eab32416b1ceb4564d9a56a4ceb6f0eaa726691"
 
 [[cases]]
 id = "beam-competitor-performance-memory-footprint"
@@ -56,7 +56,7 @@ contract_id = "search-efficiency-memory-footprint"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-memory-footprint"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_out_of_core.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario out-of-core # cargo test"
 required_for_production = true
 assertions = [
     "Host RAM consumption is bounded and does not grow linearly with the number of vectors stored in the IoUringVectorRepository.",
@@ -64,7 +64,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:31424eb7ff51ef74bb598aa340f2737602028a5aabf8c9e19dabf1099b991490"
+digest = "sha256:aef39c457d3e147f3dbb2ea719396ba0230860349080e50242c08240ff17bc3b"
 
 [[cases]]
 id = "beam-competitor-performance-pipeline-overlap"
@@ -74,7 +74,7 @@ contract_id = "search-efficiency-batched-rag-throughput"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-pipeline-overlap"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_pipeline_overlap.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario pipeline-overlap # cargo test"
 required_for_production = true
 assertions = [
     "Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations.",
@@ -82,7 +82,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8d772d2aa77a8f1eb4272cfad177fe19b1e5c6cdf4a2a18b8cd8a86d5d656a39"
+digest = "sha256:dcad10a0e4b3d07d7463cf624c4b52119a2b07350456465654a2846cba877aea"
 
 [[tool_contracts]]
 id = "beam-meter-search-efficiency-ddd"

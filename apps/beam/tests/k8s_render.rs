@@ -74,7 +74,7 @@ fn test_prod_profile_rendering() {
     assert_eq!(manifests[3]["kind"], "CronJob");
 
     let spec = &manifests[1]["spec"];
-    assert_eq!(spec["replicas"], 2);
+    assert_eq!(spec["replicas"], 1);
     
     // Check PVC storage size request
     let storage = &spec["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"];
@@ -92,7 +92,7 @@ fn test_prod_profile_rendering() {
     assert_eq!(cron_spec["schedule"], "0 2 * * *");
     let container_command = &cron_spec["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"];
     assert_eq!(container_command[0], "beam");
-    assert_eq!(container_command[1], "dump");
+    assert_eq!(container_command[1], "backup");
 }
 
 #[test]

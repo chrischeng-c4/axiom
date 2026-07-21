@@ -91,20 +91,29 @@ pub struct AppState {
     pub auth: Arc<StaticRoleMapVerifier>,
 }
 
-fn persist_collection(state: &AppState, name: &str, col: &Collection) {
-    if let Some(ref dir) = state.data_dir {
-        let path = dir.join(format!("{}.bin", name));
-        if let Err(e) = col.save(&path) {
-            eprintln!("Failed to persist collection `{}`: {e}", name);
-        }
+fn validate_collection_name(name: &str) -> Result<(), ApiErr> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(bad_request_err("invalid collection name: cannot contain separators or path traversal markers"));
     }
+    Ok(())
 }
 
-fn delete_collection_file(state: &AppState, name: &str) {
+fn persist_collection(state: &AppState, name: &str, col: &Collection) -> anyhow::Result<()> {
     if let Some(ref dir) = state.data_dir {
         let path = dir.join(format!("{}.bin", name));
-        let _ = std::fs::remove_file(&path);
+        col.save(&path)?;
     }
+    Ok(())
+}
+
+fn delete_collection_file(state: &AppState, name: &str) -> anyhow::Result<()> {
+    if let Some(ref dir) = state.data_dir {
+        let path = dir.join(format!("{}.bin", name));
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 // --- Auth Config & Helpers ---
@@ -215,7 +224,10 @@ pub struct VectorItem {
 /// compatibility with the IVF backends but ignored by the flat query path.
 #[derive(Deserialize, ToSchema)]
 pub struct QueryReq {
-    vector: Vec<f32>,
+    #[serde(default)]
+    vector: Option<Vec<f32>>,
+    #[serde(default)]
+    vectors: Option<Vec<Vec<f32>>>,
     k: usize,
     #[serde(default)]
     nprobe: Option<usize>,
@@ -246,7 +258,10 @@ pub struct WireClause {
 /// `POST /v1/collections/{name}/query` response.
 #[derive(Serialize, ToSchema)]
 pub struct QueryResp {
-    neighbors: Vec<NeighborOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    neighbors: Option<Vec<NeighborOut>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batches: Option<Vec<Vec<NeighborOut>>>,
 }
 
 /// One returned neighbor: external id, raw metric score, and the row payload
@@ -382,6 +397,7 @@ async fn create_collection(
     Extension(principal): Extension<RoleMapPrincipal>,
     Json(req): Json<CreateCollectionReq>,
 ) -> Result<Response, ApiErr> {
+    validate_collection_name(&req.name)?;
     authorize(&principal, &req.name, Role::Write)?;
     let metric = Metric::parse(&req.metric).ok_or_else(|| {
         bad_request_err(format!(
@@ -403,7 +419,8 @@ async fn create_collection(
     let mut cs = CollectionState::new(Collection::new(req.name.clone(), req.dim, metric));
     cs.rebuild(&state.gpu);
     // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection">
-persist_collection(&state, &req.name, &cs.collection);
+    persist_collection(&state, &req.name, &cs.collection)
+        .map_err(|e| internal_err(format!("failed to persist collection: {e}")))?;
     // </HANDWRITE>
     registry.insert(req.name.clone(), cs);
 
@@ -459,11 +476,13 @@ async fn drop_collection(
     Extension(principal): Extension<RoleMapPrincipal>,
     Path(name): Path<String>,
 ) -> Result<Response, ApiErr> {
+    validate_collection_name(&name)?;
     authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.remove(&name).is_some() {
         // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="delete collection file">
-delete_collection_file(&state, &name);
+        delete_collection_file(&state, &name)
+            .map_err(|e| internal_err(format!("failed to delete collection file: {e}")))?;
         // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "dropped": name }))).into_response())
     } else {
@@ -493,6 +512,7 @@ async fn upsert_vectors(
     Path(name): Path<String>,
     Json(req): Json<UpsertReq>,
 ) -> Result<Response, ApiErr> {
+    validate_collection_name(&name)?;
     authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
@@ -523,7 +543,8 @@ async fn upsert_vectors(
     }
     cs.rebuild(&state.gpu);
     // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection after upsert">
-persist_collection(&state, &name, &cs.collection);
+    persist_collection(&state, &name, &cs.collection)
+        .map_err(|e| internal_err(format!("failed to persist collection: {e}")))?;
     // </HANDWRITE>
 
     Ok((StatusCode::OK, Json(json!({ "upserted": count }))).into_response())
@@ -548,6 +569,7 @@ async fn delete_vector(
     Extension(principal): Extension<RoleMapPrincipal>,
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Response, ApiErr> {
+    validate_collection_name(&name)?;
     authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
@@ -556,7 +578,8 @@ async fn delete_vector(
     if cs.collection.delete(&id) {
         cs.rebuild(&state.gpu);
         // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection after delete">
-persist_collection(&state, &name, &cs.collection);
+        persist_collection(&state, &name, &cs.collection)
+            .map_err(|e| internal_err(format!("failed to persist collection: {e}")))?;
         // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "deleted": id }))).into_response())
     } else {
@@ -601,21 +624,46 @@ async fn query_collection(
         name: &str,
         col: &crate::collection::Collection,
     ) -> anyhow::Result<std::path::PathBuf> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for &val in col.data() {
+            val.to_bits().hash(&mut hasher);
+        }
+        let hash_val = hasher.finish();
+
         let path = if let Some(ref dir) = state.data_dir {
-            dir.join(format!("{}.raw", name))
+            dir.join(format!("{}_{:016x}.raw", name, hash_val))
         } else {
-            std::env::temp_dir().join(format!("beam_mem_{}.raw", name))
+            std::env::temp_dir().join(format!("beam_mem_{}_{:016x}.raw", name, hash_val))
         };
-        
-        let expected_len = col.data().len() * 4;
+
         if path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                if metadata.len() == expected_len as u64 {
-                    return Ok(path);
+            return Ok(path);
+        }
+
+        // Clean up old cached files for this collection name
+        if let Some(parent_dir) = path.parent() {
+            let prefix = if state.data_dir.is_some() {
+                format!("{}_", name)
+            } else {
+                format!("beam_mem_{}_", name)
+            };
+
+            if let Ok(entries) = std::fs::read_dir(parent_dir) {
+                for entry in entries.flatten() {
+                    let path_entry = entry.path();
+                    if path_entry.is_file() {
+                        if let Some(file_name) = path_entry.file_name().and_then(|s| s.to_str()) {
+                            if file_name.starts_with(&prefix) && file_name.ends_with(".raw") {
+                                let _ = std::fs::remove_file(&path_entry);
+                            }
+                        }
+                    }
                 }
             }
         }
-        
+
+        let expected_len = col.data().len() * 4;
         let mut file_content = Vec::with_capacity(expected_len);
         for &val in col.data() {
             file_content.extend_from_slice(&val.to_le_bytes());
@@ -624,9 +672,12 @@ async fn query_collection(
         Ok(path)
     }
 
+    validate_collection_name(&name)?;
     authorize(&principal, &name, Role::Read)?;
+    let is_batch = req.vectors.is_some();
     let QueryReq {
         vector,
+        vectors,
         k,
         nprobe,
         filter,
@@ -634,17 +685,32 @@ async fn query_collection(
     let _ = nprobe;
     let _filter = build_filter(filter)?; // Filter is preserved for exact/structured matches
 
+    let query_vectors = match (vector, vectors) {
+        (Some(v), None) => vec![v],
+        (None, Some(vs)) => vs,
+        (Some(_), Some(_)) => return Err(bad_request_err("provide either `vector` or `vectors`, not both")),
+        (None, None) => return Err(bad_request_err("either `vector` or `vectors` must be provided")),
+    };
+
+    if query_vectors.is_empty() {
+        return Err(bad_request_err("query vectors list cannot be empty"));
+    }
+
     let (col, gpu) = {
         let registry = state.registry.read().expect("registry lock poisoned");
         let cs = registry
             .get(&name)
             .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
-        if vector.len() != cs.collection.dim() {
-            return Err(bad_request_err(format!(
-                "query vector has dim {}, expected {}",
-                vector.len(),
-                cs.collection.dim()
-            )));
+        let expected_dim = cs.collection.dim();
+        for (i, v) in query_vectors.iter().enumerate() {
+            if v.len() != expected_dim {
+                return Err(bad_request_err(format!(
+                    "query vector at index {} has dim {}, expected {}",
+                    i,
+                    v.len(),
+                    expected_dim
+                )));
+            }
         }
         (cs.collection.clone(), state.gpu.clone())
     };
@@ -685,30 +751,38 @@ async fn query_collection(
     ddd_col.payload = ColdPayload { offsets };
 
     let search_results = app_service
-        .search(&ddd_col, vec![vector], k)
+        .search(&ddd_col, query_vectors, k)
         .await
         .map_err(|e| internal_err(format!("pipelined search failed: {e}")))?;
 
-    let hits = &search_results[0];
+    let mut mapped_results = Vec::new();
+    for hits in search_results {
+        let neighbors: Vec<NeighborOut> = hits
+            .iter()
+            .map(|(dummy_id, score)| {
+                let idx_str = dummy_id.strip_prefix("vector_").unwrap_or("0");
+                let idx: usize = idx_str.parse().unwrap_or(0);
+                let real_id = live_ids.get(idx).cloned().unwrap_or_else(|| dummy_id.clone());
+                let row_idx = col.row_of(&real_id).unwrap_or(0);
+                let payload = col.payload(row_idx as usize);
+                let payload = (!payload.is_empty()).then(|| payload_to_map(payload));
+                NeighborOut {
+                    id: real_id,
+                    score: *score,
+                    payload,
+                }
+            })
+            .collect();
+        mapped_results.push(neighbors);
+    }
 
-    let neighbors = hits
-        .iter()
-        .map(|(dummy_id, score)| {
-            let idx_str = dummy_id.strip_prefix("vector_").unwrap_or("0");
-            let idx: usize = idx_str.parse().unwrap_or(0);
-            let real_id = live_ids.get(idx).cloned().unwrap_or_else(|| dummy_id.clone());
-            let row_idx = col.row_of(&real_id).unwrap_or(0);
-            let payload = col.payload(row_idx as usize);
-            let payload = (!payload.is_empty()).then(|| payload_to_map(payload));
-            NeighborOut {
-                id: real_id,
-                score: *score,
-                payload,
-            }
-        })
-        .collect();
+    let (neighbors, batches) = if is_batch {
+        (None, Some(mapped_results))
+    } else {
+        (Some(mapped_results.into_iter().next().unwrap_or_default()), None)
+    };
 
-    Ok((StatusCode::OK, Json(QueryResp { neighbors })).into_response())
+    Ok((StatusCode::OK, Json(QueryResp { neighbors, batches })).into_response())
 }
 // </HANDWRITE>
 
@@ -778,7 +852,8 @@ if let Some(ref dir) = state.data_dir {
     for (name, col) in snap.collections {
         let mut cs = CollectionState::new(col);
         cs.rebuild(&state.gpu);
-        persist_collection(&state, &name, &cs.collection);
+        persist_collection(&state, &name, &cs.collection)
+            .map_err(|e| internal_err(format!("failed to persist collection: {e}")))?;
         registry.insert(name, cs);
     }
     // </HANDWRITE>

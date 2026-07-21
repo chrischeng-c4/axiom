@@ -12,22 +12,22 @@ PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/Us
 
 [[runners]]
 id = "ec-efficiency-meter-ddd"
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_ddd_overhead -- --nocapture"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_ddd_overhead -- --ignored --nocapture"]
 timeout_s = 600
 
 [[runners]]
 id = "ec-efficiency-meter-gpu"
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_gpu_batching -- --nocapture"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_gpu_batching -- --ignored --nocapture"]
 timeout_s = 600
 
 [[runners]]
 id = "ec-efficiency-meter-ooc"
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_out_of_core -- --nocapture"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_out_of_core -- --ignored --nocapture"]
 timeout_s = 600
 
 [[runners]]
 id = "ec-efficiency-meter-overlap"
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_pipeline_overlap -- --nocapture"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_pipeline_overlap -- --ignored --nocapture"]
 timeout_s = 600
 
 [[scenarios]]
@@ -52,6 +52,6 @@ runner = "ec-efficiency-meter-overlap"
 
 [[services]]
 id = "beam"
-cmd = ["cargo", "build", "-p", "beam"]
-ready_cmd = ["true"]
-timeout_s = 60
+cmd = ["sh", "-c", "cargo build -p beam -p vat"]
+ready_cmd = ["test", "-f", "../../target/debug/vat"]
+timeout_s = 240

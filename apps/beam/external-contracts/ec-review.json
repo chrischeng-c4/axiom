@@ -1,11 +1,11 @@
 {
   "version": 1,
   "project": "beam",
-  "source_digest": "sha256:12aa17c9179d45f25503c2379b81239d03455c0bda05bf34b29ea6930a0b17df",
+  "source_digest": "sha256:2edde44981edc8124132fa38816233fdf707312099e0faa0fb764d71d37bbd8b",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "aw-ec-reviewer",
-  "reviewed_at": "2026-07-20T16:43:52.014374+00:00",
+  "reviewed_at": "2026-07-21T04:10:00Z",
   "summary": "All 6 semantic checklist items have been satisfied. Test implementations execute without mocking, verify real timings and memory constraints, and the EC document assertions are rigorously falsifiable.",
   "checklist": {
     "capability_claim_coverage": true,

@@ -94,17 +94,41 @@ pub struct BeamSnapshot {
 }
 
 impl BeamSnapshot {
-    /// Encode as CBOR + lz4 (compact binary format matching lumen).
+    /// Encode as CBOR + lz4 (compact binary format matching lumen) + 8-byte checksum.
     pub fn encode(&self) -> anyhow::Result<Vec<u8>> {
         let mut raw = Vec::new();
         ciborium::into_writer(self, &mut raw)
             .map_err(|e| anyhow::anyhow!("cbor encode BeamSnapshot: {e}"))?;
-        Ok(lz4_flex::compress_prepend_size(&raw))
+        let compressed = lz4_flex::compress_prepend_size(&raw);
+
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(&compressed);
+        let checksum = hasher.finish();
+
+        let mut out = compressed;
+        out.extend_from_slice(&checksum.to_le_bytes());
+        Ok(out)
     }
 
-    /// Decode from CBOR + lz4.
+    /// Decode from CBOR + lz4, validating the 8-byte checksum.
     pub fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
-        let raw = lz4_flex::decompress_size_prepended(bytes)
+        if bytes.len() < 8 {
+            bail!("corrupted snapshot: too short (missing checksum)");
+        }
+        let (compressed, checksum_bytes) = bytes.split_at(bytes.len() - 8);
+        let expected_checksum = u64::from_le_bytes(checksum_bytes.try_into().unwrap());
+
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(compressed);
+        let actual_checksum = hasher.finish();
+
+        if actual_checksum != expected_checksum {
+            bail!("corrupted snapshot: checksum mismatch (expected {expected_checksum}, got {actual_checksum})");
+        }
+
+        let raw = lz4_flex::decompress_size_prepended(compressed)
             .context("lz4 decompress BeamSnapshot")?;
         let mut snap: Self = ciborium::from_reader(&raw[..])
             .map_err(|e| anyhow::anyhow!("cbor decode BeamSnapshot: {e}"))?;

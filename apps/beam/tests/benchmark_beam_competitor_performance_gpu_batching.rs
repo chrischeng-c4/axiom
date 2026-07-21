@@ -7,7 +7,7 @@
 // @contract search-efficiency-gpu-scaling
 // @category efficiency
 // @required_for_production true
-// @command cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test
+// @command cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test
 // AW-EC-END
 
 // Contract: The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1.
@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_gpu_batch_scaling() {
-    let command = "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test";
+    let command =
+        "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test";
     let id = "beam-competitor-performance-gpu-batch-scaling";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -7,7 +7,7 @@
 // @contract search-efficiency-batched-rag-throughput
 // @category efficiency
 // @required_for_production true
-// @command cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test
+// @command cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario pipeline-overlap # cargo test
 // AW-EC-END
 
 // Contract: Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn beam_competitor_performance_pipeline_overlap() {
     let command =
-        "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test";
+        "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario pipeline-overlap # cargo test";
     let id = "beam-competitor-performance-pipeline-overlap";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

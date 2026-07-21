@@ -28,7 +28,7 @@ impl FileExt for File {
 pub struct IoUringVectorRepository {
     file: Arc<File>,
     #[cfg(target_os = "linux")]
-    linux_backend: LinuxIoUringBackend,
+    linux_backend: Arc<LinuxIoUringBackend>,
 }
 
 #[cfg(target_os = "linux")]
@@ -89,6 +89,7 @@ impl LinuxIoUringBackend {
             unsafe {
                 sq.push(&entry).map_err(|e| anyhow::anyhow!("sq push failed: {e}"))?;
             }
+            sq.sync();
             submitter.submit_and_wait(1)?;
             cq.sync();
 
@@ -125,7 +126,7 @@ impl IoUringVectorRepository {
         let file = Arc::new(file);
 
         #[cfg(target_os = "linux")]
-        let linux_backend = LinuxIoUringBackend::new(Arc::clone(&file))?;
+        let linux_backend = Arc::new(LinuxIoUringBackend::new(Arc::clone(&file))?);
 
         Ok(Self {
             file,
@@ -140,7 +141,12 @@ impl VectorRepository for IoUringVectorRepository {
         #[cfg(target_os = "linux")]
         {
             eprintln!("beam: active storage backend = Linux io_uring NVMe repository");
-            return self.linux_backend.fetch_async(offsets, vector_bytes);
+            let backend = Arc::clone(&self.linux_backend);
+            let offsets = offsets.to_vec();
+            return tokio::task::spawn_blocking(move || {
+                backend.fetch_async(&offsets, vector_bytes)
+            })
+            .await?;
         }
 
         #[cfg(not(target_os = "linux"))]

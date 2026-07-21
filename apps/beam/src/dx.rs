@@ -143,7 +143,6 @@ pub fn render_instance_yaml(
     image: Option<&str>,
 ) -> String {
     use crate::operator::{Beam, BeamSpec};
-    use service_k8s::ManagedService;
 
     let mut beam = Beam::new(name, BeamSpec {
         image: image.unwrap_or("beam:latest").to_string(),
@@ -160,11 +159,6 @@ pub fn render_instance_yaml(
     beam.metadata.labels.get_or_insert_with(std::collections::BTreeMap::new)
         .insert("profile".to_string(), profile.to_string());
 
-    let manifests = beam.render();
-    manifests
-        .into_iter()
-        .map(|m| serde_yaml::to_string(&m).expect("manifest serializes"))
-        .collect::<Vec<_>>()
-        .join("---\n")
+    serde_yaml::to_string(&beam).expect("beam CR serializes")
 }
 // </HANDWRITE>

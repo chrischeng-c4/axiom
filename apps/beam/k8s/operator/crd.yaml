@@ -43,6 +43,15 @@ spec:
               graceSecs:
                 description: Graceful drain window.
                 type: integer
+              replicas:
+                description: Expected replicas.
+                type: integer
+              storageSize:
+                description: Durable storage request size, e.g. 10Gi.
+                type: string
+              requestGpu:
+                description: Request GPU resources.
+                type: boolean
             required:
             - image
             type: object

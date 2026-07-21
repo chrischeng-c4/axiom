@@ -19,7 +19,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "beam"
-generated_from_td_digest = "sha256:12aa17c9179d45f25503c2379b81239d03455c0bda05bf34b29ea6930a0b17df"
+generated_from_td_digest = "sha256:2edde44981edc8124132fa38816233fdf707312099e0faa0fb764d71d37bbd8b"
 
 [[aw.ec.generated.cases]]
 id = "beam-competitor-performance-ddd-overhead"
@@ -29,7 +29,7 @@ contract_id = "search-efficiency-ddd-overhead"
 category = "efficiency"
 td_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-ddd-overhead"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_ddd_overhead.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario ddd-overhead # cargo test"
 required_for_production = true
 assertions = [
     "The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x.",
@@ -44,7 +44,7 @@ contract_id = "search-efficiency-gpu-scaling"
 category = "efficiency"
 td_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-gpu-batch-scaling"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_gpu_batching.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario gpu-batching # cargo test"
 required_for_production = true
 assertions = [
     "The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1.",
@@ -60,7 +60,7 @@ contract_id = "search-efficiency-memory-footprint"
 category = "efficiency"
 td_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-memory-footprint"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_out_of_core.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario out-of-core # cargo test"
 required_for_production = true
 assertions = [
     "Host RAM consumption is bounded and does not grow linearly with the number of vectors stored in the IoUringVectorRepository.",
@@ -75,7 +75,7 @@ contract_id = "search-efficiency-batched-rag-throughput"
 category = "efficiency"
 td_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-pipeline-overlap"
 test_path = "apps/beam/tests/benchmark_beam_competitor_performance_pipeline_overlap.rs"
-command = "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
+command = "cd apps/beam && ${VAT_WORKSPACE_BASE:-../..}/target/debug/vat run --scenario pipeline-overlap # cargo test"
 required_for_production = true
 assertions = [
     "Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations.",

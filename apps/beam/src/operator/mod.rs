@@ -79,7 +79,7 @@ impl ManagedService for Beam {
 
         // Profile-based defaults
         let (default_replicas, default_storage, is_gpu, has_backup, has_pdb) = match profile {
-            "prod" => (2, "20Gi".to_string(), true, true, true),
+            "prod" => (1, "20Gi".to_string(), true, true, true),
             "staging" => (1, "5Gi".to_string(), true, false, true),
             "template" => (1, "REPLACE_ME__STORAGE_SIZE".to_string(), true, true, true),
             _ => (1, "1Gi".to_string(), false, false, false), // dev or other
@@ -373,13 +373,22 @@ impl ManagedService for Beam {
                                             "image": image,
                                             "command": [
                                                 "beam",
-                                                "dump",
+                                                "backup",
                                                 "--url",
                                                 format!("http://{name}:{port}"),
-                                                "--out",
+                                                "--dest",
                                                 "s3://beam-backups/snapshot.cbor.lz4"
                                             ],
                                             "env": [
+                                                {
+                                                    "name": "BEAM_BACKUP_TOKEN",
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": format!("{name}-auth"),
+                                                            "key": "admin-token"
+                                                        }
+                                                    }
+                                                },
                                                 {
                                                     "name": "AWS_ACCESS_KEY_ID",
                                                     "valueFrom": {
@@ -420,6 +429,49 @@ impl ManagedService for Beam {
         }]
     }
 
+    async fn reconcile_plan(
+        &self,
+        client: kube::Client,
+    ) -> anyhow::Result<service_k8s::service::ReconcilePlan> {
+        let children = self.render();
+
+        let profile = self.metadata.labels.as_ref()
+            .and_then(|l| l.get("profile"))
+            .map(|s| s.as_str())
+            .unwrap_or("dev");
+        let has_backup = match profile {
+            "prod" | "template" => true,
+            _ => false,
+        };
+
+        if !has_backup {
+            let namespace = self.namespace().unwrap_or_else(|| "default".to_string());
+            let name = self.name_any();
+            let cron_name = format!("{name}-backup");
+            let api: kube::Api<kube::api::DynamicObject> = kube::Api::namespaced_with(
+                client.clone(),
+                &namespace,
+                &kube::api::ApiResource {
+                    group: "batch".to_string(),
+                    version: "v1".to_string(),
+                    api_version: "batch/v1".to_string(),
+                    kind: "CronJob".to_string(),
+                    plural: "cronjobs".to_string(),
+                },
+            );
+
+            if api.get_opt(&cron_name).await?.is_some() {
+                let _ = api.delete(&cron_name, &kube::api::DeleteParams::default()).await;
+                eprintln!("deleted old backup CronJob on profile downgrade: {cron_name}");
+            }
+        }
+
+        Ok(service_k8s::service::ReconcilePlan {
+            children,
+            context: serde_json::Value::Null,
+        })
+    }
+
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {
         let name = self.name_any();
         let ready_replicas = ready.get(&name) as i32;
@@ -429,7 +481,7 @@ impl ManagedService for Beam {
             .unwrap_or("dev");
 
         let expected_replicas = match profile {
-            "prod" => 2,
+            "prod" => 1,
             _ => 1,
         };
         let expected_replicas = self.spec.replicas.unwrap_or(expected_replicas);
