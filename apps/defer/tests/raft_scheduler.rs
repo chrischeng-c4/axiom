@@ -200,7 +200,7 @@ fn task(id: &str, at: chrono::DateTime<Utc>) -> CreateTask {
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the primary observable that a follower-forwarded lease records executor identity and epoch, rejects stale settlement, survives leader loss, and completes the committed task lifecycle after reassignment.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2221" reason="Own the primary observable that a follower-forwarded lease records executor identity and epoch, rejects stale settlement, survives leader loss, and completes the committed task lifecycle after reassignment.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn committed_scheduler_converges_and_fences_cross_replica_effects() {
     let now = Utc.timestamp_millis_opt(10_000).unwrap();
