@@ -16,7 +16,6 @@ use crate::scenario::step::HttpRequest;
 
 /// One completed exchange.
 #[derive(Debug)]
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-http-rs.md#source
 pub struct HttpOutcome {
     pub status: u16,
     pub latency_ms: f64,
@@ -28,19 +27,34 @@ pub struct HttpOutcome {
 /// Execute one request template against the var store. Network-level
 /// failures (connect refused, timeout) come back as a violation with
 /// status 0 — chaos scenarios assert on exactly these.
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-http-rs.md#source
 pub fn execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, String> {
+    let agent = agent_for(request);
+    execute_with_agent(&agent, request, vars)
+}
+
+/// Build the timeout-configured client used for one request shape. Ordinary
+/// scenario steps call [`execute`] and keep one-shot behavior; load workers
+/// retain this agent across operations so ureq can reuse its connection pool.
+pub(super) fn agent_for(request: &HttpRequest) -> ureq::Agent {
+    let timeout = Duration::from_millis(request.expect.timeout_ms);
+    ureq::AgentBuilder::new()
+        .timeout_connect(timeout)
+        .timeout(timeout)
+        .build()
+}
+
+/// Execute through an existing client. The caller owns the agent lifetime;
+/// [`execute`] uses a fresh one while the load transport keeps one per worker.
+pub(super) fn execute_with_agent(
+    agent: &ureq::Agent,
+    request: &HttpRequest,
+    vars: &VarStore,
+) -> Result<HttpOutcome, String> {
     let url = vars.interpolate(&request.url)?;
     let body = match &request.body {
         Some(b) => Some(vars.interpolate(b)?),
         None => None,
     };
-    let timeout = Duration::from_millis(request.expect.timeout_ms);
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout(timeout)
-        .build();
 
     let method = request.method.to_uppercase();
     let started = Instant::now();
@@ -92,9 +106,7 @@ pub fn execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, St
                 Ok(false) => {
                     violation = Some(format!(
                         "jsonpath `{path}` = {} violates `{predicate}`",
-                        actual
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "<missing>".into())
+                        actual.map(|v| v.to_string()).unwrap_or_else(|| "<missing>".into())
                     ));
                     break;
                 }
@@ -116,7 +128,6 @@ pub fn execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, St
 
 /// Resolve a capture key against an outcome: `status`, `latency_ms`, or a
 /// `$.dot.path[i]` into the response body.
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-http-rs.md#source
 pub fn capture_value(outcome: &HttpOutcome, key: &str) -> Option<Value> {
     match key {
         "status" => Some(Value::from(outcome.status)),
@@ -127,7 +138,6 @@ pub fn capture_value(outcome: &HttpOutcome, key: &str) -> Option<Value> {
 }
 
 /// Dot-path subset: `$.a.b[0].c`. Returns a clone of the addressed value.
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-http-rs.md#source
 pub fn json_path(root: &Value, path: &str) -> Option<Value> {
     let mut current = root;
     let trimmed = path.strip_prefix('$')?;
