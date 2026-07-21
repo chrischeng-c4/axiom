@@ -144,3 +144,70 @@ changes:
     impl_mode: hand-written
     description: Record the one-production-client boundary, protocol and PTY ownership, native accessibility rules, and exact Cargo and Swift gates.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-macos-native-client-verification
+requirements:
+  agent_failure_is_recoverable:
+    id: R6
+    text: "An unavailable Claude Code, Codex, or AGY executable returns a typed error without losing the selected folder, idle tabs, or another running shell session."
+    kind: failure-recovery
+    risk: high
+    verify: tests/macos_sidecar_protocol.rs::agent_resolution_errors_are_recoverable
+  default_tabs_are_idle:
+    id: R4
+    text: "The native model creates Claude Code, Codex, AGY, and Shell in order and no folder or tab selection starts the sidecar or a process."
+    kind: contract
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::defaultTabsAreOrderedAndIdle
+  native_terminal_surface:
+    id: R7
+    text: "The production macOS executable builds with SwiftUI and an AppKit SwiftTerm terminal surface, native focus and accessibility labels, and no WebView terminal."
+    kind: accessibility
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::nativeClientUsesSwiftTermWithoutWebView
+  protocol_fails_closed:
+    id: R1
+    text: "The sidecar accepts only the current protocol version, known methods and profiles, unique request ids, and safe tab ids, and every response remains request-correlated."
+    kind: contract
+    risk: high
+    verify: tests/macos_sidecar_protocol.rs::protocol_version_and_invalid_requests_fail_closed
+  shell_cwd_and_bytes:
+    id: R2
+    text: "The Rust core resolves the account default shell without hard-coding zsh, launches a real PTY in the selected canonical folder, and preserves raw terminal bytes through the protocol."
+    kind: platform
+    risk: high
+    verify: tests/macos_sidecar_protocol.rs::default_shell_launches_in_selected_folder_and_preserves_bytes
+  shell_plus_is_explicit:
+    id: R5
+    text: "The plus control appends and selects Shell 2 and later tabs without launching; Start uses the selected folder and active tab id."
+    kind: interaction
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::addingShellTabSelectsWithoutLaunching
+  swift_routing_and_state:
+    id: R8
+    text: "Swift validates protocol and request ids, routes frames to only the matching tab, exposes readable idle/running/exited/error state, and marks a sidecar failure recoverable."
+    kind: regression
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::responsesRemainTabScopedAndLifecycleTextIsVisible
+  tab_sessions_are_isolated:
+    id: R3
+    text: "Two real PTY tabs retain independent output, cwd, resize, input, interrupt, terminate, exit, and relaunch state and cannot receive a command addressed to another id."
+    kind: concurrency
+    risk: high
+    verify: tests/macos_sidecar_protocol.rs::tab_sessions_keep_io_and_lifecycle_isolated
+---
+flowchart TD
+    r1[R1 protocol fails closed] --> tests_macos_sidecar_protocol_rs_protocol_version_and_invalid_requests_fail_closed[tests/macos_sidecar_protocol.rs::protocol_version_and_invalid_requests_fail_closed]
+    r2[R2 shell cwd and bytes] --> tests_macos_sidecar_protocol_rs_default_shell_launches_in_selected_folder_and_preserves_bytes[tests/macos_sidecar_protocol.rs::default_shell_launches_in_selected_folder_and_preserves_bytes]
+    r3[R3 tab sessions are isolated] --> tests_macos_sidecar_protocol_rs_tab_sessions_keep_io_and_lifecycle_isolated[tests/macos_sidecar_protocol.rs::tab_sessions_keep_io_and_lifecycle_isolated]
+    r4[R4 default tabs are idle] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_defaulttabsareorderedandidle[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::defaultTabsAreOrderedAndIdle]
+    r5[R5 shell plus is explicit] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_addingshelltabselectswithoutlaunching[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::addingShellTabSelectsWithoutLaunching]
+    r6[R6 agent failure is recoverable] --> tests_macos_sidecar_protocol_rs_agent_resolution_errors_are_recoverable[tests/macos_sidecar_protocol.rs::agent_resolution_errors_are_recoverable]
+    r7[R7 native terminal surface] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_nativeclientusesswifttermwithoutwebview[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::nativeClientUsesSwiftTermWithoutWebView]
+    r8[R8 swift routing and state] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_responsesremaintabscopedandlifecycletextisvisible[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::responsesRemainTabScopedAndLifecycleTextIsVisible]
+```
