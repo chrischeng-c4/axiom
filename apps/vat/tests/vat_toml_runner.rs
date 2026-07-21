@@ -1,13 +1,17 @@
 // SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_toml_runner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-use std::net::TcpListener;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -724,6 +728,170 @@ artifacts = ["runner-artifact.txt"]
         vat_home.path().join("vats").join(id).exists(),
         "always-retained run should stay inspectable"
     );
+}
+
+#[test]
+fn occupied_native_service_endpoint_fails_closed_without_starting_any_owned_process() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind unrelated HTTP listener");
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        while !stop_server.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = [0u8; 1024];
+                    let _ = stream.read(&mut request);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                    );
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let service_marker = project.path().join("owned-service-started");
+    let runner_marker = project.path().join("dependent-runner-started");
+    std::fs::write(
+        project.path().join("vat.toml"),
+        format!(
+            r#"
+version = 1
+default_runner = "e2e"
+
+[workspace]
+keep = "always"
+
+[[services]]
+id = "api"
+port = {port}
+cmd = ["sh", "-c", "touch {service_marker}; while :; do sleep 1; done"]
+ready_http = "http://127.0.0.1:{port}/readyz"
+timeout_s = 2
+
+[[runners]]
+id = "e2e"
+requires = ["api"]
+cmd = ["sh", "-c", "touch {runner_marker}"]
+"#,
+            port = endpoint.port(),
+            service_marker = service_marker.display(),
+            runner_marker = runner_marker.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "error"
+            && event["code"] == "native_service_endpoint_conflict"
+            && event["service"] == "api"
+            && event["endpoint"] == endpoint.to_string()
+    }));
+    assert!(
+        !service_marker.exists(),
+        "VAT must not spawn the owned service"
+    );
+    assert!(
+        !runner_marker.exists(),
+        "VAT must not start a dependent runner"
+    );
+
+    let mut stale = TcpStream::connect(endpoint).expect("unrelated listener must stay alive");
+    stale
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stale.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+}
+
+#[test]
+fn native_service_child_exit_before_endpoint_transition_never_starts_runner() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    let runner_marker = project.path().join("dependent-runner-started");
+    std::fs::write(
+        project.path().join("vat.toml"),
+        format!(
+            r#"
+version = 1
+default_runner = "e2e"
+
+[workspace]
+keep = "always"
+
+[[services]]
+id = "api"
+cmd = ["sh", "-c", "exit 23", "--", "{{port}}"]
+timeout_s = 2
+
+[[runners]]
+id = "e2e"
+requires = ["api"]
+cmd = ["sh", "-c", "touch {runner_marker}"]
+"#,
+            runner_marker = runner_marker.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    let child_exit = events
+        .iter()
+        .find(|event| event["code"] == "owned_service_exited_before_readiness")
+        .expect("owned child exit must be structured");
+    assert_eq!(child_exit["service"], "api");
+    assert_eq!(child_exit["exit_code"], 23);
+    assert!(child_exit["endpoint"]
+        .as_str()
+        .unwrap()
+        .starts_with("127.0.0.1:"));
+    assert!(
+        !runner_marker.exists(),
+        "VAT must not start a dependent runner"
+    );
+
+    let result = result_event(&events);
+    let id = result["id"].as_str().unwrap();
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    assert!(state_output.status.success());
+    let state: Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    let service = &state["test_run"]["services"][0];
+    assert_eq!(service["status"], "failed");
+    assert_eq!(service["exit_code"], 23);
+    assert!(service["readiness_error"]
+        .as_str()
+        .unwrap()
+        .contains("before endpoint"));
 }
 
 #[test]
