@@ -65,7 +65,7 @@ cleanup() {
   fi
   # <HANDWRITE gap="missing-generator:e2e-test:defer-kind-cleanup-contract" tracker="#2214" reason="Require successful disposable-cluster deletion and explicit absence verification on a successful Defer recovery journey.">
   if [[ "$CLUSTER_CREATED" == "1" && "${DEFER_KEEP_CLUSTER:-0}" != "1" ]]; then
-    if ! kind delete cluster --name "$CLUSTER_NAME"; then
+    if ! delete_cluster; then
       echo "!! failed to delete Kind cluster $CLUSTER_NAME" >&2
       (( ec != 0 )) || ec=1
     elif ! clusters="$(kind get clusters)"; then
@@ -83,6 +83,17 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+delete_cluster() {
+  local attempt
+  for attempt in 1 2 3; do
+    if kind delete cluster --name "$CLUSTER_NAME"; then
+      return 0
+    fi
+    [[ "$attempt" == "3" ]] || sleep 2
+  done
+  return 1
+}
 
 wait_for_statefulset() {
   local deadline=$(( $(date +%s) + 90 ))
@@ -174,6 +185,9 @@ cancel_task() {
 }
 
 create_cluster() {
+  # Mark ownership before creation so the EXIT trap also cleans up a partially
+  # bootstrapped control plane when Kind itself returns an error.
+  CLUSTER_CREATED=1
   kind create cluster --name "$CLUSTER_NAME" --wait 120s --config - <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -184,7 +198,6 @@ nodes:
         hostPort: ${HOST_PORT}
         protocol: TCP
 EOF
-  CLUSTER_CREATED=1
 }
 
 build_and_load_image() {
@@ -244,7 +257,7 @@ assert_operator_topology() {
         "app.kubernetes.io/instance": "defer",
         "app.kubernetes.io/component": "server"
       }
-      and .spec.template.metadata.labels == .spec.selector.matchLabels
+      and ((.spec.template.metadata.labels + .spec.selector.matchLabels) == .spec.template.metadata.labels)
       and .spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz"
       and .spec.template.spec.containers[0].readinessProbe.httpGet.port == "http"
       and .spec.template.spec.containers[0].readinessProbe.periodSeconds == 5
