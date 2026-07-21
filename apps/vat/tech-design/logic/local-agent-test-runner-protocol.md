@@ -699,6 +699,12 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement finalize_interrupted_groups_once {
+      id: UT6
+      text: "The first SIGINT/SIGTERM is recorded without cleanup in the handler; one idempotent finalizer performs TERM, bounded grace, KILL, reap, and PGID-absence proof before Interrupted metadata is persisted."
+      risk: high
+      verifymethod: test
+    }
     test config_parse_tests {
       type: functional
       verifies: parse_config
@@ -714,6 +720,10 @@ requirementDiagram
     test owned_child_readiness_regression {
       type: functional
       verifies: bind_readiness_to_child
+    }
+    test interrupted_group_finalizer_regression {
+      type: functional
+      verifies: finalize_interrupted_groups_once
     }
 ```
 
