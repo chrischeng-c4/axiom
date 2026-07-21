@@ -281,6 +281,7 @@ fn llm_outline_advertises_cross_scope_topics_and_terminates() {
     assert!(stdout.contains("next: done"));
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own semantic equality of offline and canonical OpenAPI, the exact routes twin, and exact TypeScript, Python, and Rust client file and symbol inventories.">
 #[test]
 fn offline_spec_and_typed_client_generation_use_one_contract() {
     let offline = chainable_json(
@@ -380,5 +381,6 @@ fn offline_spec_and_typed_client_generation_use_one_contract() {
         ],
     );
 }
+// </HANDWRITE>
 
 // HANDWRITE-END
