@@ -2,15 +2,21 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-21T02:31:38.019005+00:00"
-digest = "sha256:9e88742247601c3eb99be22148e08e5d8a825d1137ff9d5069707ac3f2157417"
-source_digest = "sha256:9e88742247601c3eb99be22148e08e5d8a825d1137ff9d5069707ac3f2157417"
-ir_digest = "sha256:e06d0009e85432cf676f0cc4216315abc25e12b390e2b0f21a697b8b3383b401"
+generated_at = "2026-07-21T03:09:35.494879+00:00"
+digest = "sha256:7911477cde2e50ac942be4327446ef94a664e4802bd9b7a18a8eb9e775cad810"
+source_digest = "sha256:7911477cde2e50ac942be4327446ef94a664e4802bd9b7a18a8eb9e775cad810"
+ir_digest = "sha256:a67b1748ef3751f2c7694f02d3e92f6d60a84346bcc9e027fe7efbed9b759119"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
 digest = "sha256:935dbcd0d32b80391cb37ffcda3a5b967765e395979d4c1683e5278ddddc837e"
 ir_digest = "sha256:a01de635c001098932d26dd6be4662314c4c52a6fee0527a918fbef7f91942de"
+section_count = 3
+
+[[files]]
+path = "interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md"
+digest = "sha256:d8eaaa650f6716618fd2763bc509d280b4f60990ce2bebf038313ce1f587e82b"
+ir_digest = "sha256:777f8bcc0f2010fbb379cfcbe54987edadaffcd9832a29059374cda7329cfb4d"
 section_count = 3
 
 [[files]]
