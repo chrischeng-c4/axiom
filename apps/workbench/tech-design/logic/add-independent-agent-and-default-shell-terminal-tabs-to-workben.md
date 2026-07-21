@@ -54,7 +54,6 @@ flowchart LR
 The WebView owns ephemeral tab presentation only. It initializes four tabs in the order Claude Code, Codex, AGY, Shell and selects Claude Code without launching it. The plus button appends and selects `Shell 2`, `Shell 3`, and so on; newly added tabs also remain unstarted until Start. One polling loop updates every running tab and the active view renders only its own transcript, cwd, source, and lifecycle state. Switching tabs never terminates or overwrites another session. Changing the selected folder affects the initial cwd of future launches; already-running PTYs retain their own actual cwd. Tabs are intentionally not persisted, closed, renamed, or reordered in this slice.
 
 The center pane uses an accessible horizontal `tablist`: arrow, Home, and End keys move and activate tabs; selected state uses text plus shape, running/exited/not-started state has visible labels rather than color alone, focus-visible rings remain clear, and the strip scrolls horizontally at constrained widths without clipping the terminal. The plus control has a 44px target and an explicit accessible name. Start names the active profile, remains disabled without a folder or while that tab is running, and no process starts from folder selection, tab focus, keyboard navigation, or plus alone. Existing bounded transcript, real PTY cleanup, OSC 7 cwd, renderer, recovery, efficiency, and production evidence contracts remain unchanged.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
