@@ -143,7 +143,6 @@ changes:
     impl_mode: hand-written
     description: Record the one-production-client boundary, protocol and PTY ownership, native accessibility rules, and exact Cargo and Swift gates.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
