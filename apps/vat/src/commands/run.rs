@@ -1280,16 +1280,6 @@ fn run_configured(
 
     let mut services = Vec::new();
     for plan in &mut service_plans {
-        if let Err(error) = cancellation.check() {
-            let interruption = run_interruption(&error);
-            finalize_services_and_persist(
-                vat,
-                &mut services,
-                should_delete_clusters(&retention, -1),
-                interruption.as_ref(),
-            )?;
-            return Err(error);
-        }
         let handle = match start_service(
             vat,
             plan,
@@ -2553,24 +2543,10 @@ fn prepare_preset_service(
             Some(ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz"))),
         );
         return Ok(ServicePlan {
-            id: service.id.clone(),
-            command,
-            host: Some("127.0.0.1".into()),
-            ready_http: service.ready_http.clone(),
-            ready_probe,
-            timeout_s: service.timeout_s,
-            preset: Some(preset),
-            port: Some(port),
-            prepare_mode: "lumen_native_cache".into(),
-            cache_key: Some(lumen.tag),
-            prepare_duration_ms: 0,
-            exported_env: sorted_keys(&env),
-            env,
-            docker_name: None,
-            microvm_name: None,
-            image: None,
-            cluster: None,
-            owned_by_vat: true,
+            id: service.id.clone(), command, host: Some("127.0.0.1".into()), ready_http: service.ready_http.clone(), ready_probe,
+            timeout_s: service.timeout_s, preset: Some(preset), port: Some(port), prepare_mode: "lumen_native_cache".into(),
+            cache_key: Some(lumen.tag), prepare_duration_ms: 0, exported_env: sorted_keys(&env), env,
+            docker_name: None, microvm_name: None, image: None, cluster: None, owned_by_vat: true,
             requires_live_child: true,
             endpoint_reservations: vec![reservation],
         });
@@ -5107,7 +5083,6 @@ fn wait_for_services(
         }
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
-            cancellation.check()?;
             // Probe success is never sufficient for a native command-backed
             // service: a stale listener may answer after the child has failed.
             // MicroVM probes retain their existing equivalent child check;
