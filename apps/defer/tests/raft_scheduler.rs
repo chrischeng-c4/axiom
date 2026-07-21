@@ -508,7 +508,7 @@ async fn committed_queue_limits_survive_cross_replica_proposals_and_failover() {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the same-directory restart and snapshot oracle that preserves terminal scheduler state and converged queue counts across replicas.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2221" reason="Own the same-directory restart and snapshot oracle that preserves terminal scheduler state and converged queue counts across replicas.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dead_letter_terminal_state_converges_and_survives_restart() {
     let now = Utc.timestamp_millis_opt(30_000).unwrap();
