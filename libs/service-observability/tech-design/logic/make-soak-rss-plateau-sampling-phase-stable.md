@@ -14,19 +14,19 @@ entry: capture_window
 nodes:
   capture_window:
     kind: start
-    label: "caller supplies a live pid, window seconds, sample cadence, and the measured workload command for one steady window"
+    label: "caller supplies a live pid, window seconds, and sample cadence for one steady window"
   validate_inputs:
     kind: decision
     label: "pid reachable and cadence/window/sample path valid?"
   start_sampler:
     kind: process
-    label: "create a sampler state dir, arm EXIT/INT/TERM cleanup, and launch a background loop that polls service_soak_rss_kb at the fixed cadence"
+    label: "create a sampler session token plus temp sample artifact, register EXIT/INT/TERM cleanup, and launch a background loop that polls service_soak_rss_kb at the fixed cadence"
   run_window:
     kind: process
-    label: "run the caller-owned bounded workload while the sampler appends one RSS integer per line for the whole window"
+    label: "caller runs its existing bounded workload while the sampler session appends one RSS integer per line for the whole window"
   stop_sampler:
     kind: process
-    label: "on normal completion, workload failure, or interruption, terminate and wait for the sampler before returning"
+    label: "caller closes the sampler session; the helper terminates and waits for the background sampler before returning"
   validate_series:
     kind: decision
     label: "pid stayed alive, every sample is a non-negative integer, and coverage reached ceil(window_secs / sample_interval_secs)?"
@@ -61,9 +61,9 @@ edges:
 flowchart TD
     start[caller requests one steady RSS window] --> inputs{pid, cadence, and window valid?}
     inputs -->|no| fail([fail closed and clean up sampler])
-    inputs -->|yes| sampler[start background RSS sampler and arm cleanup]
-    sampler --> workload[run caller-owned bounded workload]
-    workload --> stop[stop and wait for sampler]
+    inputs -->|yes| sampler[start sampler session and arm cleanup]
+    sampler --> workload[caller runs bounded workload]
+    workload --> stop[caller closes session; helper stops sampler]
     stop --> validate{numeric samples and enough coverage?}
     validate -->|no| fail
     validate -->|yes| summary[emit count, min, median, max]
@@ -73,9 +73,26 @@ flowchart TD
 
 Contract invariants:
 
-- `libs/service-observability/scripts/soak-metrics.sh` remains the shared process-metric owner. It adds a reusable RSS window primitive and plateau helper without taking ownership of any app workload, duration policy, or growth threshold.
-- The new sampler wrapper owns its lifecycle. It creates its own temporary sample artifact, records one RSS value per line at a fixed cadence for the whole measured window, and always kills and waits for the background sampler before returning, even when the workload command fails or the caller is interrupted with `INT` or `TERM`.
+- `libs/service-observability/scripts/soak-metrics.sh` remains the shared process-metric owner. It adds an explicit sampler start/stop/summary lifecycle plus the plateau helper without taking ownership of any app workload, duration policy, or growth threshold.
+- The new sampler session owns its lifecycle. Start returns a session token or handle for the caller's current window, creates the temporary sample artifact, records one RSS value per line at a fixed cadence for the whole measured window, and stop or the registered cleanup hook always kills and waits for the background sampler before returning, even when the caller is interrupted with `INT` or `TERM`.
 - Sampling fails closed when the measured pid disappears before window completion, `service_soak_rss_kb` returns a non-numeric value, or the captured series does not reach `ceil(window_secs / sample_interval_secs)` samples. A missing or malformed series never degrades to a best-effort endpoint comparison.
 - Window summaries are deterministic integer records. `count`, `min`, `median`, and `max` come from sorting the captured series; odd counts take the middle element, and even counts average the two middle elements with shell-integer division semantics so later growth math stays stable.
 - Plateau comparison is median-to-median only. `service_soak_percent_growth` keeps its current integer percentage semantics, but the shared RSS oracle feeds it each window summary's median instead of one endpoint reading. A bounded transient spike therefore affects `max` while a sustained allocation increase moves `median` and can breach the caller-owned limit.
 - Deterministic shell coverage exercises three cases: a fixed numeric series with a transient spike (`100 100 500 100 100`), a sustained-growth pair (`100` median to `120` median), and a real bounded child process whose sampler is cleaned up on both normal completion and forced interruption.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: libs/service-observability/scripts/soak-metrics.sh
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the explicit RSS sampler start/stop/summary lifecycle, validated count/min/median/max reduction, median-to-median plateau comparison, and cleanup that never leaves a background sampler running.
+  - path: libs/service-observability/tests/soak_metrics_window_contract.sh
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove transient-spike median stability, sustained-growth breach behavior, malformed or insufficient sample failures, and real-child sampler cleanup on both normal completion and interruption.
+```
