@@ -16,12 +16,11 @@ e2e_tests:
     claim_id: search-p99-survives-fault-and-recovers
     contract_id: search-p99-survives-fault-and-recovers
     category: stability
-    command: "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
+    command: "cd apps/lumen && ../../target/debug/vat run rig-resilience"
     assertions:
-      - "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario)."
-      - "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline."
+      - "packet_loss_p99 applies downstream toxiproxy timeout toxicity 0.05, requires 0 < loss_fail <= 30 and loss_p99 <= 2 * baseline_p99 + 20ms, then removes the toxic, records loss_recovered_recovered_secs <= 10, requires loss_recovery_fail == 0, and requires loss_recovery_p99 <= 2 * baseline_p99 + 1ms."
+      - "partition_recovery requires partition_fail > 0 under a full downstream partition, records recovered_recovered_secs <= 10 after toxic removal, and requires recovery_p99 <= 2 * baseline_p99 + 1ms."
 ```
-
 ## Tool Contract
 <!-- type: tool-contract lang: yaml -->
 

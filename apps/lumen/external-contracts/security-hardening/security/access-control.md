@@ -56,7 +56,7 @@ tool_contracts:
     tool: guard
     manifest: guard-search.toml
     category: security
-    command: "target/debug/guard scan apps/lumen --compact --no-persist"
+    command: "cargo run --quiet -p guard-cli --bin guard -- scan apps/lumen --compact --no-persist"
     native:
       version: 1
       project: lumen
