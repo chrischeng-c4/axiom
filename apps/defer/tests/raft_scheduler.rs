@@ -200,6 +200,7 @@ fn task(id: &str, at: chrono::DateTime<Utc>) -> CreateTask {
     }
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the primary observable that a follower-forwarded lease records executor identity and epoch, rejects stale settlement, survives leader loss, and completes the committed task lifecycle after reassignment.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn committed_scheduler_converges_and_fences_cross_replica_effects() {
     let now = Utc.timestamp_millis_opt(10_000).unwrap();
@@ -359,6 +360,7 @@ async fn committed_scheduler_converges_and_fences_cross_replica_effects() {
         .await;
     cluster.shutdown().await;
 }
+// </HANDWRITE>
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2216" reason="Own real three-node proofs that rate, burst, and in-flight limits are one committed aggregate and that DeadLettered converges and survives same-directory restart.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -506,6 +508,7 @@ async fn committed_queue_limits_survive_cross_replica_proposals_and_failover() {
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the same-directory restart and snapshot oracle that preserves terminal scheduler state and converged queue counts across replicas.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dead_letter_terminal_state_converges_and_survives_restart() {
     let now = Utc.timestamp_millis_opt(30_000).unwrap();
@@ -601,4 +604,5 @@ async fn dead_letter_terminal_state_converges_and_survives_restart() {
 
     cluster.shutdown().await;
 }
+// </HANDWRITE>
 // HANDWRITE-END
