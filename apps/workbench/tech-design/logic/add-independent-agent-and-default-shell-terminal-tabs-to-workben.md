@@ -107,7 +107,6 @@ changes:
     impl_mode: hand-written
     description: Record multi-tab PTY isolation, host-shell, no-auto-launch, accessibility, viewport, and evidence verification rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
