@@ -2,10 +2,16 @@ version = 2
 project = "service-observability"
 ir_kind = "td"
 td_path = "libs/service-observability/tech-design"
-generated_at = "2026-07-17T08:55:14.454127+00:00"
-digest = "sha256:3058cfbf532b7a089296bb9224f8cee6c273d2eb79159a8d04574cdc9bf8da42"
-source_digest = "sha256:3058cfbf532b7a089296bb9224f8cee6c273d2eb79159a8d04574cdc9bf8da42"
-ir_digest = "sha256:5f759954c135e1b8768b76997d48a538de9939f6870abf62e397d7d8639ba35a"
+generated_at = "2026-07-21T06:11:47.228377+00:00"
+digest = "sha256:49cd15846122c6dfbff4f629a7359ea9c5005c847e97e128b60eca1ae78bf526"
+source_digest = "sha256:49cd15846122c6dfbff4f629a7359ea9c5005c847e97e128b60eca1ae78bf526"
+ir_digest = "sha256:3b88674f0b54e100b3d7da2be2f88b34475cf8f74e29592c40aa7c883e0a530e"
+
+[[files]]
+path = "logic/make-soak-rss-plateau-sampling-phase-stable.md"
+digest = "sha256:9663b0c944537423a16ef24019b3ebc081bd59458cff791b4f6097bf2337b4b7"
+ir_digest = "sha256:9f26a0fdd153c2a7810753101fbd5bf1ef9e3c67342777e37b7ad1dd7458a928"
+section_count = 3
 
 [[files]]
 path = "logic/standardize-versioned-jsonl-stdout-correlation.md"
