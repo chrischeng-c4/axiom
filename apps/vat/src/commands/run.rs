@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
@@ -996,7 +996,7 @@ fn run_configured(
     }
 
     let mut services = Vec::new();
-    for plan in &service_plans {
+    for plan in &mut service_plans {
         let handle = match start_service(
             vat,
             plan,
@@ -1429,7 +1429,7 @@ fn run_setup_step(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ServicePlan {
     id: String,
     command: Vec<String>,
@@ -1459,6 +1459,21 @@ struct ServicePlan {
     /// False when the service is provided by CI/local infrastructure and vat is
     /// attaching to it instead of starting/stopping a process.
     owned_by_vat: bool,
+    /// True only for native command-backed services whose spawned child is the
+    /// service itself and must remain live through endpoint readiness. Docker,
+    /// cluster, external, and other launcher-style runtimes preserve their own
+    /// readiness/lifecycle semantics instead of inheriting this contract.
+    requires_live_child: bool,
+    /// Literal 127.0.0.1 endpoints held exclusively from planning until the
+    /// instant the owned child is spawned. External/attach services never
+    /// reserve ports.
+    endpoint_reservations: Vec<EndpointReservation>,
+}
+
+#[derive(Debug)]
+struct EndpointReservation {
+    endpoint: SocketAddr,
+    listener: TcpListener,
 }
 
 #[derive(Debug, Clone)]
@@ -1496,6 +1511,12 @@ struct ServiceHandle {
     child: Option<Child>,
     timeout_s: u64,
     ready_probe: ReadyProbe,
+    /// Endpoints VAT proved unavailable immediately before spawning this
+    /// owned child. Readiness requires each one to become reachable afterward.
+    owned_endpoints: Vec<SocketAddr>,
+    /// Whether this handle owns a native service child that must remain live
+    /// until its endpoint completes readiness.
+    requires_live_child: bool,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
     /// `container --name` when the service runs via Apple's `container` CLI
@@ -1562,7 +1583,8 @@ fn prepare_service(
             }
         }
     } else {
-        let port = command_service_port(service)?;
+        let reservation = command_service_port(service)?;
+        let port = reservation.as_ref().map(EndpointReservation::port);
         let command = substitute_service_port(&service.cmd, port);
         let ready_http = service
             .ready_http
@@ -1573,12 +1595,16 @@ fn prepare_service(
         service_for_probe.ready_http = ready_http.clone();
         service_for_probe.ready_cmd = ready_cmd;
         let env = export_command_service_env(&service_for_probe, port);
+        let default_probe = port.map(|port| ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port,
+        });
         ServicePlan {
             id: service.id.clone(),
             command,
             host: Some("127.0.0.1".to_string()).filter(|_| port.is_some()),
             ready_http,
-            ready_probe: resolve_ready_probe(&service_for_probe, None),
+            ready_probe: resolve_ready_probe(&service_for_probe, default_probe),
             timeout_s: service.timeout_s,
             preset: None,
             port,
@@ -1592,6 +1618,8 @@ fn prepare_service(
             image: None,
             cluster: None,
             owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: reservation.into_iter().collect(),
         }
     };
     let mut plan = plan;
@@ -1754,6 +1782,8 @@ fn prepare_cluster_service(
         image: None,
         cluster: Some(record),
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -1779,7 +1809,7 @@ fn service_sandbox_backend(
 
 fn start_service(
     vat: &mut store::Vat,
-    plan: &ServicePlan,
+    plan: &mut ServicePlan,
     cwd: &Path,
     logs_dir: &Path,
     env: &BTreeMap<String, String>,
@@ -1790,6 +1820,11 @@ fn start_service(
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
     let command = if plan.owned_by_vat {
         service_start_command(plan, service_sandbox, rootfs)
+    } else {
+        Vec::new()
+    };
+    let owned_endpoints = if plan.owned_by_vat {
+        release_endpoint_reservations_at_spawn(plan)?
     } else {
         Vec::new()
     };
@@ -1838,6 +1873,8 @@ fn start_service(
         child,
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
+        owned_endpoints,
+        requires_live_child: plan.requires_live_child,
         docker_name: plan.docker_name.clone(),
         microvm_name: plan.microvm_name.clone(),
         cluster: plan.cluster.clone(),
@@ -1901,6 +1938,8 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
         image: None,
         cluster: None,
         owned_by_vat: false,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -1912,7 +1951,8 @@ fn prepare_preset_service(
     preset: ServicePreset,
 ) -> Result<ServicePlan> {
     if preset == ServicePreset::Lumen {
-        let port = resolve_service_port(&service.port)?;
+        let reservation = reserve_native_service_port(&service.id, &service.port)?;
+        let port = reservation.port();
         let lumen = lumen_release::resolve(service.version.as_deref())?;
         let env = preset_exports(service, preset, port);
         let command = vec![lumen.executable.to_string_lossy().into_owned(), "serve".into(), "--host".into(), "127.0.0.1".into(), "--port".into(), port.to_string()];
@@ -1922,10 +1962,13 @@ fn prepare_preset_service(
             timeout_s: service.timeout_s, preset: Some(preset), port: Some(port), prepare_mode: "lumen_native_cache".into(),
             cache_key: Some(lumen.tag), prepare_duration_ms: 0, exported_env: sorted_keys(&env), env,
             docker_name: None, microvm_name: None, image: None, cluster: None, owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: vec![reservation],
         });
     }
     ensure_preset_binaries(service, preset)?;
-    let port = resolve_service_port(&service.port)?;
+    let reservation = reserve_native_service_port(&service.id, &service.port)?;
+    let port = reservation.port();
     let cache_key = service_cache_key(cfg, service, preset)?;
     let cache_dir = crate::paths::root()?
         .join("cache")
@@ -2003,6 +2046,8 @@ fn prepare_preset_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations: vec![reservation],
     })
 }
 // </HANDWRITE>
@@ -2196,6 +2241,8 @@ fn prepare_preset_docker_service(
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2255,6 +2302,8 @@ fn prepare_preset_microvm_service(
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2302,9 +2351,13 @@ fn prepare_firebase_service(
     let mut env = BTreeMap::new();
     let mut hub_port = 4400u16;
     let mut first_port: Option<u16> = None;
+    let mut configured_ports = BTreeSet::new();
     if let Some(emulators) = parsed.get("emulators").and_then(|e| e.as_object()) {
         for (emulator, conf) in emulators {
             let port = conf.get("port").and_then(|p| p.as_u64()).map(|p| p as u16);
+            if let Some(port) = port {
+                configured_ports.insert(port);
+            }
             if emulator == "hub" {
                 if let Some(p) = port {
                     hub_port = p;
@@ -2324,6 +2377,11 @@ fn prepare_firebase_service(
     add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", hub_port);
 
     let ready_port = first_port.unwrap_or(hub_port);
+    configured_ports.insert(hub_port);
+    let endpoint_reservations = configured_ports
+        .into_iter()
+        .map(|port| reserve_native_service_endpoint(&service.id, port))
+        .collect::<Result<Vec<_>>>()?;
     Ok(ServicePlan {
         id: service.id.clone(),
         command: vec![
@@ -2351,6 +2409,8 @@ fn prepare_firebase_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations,
     })
 }
 
@@ -2473,7 +2533,8 @@ fn prepare_builtin_service(
     network_routes: &[(String, String)],
     hermetic: bool,
 ) -> Result<ServicePlan> {
-    let port = resolve_service_port(&service.port)?;
+    let reservation = reserve_native_service_port(&service.id, &service.port)?;
+    let port = reservation.port();
     let exe =
         std::env::current_exe().context("resolve the vat executable for the built-in emulator")?;
     let (kind, default_var) = builtin_emulator_info(preset);
@@ -2560,6 +2621,8 @@ fn prepare_builtin_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations: vec![reservation],
     })
 }
 
@@ -2631,6 +2694,8 @@ fn prepare_image_service(
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2684,6 +2749,8 @@ fn prepare_microvm_service(
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -3499,6 +3566,88 @@ fn free_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+impl EndpointReservation {
+    fn port(&self) -> u16 {
+        self.endpoint.port()
+    }
+}
+
+/// Reserve one native service endpoint for the whole preparation phase. The
+/// listener is released only at the child-spawn boundary; this makes an auto
+/// port unique across concurrent VAT runs and makes a fixed conflict terminal
+/// before VAT starts any owned process.
+fn reserve_native_service_port(service_id: &str, port: &PortSpec) -> Result<EndpointReservation> {
+    let requested_port = match port {
+        PortSpec::Fixed(port) => *port,
+        PortSpec::Auto(_) => 0,
+    };
+    reserve_native_service_endpoint(service_id, requested_port)
+}
+
+fn reserve_native_service_endpoint(
+    service_id: &str,
+    requested_port: u16,
+) -> Result<EndpointReservation> {
+    let requested_endpoint = SocketAddr::from(([127, 0, 0, 1], requested_port));
+    let listener = match TcpListener::bind(requested_endpoint) {
+        Ok(listener) => listener,
+        Err(err) => {
+            let endpoint = format!("127.0.0.1:{requested_port}");
+            emit_owned_endpoint_conflict(service_id, &endpoint, "prepare", &err.to_string());
+            bail!(
+                "native_service_endpoint_conflict: service `{service_id}` cannot own endpoint `{endpoint}`: {err}; declare `external = {{ host = \"127.0.0.1\", port = {requested_port} }}` only when intentional attachment is required"
+            );
+        }
+    };
+    let endpoint = listener
+        .local_addr()
+        .context("read reserved native service endpoint")?;
+    Ok(EndpointReservation { endpoint, listener })
+}
+
+fn emit_owned_endpoint_conflict(service_id: &str, endpoint: &str, phase: &str, reason: &str) {
+    let _ = emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "native_service_endpoint_conflict",
+        "service": service_id,
+        "endpoint": endpoint,
+        "phase": phase,
+        "reason": reason,
+        "owned_by_vat": true,
+        "external_attach_required_for_reuse": true,
+    }));
+}
+
+/// Release reservations immediately before spawning the command and prove the
+/// endpoint is still unavailable at that boundary. A process that races into
+/// the tiny release-to-spawn window is still caught by owned-child liveness;
+/// arbitrary commands cannot inherit an already-bound socket without a new
+/// public descriptor-passing contract.
+fn release_endpoint_reservations_at_spawn(plan: &mut ServicePlan) -> Result<Vec<SocketAddr>> {
+    let reservations = std::mem::take(&mut plan.endpoint_reservations);
+    let mut endpoints = Vec::with_capacity(reservations.len());
+    for EndpointReservation { endpoint, listener } in reservations {
+        endpoints.push(endpoint);
+        drop(listener);
+    }
+    for endpoint in &endpoints {
+        if TcpStream::connect_timeout(endpoint, Duration::from_millis(50)).is_ok() {
+            let endpoint = endpoint.to_string();
+            emit_owned_endpoint_conflict(
+                &plan.id,
+                &endpoint,
+                "spawn_boundary",
+                "endpoint became reachable before the owned child was spawned",
+            );
+            bail!(
+                "native_service_endpoint_conflict: service `{}` endpoint `{endpoint}` became reachable before spawn; VAT did not start the service",
+                plan.id
+            );
+        }
+    }
+    Ok(endpoints)
+}
+
 fn service_cache_key(
     cfg: &VatConfig,
     service: &ServiceConfig,
@@ -3740,7 +3889,35 @@ fn preset_exports(
     env
 }
 
-fn command_service_port(service: &ServiceConfig) -> Result<Option<u16>> {
+fn command_service_port(service: &ServiceConfig) -> Result<Option<EndpointReservation>> {
+    let ready_http_port = command_ready_http_ipv4_port(service)?;
+    if let Some(ready_http_port) = ready_http_port {
+        if let PortSpec::Fixed(configured_port) = &service.port {
+            if *configured_port != ready_http_port {
+                let configured_endpoint = format!("127.0.0.1:{configured_port}");
+                let ready_endpoint = format!("127.0.0.1:{ready_http_port}");
+                let _ = emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "native_service_endpoint_mismatch",
+                    "service": service.id.as_str(),
+                    "configured_endpoint": configured_endpoint,
+                    "ready_http_endpoint": ready_endpoint,
+                    "owned_by_vat": true,
+                }));
+                bail!(
+                    "native_service_endpoint_mismatch: service `{}` configures port {} but ready_http names 127.0.0.1:{}",
+                    service.id,
+                    configured_port,
+                    ready_http_port
+                );
+            }
+        }
+        return Ok(Some(reserve_native_service_endpoint(
+            &service.id,
+            ready_http_port,
+        )?));
+    }
+
     let needs_port = service.cmd.iter().any(|value| value.contains("{port}"))
         || service
             .ready_http
@@ -3754,12 +3931,82 @@ fn command_service_port(service: &ServiceConfig) -> Result<Option<u16>> {
         || service
             .export
             .values()
-            .any(|value| value.contains("{port}") || value.contains("{host}"));
+            .any(|value| value.contains("{port}") || value.contains("{host}"))
+        || matches!(service.port, PortSpec::Fixed(_));
     if needs_port {
-        Ok(Some(resolve_service_port(&service.port)?))
+        Ok(Some(reserve_native_service_port(
+            &service.id,
+            &service.port,
+        )?))
     } else {
         Ok(None)
     }
+}
+
+/// Return the fixed port named by an owned command service's literal IPv4
+/// readiness endpoint. `{host}` resolves to the same supported 127.0.0.1
+/// address; `{port}` remains run-allocated. Other loopback spellings are
+/// rejected deliberately because reserving only an IPv4 socket would not prove
+/// ownership of `localhost`'s resolver choice or an IPv6 listener.
+fn command_ready_http_ipv4_port(service: &ServiceConfig) -> Result<Option<u16>> {
+    let Some(raw_url) = service.ready_http.as_deref() else {
+        return Ok(None);
+    };
+    let has_port_placeholder = raw_url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .map(|authority| authority.contains("{port}"))
+        .unwrap_or(false);
+    let parseable_url = raw_url
+        .replace("{host}", "127.0.0.1")
+        .replace("{port}", "1");
+    let url = url::Url::parse(&parseable_url)
+        .with_context(|| format!("parse ready_http for service `{}`", service.id))?;
+    let Some(host) = url.host() else {
+        return Ok(None);
+    };
+    match host {
+        url::Host::Ipv4(address) if address == std::net::Ipv4Addr::LOCALHOST => {
+            if has_port_placeholder {
+                Ok(None)
+            } else {
+                Ok(Some(
+                    url.port_or_known_default()
+                        .context("127.0.0.1 ready_http missing port")?,
+                ))
+            }
+        }
+        url::Host::Domain(domain) if domain.eq_ignore_ascii_case("localhost") => {
+            reject_unsupported_native_loopback(service, raw_url, domain)
+        }
+        url::Host::Ipv4(address) if address.is_loopback() => {
+            reject_unsupported_native_loopback(service, raw_url, &address.to_string())
+        }
+        url::Host::Ipv6(address) if address.is_loopback() => {
+            reject_unsupported_native_loopback(service, raw_url, &address.to_string())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn reject_unsupported_native_loopback(
+    service: &ServiceConfig,
+    ready_http: &str,
+    host: &str,
+) -> Result<Option<u16>> {
+    let _ = emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "native_service_loopback_unsupported",
+        "service": service.id.as_str(),
+        "ready_http": ready_http,
+        "host": host,
+        "supported_host": "127.0.0.1",
+        "owned_by_vat": true,
+    }));
+    bail!(
+        "native_service_loopback_unsupported: service `{}` ready_http host `{host}` cannot be reserved exactly; use literal `127.0.0.1` or `{{host}}`",
+        service.id
+    )
 }
 
 fn substitute_service_port(values: &[String], port: Option<u16>) -> Vec<String> {
@@ -4221,8 +4468,14 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         let started = Instant::now();
         let ready_probe = service.ready_probe.clone();
         let microvm_probe = is_microvm_probe(&ready_probe);
+        let enforce_live_child = service.requires_live_child || microvm_probe;
         let mut last_microvm_readiness_error = None;
-        if matches!(ready_probe, ReadyProbe::None) {
+        if matches!(ready_probe, ReadyProbe::None) && service.owned_endpoints.is_empty() {
+            if enforce_live_child {
+                if let Some(status) = service_child_exit_status(service)? {
+                    return report_owned_service_child_exit(vat, service, status, false, None);
+                }
+            }
             service.record.status = ProcessStatus::Ready;
             service.record.ready_duration_ms = Some(started.elapsed().as_millis() as u64);
             emit_jsonl(serde_json::json!({
@@ -4234,20 +4487,25 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         }
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
-            // A published host port can already be occupied by an unrelated
-            // listener. Check the MicroVM launch before probing it so that an
-            // exited `container run` cannot borrow that listener's readiness.
-            if microvm_probe {
+            // Probe success is never sufficient for a native command-backed
+            // service: a stale listener may answer after the child has failed.
+            // MicroVM probes retain their existing equivalent child check;
+            // launcher-style Docker/cluster services do not inherit it.
+            if enforce_live_child {
                 if let Some(status) = service_child_exit_status(service)? {
-                    return report_microvm_child_exit(
+                    return report_owned_service_child_exit(
                         vat,
                         service,
                         status,
+                        microvm_probe,
                         last_microvm_readiness_error.as_deref(),
                     );
                 }
             }
-            let readiness = if microvm_probe {
+            let endpoint_transition_ready = owned_service_endpoints_ready(service);
+            let readiness = if !endpoint_transition_ready {
+                Ok(false)
+            } else if microvm_probe {
                 match microvm_readiness(&ready_probe) {
                     Ok(EndpointReadiness::Ready) => Ok(true),
                     Ok(EndpointReadiness::Pending(reason)) => {
@@ -4261,16 +4519,13 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             };
             match readiness {
                 Ok(true) => {
-                    // A TCP usability probe can take up to its bounded read
-                    // timeout. Recheck the launch after that probe as well:
-                    // otherwise a MicroVM that dies during the probe can be
-                    // recorded Ready because a stale host listener answered.
-                    if microvm_probe {
+                    if enforce_live_child {
                         if let Some(status) = service_child_exit_status(service)? {
-                            return report_microvm_child_exit(
+                            return report_owned_service_child_exit(
                                 vat,
                                 service,
                                 status,
+                                microvm_probe,
                                 last_microvm_readiness_error.as_deref(),
                             );
                         }
@@ -4292,12 +4547,23 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
                 }
                 Err(_) => {}
             }
-            if !microvm_probe {
+            if enforce_live_child {
                 if let Some(status) = service_child_exit_status(service)? {
-                    service.record.status = ProcessStatus::Failed;
-                    service.record.exit_code = status.code();
-                    bail!("service `{}` exited before readiness", service.record.id);
+                    return report_owned_service_child_exit(
+                        vat,
+                        service,
+                        status,
+                        microvm_probe,
+                        last_microvm_readiness_error.as_deref(),
+                    );
                 }
+            } else if let Some(status) = service_child_exit_status(service)? {
+                // Preserve the pre-existing foreground launcher behavior after
+                // a failed probe without treating successful readiness as a
+                // native long-lived-child contract.
+                service.record.status = ProcessStatus::Failed;
+                service.record.exit_code = status.code();
+                bail!("service `{}` exited before readiness", service.record.id);
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
@@ -4330,6 +4596,13 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     Ok(())
 }
 
+fn owned_service_endpoints_ready(service: &ServiceHandle) -> bool {
+    service
+        .owned_endpoints
+        .iter()
+        .all(|endpoint| TcpStream::connect_timeout(endpoint, Duration::from_millis(300)).is_ok())
+}
+
 /// Observe an owned service process without consuming its handle. MicroVM
 /// readiness uses this both before and after its host-endpoint probe.
 fn service_child_exit_status(
@@ -4339,6 +4612,51 @@ fn service_child_exit_status(
         Some(child) => child.try_wait().context("observe service process"),
         None => Ok(None),
     }
+}
+
+fn report_owned_service_child_exit(
+    vat: &mut store::Vat,
+    service: &mut ServiceHandle,
+    status: std::process::ExitStatus,
+    microvm_probe: bool,
+    last_readiness_observation: Option<&str>,
+) -> Result<()> {
+    if microvm_probe {
+        return report_microvm_child_exit(vat, service, status, last_readiness_observation);
+    }
+
+    service.record.status = ProcessStatus::Failed;
+    service.record.exit_code = status.code();
+    let endpoint = service
+        .record
+        .host
+        .as_deref()
+        .zip(service.record.port)
+        .map(|(host, port)| format!("{host}:{port}"))
+        .unwrap_or_else(|| "no-network-endpoint".to_string());
+    let reason = format!(
+        "owned service process exited {:?} before endpoint {endpoint} completed readiness",
+        status.code()
+    );
+    service.record.readiness_error = Some(reason.clone());
+    let state_command = format!("vat state {}", vat.meta.id);
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "owned_service_exited_before_readiness",
+        "service": service.record.id.as_str(),
+        "endpoint": endpoint.as_str(),
+        "exit_code": status.code(),
+        "reason": reason.as_str(),
+        "owned_by_vat": true,
+        "state": state_command.as_str(),
+        "next": state_command.as_str(),
+    }))?;
+    bail!(
+        "owned_service_exited_before_readiness: service `{}` endpoint `{}` exited {:?} before readiness",
+        service.record.id,
+        endpoint,
+        status.code()
+    )
 }
 
 /// Turn an exited MicroVM launcher into the same terminal, structured
@@ -5042,7 +5360,7 @@ mod tests {
 
     #[test]
     fn direct_start_service_command_uses_supplied_sandbox_only_for_direct_services() {
-        let plan = ServicePlan {
+        let mut plan = ServicePlan {
             id: "api".to_string(),
             command: vec!["python3".to_string(), "-m".to_string(), "app".to_string()],
             host: None,
@@ -5061,6 +5379,8 @@ mod tests {
             image: None,
             cluster: None,
             owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: Vec::new(),
         };
 
         let wrapped = service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root"));
@@ -5070,12 +5390,58 @@ mod tests {
             vec!["sandboxed", "/vat/root", "python3", "-m", "app"]
         );
 
-        let mut preset_plan = plan.clone();
-        preset_plan.prepare_mode = "builtin_emulator".to_string();
+        plan.prepare_mode = "builtin_emulator".to_string();
         assert_eq!(
-            service_start_command(&preset_plan, Some(&TestSandbox), Path::new("/vat/root")),
-            preset_plan.command
+            service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root")),
+            plan.command
         );
+    }
+
+    #[test]
+    fn native_auto_endpoint_reservations_are_unique_and_release_deterministically() {
+        let first = reserve_native_service_port("first", &PortSpec::default())
+            .expect("reserve first native endpoint");
+        let second = reserve_native_service_port("second", &PortSpec::default())
+            .expect("reserve second native endpoint");
+        let first_endpoint = first.endpoint;
+        let second_endpoint = second.endpoint;
+
+        assert_ne!(first_endpoint, second_endpoint);
+        assert!(TcpListener::bind(first_endpoint).is_err());
+        assert!(TcpListener::bind(second_endpoint).is_err());
+
+        drop(first);
+        let rebound = TcpListener::bind(first_endpoint)
+            .expect("dropping a failed/finished plan must release its reservation");
+        drop(rebound);
+        assert!(TcpListener::bind(second_endpoint).is_err());
+    }
+
+    #[test]
+    fn native_fixed_endpoint_rejects_an_existing_listener_without_touching_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind unrelated listener");
+        let endpoint = listener.local_addr().expect("unrelated endpoint");
+
+        let err = reserve_native_service_port("api", &PortSpec::Fixed(endpoint.port()))
+            .expect_err("owned native service must not attach to an occupied endpoint");
+
+        assert!(err.to_string().contains("native_service_endpoint_conflict"));
+        assert!(err.to_string().contains(&endpoint.to_string()));
+        assert!(TcpStream::connect(endpoint).is_ok());
+    }
+
+    #[test]
+    fn native_command_rejects_non_literal_loopback_readiness_hosts() {
+        let mut service = test_service("api", &["server", "--port", "{port}"]);
+        service.ready_http = Some("http://localhost:{port}/ready".to_string());
+
+        let err = command_service_port(&service)
+            .expect_err("localhost cannot be reserved as one exact IPv4 endpoint");
+
+        assert!(err
+            .to_string()
+            .contains("native_service_loopback_unsupported"));
+        assert!(err.to_string().contains("localhost"));
     }
 
     /// UT3 (#1301 R2/AC2): the real (non-hermetic-proxy) service call path
@@ -6014,6 +6380,8 @@ mod tests {
             child: Some(child),
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
+            owned_endpoints: Vec::new(),
+            requires_live_child: true,
             docker_name: None,
             microvm_name: None,
             cluster: None,

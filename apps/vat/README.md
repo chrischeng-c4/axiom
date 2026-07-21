@@ -806,7 +806,18 @@ preferred**:
   with `kubectl get nodes`, and deletes it at teardown per the `keep` policy. A
   missing backend fails with a structured `cluster_backend_unavailable` error
   (never a panic). `vat cluster` manages clusters standalone, outside a run.
-- `cmd` — an explicit native command.
+- `cmd` — an explicit native command. When the command owns an IPv4 endpoint on
+  literal `127.0.0.1` (through `port`, `{host}`/`{port}`, or a fixed
+  `127.0.0.1` `ready_http`), vat reserves that exact endpoint for the run
+  through preparation and releases it only at the child-spawn boundary.
+  `localhost`, `::1`, and other loopback spellings are rejected because they
+  cannot be proven by the same exact IPv4 reservation. An already occupied
+  endpoint fails closed with the exact service and endpoint; vat never treats
+  the existing listener as the owned child's readiness. After spawn, both the
+  owned child and the endpoint's unavailable-to-ready transition must remain
+  valid before a dependent runner starts. Declare
+  `external = { host = "...", port = ... }` when attaching to an intentionally
+  pre-existing listener.
 
 Env export contract:
 
@@ -827,7 +838,11 @@ plan into the rootfs, injects `VAT_PLAN_PATH` and `VAT_PLAN_DIGEST`, and records
 the plan evidence in `vat state`; vat never interprets the plan semantics.
 
 For the native path vat checks for required binaries, cold-prepares cached
-service data when needed, and clones it on later runs. The Docker path runs an
+service data when needed, and clones it on later runs. Native preset and
+endpoint-bearing `cmd` services reserve their exact `127.0.0.1` endpoints until
+spawn, then require the owned child to stay live while the endpoint becomes
+ready; a probe response from a pre-existing listener cannot certify ownership.
+The Docker path runs an
 ephemeral `docker run --rm` container bound to loopback; the explicit MicroVM
 path runs an ephemeral Apple `container run --rm` service after the bounded
 image preflight, with stricter host-port readiness evidence. Both are removed at

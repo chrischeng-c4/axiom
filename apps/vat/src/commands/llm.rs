@@ -659,6 +659,15 @@ network = "hermetic"       # open | hermetic
   substitutes `{host}`/`{port}` in `ready_http`, `ready_cmd`, and `export`,
   injects `VAT_SERVICE_<ID>_{HOST,PORT}`, and records `owned_by_vat = false` in
   `vat state`.
+- A `cmd` service is VAT-owned. For an IPv4 endpoint on literal `127.0.0.1`
+  declared through `port`, `{host}`/`{port}`, or a fixed `127.0.0.1`
+  `ready_http`, vat holds an exact run-scoped reservation through preparation
+  and releases it only at the spawn boundary. `localhost`, `::1`, and other
+  loopback spellings are rejected because they are not the same exact IPv4
+  endpoint. An occupied endpoint fails closed with the exact service/endpoint;
+  after spawn, the owned child must stay live and the endpoint must transition
+  to ready before any runner starts. Use `external`, not `cmd`, to attach to an
+  intentionally existing listener.
 - Built-in emulators: `preset = "gcloud-pubsub"`, `"firebase-auth"`, `"gcloud-cloud-tasks"`,
   `"cloud-scheduler"`, `"cloud-workflows"`, and `"cloud-storage"` run vat's OWN
   in-process Rust emulator under `runtime = auto` — no gcloud, Java,

@@ -57,6 +57,18 @@ scenarios:
       - "the run fails with a readiness timeout"
       - "vat terminates all service process groups"
       - "failure evidence is retained according to the failed-only policy"
+  - id: occupied_owned_native_endpoint_fails_closed
+    given:
+      - "a command-backed native service declares a literal 127.0.0.1 endpoint already served by an unrelated listener"
+    when:
+      - "vat prepares the owned service and waits for readiness"
+    then:
+      - "vat rejects the exact service and endpoint before spawning the owned child"
+      - "vat does not start dependent runners or kill the unrelated listener"
+      - "only an explicit external service may attach to an existing listener"
+      - "localhost, IPv6 loopback, and other non-literal loopback readiness hosts are rejected because they cannot share the exact 127.0.0.1 reservation proof"
+      - "auto ports remain reserved for the run through preparation and are released immediately at the owned-child spawn boundary"
+      - "after spawn, readiness requires the endpoint to transition from unavailable to reachable while the owned child remains live"
   - id: unconfirmed_runtime_cleanup_forces_retention
     given:
       - "a runner or scenario has a VAT-owned Docker or MicroVM service"
@@ -656,6 +668,18 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement own_native_endpoint {
+      id: UT4
+      text: "Concurrent native auto-port allocations are unique, fixed occupied 127.0.0.1 endpoints fail closed, unsupported loopback spellings are rejected, and every failed or finished plan releases its reservation."
+      risk: high
+      verifymethod: test
+    }
+    requirement bind_readiness_to_child {
+      id: UT5
+      text: "An owned network service is Ready only after its reserved endpoint transitions to reachable and its child stays live before and after the configured probe."
+      risk: high
+      verifymethod: test
+    }
     test config_parse_tests {
       type: functional
       verifies: parse_config
@@ -663,6 +687,14 @@ requirementDiagram
     test direct_run_regression {
       type: functional
       verifies: keep_direct_run
+    }
+    test native_endpoint_ownership_regression {
+      type: functional
+      verifies: own_native_endpoint
+    }
+    test owned_child_readiness_regression {
+      type: functional
+      verifies: bind_readiness_to_child
     }
 ```
 
@@ -682,6 +714,9 @@ e2e_tests:
       - "vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence."
       - "failed runner evidence remains inspectable."
       - "An unconfirmed Docker or MicroVM cleanup forces a nonzero result and keeps the VAT evidence regardless of the normal keep policy."
+      - "An occupied command-backed native endpoint fails before service or runner spawn, reports the exact service/endpoint, and leaves the unrelated listener reachable."
+      - "A child that exits before its reserved endpoint becomes ready is terminal and no dependent runner starts."
+      - "Explicit external services retain attach-and-probe behavior without VAT lifecycle ownership."
       - "direct vat run -- <cmd> compatibility is preserved."
 ```
 
