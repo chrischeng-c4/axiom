@@ -15,6 +15,12 @@ capability_refs:
     claim: agent-legible-state-and-diff-surface
     coverage: partial
     rationale: "This TD makes vat.toml the local agent-to-vat protocol for preparing ephemeral test environments and returning structured runner evidence."
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: interrupt-safe-process-group-cleanup
+    claim: interrupt-safe-process-group-cleanup
+    coverage: full
+    rationale: "#2394 binds direct and configured SIGINT/SIGTERM handling to owned process-group absence, terminal Interrupted state, retained evidence, and real Unix integration proof."
 ---
 
 # Vat Local Agent Test Runner Protocol
@@ -90,6 +96,19 @@ scenarios:
       - "vat does not require vat.toml"
       - "vat preserves current foreground stdio behavior"
       - "vat forwards the child command exit code"
+  - id: signal_interrupt_finalizes_owned_groups
+    given:
+      - "a direct or configured vat run owns TERM-resistant runner/service leaders and descendants in private process groups"
+      - "an explicit external service or unrelated listener remains outside VAT ownership"
+    when:
+      - "VAT receives SIGINT or SIGTERM followed by any later signal"
+    then:
+      - "the first signal remains authoritative and the signal handler only records/wakes"
+      - "the run thread finalizes runners first and VAT-owned services in reverse start order"
+      - "each owned group receives TERM, bounded grace, KILL when necessary, leader reap, and PGID-absence proof exactly once"
+      - "VAT persists terminal interrupted state with exact signal/reason and no live child PID only after cleanup"
+      - "VAT exits 130 for SIGINT or 143 for SIGTERM and retains the evidence regardless of keep policy"
+      - "external services and unrelated listeners are never signalled"
 ```
 
 ## State Machine
@@ -355,7 +374,7 @@ properties:
       required: [id, status, stdout_log, stderr_log]
       properties:
         id: { type: string }
-        status: { type: string, enum: [created, running, ready, exited, failed, timeout] }
+        status: { type: string, enum: [created, running, ready, interrupted, exited, failed, timeout] }
         exit_code: { type: [integer, "null"] }
         ready_http: { type: [string, "null"] }
         docker_name:
@@ -378,7 +397,7 @@ properties:
     required: [id, status, command, stdout_log, stderr_log]
     properties:
       id: { type: string }
-      status: { type: string, enum: [created, running, exited, failed] }
+      status: { type: string, enum: [created, running, interrupted, exited, failed, timeout] }
       command:
         type: array
         items: { type: string }
@@ -680,6 +699,12 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement finalize_interrupted_groups_once {
+      id: UT6
+      text: "The first SIGINT/SIGTERM is recorded without cleanup in the handler; one idempotent finalizer performs TERM, bounded grace, KILL, reap, and PGID-absence proof before Interrupted metadata is persisted."
+      risk: high
+      verifymethod: test
+    }
     test config_parse_tests {
       type: functional
       verifies: parse_config
@@ -695,6 +720,10 @@ requirementDiagram
     test owned_child_readiness_regression {
       type: functional
       verifies: bind_readiness_to_child
+    }
+    test interrupted_group_finalizer_regression {
+      type: functional
+      verifies: finalize_interrupted_groups_once
     }
 ```
 
@@ -718,6 +747,19 @@ e2e_tests:
       - "A child that exits before its reserved endpoint becomes ready is terminal and no dependent runner starts."
       - "Explicit external services retain attach-and-probe behavior without VAT lifecycle ownership."
       - "direct vat run -- <cmd> compatibility is preserved."
+  - id: vat-signal-owned-process-group-cleanup
+    name: "SIGINT/SIGTERM owned process-group cleanup"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: interrupt-safe-process-group-cleanup
+    contract_id: interrupt-safe-process-group-cleanup
+    category: behavior
+    command: "cargo test -p vat --test vat_signal_cleanup -- --test-threads=1"
+    assertions:
+      - "Real configured SIGINT and SIGTERM stop TERM-resistant runner and native-service leaders plus descendants before VAT exits 130/143."
+      - "The owned service port immediately rebinds while an explicit external listener remains reachable and unowned."
+      - "Terminal state is interrupted with the first signal/reason and no runner/service PID; a second cleanup is a no-op."
+      - "Direct vat run -- <cmd> has the same real SIGINT/SIGTERM terminal-state and owned-descendant cleanup contract."
+      - "vat gc --execute without --include-failed classifies interrupted evidence as retained and does not delete it."
 ```
 
 ## Changes
@@ -859,6 +901,14 @@ changes:
     refs:
       - "apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#e2e-test"
     summary: "Add vat.toml local service runner smoke coverage."
+  - path: apps/vat/tests/vat_signal_cleanup.rs
+    action: add
+    section: e2e-test
+    impl_mode: hand-written
+    refs:
+      - "apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#scenarios"
+      - "apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#e2e-test"
+    summary: "Send real SIGINT/SIGTERM to direct and configured VAT runs and prove bounded owned-group cleanup, terminal state, port release, external survival, retention, and idempotency."
   - path: apps/vat/Cargo.toml
     action: modify
     section: manifest

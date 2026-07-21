@@ -10,7 +10,7 @@ use crate::cli::ComposeCmd;
 use crate::config::ServiceRuntime;
 use crate::spec::{GpuRequest, Isolation};
 use crate::state::{ProcessStatus, Status, TestRunEvidence};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -130,8 +130,9 @@ enum DetachedStartup {
     Starting,
     Ready,
     /// The VAT parent has begun terminal teardown. Its runner may already be
-    /// exited, but compose must retain the binding until VAT status is Exited
-    /// and every tracked service has a confirmed terminal state.
+    /// terminal, but compose must retain the binding until VAT status is
+    /// Exited or Interrupted and every tracked service has a confirmed
+    /// terminal state.
     Stopping,
     /// Persisted VAT evidence could not be read. This is never terminal: a
     /// concurrent atomic replacement or transient filesystem error cannot
@@ -474,6 +475,7 @@ pub(crate) enum DockerShimTopologyServiceState {
     Created,
     Running,
     Ready,
+    Interrupted,
     Exited,
     Failed,
     Timeout,
@@ -488,6 +490,7 @@ impl DockerShimTopologyServiceState {
             Self::Created => "created",
             Self::Running => "running",
             Self::Ready => "ready",
+            Self::Interrupted => "interrupted",
             Self::Exited => "exited",
             Self::Failed => "failed",
             Self::Timeout => "timeout",
@@ -1553,6 +1556,7 @@ fn docker_shim_service_state(
         Some(ProcessStatus::Created) => DockerShimTopologyServiceState::Created,
         Some(ProcessStatus::Running) => DockerShimTopologyServiceState::Running,
         Some(ProcessStatus::Ready) => DockerShimTopologyServiceState::Ready,
+        Some(ProcessStatus::Interrupted) => DockerShimTopologyServiceState::Interrupted,
         Some(ProcessStatus::Exited) => DockerShimTopologyServiceState::Exited,
         Some(ProcessStatus::Failed) => DockerShimTopologyServiceState::Failed,
         Some(ProcessStatus::Timeout) => DockerShimTopologyServiceState::Timeout,
@@ -1834,7 +1838,10 @@ fn cap_log_text_to_json_value(text: String) -> Result<(String, bool)> {
         return Ok((text, false));
     }
 
-    let mut boundaries = text.char_indices().map(|(offset, _)| offset).collect::<Vec<_>>();
+    let mut boundaries = text
+        .char_indices()
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
     boundaries.push(text.len());
     let mut lower = 0;
     let mut upper = boundaries.len() - 1;
@@ -1848,10 +1855,8 @@ fn cap_log_text_to_json_value(text: String) -> Result<(String, bool)> {
         }
     }
     let suffix = text[boundaries[lower]..].to_string();
-    debug_assert!(
-        serialized_json_string_len(&suffix)
-            .is_ok_and(|length| length <= MAX_DOCKER_SHIM_JSON_STREAM_VALUE_BYTES)
-    );
+    debug_assert!(serialized_json_string_len(&suffix)
+        .is_ok_and(|length| length <= MAX_DOCKER_SHIM_JSON_STREAM_VALUE_BYTES));
     Ok((suffix, true))
 }
 
@@ -2390,14 +2395,17 @@ fn reconcile_detached_startup_with_evidence(
     let crate::store::Vat { meta, .. } = vat;
     let status = meta.status;
     let test_run = meta.test_run;
-    if !matches!(&status, Status::Exited { .. }) {
+    if !matches!(&status, Status::Exited { .. } | Status::Interrupted { .. }) {
         let state = detached_startup_while_active(&record.service_ids, test_run.as_ref());
         return Ok(ReconciledStartupEvidence { state, test_run });
     }
+    let terminal_state = vat_terminal_state_label(&status);
 
     let Some(test_run_ref) = test_run.as_ref() else {
         return Ok(ReconciledStartupEvidence {
-            state: DetachedStartup::Terminal("VAT exited without compose run evidence".to_string()),
+            state: DetachedStartup::Terminal(format!(
+                "VAT reached {terminal_state} without compose run evidence"
+            )),
             test_run: None,
         });
     };
@@ -2419,13 +2427,21 @@ fn reconcile_detached_startup_with_evidence(
         // binding until this point, then make malformed/incomplete evidence a
         // resettable terminal failure instead of wedging the project forever.
         DetachedStartup::Starting | DetachedStartup::Ready | DetachedStartup::Stopping => {
-            DetachedStartup::Terminal(
-                "VAT reached Exited without terminal compose runner evidence".to_string(),
-            )
+            DetachedStartup::Terminal(format!(
+                "VAT reached {terminal_state} without terminal compose runner evidence"
+            ))
         }
         terminal => terminal,
     };
     Ok(ReconciledStartupEvidence { state, test_run })
+}
+
+fn vat_terminal_state_label(status: &Status) -> &'static str {
+    match status {
+        Status::Interrupted { .. } => "Interrupted",
+        Status::Exited { .. } => "Exited",
+        Status::Created | Status::Running | Status::Snapshot => "nonterminal",
+    }
 }
 
 /// A compatibility-only absence proof for records from before compose
@@ -2493,7 +2509,10 @@ fn wait_for_compose_shutdown(
     loop {
         let vat = crate::store::load(vat_id)
             .with_context(|| format!("load VAT `{vat_id}` while waiting for compose shutdown"))?;
-        if matches!(&vat.meta.status, Status::Exited { .. }) {
+        if matches!(
+            &vat.meta.status,
+            Status::Exited { .. } | Status::Interrupted { .. }
+        ) {
             if let Some(message) = compose_cleanup_error(vat.meta.test_run.as_ref(), service_ids) {
                 bail!(
                     "compose stop request for VAT `{vat_id}` reached a terminal state but cleanup is unconfirmed: {message}; registry retained to avoid overlapping services; inspect with `vat state {vat_id}` and retry `vat compose down`"
@@ -2529,7 +2548,10 @@ fn compose_services_are_terminal(
                 service.owned_by_vat == Some(false)
                     || (matches!(
                         service.status,
-                        ProcessStatus::Exited | ProcessStatus::Failed | ProcessStatus::Timeout
+                        ProcessStatus::Interrupted
+                            | ProcessStatus::Exited
+                            | ProcessStatus::Failed
+                            | ProcessStatus::Timeout
                     ) && service.cleanup_error.is_none())
             })
             // An exited VAT that never recorded this service did not have a
@@ -2557,6 +2579,11 @@ fn detached_startup_from_evidence(
             .find(|service| service.id == *service_id)
         {
             match service.status {
+                ProcessStatus::Interrupted => {
+                    return DetachedStartup::Terminal(format!(
+                        "service `{service_id}` was interrupted before compose startup completed"
+                    ));
+                }
                 ProcessStatus::Failed | ProcessStatus::Timeout => {
                     let detail = service
                         .readiness_error
@@ -2584,7 +2611,10 @@ fn detached_startup_from_evidence(
         .find(|runner| {
             matches!(
                 runner.status,
-                ProcessStatus::Exited | ProcessStatus::Failed | ProcessStatus::Timeout
+                ProcessStatus::Interrupted
+                    | ProcessStatus::Exited
+                    | ProcessStatus::Failed
+                    | ProcessStatus::Timeout
             )
         })
     {
@@ -2644,7 +2674,10 @@ fn detached_startup_while_active(
         .any(|runner| {
             matches!(
                 runner.status,
-                ProcessStatus::Exited | ProcessStatus::Failed | ProcessStatus::Timeout
+                ProcessStatus::Interrupted
+                    | ProcessStatus::Exited
+                    | ProcessStatus::Failed
+                    | ProcessStatus::Timeout
             )
         });
     let service_is_terminal = service_ids.iter().any(|service_id| {
@@ -2655,7 +2688,10 @@ fn detached_startup_while_active(
             .is_some_and(|service| {
                 matches!(
                     service.status,
-                    ProcessStatus::Exited | ProcessStatus::Failed | ProcessStatus::Timeout
+                    ProcessStatus::Interrupted
+                        | ProcessStatus::Exited
+                        | ProcessStatus::Failed
+                        | ProcessStatus::Timeout
                 )
             })
     });
@@ -2968,8 +3004,8 @@ mod tests {
 
     use crate::config::RetentionPolicy;
     use crate::state::{ConfigRef, RunnerRunRecord, ServiceRunRecord};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn service(id: &str, status: ProcessStatus, readiness_error: Option<&str>) -> ServiceRunRecord {
         ServiceRunRecord {
@@ -3015,6 +3051,7 @@ mod tests {
                 exit_code: None,
                 duration_ms: None,
                 pid: (status == ProcessStatus::Running).then_some(42),
+                cleanup_error: None,
                 stdout_log: String::new(),
                 stderr_log: String::new(),
             }),
@@ -3205,6 +3242,18 @@ mod tests {
             state,
             DetachedStartup::Terminal(message) if message.contains("project.up")
         ));
+
+        assert_eq!(
+            vat_terminal_state_label(&Status::Interrupted {
+                signal: libc::SIGTERM,
+                reason: "received SIGTERM (15)".to_string(),
+            }),
+            "Interrupted"
+        );
+        assert_eq!(
+            vat_terminal_state_label(&Status::Exited { code: 0 }),
+            "Exited"
+        );
     }
 
     #[test]
@@ -3449,13 +3498,11 @@ mod tests {
             let snapshot = topology_snapshot(&record, phase, vec![valid.clone()]);
             assert_eq!(snapshot.topology.phase, phase);
             assert!(!snapshot.topology.ready);
-            assert!(
-                snapshot
-                    .topology
-                    .services
-                    .iter()
-                    .all(|service| service.endpoint.is_none())
-            );
+            assert!(snapshot
+                .topology
+                .services
+                .iter()
+                .all(|service| service.endpoint.is_none()));
         }
 
         let cases: &[(&str, fn(&mut ServiceRunRecord))] = &[
@@ -3493,13 +3540,11 @@ mod tests {
                 !snapshot.topology.ready,
                 "{label} endpoint evidence must not claim agent readiness"
             );
-            assert!(
-                snapshot
-                    .topology
-                    .services
-                    .iter()
-                    .all(|service| service.endpoint.is_none())
-            );
+            assert!(snapshot
+                .topology
+                .services
+                .iter()
+                .all(|service| service.endpoint.is_none()));
         }
 
         let duplicate = topology_snapshot(
@@ -3513,13 +3558,11 @@ mod tests {
             "duplicate service evidence is not a unique ownership proof"
         );
         assert!(!duplicate.topology.ready);
-        assert!(
-            duplicate
-                .topology
-                .services
-                .iter()
-                .all(|service| service.endpoint.is_none())
-        );
+        assert!(duplicate
+            .topology
+            .services
+            .iter()
+            .all(|service| service.endpoint.is_none()));
     }
 
     #[test]
@@ -3614,11 +3657,9 @@ mod tests {
         let error =
             require_compose_access(&record, "expected-project", ComposeAccess::DockerShimPost)
                 .expect_err("mismatched registry project must not be accessible");
-        assert!(
-            error
-                .to_string()
-                .contains("registry belongs to `other-project`")
-        );
+        assert!(error
+            .to_string()
+            .contains("registry belongs to `other-project`"));
     }
 }
 // HANDWRITE-END

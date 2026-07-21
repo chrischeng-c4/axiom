@@ -32,6 +32,13 @@ pub enum Status {
     Created,
     /// A command is currently executing.
     Running,
+    /// The last command was interrupted after VAT completed owned cleanup.
+    Interrupted {
+        /// POSIX signal number received by VAT (SIGINT=2, SIGTERM=15).
+        signal: i32,
+        /// Stable human-readable signal/reason retained for state and GC.
+        reason: String,
+    },
     /// Last command finished with this exit code.
     Exited { code: i32 },
     /// A frozen, read-only label (produced by `vat snapshot`).
@@ -170,6 +177,11 @@ pub struct RunnerRunRecord {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// A non-empty value means VAT could not prove the owned runner process
+    /// group absent. The VAT must be retained instead of discarding the only
+    /// durable cleanup diagnosis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
     pub stdout_log: String,
     pub stderr_log: String,
 }
@@ -205,6 +217,7 @@ pub enum ProcessStatus {
     Created,
     Running,
     Ready,
+    Interrupted,
     Exited,
     Failed,
     Timeout,
