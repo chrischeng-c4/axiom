@@ -2,21 +2,19 @@
   "version": 1,
   "project": "defer",
   "source_digest": "sha256:e5cc0fb881925a3b48db2ba40b0e9d6e8bc90ef44e9c5463878e1f355a0a0185",
-  "decision": "needs_revision",
+  "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2220-revision-2",
-  "reviewed_at": "2026-07-21T01:48:32.854544+00:00",
-  "summary": "The revision closes the prior operator-render and live-reconcile gaps: the feature-enabled test pins the six-object graph, exact Service/PDB/probe/PVC and secret relationships, and the strengthened Kind journey checks the reconciled topology before durable domain mutation and recovery. The direct Kustomize oracle still reads service.yaml and pdb.yaml out of band rather than asserting them in a composed kustomize result, so disconnecting those valid files from the base resources list remains false green despite the EC's explicit unconnected-patch guarantee.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2220-revision-3",
+  "reviewed_at": "2026-07-21T02:15:43.174522+00:00",
+  "summary": "Accepted. The Kubernetes-native capability's behavior and stability dimensions are covered by three substantive cases. The CLI gate pins lifecycle-layer artifacts and version binding; the operator-feature command runs non-zero direct and operator tests that now assert both base and production composed Kustomize resources, the exact stateful topology, probes, PVC, Services/PDB, and connected security/backup wiring; and the real Kind gate checks reconciled resources before a PVC-backed queue/task mutation, pod-UID replacement, recovered state, post-recovery mutations, and verified cluster cleanup. The prior out-of-band direct-resource loophole is closed because both composed resource sets must contain the exact named Services and PDB.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
-    "assertions_specific": false,
+    "assertions_specific": true,
     "oracle_independent": true,
-    "loopholes_checked": false,
-    "false_green_risk_checked": false
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
   },
-  "findings": [
-    "Case `defer-kubernetes-rendered-stateful-topology` now pins the contents of the direct Services and PDB, but `direct_base_is_a_restricted_durable_singleton` obtains them with `include_str!(\"../k8s/base/service.yaml\")` and `include_str!(\"../k8s/base/pdb.yaml\")`; `prod_profile_renders_the_connected_security_boundary` parses the composed `kubectl kustomize` output but never requires `Service/defer-headless`, `Service/defer`, or `PodDisruptionBudget/defer`. Removing `service.yaml` or `pdb.yaml` from `apps/defer/k8s/base/kustomization.yaml` therefore leaves all assertions green while the direct Kustomize base no longer ships the peer/client Services or disruption budget, contradicting the case's exact-base and `unconnected patch cannot pass` claims. Revise the runner to assert those named resources and their already-specified selectors/ports/budget from a composed base or production `kubectl kustomize` resource set, not only from standalone source files."
-  ],
+  "findings": [],
   "target_path": "apps/defer/external-contracts/behavior/2220.md"
 }
