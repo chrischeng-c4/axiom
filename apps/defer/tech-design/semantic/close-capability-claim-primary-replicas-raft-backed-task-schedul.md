@@ -55,7 +55,6 @@ flowchart TD
     peer_ok -->|yes| verified([primary-replicas claim externally verified])
     peer_ok -->|no| fail
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
