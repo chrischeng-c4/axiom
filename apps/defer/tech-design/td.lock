@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-21T00:52:35.020084+00:00"
-digest = "sha256:84ac6a4f9afca0868008deb6e1afd76fafdca85674c10c30b521c7165a1b05cd"
-source_digest = "sha256:84ac6a4f9afca0868008deb6e1afd76fafdca85674c10c30b521c7165a1b05cd"
-ir_digest = "sha256:f22b374f4a25f036b24adcb7fce78bbd8c0d6f70f7ad67479fabf2d5aa0de294"
+generated_at = "2026-07-21T02:39:14.993775+00:00"
+digest = "sha256:94e6a95ec6a4670e041bb3fb91a59bf60f0cd7ac06e251fb98bea1de25950721"
+source_digest = "sha256:94e6a95ec6a4670e041bb3fb91a59bf60f0cd7ac06e251fb98bea1de25950721"
+ir_digest = "sha256:2ca9f347f35a40a6b5f15b7d247a01f7a6c2ed0b468c6b55194d5d96e26d617b"
 
 [[files]]
 path = "README.md"
@@ -59,6 +59,12 @@ section_count = 3
 path = "semantic/close-capability-claim-competitor-performance-delayed-task-compe.md"
 digest = "sha256:15831233baebbccca7d37fb9c00940b4f952179a834b69255950186f08842a1f"
 ir_digest = "sha256:95f6f0b636de219594376467b40eaea54d8d781fd41a4485ae1d09ec64da9d11"
+section_count = 3
+
+[[files]]
+path = "semantic/close-capability-claim-kubernetes-native-deployment-dedicated-ta.md"
+digest = "sha256:811ff755081348124c8dcb897676f5b68f58ff7cb3416ce9321169b659f0a52b"
+ir_digest = "sha256:a1e3487c6c3ac272d1a9ca194c15ca17ee4cce910b7d34c2a6072701bc2a6374"
 section_count = 3
 
 [[files]]
