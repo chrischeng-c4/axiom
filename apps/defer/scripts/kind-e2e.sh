@@ -228,6 +228,74 @@ EOF
   # </HANDWRITE>
 }
 
+assert_operator_topology() {
+  echo ">> assert reconciled StatefulSet probes, PVC, and /data mount"
+  kubectl -n "$NAMESPACE" get statefulset "$DEFER_NAME" -o json |
+    jq -e '
+      .spec.replicas == 1
+      and .spec.serviceName == "defer-headless"
+      and .spec.selector.matchLabels == {
+        "app.kubernetes.io/name": "defer",
+        "app.kubernetes.io/instance": "defer",
+        "app.kubernetes.io/component": "server"
+      }
+      and .spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz"
+      and .spec.template.spec.containers[0].readinessProbe.httpGet.port == "http"
+      and .spec.template.spec.containers[0].readinessProbe.periodSeconds == 5
+      and .spec.template.spec.containers[0].livenessProbe.httpGet.path == "/healthz"
+      and .spec.template.spec.containers[0].livenessProbe.httpGet.port == "http"
+      and .spec.template.spec.containers[0].livenessProbe.periodSeconds == 15
+      and .spec.template.spec.containers[0].startupProbe.httpGet.path == "/healthz"
+      and .spec.template.spec.containers[0].startupProbe.httpGet.port == "http"
+      and .spec.template.spec.containers[0].startupProbe.periodSeconds == 5
+      and .spec.template.spec.containers[0].startupProbe.failureThreshold == 120
+      and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "data" and .mountPath == "/data" and ((.readOnly // false) == false))] | length) == 1
+      and .spec.volumeClaimTemplates[0].metadata.name == "data"
+      and .spec.volumeClaimTemplates[0].spec.resources.requests.storage == "1Gi"
+    ' >/dev/null
+
+  echo ">> assert reconciled headless peer Service selector and HTTP/Raft ports"
+  kubectl -n "$NAMESPACE" get service "${DEFER_NAME}-headless" -o json |
+    jq -e '
+      .spec.clusterIP == "None"
+      and .spec.publishNotReadyAddresses == true
+      and .spec.selector == {
+        "app.kubernetes.io/name": "defer",
+        "app.kubernetes.io/instance": "defer",
+        "app.kubernetes.io/component": "server"
+      }
+      and ([.spec.ports[] | {name, port, targetPort, protocol}]) == [
+        {"name":"http","port":7141,"targetPort":"http","protocol":"TCP"},
+        {"name":"raft","port":7142,"targetPort":"raft","protocol":"TCP"}
+      ]
+    ' >/dev/null
+
+  echo ">> assert reconciled client Service selector and HTTP port"
+  kubectl -n "$NAMESPACE" get service "$DEFER_NAME" -o json |
+    jq -e '
+      .spec.type == "ClusterIP"
+      and .spec.selector == {
+        "app.kubernetes.io/name": "defer",
+        "app.kubernetes.io/instance": "defer",
+        "app.kubernetes.io/component": "server"
+      }
+      and ([.spec.ports[] | {name, port, targetPort, protocol}]) == [
+        {"name":"http","port":7141,"targetPort":"http","protocol":"TCP"}
+      ]
+    ' >/dev/null
+
+  echo ">> assert reconciled PDB selector and disruption budget"
+  kubectl -n "$NAMESPACE" get poddisruptionbudget "$DEFER_NAME" -o json |
+    jq -e '
+      .spec.maxUnavailable == 1
+      and .spec.selector.matchLabels == {
+        "app.kubernetes.io/name": "defer",
+        "app.kubernetes.io/instance": "defer",
+        "app.kubernetes.io/component": "server"
+      }
+    ' >/dev/null
+}
+
 expose_api() {
   kubectl -n "$NAMESPACE" apply -f - <<EOF
 apiVersion: v1
@@ -259,6 +327,7 @@ step "create Kind cluster $CLUSTER_NAME (host :$HOST_PORT -> node :$NODE_PORT)" 
 step "build Defer operator image and load it into Kind" build_and_load_image
 step "install Defer CRD and operator" install_operator
 step "apply single-node Defer CR and wait for its PVC" apply_defer_instance
+step "verify operator-owned StatefulSet, peer/client Services, and PDB" assert_operator_topology
 
 INITIAL_UID="$(wait_for_ready_pod)"
 step "expose operator-owned Defer pod on NodePort :$NODE_PORT" expose_api

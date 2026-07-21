@@ -1,20 +1,22 @@
 {
   "version": 1,
   "project": "defer",
-  "source_digest": "sha256:edbc5a3cb6ba7ad795d63f6d24e9a90cc2806980d5d7460acdeeaf761b635900",
-  "decision": "accepted",
+  "source_digest": "sha256:e5cc0fb881925a3b48db2ba40b0e9d6e8bc90ef44e9c5463878e1f355a0a0185",
+  "decision": "needs_revision",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2219",
-  "reviewed_at": "2026-07-21T00:39:07.918913+00:00",
-  "summary": "Accepted. The two behavior cases close the HTTP/2 API-list claim with independent exact-operation oracles: one real service listener is exercised by HTTP/1.1 and prior-knowledge h2c clients, every advertised domain operation performs a concrete stateful journey, backup bytes restore terminal state into a fresh Raft store, and served/offline OpenAPI remain equal to the canonical IR. The offline gate also pins the exact routes output and exact TypeScript, Python, and Rust file/symbol inventories, including Python sync/async clients and the batch-task path. Both declared commands passed independently with non-zero test counts.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2220-revision-2",
+  "reviewed_at": "2026-07-21T01:48:32.854544+00:00",
+  "summary": "The revision closes the prior operator-render and live-reconcile gaps: the feature-enabled test pins the six-object graph, exact Service/PDB/probe/PVC and secret relationships, and the strengthened Kind journey checks the reconciled topology before durable domain mutation and recovery. The direct Kustomize oracle still reads service.yaml and pdb.yaml out of band rather than asserting them in a composed kustomize result, so disconnecting those valid files from the base resources list remains false green despite the EC's explicit unconnected-patch guarantee.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
-    "assertions_specific": true,
+    "assertions_specific": false,
     "oracle_independent": true,
-    "loopholes_checked": true,
-    "false_green_risk_checked": true
+    "loopholes_checked": false,
+    "false_green_risk_checked": false
   },
-  "findings": [],
-  "target_path": "apps/defer/external-contracts/behavior/2219.md"
+  "findings": [
+    "Case `defer-kubernetes-rendered-stateful-topology` now pins the contents of the direct Services and PDB, but `direct_base_is_a_restricted_durable_singleton` obtains them with `include_str!(\"../k8s/base/service.yaml\")` and `include_str!(\"../k8s/base/pdb.yaml\")`; `prod_profile_renders_the_connected_security_boundary` parses the composed `kubectl kustomize` output but never requires `Service/defer-headless`, `Service/defer`, or `PodDisruptionBudget/defer`. Removing `service.yaml` or `pdb.yaml` from `apps/defer/k8s/base/kustomization.yaml` therefore leaves all assertions green while the direct Kustomize base no longer ships the peer/client Services or disruption budget, contradicting the case's exact-base and `unconnected patch cannot pass` claims. Revise the runner to assert those named resources and their already-specified selectors/ports/budget from a composed base or production `kubectl kustomize` resource set, not only from standalone source files."
+  ],
+  "target_path": "apps/defer/external-contracts/behavior/2220.md"
 }
