@@ -62,6 +62,49 @@ fn h2c_client() -> reqwest::Client {
         .unwrap()
 }
 
+fn http1_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .http1_only()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .unwrap()
+}
+
+const EXPECTED_DOMAIN_OPERATIONS: &[&str] = &[
+    "DELETE /v1/queues/{queue}/tasks/{task_id}",
+    "GET /admin/backup",
+    "GET /v1/queues/{queue}",
+    "GET /v1/queues/{queue}/tasks/{task_id}",
+    "POST /v1/queues/{queue}/control",
+    "POST /v1/queues/{queue}/dispatch",
+    "POST /v1/queues/{queue}/tasks",
+    "POST /v1/queues/{queue}/tasks:batch",
+    "PUT /v1/queues/{queue}",
+];
+
+fn assert_exact_domain_operations(spec: &serde_json::Value) {
+    let paths = spec["paths"].as_object().expect("OpenAPI paths object");
+    let mut actual = Vec::new();
+    for (path, item) in paths {
+        let item = item.as_object().expect("OpenAPI path item");
+        for method in [
+            "delete", "get", "head", "options", "patch", "post", "put", "trace",
+        ] {
+            if item.contains_key(method) {
+                actual.push(format!("{} {path}", method.to_ascii_uppercase()));
+            }
+        }
+    }
+    actual.sort();
+    assert_eq!(
+        actual,
+        EXPECTED_DOMAIN_OPERATIONS
+            .iter()
+            .map(|operation| (*operation).to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2215" reason="Own the required-auth h2c oracle for tokenless operational routes, protected task/admin routes, queue-scoped RBAC, and cross-queue tenant denial.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
@@ -79,17 +122,20 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
     let (_dir, raft) = raft().await;
     let (url, open_server) = start(raft.clone(), AuthConfig::open()).await;
     let client = h2c_client();
-    for path in ["/healthz", "/readyz", "/docs"] {
-        assert_eq!(
-            client
-                .get(format!("{url}{path}"))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::OK,
-            "{path}"
-        );
+    let http1 = http1_client();
+    for (protocol, protocol_client) in [("h2c", &client), ("http/1.1", &http1)] {
+        for path in ["/healthz", "/readyz", "/docs", "/openapi.json", "/metrics"] {
+            assert_eq!(
+                protocol_client
+                    .get(format!("{url}{path}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK,
+                "{protocol} {path}"
+            );
+        }
     }
     let spec = client
         .get(format!("{url}/openapi.json"))
@@ -99,7 +145,13 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
         .text()
         .await
         .unwrap();
-    assert!(spec.contains("/v1/queues/{queue}/tasks"));
+    let served_spec: serde_json::Value = serde_json::from_str(&spec).unwrap();
+    assert_eq!(
+        served_spec,
+        serde_json::to_value(defer::openapi::openapi()).unwrap(),
+        "served OpenAPI must equal the canonical IR"
+    );
+    assert_exact_domain_operations(&served_spec);
 
     assert_eq!(
         client
@@ -111,6 +163,29 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             .status(),
         StatusCode::OK
     );
+    assert_eq!(
+        http1
+            .get(format!("{url}/v1/queues/jobs"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK,
+        "domain routes share the same HTTP/1.1+h2c listener"
+    );
+    for state in ["Paused", "Running"] {
+        let response = http1
+            .post(format!("{url}/v1/queues/jobs/control"))
+            .json(&serde_json::json!({"state": state}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["control_state"],
+            state
+        );
+    }
     assert_eq!(
         client
             .post(format!("{url}/v1/queues/jobs/tasks"))
@@ -127,6 +202,26 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             .unwrap()
             .status(),
         StatusCode::CREATED
+    );
+    let batch = http1
+        .post(format!("{url}/v1/queues/jobs/tasks:batch"))
+        .json(&serde_json::json!({
+            "tasks": [{
+                "task_id": "batch-through-http1",
+                "target": {"url": "http://127.0.0.1/", "method": "POST", "headers": {}},
+                "payload": {"contract": "http1-batch-route"},
+                "schedule_at": Utc::now() + chrono::Duration::minutes(5),
+                "priority": 10,
+                "max_attempts": 1
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(batch.status(), StatusCode::CREATED);
+    assert_eq!(
+        batch.json::<serde_json::Value>().await.unwrap()["created"],
+        1
     );
     let dispatched: serde_json::Value = client
         .post(format!("{url}/v1/queues/jobs/dispatch"))
@@ -156,7 +251,7 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
         .unwrap();
     assert!(metrics.contains("defer_dispatch_acked_total 1"));
 
-    let snapshot = client
+    let snapshot = http1
         .get(format!("{url}/admin/backup"))
         .send()
         .await
