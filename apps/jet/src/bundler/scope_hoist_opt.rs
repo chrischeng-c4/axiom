@@ -3566,6 +3566,14 @@ pub struct ExportElisionStats {
     /// through the same runtime registry accessor as a registry-resident
     /// one does, with no distinguishing signal available here — see
     /// `kept_cross_chunk`.
+    ///
+    /// #2282 added a second source into this same bucket: a `require(`
+    /// consumer read isn't the only way a producer can be registry-side —
+    /// a *flat-region* `_r(id)` consumer reads producer `id` this same way
+    /// regardless of `id`'s own residency, so `require_side` alone can't
+    /// catch a registry-resident producer whose export text still happens
+    /// to take this pass's `_m{id}.exports[...]` candidate shape. See
+    /// `ExportKeepReason::RegistryResidentProducer`.
     pub kept_registry: usize,
     /// Always 0 today. A *cross-chunk-referenced* producer never reaches
     /// this pass as an `_m{id}.exports[...]` candidate at all — the
@@ -3651,7 +3659,9 @@ impl ExportElisionStats {
     /// to be independently observable at this pass.
     fn record_keep(&mut self, reason: ExportKeepReason) {
         match reason {
-            ExportKeepReason::RegistryResidueRead => self.kept_registry += 1,
+            ExportKeepReason::RegistryResidueRead | ExportKeepReason::RegistryResidentProducer => {
+                self.kept_registry += 1
+            }
             ExportKeepReason::NamespaceEscape => self.kept_namespace += 1,
             ExportKeepReason::NoRecordedReads => self.kept_barrel_glue += 1,
             ExportKeepReason::ComplexRhs
@@ -3673,13 +3683,29 @@ impl ExportElisionStats {
 /// access, surviving barrel glue re-export). Two of those five turned out
 /// to be structurally indistinguishable, at this pass, from two others —
 /// see the `kept_cross_chunk` / `kept_string_indexed` field doc comments
-/// on [`ExportElisionStats`] for exactly why — leaving the seven arms
-/// below as what the code actually branches on.
+/// on [`ExportElisionStats`] for exactly why — leaving seven arms as what
+/// the code originally branched on. #2282 added an eighth,
+/// `RegistryResidentProducer`: none of the original seven catch a
+/// registry-resident producer id whose export text still happens to take
+/// this pass's `_m{id}.exports[...]` candidate shape (see that variant's
+/// own doc comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExportKeepReason {
     /// RHS isn't a bare identifier — `is_js_identifier` rejected it
     /// (function/object/conditional/chained expression).
     ComplexRhs,
+    /// The candidate producer id is not flat-resident in the entry-flatten
+    /// combined region's own sparse `_mods` map (#2282) — i.e. it is
+    /// registry-resident. `_m{id}.exports[...]` text is expected to only
+    /// exist for flat-resident producers, but the reference corpus
+    /// falsified that assumption for one registry-resident id, and no
+    /// other rung below catches it (the mattering consumer read reaches
+    /// the producer through `_r(id)`, which every flat consumer uses
+    /// regardless of the target's own residency). Folded into the same
+    /// `kept_registry` bucket as `RegistryResidueRead` — both are
+    /// fundamentally "this crosses into registry-residence," just
+    /// detected by a different signal. See `is_registry_resident_producer`.
+    RegistryResidentProducer,
     /// The module has a bare/namespace/computed-key escape anywhere
     /// (`escaped_ids.contains(id)`).
     NamespaceEscape,
@@ -3704,12 +3730,13 @@ enum ExportKeepReason {
 }
 
 impl ExportKeepReason {
-    /// Per-key `JET_ELISION_DEBUG` dump tag. Four of the seven arms fold
+    /// Per-key `JET_ELISION_DEBUG` dump tag. Four of the eight arms fold
     /// into the coarse `"other"` counter bucket on `ExportElisionStats`
     /// but stay individually distinguishable in the dump.
     fn dump_tag(self) -> &'static str {
         match self {
             ExportKeepReason::RegistryResidueRead => "registry",
+            ExportKeepReason::RegistryResidentProducer => "registry_producer",
             ExportKeepReason::NamespaceEscape => "namespace",
             ExportKeepReason::NoRecordedReads => "barrel_glue",
             ExportKeepReason::ComplexRhs => "other:complex_rhs",
@@ -4083,6 +4110,28 @@ fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizatio
 }
 // </HANDWRITE>
 
+/// Static guard (#2282): verifies, rather than assumes, that a candidate
+/// `_m{id}.exports[...]` producer id is actually flat-resident before
+/// [`elide_same_chunk_export_bindings_unvalidated`] treats it as eligible.
+/// The reference corpus produced this id-qualified export-assignment shape
+/// for module 143 — a registry-resident react-router chunk newly ingested
+/// since #2261 — even though only flat-resident modules are supposed to
+/// emit it; the mattering consumer read reached producer 143 through
+/// `_r(143)`, which every flat-region consumer uses for *any* target id
+/// regardless of that target's own residency, so
+/// `ExportKeepReason::RegistryResidueRead`'s `require(`-token signal never
+/// fired. Reuses `entry_flat_region_mods_ids`'s parse of the entry-flatten
+/// combined region's own sparse `_mods` map (#2205 round 1) as the source
+/// of truth for which ids are genuinely flat-resident in *this* region;
+/// `None` (the dense array-form region, where no registry residue is
+/// possible by construction) means every id is flat, so nothing is denied.
+fn is_registry_resident_producer(id: usize, flat_region_ids: &Option<HashSet<usize>>) -> bool {
+    match flat_region_ids {
+        Some(flat_ids) => !flat_ids.contains(&id),
+        None => false,
+    }
+}
+
 /// Drop the exports-object property-key indirection for same-chunk,
 /// statically-consumed named exports in the flattened region (#1993).
 ///
@@ -4123,10 +4172,18 @@ fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizatio
 /// - Per key: every recorded read must come from `_r(` (flat region); a
 ///   single `require(id).key` read or a single write (`_r(id).key = ...`)
 ///   keeps that key's indirection.
-/// - `_m{id}.exports[...]`/`_r(id)` text only exists for modules the
-///   entry-flatten partition already proved safe to flatten (registry-
-///   resident and cross-chunk-referenced modules never emit this shape),
-///   so those two "keep" triggers are satisfied by construction.
+/// - `_m{id}.exports[...]`/`_r(id)` text is *expected* to only exist for
+///   modules the entry-flatten partition already proved flat-resident
+///   (registry-resident and cross-chunk-referenced modules are supposed to
+///   keep the generic CJS `module`/`exports` factory names instead) — but
+///   #2282 found this assumption violated on the reference corpus for one
+///   registry-resident producer, with no other rung able to catch it (the
+///   mattering consumer read reaches the producer through `_r(id)`, which
+///   every flat consumer uses regardless of the target's own residency).
+///   Enforced explicitly now instead of only assumed: `is_registry_resident_producer`
+///   checks the candidate producer id against the flat region's own sparse
+///   `_mods` map (via `entry_flat_region_mods_ids`, #2205 round 1) before
+///   treating any `_m{id}.exports[...]` candidate as eligible.
 /// - When every key of a module is elided and nothing still references
 ///   `_m{id}e`/`_m{id}`, `remove_orphan_module_alias_and_slot` drops the
 ///   now-dead exports-object scaffolding too.
@@ -4151,6 +4208,7 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
     let escaped_ids = bare_require_module_ids_excluding_default_fallback(code);
     let usage = collect_export_key_usage(code);
     let block_scoped_names = collect_block_scoped_declaration_names(code);
+    let flat_region_ids = entry_flat_region_mods_ids(code);
 
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
     let mut touched_modules: HashSet<usize> = HashSet::new();
@@ -4176,6 +4234,18 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
                 *id,
                 prop,
                 ExportKeepReason::ComplexRhs,
+                usage.get(key),
+            );
+            continue;
+        }
+        if is_registry_resident_producer(*id, &flat_region_ids) {
+            mark_export_key_kept(
+                &mut stats,
+                &mut debug_rows,
+                debug_enabled,
+                *id,
+                prop,
+                ExportKeepReason::RegistryResidentProducer,
                 usage.get(key),
             );
             continue;
@@ -6424,6 +6494,64 @@ const raw = `_m0_x`;"#;
                 + stats.kept_other,
             "kept-reason counters must sum to kept: {stats:?}"
         );
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_registry_resident_producer_keeps() {
+        // #2282: the entry-flatten combined region's own sparse `_mods`
+        // map lists only module 0 as flat-resident, so module 143 is
+        // registry-resident — but the reference corpus produced this
+        // pass's `_m{id}.exports[...]` candidate shape for it anyway. No
+        // pre-existing keep-reason check catches this: the consumer read
+        // reaches producer 143 through `_r(143)`, which every flat
+        // consumer uses for *any* target id regardless of that target's
+        // own residency, so `kept_registry`'s old `require(`-token signal
+        // never fires. Pre-fix this pass rewrote the read to a bare,
+        // nowhere-declared `createRequestInit` identifier — exactly the
+        // shape of the real corpus's `ReferenceError: createRequestInit
+        // is not defined`; `is_registry_resident_producer` must now
+        // force-keep it.
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n\n",
+            "var _mods={0:_m0};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "var createRequestInit=function(){};\n",
+            "_m143.exports[\"createRequestInit\"]=createRequestInit;\n",
+            "var _m0_ee=_r(143)[\"createRequestInit\"];\n",
+            "})();\n",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(
+            stats.elided_keys, 0,
+            "must not elide a registry-resident producer's export: {stats:?}"
+        );
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_flat_resident_producer_still_elides_in_entry_flat_region(
+    ) {
+        // Sibling coverage for the fix above: a producer id that *is*
+        // present in the sparse `_mods` map (genuinely flat-resident)
+        // must keep eliding normally through the same
+        // `entry_flat_region_mods_ids`-recognized preamble shape — the
+        // new guard only fires for ids absent from that map.
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n",
+            "var _m1={exports:{}};\n\n",
+            "var _mods={0:_m0,1:_m1};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "var _m1_x=1;\n",
+            "_m1.exports[\"x\"]=_m1_x;\n",
+            "var _m0_y=_r(1)[\"x\"];\n",
+            "})();\n",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 1, "{stats:?}");
+        assert!(!out.contains("_m1.exports"));
+        assert!(out.contains("_m0_y=_m1_x;"));
     }
 }
 // </HANDWRITE>
