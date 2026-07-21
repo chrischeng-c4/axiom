@@ -58,9 +58,8 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: "Add a deterministic structural regression gate that derives Lumen's required service baselines from aw.toml, requires the capability contract to name shared stateful composition, verifies cli-std/service-http/service-auth/service-k8s/raft-runtime/peer-tls delegation at the actual integration seams, and rejects app-local copies of tracing, admission, auth registry, Kubernetes render, or Raft host mechanisms. Search policy, Lumen CRD policy, and thin adapters remain app-owned. generator gap: missing-generator:test:capability-shared-ownership (#2324)."
+    description: "Create one deterministic structural regression gate for Lumen's trait-derived capability baseline and shared-library ownership boundary. It must inspect aw.toml, README, Cargo.toml, and the actual CLI, HTTP, auth, Kubernetes, Raft, peer transport, and observability integration seams; require canonical shared delegation; keep search/CRD policy app-owned; and encode a total, disjoint shared-versus-domain classification so shared failures cannot be tracked skips. generator gap: missing-generator:test:capability-shared-ownership (#2324)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
