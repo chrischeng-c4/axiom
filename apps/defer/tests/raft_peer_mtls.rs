@@ -75,7 +75,7 @@ struct Node {
     serve: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the positive peer-identity oracle that trusted Defer voters replicate committed scheduler state over the shared authenticated peer transport.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2221" reason="Own the positive peer-identity oracle that trusted Defer voters replicate committed scheduler state over the shared authenticated peer transport.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn trusted_defer_peers_replicate_scheduler_state_over_mtls() {
     let material = material(&authority());
