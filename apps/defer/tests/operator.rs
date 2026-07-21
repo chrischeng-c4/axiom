@@ -47,7 +47,7 @@ fn production() -> Defer {
     .unwrap()
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the exact six-object production graph, three-replica StatefulSet relationships, connected security secrets, and backup CronJob oracle.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2220" reason="Own the exact six-object production graph, three-replica StatefulSet relationships, connected security secrets, and backup CronJob oracle.">
 #[test]
 fn production_render_composes_shared_stateful_primitives() {
     let objects = operator::render::render(&production());
