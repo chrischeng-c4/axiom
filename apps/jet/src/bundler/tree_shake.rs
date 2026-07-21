@@ -2478,6 +2478,30 @@ struct ModuleLookup<'a> {
     modules: &'a [(PathBuf, String)],
     by_path: HashMap<PathBuf, usize>,
     by_specifier: HashMap<String, usize>,
+    /// #2267 round 2 — specifier strings that more than one distinct
+    /// module index tried to claim in `by_specifier` (`.or_insert`
+    /// first-writer-wins leaves `by_specifier` itself silently pointing at
+    /// whichever candidate was discovered first). A non-hoisted, nested
+    /// duplicate of a package under some other package's own
+    /// `node_modules/` (a common real-world version-conflict shape)
+    /// textually reduces to the exact same bare specifier as the
+    /// correctly-hoisted top-level copy via `package_specifier_variants`
+    /// (it only looks at the text after the LAST `node_modules/`
+    /// segment) — e.g. both `node_modules/react/index.js` and
+    /// `node_modules/some-lib/node_modules/react/index.js` register
+    /// "react". Left unresolved, EVERY bare `import X from 'react'`
+    /// edge in the whole graph — including ones a real, importer-aware
+    /// resolver would have correctly pointed at the hoisted copy — got
+    /// silently redirected to whichever copy happened to sort first,
+    /// leaving the real, correctly-hoisted copy with zero `used_exports`
+    /// demand despite hundreds of real graph edges pointing at it:
+    /// `compute_transform_survivors` then skipped transforming it while
+    /// the flattened output's compiled consumers still referenced its
+    /// numeric module id, tripping `check_referenced_module_emission`'s
+    /// guard. `find_index_uncached` treats a specifier in this set as
+    /// untrustworthy for the `by_specifier` fast path and defers to
+    /// `resolver` instead when one is available.
+    ambiguous_specifiers: HashSet<String>,
     /// Exact specifier resolution from the bundler's resolver. The textual
     /// variants above cannot map bare package specifiers whose entry comes
     /// from package.json (`@ant-design/colors` -> `es/index.js`); missing
@@ -2505,13 +2529,28 @@ struct ModuleLookup<'a> {
 impl<'a> ModuleLookup<'a> {
     fn new(modules: &'a [(PathBuf, String)]) -> Self {
         let mut by_path = HashMap::new();
-        let mut by_specifier = HashMap::new();
+        let mut by_specifier: HashMap<String, usize> = HashMap::new();
+        let mut ambiguous_specifiers: HashSet<String> = HashSet::new();
 
         for (idx, (path, _)) in modules.iter().enumerate() {
             let normalized = normalize_tree_shake_path(path);
             by_path.entry(normalized.clone()).or_insert(idx);
             for specifier in package_specifier_variants(&normalized) {
-                by_specifier.entry(specifier).or_insert(idx);
+                // #2267 round 2 — record when a second, distinct module
+                // index also claims a specifier `by_specifier` already has
+                // an entry for, instead of silently keeping only the
+                // first-writer-wins value with no trace anything was ever
+                // ambiguous (see `ambiguous_specifiers`'s doc comment).
+                match by_specifier.entry(specifier) {
+                    std::collections::hash_map::Entry::Occupied(existing) => {
+                        if *existing.get() != idx {
+                            ambiguous_specifiers.insert(existing.key().clone());
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(idx);
+                    }
+                }
             }
         }
 
@@ -2519,6 +2558,7 @@ impl<'a> ModuleLookup<'a> {
             modules,
             by_path,
             by_specifier,
+            ambiguous_specifiers,
             resolver: None,
             resolution_memo: DashMap::new(),
         }
@@ -2565,6 +2605,29 @@ impl<'a> ModuleLookup<'a> {
         }
 
         if let Some(idx) = self.by_specifier.get(specifier) {
+            if !self.ambiguous_specifiers.contains(specifier) {
+                return Some(*idx);
+            }
+            // #2267 round 2 — more than one module in this graph textually
+            // reduces to this same bare specifier (see
+            // `ambiguous_specifiers`'s doc comment: typically a hoisted
+            // package copy and a non-hoisted nested duplicate under some
+            // other package's own node_modules/). Consult the real,
+            // importer-aware resolver instead of confidently returning
+            // whichever candidate happened to be discovered first — only
+            // reached for genuinely ambiguous specifiers, so every
+            // unambiguous one keeps today's fast path untouched.
+            if let Some(resolver) = self.resolver {
+                if let Some(resolved) = resolver(specifier, importer) {
+                    let normalized = normalize_tree_shake_path(&resolved);
+                    if let Some(resolved_idx) = self.by_path.get(&normalized) {
+                        return Some(*resolved_idx);
+                    }
+                }
+            }
+            // No resolver, or it couldn't resolve this specifier either —
+            // fall back to the historical first-registered candidate
+            // rather than dropping the edge entirely.
             return Some(*idx);
         }
 

@@ -2063,4 +2063,288 @@ async fn entry_flatten_resolves_multiline_bare_export_list_via_star_reexport() -
 
     Ok(())
 }
+
+fn write_cjs_entry_shim_specifier_collision_fixture(dir: &Path) {
+    // Hoisted copy: a react-shaped 2-line conditional CJS entry shim (no
+    // ESM export statements at all) sitting at the conventional top-level
+    // `node_modules/pkg/index.js` location every *external* consumer's
+    // real (importer-aware) resolution should land on.
+    fs::create_dir_all(dir.join("node_modules/pkg/cjs")).expect("create node_modules/pkg/cjs");
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","version":"1.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write pkg package.json");
+    fs::write(
+        dir.join("node_modules/pkg/index.js"),
+        r#"if (process.env.NODE_ENV === 'production') {
+  module.exports = require('./cjs/pkg.production.js');
+} else {
+  module.exports = require('./cjs/pkg.development.js');
+}
+"#,
+    )
+    .expect("write pkg index.js");
+    fs::write(
+        dir.join("node_modules/pkg/cjs/pkg.production.js"),
+        "exports.MARKER = 'HOISTED_PKG';\n",
+    )
+    .expect("write pkg cjs/pkg.production.js");
+    fs::write(
+        dir.join("node_modules/pkg/cjs/pkg.development.js"),
+        "exports.MARKER = 'HOISTED_PKG_DEV';\n",
+    )
+    .expect("write pkg cjs/pkg.development.js");
+
+    // `other-lib` carries its own non-hoisted, nested duplicate of `pkg`
+    // under its own `node_modules/` (a realistic version-conflict shape) —
+    // `other-lib`'s own `require('pkg')` legitimately resolves to *this*
+    // copy via real nearest-wins node_modules walk-up, not the top-level
+    // hoisted one.
+    fs::create_dir_all(dir.join("node_modules/other-lib/node_modules/pkg/cjs"))
+        .expect("create other-lib's nested node_modules/pkg/cjs");
+    fs::write(
+        dir.join("node_modules/other-lib/package.json"),
+        r#"{"name":"other-lib","version":"1.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write other-lib package.json");
+    fs::write(
+        dir.join("node_modules/other-lib/index.js"),
+        "const pkg = require('pkg');\nmodule.exports = { otherLibMarker: pkg.MARKER };\n",
+    )
+    .expect("write other-lib index.js");
+    // A *different* version string than the hoisted copy's `1.0.0` is
+    // load-bearing: `resolver::resolve_package`'s walk-up has a
+    // `hoisted_same_version` dedup rule that prefers the outermost copy
+    // whenever an outer candidate's version string exactly matches the
+    // nearest one — which would silently collapse this fixture's intended
+    // two-target split back down to a single (hoisted-only) target even
+    // for `other-lib`'s own nested-tree-local `require('pkg')`.
+    fs::write(
+        dir.join("node_modules/other-lib/node_modules/pkg/package.json"),
+        r#"{"name":"pkg","version":"2.0.0","main":"index.js","sideEffects":false}"#,
+    )
+    .expect("write other-lib's nested pkg package.json");
+    fs::write(
+        dir.join("node_modules/other-lib/node_modules/pkg/index.js"),
+        r#"if (process.env.NODE_ENV === 'production') {
+  module.exports = require('./cjs/pkg.production.js');
+} else {
+  module.exports = require('./cjs/pkg.development.js');
+}
+"#,
+    )
+    .expect("write other-lib's nested pkg index.js");
+    fs::write(
+        dir.join("node_modules/other-lib/node_modules/pkg/cjs/pkg.production.js"),
+        "exports.MARKER = 'NESTED_PKG';\n",
+    )
+    .expect("write other-lib's nested pkg cjs/pkg.production.js");
+    fs::write(
+        dir.join("node_modules/other-lib/node_modules/pkg/cjs/pkg.development.js"),
+        "exports.MARKER = 'NESTED_PKG_DEV';\n",
+    )
+    .expect("write other-lib's nested pkg cjs/pkg.development.js");
+
+    // Five more external consumers (outside `other-lib`'s own tree) doing a
+    // plain bare-specifier default import — standing in for the real
+    // corpus's ~180-file fan-in (every one of these must resolve to the
+    // *hoisted* copy, exactly like `other-lib`'s own import must keep
+    // resolving to its *nested* copy).
+    for n in 1..=5 {
+        let pkg_dir = format!("node_modules/consumer{n}");
+        fs::create_dir_all(dir.join(&pkg_dir)).expect("create consumerN dir");
+        fs::write(
+            dir.join(format!("{pkg_dir}/package.json")),
+            format!(
+                r#"{{"name":"consumer{n}","version":"1.0.0","main":"index.js","sideEffects":false}}"#
+            ),
+        )
+        .expect("write consumerN package.json");
+        fs::write(
+            dir.join(format!("{pkg_dir}/index.js")),
+            "import pkg from 'pkg';\nexport default pkg.MARKER;\n",
+        )
+        .expect("write consumerN index.js");
+    }
+
+    // Entry: the *hoisted* `pkg` import is textually first (so it is
+    // pushed to the crawl stack first) and `other-lib` is textually last —
+    // `build_graph`'s LIFO crawl (`queue.pop()`) explores the *last*-pushed
+    // import first, so `other-lib` (and therefore its nested `pkg`
+    // duplicate) is discovered — and assigned a module id — before the
+    // hoisted `pkg/index.js` shim, reproducing the exact discovery-order
+    // shape that exposes the `by_specifier` first-writer-wins collision.
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import HostedPkg from 'pkg';
+import consumer1Marker from 'consumer1';
+import consumer2Marker from 'consumer2';
+import consumer3Marker from 'consumer3';
+import consumer4Marker from 'consumer4';
+import consumer5Marker from 'consumer5';
+import otherLibResult from 'other-lib';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' +
+  [
+    HostedPkg.MARKER,
+    otherLibResult.otherLibMarker,
+    consumer1Marker,
+    consumer2Marker,
+    consumer3Marker,
+    consumer4Marker,
+    consumer5Marker,
+  ].join('|') +
+  '</div>';
+"#,
+    )
+    .expect("write entry");
+}
+
+/// #2267 round 2 — a package's only public surface may be a **classic
+/// 2-line CJS conditional entry shim** (`if (process.env.NODE_ENV ===
+/// 'production') module.exports = require('./cjs/pkg.production.js') else
+/// ...`, zero ESM export statements) hoisted to the top-level
+/// `node_modules/`, *and* the graph may separately carry a non-hoisted,
+/// nested duplicate of the exact same package under some other package's
+/// own `node_modules/` (a realistic version-conflict shape — this is
+/// exactly the react/react-is shape a real `@mui` corpus hit: module 1133
+/// = `node_modules/react/index.js`, referenced from ~180 files, never
+/// emitted). Both copies textually reduce to the identical bare specifier
+/// via `tree_shake::package_specifier_variants` (it only looks at the text
+/// after the *last* `node_modules/` segment), and
+/// `tree_shake::ModuleLookup`'s `by_specifier` fast path used to let
+/// whichever copy was discovered first during the graph crawl silently
+/// win specifier resolution for *every* consumer in the whole graph —
+/// including consumers whose real, importer-aware resolution should have
+/// landed on the *other* copy. That starved the correctly-hoisted copy of
+/// all analysis-side `used_exports` demand despite the real graph's own
+/// per-importer resolution consistently pointing every external consumer
+/// at it, so `compute_transform_survivors` dropped it from the survivors
+/// set while compiled consumer code still referenced its numeric module id
+/// — caught loudly by `Bundler::check_referenced_module_emission` rather
+/// than silently producing a black page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_flatten_resolves_hoisted_cjs_entry_shim_despite_nested_duplicate_specifier_collision(
+) -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_cjs_entry_shim_specifier_collision_fixture(fixture);
+
+    // The build itself must succeed: pre-fix, the hoisted `pkg` shim is
+    // dropped from the survivors set while every external consumer's
+    // compiled glue still calls into it by numeric id, and
+    // `check_referenced_module_emission` turns that into a loud build
+    // failure rather than a silent black page. `--no-minify` keeps this
+    // test isolated from a separate, pre-existing minifier issue (default
+    // minification can strip property-mutation-only CJS leaf bodies like
+    // `exports.MARKER = ...` down to an empty object even when they are
+    // correctly marked fully-live — unrelated to this fix; see the report
+    // follow-ups) so this test's signal is specifically the specifier
+    // resolution / survivors-set behavior this fix targets.
+    require_success(
+        run_jet(fixture, ["build", "--no-minify"])?,
+        "build (CJS entry-shim specifier-collision fixture)",
+    )?;
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "build must emit dist/index.html"
+    );
+
+    let dist = fixture.join("dist");
+
+    // (a) Static guard (module presence, cheap, no browser required): both
+    // the hoisted and nested `pkg` bodies must have been emitted, not just
+    // referenced.
+    let hoisted_emitted = dist_js_files_containing(&dist, "HOISTED_PKG");
+    assert!(
+        !hoisted_emitted.is_empty(),
+        "expected the hoisted pkg shim's body ('HOISTED_PKG') to be \
+         emitted somewhere in dist — it must survive tree-shaking's \
+         analysis pre-pass despite the nested duplicate's specifier \
+         collision, not just be referenced by numeric id from every \
+         consumer's compiled glue"
+    );
+    let nested_emitted = dist_js_files_containing(&dist, "NESTED_PKG");
+    assert!(
+        !nested_emitted.is_empty(),
+        "expected other-lib's own nested pkg duplicate ('NESTED_PKG') to \
+         also survive — the fix must not break legitimate nearest-wins \
+         resolution for the one consumer that really should get the \
+         nested copy"
+    );
+
+    // (b) Dynamic proof: the app must actually boot in a real Chromium and
+    // every one of the 5 external fan-in consumers plus the entry's own
+    // direct import must render the *hoisted* marker, while `other-lib`'s
+    // own import (from inside its own nested tree) renders the *nested*
+    // marker — proving the analysis's resolution matches the real graph's
+    // resolution for both sides of the collision, not merely that
+    // something got emitted.
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping real-browser half of \
+             entry_flatten_resolves_hoisted_cjs_entry_shim_despite_nested_duplicate_specifier_collision: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<Option<String>, anyhow::Error>(output_text)
+    })
+    .await;
+
+    let output_text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "entry_flatten_resolves_hoisted_cjs_entry_shim_despite_nested_duplicate_specifier_collision \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        output_text.as_deref(),
+        Some("HOISTED_PKG|NESTED_PKG|HOISTED_PKG|HOISTED_PKG|HOISTED_PKG|HOISTED_PKG|HOISTED_PKG"),
+        "app must boot with the entry's own direct import and every \
+         external fan-in consumer resolving to the hoisted pkg copy, \
+         while other-lib's own import (from inside its own nested tree) \
+         keeps resolving to its nested duplicate (#2267 round 2)"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END
