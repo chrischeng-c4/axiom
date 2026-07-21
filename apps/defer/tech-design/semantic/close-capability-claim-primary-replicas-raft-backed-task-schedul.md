@@ -92,3 +92,56 @@ changes:
     anchor: untrusted_defer_server_certificate_is_rejected
     reason: "Own the negative server-identity oracle that the client side of required peer mTLS rejects an attacker-CA server while the Defer client identity remains otherwise trusted."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: defer-primary-replicas-raft-backed-task-scheduler-verification
+requirements:
+  attacker_identity_rejected_before_routing:
+    id: R6
+    text: "Required peer mTLS rejects attacker-CA client and server identities before the Raft router handles the request, even when the legitimate opposite side remains otherwise trusted."
+    kind: security
+    risk: high
+    verify: cargo test -p defer --test raft_peer_mtls -- --nocapture
+  committed_executor_fencing:
+    id: R1
+    text: "A follower may forward the lease proposal, but the committed attempt records that follower as executor, a non-owner ack is rejected, and only the committed owner can settle the task to Succeeded across every replica."
+    kind: functional
+    risk: high
+    verify: cargo test -p defer --test raft_scheduler committed_scheduler_converges_and_fences_cross_replica_effects -- --nocapture
+  leader_loss_and_reassignment:
+    id: R2
+    text: "If the leader dies with a live lease, the new leader preserves the abandoned attempt, rejects stale settlement, reclaims the lease only after expiry, and reassigns it with a higher epoch and new attempt id before the terminal outcome commits."
+    kind: stability
+    risk: high
+    verify: cargo test -p defer --test raft_scheduler committed_scheduler_converges_and_fences_cross_replica_effects -- --nocapture
+  restart_catchup_and_second_failover:
+    id: R3
+    text: "The first failed primary can restart from the same durable directory, catch up to the committed task state before another leader loss, and the surviving quorum still completes another full create-lease-ack lifecycle after the second failover."
+    kind: stability
+    risk: high
+    verify: cargo test -p defer --test raft_scheduler committed_scheduler_converges_and_fences_cross_replica_effects -- --nocapture
+  snapshot_terminal_state_recovery:
+    id: R4
+    text: "A task that retries to DeadLettered survives same-directory restart, and every replica reports identical queue snapshot counts for task, terminal, scheduled, and in-flight state after recovery."
+    kind: regression
+    risk: high
+    verify: cargo test -p defer --test raft_scheduler dead_letter_terminal_state_converges_and_survives_restart -- --nocapture
+  trusted_peer_replication:
+    id: R5
+    text: "Trusted Defer peers replicate committed scheduler state over required peer mTLS using the shared authenticated transport."
+    kind: security
+    risk: high
+    verify: cargo test -p defer --test raft_peer_mtls trusted_defer_peers_replicate_scheduler_state_over_mtls -- --nocapture
+---
+flowchart TD
+    r1[R1 committed executor fencing] --> cargo_test_p_defer_test_raft_scheduler_committed_scheduler_converges_and_fences_cross_replica_effects_nocapture[cargo test -p defer --test raft_scheduler committed_scheduler_converges_and_fences_cross_replica_effects -- --nocapture]
+    r2[R2 leader loss and reassignment] --> cargo_test_p_defer_test_raft_scheduler_committed_scheduler_converges_and_fences_cross_replica_effects_nocapture
+    r3[R3 restart catchup and second failover] --> cargo_test_p_defer_test_raft_scheduler_committed_scheduler_converges_and_fences_cross_replica_effects_nocapture
+    r4[R4 snapshot terminal state recovery] --> cargo_test_p_defer_test_raft_scheduler_dead_letter_terminal_state_converges_and_survives_restart_nocapture[cargo test -p defer --test raft_scheduler dead_letter_terminal_state_converges_and_survives_restart -- --nocapture]
+    r5[R5 trusted peer replication] --> cargo_test_p_defer_test_raft_peer_mtls_trusted_defer_peers_replicate_scheduler_state_over_mtls_nocapture[cargo test -p defer --test raft_peer_mtls trusted_defer_peers_replicate_scheduler_state_over_mtls -- --nocapture]
+    r6[R6 attacker identity rejected before routing] --> cargo_test_p_defer_test_raft_peer_mtls_nocapture[cargo test -p defer --test raft_peer_mtls -- --nocapture]
+```
