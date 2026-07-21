@@ -53,3 +53,16 @@ flowchart TD
     ratio_ok -->|no| fail
     emit --> verified([local overhead ceiling verified])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/tests/relay_performance_ceiling.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: defer_stays_within_twenty_percent_of_relay_scheduler_ceiling
+    reason: "Own the release-mode oracle for exact same-host workload identity, completed-operation cardinality, positive finite metrics, explicit no-overclaim scope, and the hard Defer-to-Relay ratio threshold."
+```
