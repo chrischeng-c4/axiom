@@ -155,6 +155,11 @@ assert_task_status() {
       '.task_id == $task_id and .status == $expected' >/dev/null
 }
 
+pvc_uid() {
+  kubectl -n "$NAMESPACE" get pvc data-"${DEFER_NAME}"-0 \
+    -o jsonpath='{.metadata.uid}'
+}
+
 pause_queue() {
   curl -fsS --max-time 20 -X POST "http://127.0.0.1:${HOST_PORT}/v1/queues/jobs/control" \
     -H 'content-type: application/json' -d '{"state":"Paused"}' |
@@ -239,6 +244,7 @@ assert_operator_topology() {
         "app.kubernetes.io/instance": "defer",
         "app.kubernetes.io/component": "server"
       }
+      and .spec.template.metadata.labels == .spec.selector.matchLabels
       and .spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz"
       and .spec.template.spec.containers[0].readinessProbe.httpGet.port == "http"
       and .spec.template.spec.containers[0].readinessProbe.periodSeconds == 5
@@ -335,6 +341,11 @@ step "configure durable queue" put_queue
 step "create two scheduled tasks in one committed batch" create_task_batch
 step "verify scheduled lifecycle before replacement" assert_task_status "before-restart-a" "Scheduled"
 step "verify queue inventory before replacement" assert_queue "Running" 0
+INITIAL_PVC_UID="$(pvc_uid)"
+if [[ -z "$INITIAL_PVC_UID" ]]; then
+  echo "!! bound Defer PVC has no UID before pod replacement" >&2
+  exit 1
+fi
 
 step "delete serving pod while retaining its PVC" \
   kubectl -n "$NAMESPACE" delete pod "${DEFER_NAME}-0" --wait=false
@@ -343,6 +354,14 @@ if [[ "$REPLACEMENT_UID" == "$INITIAL_UID" ]]; then
   echo "!! StatefulSet did not replace the serving pod" >&2
   exit 1
 fi
+RECOVERED_PVC_UID="$(pvc_uid)"
+if [[ "$RECOVERED_PVC_UID" != "$INITIAL_PVC_UID" ]]; then
+  echo "!! pod replacement did not retain the same PVC identity" >&2
+  exit 1
+fi
+step "verify the same PVC remains Bound after pod replacement" \
+  kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Bound \
+  pvc/data-"${DEFER_NAME}"-0 --timeout=30s
 step "confirm API after replacement" wait_for_api
 step "verify both scheduled tasks recovered from durable Raft state" assert_queue "Running" 0
 step "verify task identity and state after replacement" assert_task_status "before-restart-b" "Scheduled"
