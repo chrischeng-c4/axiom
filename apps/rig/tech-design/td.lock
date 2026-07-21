@@ -2,10 +2,10 @@ version = 2
 project = "rig"
 ir_kind = "td"
 td_path = "apps/rig/tech-design"
-generated_at = "2026-07-15T17:46:03.889416+00:00"
-digest = "sha256:6adb9d2d9808a966a8881d4265235862d47e1733c05170abf324bc8e661c1dfd"
-source_digest = "sha256:6adb9d2d9808a966a8881d4265235862d47e1733c05170abf324bc8e661c1dfd"
-ir_digest = "sha256:fb28f7e225bfd4014a86bd2dd3c159a4223874bb8881162b74eb8362d912b49a"
+generated_at = "2026-07-21T10:21:58.710261+00:00"
+digest = "sha256:14a4d060b41695da757b209b6ae03c631bf835fb378db03e85bb8d15f6d208bd"
+source_digest = "sha256:14a4d060b41695da757b209b6ae03c631bf835fb378db03e85bb8d15f6d208bd"
+ir_digest = "sha256:af82e3710a3e29681f8556239e7b4336c576dc5b3eaddf7259078ff5f4c71ac4"
 
 [[files]]
 path = "logic/add-reusable-stateful-service-soak-and-fault-scenario-harness.md"
@@ -105,8 +105,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-rig-src-engine-http-rs.md"
-digest = "sha256:9254edc5823900c51e79b9259bec72539abedaafd3877cbccec6a2a157690cb5"
-ir_digest = "sha256:5a93fba45f26a8854fd47a914379c996a5c922a7f287ba9bd7a0ac9e8c2842a7"
+digest = "sha256:7f564daaed160e0965c70e43de2a4573da113a36d62211b10d8e14919cb3d177"
+ir_digest = "sha256:9aef7ab615f71565679c381bfbcf8d6b0fd759fed157f57f325d4497f67b0003"
 section_count = 3
 
 [[files]]
@@ -141,8 +141,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-rig-src-engine-transport-rs.md"
-digest = "sha256:7ce9713078ed90356699df33f207bfc05b9c438ab32276136492b51e9ddcc15d"
-ir_digest = "sha256:0272643e3fb1431240cb00d037e0b1988912168aee0be8c7236d91ab60012842"
+digest = "sha256:106fa388e801bb7bbd198ff09d8b505f2b37e02e89b019eebebd359eca842013"
+ir_digest = "sha256:a70fbd2cfa9d08c3fab0ddcfa4569236c52eb520e4f278df115ed8c53067593f"
 section_count = 3
 
 [[files]]
