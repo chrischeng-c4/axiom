@@ -11,7 +11,7 @@
 
 ## Capability Map
 
-- [README](README.md): capability source of truth and product contract.
+- [README](CAPABILITIES.md): capability source of truth and product contract.
 
 ## Agent Workflow
 
