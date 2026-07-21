@@ -1,7 +1,14 @@
 ---
 id: '2220'
-summary: (fill)
+summary: Verify Defer's dedicated Kubernetes task-service topology through exact CLI-rendered artifacts, composed direct and operator resource graphs, and a real Kind PVC-backed pod replacement and state-recovery journey.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: kubernetes-native-deployment
+    role: primary
+    gap: dedicated-task-service-topology
+    claim: dedicated-task-service-topology
+    coverage: full
+    rationale: "Defines Defer's domain CR policy and fail-closed deployment/recovery oracle while keeping generic StatefulSet reconciliation in libs/service-k8s."
 ---
 
 ## Logic
