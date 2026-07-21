@@ -75,6 +75,7 @@ summary_validation() {
   cat <<'EOF' >"${tmp_root}/short.meta"
 completed=1
 target_missing=0
+owner_missing=0
 EOF
   assert_nonzero "insufficient coverage" \
     _service_soak_rss_sampler_validate_series 99999 "${short_samples}" "${tmp_root}/short.meta" 2 2
@@ -99,11 +100,12 @@ summary_stop_output() {
   local child_pid
   sleep 4 &
   child_pid=$!
-  service_soak_rss_sampler_start "${child_pid}" 2 1 >/dev/null
+  service_soak_rss_sampler_start "${child_pid}" 2 1
   local token="${SERVICE_SOAK_RSS_LAST_TOKEN}"
   sleep 3
   local summary
-  summary="$(service_soak_rss_sampler_stop "${token}")"
+  service_soak_rss_sampler_stop "${token}"
+  summary="${SERVICE_SOAK_RSS_LAST_SUMMARY}"
   assert_ordered_summary "${summary}"
   assert_eq "0" "$(service_soak_rss_window_growth_pct "${summary}" "${summary}")" "stop summary growth parse"
   [[ ! -e "${token}" ]] || {
@@ -117,7 +119,7 @@ early_stop_fails() {
   local child_pid
   sleep 5 &
   child_pid=$!
-  service_soak_rss_sampler_start "${child_pid}" 3 1 >/dev/null
+  service_soak_rss_sampler_start "${child_pid}" 3 1
   local token="${SERVICE_SOAK_RSS_LAST_TOKEN}"
   sleep 1
   assert_nonzero "early stop" service_soak_rss_sampler_stop "${token}"
@@ -133,7 +135,7 @@ dead_target_fails() {
   local child_pid
   sleep 2 &
   child_pid=$!
-  service_soak_rss_sampler_start "${child_pid}" 5 1 >/dev/null
+  service_soak_rss_sampler_start "${child_pid}" 5 1
   local token="${SERVICE_SOAK_RSS_LAST_TOKEN}"
   sleep 3
   wait "${child_pid}" 2>/dev/null || true
@@ -191,11 +193,22 @@ sampler_lifecycle_cleanup() {
   trap_preservation_and_cleanup
 }
 
+subshell_lifecycle_rejected() {
+  local child_pid
+  sleep 4 &
+  child_pid=$!
+  assert_nonzero "subshell start" \
+    bash -c 'set -euo pipefail; source "$1"; (service_soak_rss_sampler_start "$2" 1 1)' \
+      bash libs/service-observability/scripts/soak-metrics.sh "${child_pid}"
+  kill "${child_pid}" 2>/dev/null || true
+  wait "${child_pid}" 2>/dev/null || true
+}
+
 contract_all() {
   summary_validation
   median_growth_semantics
-  local sampler_pid
   sampler_lifecycle_cleanup
+  subshell_lifecycle_rejected
 }
 
 case "${1:-all}" in
@@ -220,14 +233,15 @@ case "${1:-all}" in
     before_term="$(trap -p TERM)"
     sleep 30 &
     child_pid=$!
-    service_soak_rss_sampler_start "${child_pid}" 10 1 >/dev/null
+    service_soak_rss_sampler_start "${child_pid}" 10 1
     token="${SERVICE_SOAK_RSS_LAST_TOKEN}"
     after_start_exit="$(trap -p EXIT)"
     after_start_int="$(trap -p INT)"
     after_start_term="$(trap -p TERM)"
     if [[ "${mode}" == "stop" ]]; then
       sleep 11
-      service_soak_rss_sampler_stop "${token}" >"${state_file}.summary"
+      service_soak_rss_sampler_stop "${token}"
+      printf '%s\n' "${SERVICE_SOAK_RSS_LAST_SUMMARY}" >"${state_file}.summary"
       after_stop_exit="$(trap -p EXIT)"
       after_stop_int="$(trap -p INT)"
       after_stop_term="$(trap -p TERM)"
@@ -259,6 +273,7 @@ case "${1:-all}" in
   dead_target_fails) dead_target_fails ;;
   trap_preservation_and_cleanup) trap_preservation_and_cleanup ;;
   sampler_lifecycle_cleanup) sampler_lifecycle_cleanup ;;
+  subshell_lifecycle_rejected) subshell_lifecycle_rejected ;;
   all) contract_all ;;
   *)
     echo "unknown case: ${1}" >&2
