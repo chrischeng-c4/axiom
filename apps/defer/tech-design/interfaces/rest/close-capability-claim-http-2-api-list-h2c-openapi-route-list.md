@@ -51,7 +51,6 @@ flowchart TD
     offline_ok -->|no| fail
     bind_one_port -->|ownership boundary| shared([shared libraries unchanged])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
