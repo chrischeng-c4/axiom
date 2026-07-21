@@ -1,7 +1,14 @@
 ---
 id: '2219'
-summary: (fill)
+summary: Close Defer's HTTP/2 API-list claim with one-port HTTP/1.1 and prior-knowledge h2c runtime evidence, exact canonical live/offline OpenAPI parity, all nine stateful domain routes, and exact TypeScript, Python, and Rust client generation.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: http2-api-list
+    role: primary
+    gap: h2c-openapi-route-list
+    claim: h2c-openapi-route-list
+    coverage: full
+    rationale: "Defines the exact live and offline public API oracle while keeping transport and generic client generation in shared libraries."
 ---
 
 ## Logic
