@@ -9,13 +9,28 @@ Google Cloud Tasks is Defer's external feature-contract peer; this local
 performance ceiling intentionally compares the two Axiom state machines so
 network-region effects do not dominate scheduler overhead.
 
+```yaml
+benchmark_contract:
+  performance_comparator: relay
+  scope: same-host-sibling-implementation-ceiling
+  rss_measurement: process-shared-not-component-isolated
+  dated_observation_authoritative: false
+  cloud_tasks_performance_claim: false
+  universal_superiority_claim: false
+  messages: 1000
+  batches: 10
+  batch_size: 100
+  payload_serialized_bytes: 128
+  minimum_ratio: 0.8
+```
+
 ## Reproduce
 
 ```bash
 cargo test --release -p defer --test relay_performance_ceiling -- --ignored --nocapture
 ```
 
-The gate uses 1,000 messages in ten batches of 100, a 128-byte payload, one
+The gate uses 1,000 messages in ten batches of 100, a 128-byte serialized JSON payload, one
 Raft voter, `fsync=always`, and the same durable enqueue -> committed lease ->
 committed ack lifecycle. Defer additionally maintains its queue and task
 lifecycle state. A result passes when `defer_to_relay_ratio >= 0.8`.
