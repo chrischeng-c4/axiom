@@ -23,6 +23,10 @@ service_soak_rss_sampler_start() {
   local meta
   local sampler_pid
   local expected_count
+  (( ${BASH_SUBSHELL:-0} == 0 )) || {
+    echo "service_soak_rss_sampler_start must be called directly, not from a subshell" >&2
+    return 1
+  }
   [[ "$pid" =~ ^[0-9]+$ ]] || {
     echo "invalid pid: ${pid}" >&2
     return 1
@@ -55,7 +59,7 @@ EOF
   printf 'sampler_pid=%s\n' "${sampler_pid}" >>"${meta}"
   SERVICE_SOAK_RSS_LAST_TOKEN="${dir}"
   SERVICE_SOAK_RSS_ACTIVE_TOKEN="${dir}"
-  echo "${dir}"
+  unset SERVICE_SOAK_RSS_LAST_SUMMARY
 }
 
 _service_soak_rss_sampler_loop() {
@@ -112,6 +116,10 @@ service_soak_rss_sampler_stop() {
   local now
   local deadline
   local summary
+  (( ${BASH_SUBSHELL:-0} == 0 )) || {
+    echo "service_soak_rss_sampler_stop must be called directly, not from a subshell" >&2
+    return 1
+  }
   [[ -d "${token}" && -f "${meta}" && -f "${samples}" ]] || {
     echo "invalid sampler token" >&2
     return 1
@@ -141,7 +149,7 @@ service_soak_rss_sampler_stop() {
     unset SERVICE_SOAK_RSS_ACTIVE_TOKEN
     return 1
   }
-  printf '%s\n' "${summary}"
+  SERVICE_SOAK_RSS_LAST_SUMMARY="${summary}"
   rm -rf "${token}"
   unset SERVICE_SOAK_RSS_ACTIVE_TOKEN
 }
