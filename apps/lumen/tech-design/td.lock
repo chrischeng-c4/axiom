@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-20T03:53:10.002784+00:00"
-digest = "sha256:5a2e6cfdbd82ed50ba952dc5fb5c484cbda3603813758a6f0260b951eeb261a1"
-source_digest = "sha256:5a2e6cfdbd82ed50ba952dc5fb5c484cbda3603813758a6f0260b951eeb261a1"
-ir_digest = "sha256:edcbc16be3ee960a6612608c508dc3456fb86e27cb320172f6d53814d6c0f7fa"
+generated_at = "2026-07-21T07:46:24.796589+00:00"
+digest = "sha256:3ca9094bcd966b2236a07e4202ed943ef36519660f9deeb0fffe8a618743e711"
+source_digest = "sha256:3ca9094bcd966b2236a07e4202ed943ef36519660f9deeb0fffe8a618743e711"
+ir_digest = "sha256:f703276dcd3114f9fc3c406afc84c3cedb9c5e21b0830afd88bd2697c6967232"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
