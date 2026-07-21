@@ -65,7 +65,6 @@ changes:
     anchor: defer_stays_within_twenty_percent_of_relay_scheduler_ceiling
     reason: "Own the release-mode oracle for exact same-host workload identity, completed-operation cardinality, positive finite metrics, explicit no-overclaim scope, and the hard Defer-to-Relay ratio threshold."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
