@@ -137,15 +137,27 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
             );
         }
     }
-    let spec = client
+    let h2c_spec = client
         .get(format!("{url}/openapi.json"))
         .send()
         .await
         .unwrap()
-        .text()
+        .bytes()
         .await
         .unwrap();
-    let served_spec: serde_json::Value = serde_json::from_str(&spec).unwrap();
+    let http1_spec = http1
+        .get(format!("{url}/openapi.json"))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(
+        h2c_spec, http1_spec,
+        "the one-port HTTP/1.1 and h2c OpenAPI responses must be byte-identical"
+    );
+    let served_spec: serde_json::Value = serde_json::from_slice(&h2c_spec).unwrap();
     assert_eq!(
         served_spec,
         serde_json::to_value(defer::openapi::openapi()).unwrap(),
