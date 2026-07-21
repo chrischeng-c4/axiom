@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-21T00:10:03.337995+00:00"
-digest = "sha256:587019d13b0ad8ba264a49bc8bb1849c5a285e3bbd285663531da62dadf063ec"
-source_digest = "sha256:587019d13b0ad8ba264a49bc8bb1849c5a285e3bbd285663531da62dadf063ec"
-ir_digest = "sha256:c43340b94a2f0436fa6b0089eb393e39bb0fb571138b3e28a62b6cf53d96f029"
+generated_at = "2026-07-21T00:52:35.020084+00:00"
+digest = "sha256:84ac6a4f9afca0868008deb6e1afd76fafdca85674c10c30b521c7165a1b05cd"
+source_digest = "sha256:84ac6a4f9afca0868008deb6e1afd76fafdca85674c10c30b521c7165a1b05cd"
+ir_digest = "sha256:f22b374f4a25f036b24adcb7fce78bbd8c0d6f70f7ad67479fabf2d5aa0de294"
 
 [[files]]
 path = "README.md"
@@ -17,6 +17,12 @@ section_count = 0
 path = "interfaces/cli/close-capability-claim-cli-interface-defer-cli-convention-and-ta.md"
 digest = "sha256:d1abd62d41f6d8955aa7f6be039ffc142a7608c8296ac4c3f8960df650f3b25d"
 ir_digest = "sha256:b3baa453f999dd40c4e142c01d5b2d6b41188405e1efbe3bb69f8cd45105d0dd"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/close-capability-claim-http-2-api-list-h2c-openapi-route-list.md"
+digest = "sha256:b8cc325748a1789fe65d26c29734b1fdd0ac7aaee1df4b25d4cd3fe11dbe3002"
+ir_digest = "sha256:b83cfcb80e1c1a450f7ffe7b6cacf3e2d5606645d113beb370f905be4235620e"
 section_count = 3
 
 [[files]]
