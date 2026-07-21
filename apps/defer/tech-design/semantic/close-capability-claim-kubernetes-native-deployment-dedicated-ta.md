@@ -59,7 +59,6 @@ flowchart TD
     cleanup_ok -->|no| fail
     render_layers -->|ownership boundary| shared([service-k8s owns generic reconciliation])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
