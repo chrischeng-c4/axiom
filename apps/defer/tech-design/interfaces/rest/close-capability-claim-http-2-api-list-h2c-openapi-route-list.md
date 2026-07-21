@@ -75,7 +75,6 @@ changes:
     anchor: offline_spec_and_typed_client_generation_use_one_contract
     reason: "Own semantic equality of offline and canonical OpenAPI, the exact routes twin, and exact TypeScript, Python, and Rust client file and symbol inventories."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
