@@ -136,7 +136,7 @@ codegen.profile = "rust/score-crate"
 name = "courier"
 path = "apps/courier"
 td_path = "apps/courier/tech-design"
-cap_path = "apps/courier/README.md"
+cap_path = "apps/courier/CAPABILITIES.md"
 label = "app:courier"
 
 [[projects.workspaces]]

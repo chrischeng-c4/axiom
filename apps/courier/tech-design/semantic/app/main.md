@@ -5,14 +5,17 @@ fill_sections: [text-source-unit, changes]
 capability_refs:
   - id: github-issues-proxy
     role: primary
+    gap: github-issues-proxy-service
     claim: github-issues-proxy-service
     coverage: full
   - id: security-hardening
-    role: contributes
+    role: primary
+    gap: security-hardening-root
     claim: security-hardening-root
     coverage: full
   - id: long-running-stability
-    role: contributes
+    role: primary
+    gap: long-running-stability-root
     claim: long-running-stability-root
     coverage: full
 ---

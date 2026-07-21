@@ -43,8 +43,8 @@ as the live prompt for the current binary and repository state. Prefer the
 shortest agent-facing invocation; do not add compatibility/no-op flags such as
 `--json` when stdout already is the protocol. If stdout contains a JSON
 envelope, payload path, `invoke.command`, validation error, or next command,
-follow it exactly. For runner output (`aw wi run` / `aw capability run`), do
-not declare the workflow complete
+follow it exactly. For goal lifecycle root output (`aw goal wi` / `aw goal
+capability` / `aw goal backlog`), do not declare the workflow complete
 unless `completion.workflow_complete=true`; `action=done` can mean only the
 current child root is complete and the envelope is asking you to inspect the
 parent.
@@ -57,8 +57,9 @@ AW loop against its own repo, and do not turn `aw health` (including its
 `takeover-audit` axis, the retired `aw standardize` namespace's successor)
 into a self-takeover gate: a broken lifecycle cannot be required to fix
 itself (self-deadlock). Self-AW hard-gates only the capability contract —
-CAPABILITIES.md work-roots with resolvable gap/claim ids and closing WI/TD
-refs. EC claim verification becomes a hard gate only once an EC inventory is
+CAPABILITIES.md work-roots with resolvable gap/claim ids; closing WI/TD
+evidence is discovered from the WI/commit side, and doc-stored WI refs are
+optional derived provenance (#1847). EC claim verification becomes a hard gate only once an EC inventory is
 actually configured for aw; until then it is advisory, like managed/semantic/
 traceability, TD lock, CB verify, cold rebuild, and workspace test gates.
 Changes to aw itself land as direct commits with `Refs #<issue>` trailers
@@ -83,19 +84,33 @@ explicitly asks for Claude-specific behavior.
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 <!-- aw:cli-table:workflow:end -->
 
-`aw wi run <id>` drives one work item to terminal, and `aw capability run
-[<cap-id>] --project <project>` drives one capability's work-root WIs (omit
-`<cap-id>` to run the whole project end to end). Follow `invoke.command` and
-`agent_prompt` from either until `completion.workflow_complete=true` or
-`requires_hitl=true`. (The old top-level runner verb is retired.)
+`aw goal` is aw's single loop verb: every invocation names a root and a
+verifier. `aw goal wi <id>` drives one work item to terminal, `aw goal
+capability [<cap-id>] --project <project>` drives one capability's work-root
+WIs (omit `<cap-id>` to run the whole project end to end), and `aw goal
+backlog --project <project>` drains every open work item for a project one
+at a time, parking (not blocking) on HITL/hard blockers so the drain
+continues. Follow `invoke.command` and `agent_prompt` from any of the three
+until `completion.workflow_complete=true` or `requires_hitl=true`. If a HITL
+envelope includes `hitl_question.interaction.kind=user_question`, invoke the
+host's native user-question tool immediately with its question, choices, and
+freeform prompt: Claude Code uses `AskUserQuestion`, Codex uses
+`request_user_input` when that tool is exposed, and AGY uses `ask_user`. Do
+not treat the envelope as terminal output or fabricate human approval. If
+the host has no such tool, present every field as a blocking human question.
+(The old top-level `aw run` verb and the retired `aw wi run`/`aw capability
+run` verbs are gone — `wi`/`capability`/`backlog` are `aw goal` root types
+now.)
 
 `aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
-`enrich`, `validate`, `fill-section`, plus the `run`
-driver above. Planning commands write local artifacts under
+`enrich`, `validate`, `fill-section`; drive one WI to terminal with `aw goal
+wi <id>` (see above). Planning commands write local artifacts under
 `/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
-`estimate`/`sprintize`; use `aw capability run --project <name>` as the
-run-to-end driver instead of cron-style sprint batches.
+`estimate`/`sprintize`; use `aw goal backlog --project <name>` to drain every
+open issue for a project, or `aw goal capability --project <name>` as the
+run-to-end driver for one capability/the whole project, instead of
+cron-style sprint batches.
 
 `aw td` is the tech-design + generated-code lifecycle (LINEAR — no
 review/revise; the gate is EC via `code-check`): `create`, `gen`, `fill`,
@@ -112,10 +127,20 @@ capability and EC gates remain the source of product truth.
 
 `aw ec` is the only semantic approval loop: `draft` -> `fill` -> structural
 `check` -> independent `review`; `needs_revision` returns to bounded `fill`,
-while `accepted` advances to `gen` and `verify`. Until subagent review exists,
-production-required EC review evidence must be human-backed; same-agent
-self-review is not accepted. `aw health` routes missing approval to `aw ec
-review` and accepted EC generation gaps to `aw ec gen --verify`.
+while `accepted` advances to `gen` and `verify`. Production-required EC review
+evidence is digest-bound and independent: project `aw.toml`
+`ec_review_backing` selects `either` (default, agent-first) | `agent` |
+`human` (opt-in blocking human-only review). An unconfigured project's
+`aw ec review` emits the non-blocking `pending_agent_review` envelope, and
+agent verdicts come from a host-dispatched independent `aw-ec-reviewer`
+subagent, with same-agent self-review never accepted (#1829). A human
+`--evidence-file` submission always remains valid evidence regardless of
+policy, so the post-completion human batch audit can reopen an
+agent-accepted EC (#1859). `ec_review_mode = "deferred"` records a pending
+human review as `deferred_pending_human` without blocking the runner and
+queues it in `aw ec`/`aw health` for post-completion batch review (#1828).
+`aw health` routes missing approval to `aw ec review` and accepted EC
+generation gaps to `aw ec gen --verify`.
 
 The former `aw standardize` namespace (including `audit check`/`audit
 record`) is retired (#1278, epic #1270). Existing-project takeover uses
@@ -133,12 +158,15 @@ promotion is `aw td promote`.
 --human --skip-issue-inventory` first, then use the rollout/draft/WI/action
 queue artifacts instead of freehand README edits. Treat
 `create_wi:issue_inventory_skipped` as tracker-sync work, not WI backlog.
-Use `migrate` only for YAML/legacy-to-canonical Markdown conversion, and
+Use `migrate` for YAML/legacy-to-canonical Markdown conversion and for
+relocating README-resident capability structure to CAPABILITIES.md, and
 use `check --verify` when capability proof should include configured test
-gates. README is the default `cap_path` and uses `## Brief`,
+gates. CAPABILITIES.md is the default `cap_path` and uses `## Brief`,
 `## Capabilities`, `### Capability Index`, field-style capability
-contracts, and work-root tables. YAML `## Capability:` sections and legacy
-capability tables are migration input only.
+contracts, and work-root tables; README keeps a human-readable summary
+that links to the capability contract. YAML `## Capability:` sections,
+legacy capability tables, and README-resident capability structure are
+migration input only.
 
 `aw health` is a read-only aggregate of project readiness metrics:
 capability readiness, managed/semantic/traceability coverage, command
@@ -149,7 +177,7 @@ picture, or pass a focused `[SECTION]` (e.g. `regenerable`, `gates`,
 `--verify-traceability --verify-cb --verify-cold --verify-tests` when
 production readiness must be evaluated. `aw health` never mutates; its
 `next.command` field already names the exact remediation command to run
-next (`aw capability run`, `aw td promote <path>`, `aw ec gen --verify`,
+next (`aw goal capability`, `aw td promote <path>`, `aw ec gen --verify`,
 ...), so there is no `aw health fix` — diagnosis and remediation are
 deliberately separate commands.
 
@@ -158,10 +186,11 @@ deliberately separate commands.
 <!-- aw:cli-table:support:start -->
 | Verb | About |
 |------|-------|
-| `aw guard` | Agent-runtime direct edit/create guard for Codex and Claude Code |
+| `aw guard` | Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY |
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
 | `aw upgrade` | Self-update this binary from a published GitHub release |
 | `aw issue` | Search, view, or create Agentic Workflow issues |
+| `aw goal` | Unified loop verb: lifecycle root types (`wi`, `capability`, `backlog`) plus the ad-hoc CLI-owned verifiable-condition loop for bounded work outside the WI lifecycle (`set`/`check`/`show`/`list`/`clear`) |
 <!-- aw:cli-table:support:end -->
 
 `aw conf check` verifies `aw.toml`'s generated project registry block
@@ -177,6 +206,19 @@ ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 
 `aw guard` is the agent-runtime direct edit/create guard for Codex and
 Claude Code (live-denies out-of-lifecycle writes).
+
+`aw goal` has a closed four-leaf root-type enum: `wi` and `capability`
+(the lifecycle roots described above), `backlog` (drain every open WI for a
+project — `aw goal backlog --project <project>`), and `adhoc` for bounded
+work OUTSIDE the WI/TD/EC lifecycle — test-pass gates, migration sweeps, and
+other ad-hoc tasks a human hands an agent directly. `aw goal set --gate
+"<command>" <intent>` records the prose intent plus one or more required
+machine-runnable gate commands as workspace-scoped state (never a repo-root
+file); `aw goal check [<id>]` runs the gates and reports deterministically
+(`done`, `blocked` with `next.command`, or `gave_up` on budget/24h expiry).
+aw-managed roots use the `wi`/`capability`/`backlog` goal leaves; `adhoc` is
+for everything outside that lifecycle — never a substitute for the
+lifecycle root types.
 
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the
@@ -201,7 +243,7 @@ branches are:
   as `app/jet` or `app/aw`; their local worktree directories use underscores,
   such as `app_jet`.
 - `lib/{name}` — persistent work-area branches for `libs/` internal libraries,
-  such as `lib/openapi-codegen` or `lib/raft-runtime`; their local worktree
+  such as `lib/openapi-codegen` or `lib/raft-host`; their local worktree
   directories use underscores, such as `lib_openapi-codegen`.
 - `project-mamba` and `project-lumen` — retained legacy project work-area
   branches while those two roots remain under `projects/`.
@@ -307,16 +349,20 @@ add `@spec` annotations where appropriate, and feed the gap back into
 Agentic Workflow until it can become `CODEGEN`.
 
 Product capability completion is separate from source ownership. `aw
-capability` reads the project README or configured `cap_path`; README capability
-structure is Markdown-first: `#` is the project root, `## Brief` is the
-agent-readable project summary, `## Capabilities` owns the capability registry,
-and `### Capability Index` is the compact scan surface. H3-Hn capability
-headings use field-style contracts and work-root tables to map headings to
-epic/subepic WI roots. Atomic `change` WIs usually come from `aw wi atomize`
-rather than README rows. YAML `## Capability:` sections and legacy capability
-tables are migration input only. Verified progress requires closed/non-deferred
-work roots, passing declared verification gates or linked validation
-inventories, and resolving WI/TD refs. Do not use the old capability shorthand.
+capability` reads the project's `CAPABILITIES.md` (the default `cap_path`)
+or configured `cap_path`; capability document structure is Markdown-first:
+`#` is the project root, `## Brief` is the agent-readable project summary,
+`## Capabilities` owns the capability registry, and `### Capability Index`
+is the compact scan surface. H3-Hn capability headings use field-style
+contracts and work-root tables to map headings to epic/subepic WI roots.
+Atomic `change` WIs usually come from `aw wi atomize` rather than
+CAPABILITIES.md rows. README-resident capability structure is migration
+input — `aw capability migrate` relocates it to CAPABILITIES.md and leaves
+a human-readable summary in README. YAML `## Capability:` sections and
+legacy capability tables are also migration input only. Verified progress requires passing declared
+verification gates or linked validation inventories plus claim closure; WI
+linkage is derived provenance resolved from the WI side, and doc-stored WI
+refs are optional (stale ones degrade to advisory findings, #1847). Do not use the old capability shorthand.
 Project-local `aw.toml` may declare `[capability.profile].traits`; agents must
 let those traits derive required baseline capabilities before adding
 domain-specific capability roots. Trait-derived baseline capabilities are a

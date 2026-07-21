@@ -11,7 +11,7 @@ details.
 |---------|------------|
 | [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
-| [vat](apps/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [vat](apps/vat/README.md) | `vat` is a headless local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |
 | [loom](apps/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
 | [preview](apps/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
