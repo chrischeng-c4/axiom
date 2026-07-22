@@ -221,7 +221,7 @@ fn td_create_emits_cli_owned_skeleton_structured_slots_and_ownership() {
             "--spec-path",
             &spec_path,
         ],
-        false,
+        true,
     );
     assert_common_contract(root, &envelope, "tech_design");
     let ownership = envelope["artifact"]["ownership_outputs"]

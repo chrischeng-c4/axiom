@@ -86,17 +86,17 @@ definitions:
 
   IssueType:
     type: string
-    enum: [epic, bug, enhancement, refactor, test]
-    description: Issue kind. Must match GitHub type:* labels 1:1.
+    enum: [epic, change, bug, enhancement, refactor, test]
+    description: Canonical issue kind is epic or change; older non-epic values remain decode-only compatibility aliases.
     x-rust-enum:
-      derive: [Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize]
-      serde_rename_all: lowercase
+      derive: [Debug, Clone, Copy]
       variants:
         - { name: Epic,        doc: "Large multi-issue initiative (may omit crate: label)." }
-        - { name: Bug,         doc: "A defect in existing behavior." }
-        - { name: Enhancement, doc: "New capability or improvement." }
-        - { name: Refactor,    doc: "Code restructuring with no behavior change." }
-        - { name: Test,        doc: "Test coverage work." }
+        - { name: Change,      doc: "Canonical executable work-item leaf." }
+        - { name: Bug,         doc: "Legacy compatibility alias decoded from existing tracker history." }
+        - { name: Enhancement, doc: "Legacy compatibility alias decoded from existing tracker history." }
+        - { name: Refactor,    doc: "Legacy compatibility alias decoded from existing tracker history." }
+        - { name: Test,        doc: "Legacy compatibility alias decoded from existing tracker history." }
 
   IssueErrorCode:
     type: string
@@ -118,7 +118,7 @@ definitions:
         type: object
         x-rust-type: "IssueType"
         x-serde-rename: "type"
-        description: "Issue kind. Maps 1:1 to GitHub type:* labels."
+        description: "Canonical issue kind. Existing legacy tracker labels decode as change."
       title:
         type: string
         description: "Full title (preserves prefixes like 'score(2.5):' for human context)."

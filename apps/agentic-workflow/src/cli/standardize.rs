@@ -802,6 +802,14 @@ pub(crate) fn project_touched_scope_standardization(
     candidate_paths: &[String],
 ) -> Result<TouchedScopeStandardization> {
     let project_root = crate::find_project_root()?;
+    project_touched_scope_standardization_at(&project_root, project, candidate_paths)
+}
+
+fn project_touched_scope_standardization_at(
+    project_root: &Path,
+    project: &str,
+    candidate_paths: &[String],
+) -> Result<TouchedScopeStandardization> {
     let inventory = build_inventory(&project_root, &[], Some(project), false)?;
     let candidates: std::collections::BTreeSet<&str> =
         candidate_paths.iter().map(String::as_str).collect();
@@ -4960,7 +4968,13 @@ fn collect_source_files(project_root: &Path, scopes: &[String]) -> Result<Vec<So
             if !matcher.is_match(&rel) || !rels.insert(rel.clone()) {
                 continue;
             }
-            let content = fs::read_to_string(path).unwrap_or_default();
+            // Health must be resilient to build caches or other binary
+            // artifacts that happen to use a source-looking extension. They
+            // cannot provide marker evidence, so omit them rather than
+            // treating an undecodable file as empty managed source.
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
             let markers = detect_markers(&content);
             let handwrite_gaps = detect_handwrite_gaps(&content);
             out.push(SourceFile {
@@ -5565,9 +5579,13 @@ fn tracker_attr_absent(tracker: &str) -> bool {
 
 fn strip_comment_lead(line: &str) -> &str {
     let s = line.trim_start();
-    for prefix in ["///", "//!", "//", "#", "<!--"] {
+    for prefix in ["///", "//!", "//", "#", "<!--", "/*"] {
         if let Some(rest) = s.strip_prefix(prefix) {
-            return rest.trim_start().trim_end_matches("-->").trim();
+            return rest
+                .trim_start()
+                .trim_end_matches("-->")
+                .trim_end_matches("*/")
+                .trim();
         }
     }
     s
@@ -5575,7 +5593,7 @@ fn strip_comment_lead(line: &str) -> &str {
 
 fn marker_comment_body(line: &str) -> Option<&str> {
     let s = line.trim_start();
-    let is_comment = ["///", "//!", "//", "#", "<!--"]
+    let is_comment = ["///", "//!", "//", "#", "<!--", "/*"]
         .iter()
         .any(|prefix| s.starts_with(prefix));
     if !is_comment {
@@ -7407,6 +7425,8 @@ changes:
             write(tmp.path(), rel, "fn main() {}\n");
         }
         write(tmp.path(), "node_modules/pkg/index.ts", "export {}\n");
+        let binary = tmp.path().join("src/transform-cache.ts");
+        fs::write(&binary, [0xff, 0x00, 0xfe]).unwrap();
         write(tmp.path(), "src/assets/highlight.min.js", "minified();\n");
         let files = collect_source_files(
             tmp.path(),
@@ -7415,6 +7435,10 @@ changes:
         .unwrap();
         assert_eq!(files.len(), 9);
         assert!(!files.iter().any(|f| f.rel.ends_with(".min.js")));
+        assert!(
+            !files.iter().any(|f| f.rel.ends_with("transform-cache.ts")),
+            "undecodable source-looking artifacts must be omitted from health inventory"
+        );
         let langs: BTreeSet<_> = files.iter().map(|f| f.language.as_str()).collect();
         assert!(langs.contains("rust"));
         assert!(langs.contains("python"));
@@ -7640,16 +7664,12 @@ test_cmd = "true"
         generated.push_str("\n");
         write(tmp.path(), "projects/tool/llms.txt", &generated);
         let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
-        assert_eq!(
-            blockers,
-            vec![
-                "project root artifact `projects/tool/llms.txt` is stale; run `aw td gen --force-regen --project tool`"
-                    .to_string()
-            ]
-        );
-        assert!(blockers
+        let stale = blockers
             .iter()
-            .all(|blocker| !blocker.contains("aw standardize")));
+            .find(|blocker| blocker.contains("is stale"))
+            .expect("stale llms.txt must report a remediation");
+        assert!(stale.contains("aw td gen --force-regen --project tool"));
+        assert!(!stale.contains("aw standardize"));
 
         let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
         write(tmp.path(), "projects/tool/llms.txt", &generated);
@@ -7996,6 +8016,44 @@ paths = ["apps/cap/**"]
             "aw_ownership = \"CODEGEN-BEGIN tracker=\\\"#4041\\\" reason=\\\"valid TOML marker\\\"\"\n";
         let toml_markers = detect_markers(toml_marker);
         assert!(toml_markers.codegen);
+
+        let css_marker =
+            "/* HANDWRITE-BEGIN gap=\"css\" tracker=\"#4041\" reason=\"valid CSS marker\" */\n";
+        assert!(detect_markers(css_marker).handwrite);
+        assert!(detect_handwrite_gaps(css_marker).is_empty());
+    }
+
+    #[test]
+    fn touched_scope_standardization_accepts_filled_css_handwrite_marker() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "aw.toml",
+            r#"
+[[projects]]
+name = "demo"
+path = "apps/demo"
+
+[[projects.workspaces]]
+paths = ["apps/demo/**"]
+target = "typescript"
+"#,
+        );
+        write(
+            tmp.path(),
+            "apps/demo/ui/shell.css",
+            "/* HANDWRITE-BEGIN gap=\"css\" tracker=\"#2192\" reason=\"project shell\" */\n:root { color: #fff; }\n/* HANDWRITE-END */\n",
+        );
+
+        let candidate = "apps/demo/ui/shell.css".to_string();
+        let outcome = project_touched_scope_standardization_at(
+            tmp.path(),
+            "demo",
+            std::slice::from_ref(&candidate),
+        )
+        .unwrap();
+        assert!(outcome.unmarked.is_empty(), "{:#?}", outcome.unmarked);
+        assert!(outcome.attr_gap.is_empty(), "{:#?}", outcome.attr_gap);
     }
 
     #[test]

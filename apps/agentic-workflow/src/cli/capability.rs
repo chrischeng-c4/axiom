@@ -1209,6 +1209,8 @@ pub struct CapabilityReport {
     pub format_version: u8,
     pub status: String,
     pub test_gates: ProjectTestGateReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_artifact: Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
     pub production_ready: bool,
     pub production_status: ProductionStatus,
     pub production_scope: Vec<String>,
@@ -5945,6 +5947,13 @@ async fn build_capability_report_inner(
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
     let mut warnings = Vec::new();
+    let python_artifact = crate::services::python_artifact_readiness::evaluate(
+        &project_root,
+        project,
+    )?;
+    if let Some(readiness) = &python_artifact {
+        blockers.extend(readiness.blockers.iter().cloned());
+    }
     let profile = match load_capability_profile_report(&project_root, project) {
         Ok(profile) => complete_capability_profile_for_document(profile, &document),
         Err(err) => {
@@ -6119,6 +6128,7 @@ async fn build_capability_report_inner(
         format_version: document.format_version(),
         status: "healthy".to_string(),
         test_gates,
+        python_artifact: python_artifact.clone(),
         production_ready: production_readiness.production_ready,
         production_status: production_readiness.production_status,
         production_scope: production_readiness.production_scope.clone(),
@@ -6153,6 +6163,21 @@ async fn build_capability_report_inner(
         &capability_types,
         include_issue_inventory,
     );
+    if let Some(readiness) = &python_artifact {
+        if let Some(command) = readiness.next_command.as_ref() {
+            report.next_action = CapabilityAction {
+                kind: CapabilityActionKind::RunVerify,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: project.to_string(),
+                command: command.clone(),
+                reason: "Python artifact inventory or digest-bound evidence is not ready".to_string(),
+                requires_hitl: false,
+                hitl_question: None,
+            };
+        }
+    }
     if !report.blockers.is_empty()
         || report.next_action.kind != CapabilityActionKind::None
         || verified_count < capability_count
@@ -6217,6 +6242,7 @@ fn capability_map_read_blocked_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -6262,6 +6288,7 @@ fn capability_map_stale_project_config_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -7821,6 +7848,25 @@ fn lifecycle_action_for_work_item(
             format!("aw wi plan --project {}", report.project),
             wi_plan_reason(report, reason),
         );
+    }
+
+    // `python-v1` is an explicit project-model opt-in.  Route capability
+    // roots through the same artifact/gate table as `aw goal wi`; backlog
+    // roots already reach this table by probing their selected WI.  Keep the
+    // legacy phase logic below byte-for-byte for projects that do not opt in.
+    if let Ok(project_root) = crate::find_project_root() {
+        if let Ok(Some(step)) = crate::cli::run::python_artifact_lifecycle_step(
+            &project_root,
+            &report.project,
+            work_item,
+            evidence.and_then(|evidence| evidence.phase.as_deref()),
+        ) {
+            return (
+                action_kind_for_lifecycle_command(&step.command),
+                step.command,
+                step.reason,
+            );
+        }
     }
 
     // issues #916 / #850: derive from the single td_phase transition table
@@ -11524,6 +11570,7 @@ fn capability_map_readme_resident_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -13080,6 +13127,7 @@ mod tests {
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18170,6 +18218,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18254,6 +18303,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18384,6 +18434,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18490,6 +18541,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::Blocked,
             production_scope: Vec::new(),
@@ -18586,6 +18638,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::Blocked,
             production_scope: Vec::new(),
@@ -18706,6 +18759,7 @@ capability_refs:
             format_version: 2,
             status: "healthy".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("meter"),
+            python_artifact: None,
             production_ready: true,
             production_status: ProductionStatus::Ready,
             production_scope: Vec::new(),
@@ -18803,6 +18857,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18935,6 +18990,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),

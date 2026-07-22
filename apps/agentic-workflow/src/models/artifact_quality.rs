@@ -415,4 +415,41 @@ fn dial(key: &str, value: &str, rationale: &str) -> QualityDial {
         rationale: Some(rationale.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_quality_fixture_roundtrip() {
+        let fixtures = [
+            include_str!("../../tests/fixtures/artifact_quality_profiles/frontend_page.json"),
+            include_str!("../../tests/fixtures/artifact_quality_profiles/documentation.json"),
+            include_str!("../../tests/fixtures/artifact_quality_profiles/cli_surface.json"),
+            include_str!("../../tests/fixtures/artifact_quality_profiles/api_surface.json"),
+            include_str!("../../tests/fixtures/artifact_quality_profiles/code_artifact.json"),
+        ];
+
+        for raw in fixtures {
+            let profile: ArtifactQualityProfile = serde_json::from_str(raw).unwrap();
+            profile.validate().unwrap();
+            let encoded = serde_json::to_value(&profile).unwrap();
+            let decoded: ArtifactQualityProfile = serde_json::from_value(encoded.clone()).unwrap();
+            assert_eq!(
+                decoded, profile,
+                "serialized fixture must round-trip exactly"
+            );
+            assert!(encoded.get("artifact_kind").is_some());
+            assert!(encoded.get("intent_read").is_some());
+            assert!(encoded.get("quality_dials").is_some());
+            assert!(encoded.get("source_policy").is_some());
+            assert!(encoded.get("preflight_gate_set").is_some());
+            let context = profile.to_review_prompt_context();
+            assert!(context.contains("intent_read:"));
+            assert!(context.contains("quality_dials:"));
+            assert!(context.contains("source_policy:"));
+            assert!(context.contains("preflight_gate_set:"));
+        }
+    }
+}
 // CODEGEN-END

@@ -180,6 +180,11 @@ pub struct EcCheckArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
+    /// Local lifecycle work-item that owns this EC-first root transition.
+    /// A clean Python-project check persists the independent-review handoff
+    /// instead of making the root rediscover a project-global EC inventory.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -191,9 +196,19 @@ pub struct EcLockArgs {
     /// Show current lock status without rewriting it.
     #[arg(long)]
     pub show: bool,
+    /// Safely rewrite one project-relative path prefix in a moved EC lock.
+    /// The migration succeeds only when every existing locked contract still
+    /// matches the current EC IR after that rewrite.
+    #[arg(long, value_name = "OLD=NEW")]
+    pub migrate_paths: Option<String>,
     /// Emit JSON status.
     #[arg(long)]
     pub json: bool,
+    /// Root-owned Python artifact lifecycle WI. A successful lock advances
+    /// the reviewed EC to TD validation instead of leaving the root at a
+    /// project-global lock operation.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -244,6 +259,10 @@ pub struct EcVerifyArgs {
     /// terminal EC gate's filter); default runs every configured case.
     #[arg(long)]
     pub required_only: bool,
+    /// Select the EC lifecycle stage. `core` runs behavior/security; `operational`
+    /// runs stability/efficiency after generation/build. Omit for legacy all-case verification.
+    #[arg(long, value_parser = ["core", "operational"])]
+    pub stage: Option<String>,
     /// Local lifecycle work-item that receives this verifier verdict. A green
     /// result advances to terminal code-check; a red result returns to bounded
     /// TD/codegen adaptation.
@@ -753,6 +772,9 @@ impl TerminalEcGateSession {
 pub struct EcProjectContext {
     pub project_root: PathBuf,
     pub project: String,
+    /// Explicit opt-in to the direct Python EC inventory adapter. Legacy
+    /// projects remain on the Markdown/generated-manifest implementation.
+    pub artifact_model: crate::models::project::ProjectArtifactModel,
     pub source_root: PathBuf,
     pub ec_root: PathBuf,
     pub td_root: PathBuf,
@@ -956,7 +978,11 @@ pub fn run(args: EcArgs) -> Result<()> {
 /// asking capability and WI runners to infer progress from a project-global
 /// EC inventory. The external-contract artifacts remain project-scoped, while
 /// the next implementation act is owned by exactly one bounded WI.
-fn persist_ec_first_next_action(project_root: &Path, wi: &str, next_action: String) -> Result<()> {
+pub(crate) fn persist_ec_first_next_action(
+    project_root: &Path,
+    wi: &str,
+    next_action: String,
+) -> Result<()> {
     use crate::issues::IssueBackend;
 
     let wi = wi.trim();
@@ -1082,6 +1108,24 @@ fn command_with_wi(command: String, wi: Option<&str>) -> String {
         Some(wi) => format!("{command} --wi {wi}"),
         None => command,
     }
+}
+
+fn python_td_check_next_command(ctx: &EcProjectContext, wi: &str) -> String {
+    format!(
+        "aw td check {} --project {} --wi {wi}",
+        shell_quote_ec_arg(&ctx.td_root.display().to_string()),
+        ctx.project,
+    )
+}
+
+fn shell_quote_ec_arg(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\\"'\\\"'"))
 }
 
 /// Emit an EC-review result and, when the review belongs to a root-owned WI,
@@ -1805,6 +1849,15 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
     if !summary.clean {
         std::process::exit(1);
     }
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        if let Some(wi) = args.wi.as_deref() {
+            persist_ec_first_next_action(
+                &project_root,
+                wi,
+                format!("aw ec review --project {} --wi {wi}", ctx.project),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1822,6 +1875,30 @@ fn ensure_ec_lock_clean_for_gen(ctx: &EcProjectContext) -> Result<()> {
 fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    if let Some(mapping) = args.migrate_paths.as_deref() {
+        if args.check || args.show {
+            anyhow::bail!("--migrate-paths cannot be combined with --check or --show");
+        }
+        let (old_prefix, new_prefix) = parse_ec_lock_path_migration(mapping)?;
+        let (status, migrated) = migrate_ec_lock_paths_context(&ctx, &old_prefix, &new_prefix)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        } else {
+            println!(
+                "ec lock {}: {} {} -> {}; wrote {} ({} source(s), {} case(s), {} tool contract(s), {})",
+                status.project,
+                if migrated { "migrated paths" } else { "already clean" },
+                old_prefix,
+                new_prefix,
+                status.lock_path,
+                status.source_count,
+                status.case_count,
+                status.tool_contract_count,
+                status.ir_digest
+            );
+        }
+        return Ok(());
+    }
     if args.check || args.show {
         let status = check_ec_lock_context(&ctx)?;
         if args.json {
@@ -1850,6 +1927,15 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
             status.ir_digest
         );
     }
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        if let Some(wi) = args.wi.as_deref().map(str::trim).filter(|wi| !wi.is_empty()) {
+            persist_ec_first_next_action(
+                &project_root,
+                wi,
+                python_td_check_next_command(&ctx, wi),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1859,6 +1945,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     let manifest = build_expected_manifest(&ctx)?;
+    ensure_python_ec_author_record(&ctx, &manifest)?;
     let review_path = ec_review_path(&ctx);
     let review_path_rel = relative_to(&ctx.project_root, &review_path);
     if !ec_semantic_review_required(&manifest) {
@@ -1876,7 +1963,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 hitl_question: None,
                 findings: Vec::new(),
                 next: Some(command_with_wi(
-                    format!("aw ec gen --project {} --verify", ctx.project),
+                    ec_review_success_next_command(&ctx),
                     args.wi.as_deref(),
                 )),
                 backing: None,
@@ -1929,7 +2016,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                         hitl_question: None,
                         findings: Vec::new(),
                         next: Some(command_with_wi(
-                            format!("aw ec gen --project {} --verify", ctx.project),
+                            ec_review_success_next_command(&ctx),
                             args.wi.as_deref(),
                         )),
                         backing: Some(record.reviewer_kind.clone()),
@@ -2079,7 +2166,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 hitl_question: None,
                 findings: Vec::new(),
                 next: Some(command_with_wi(
-                    format!("aw ec gen --project {} --verify", ctx.project),
+                    ec_review_success_next_command(&ctx),
                     args.wi.as_deref(),
                 )),
                 backing: Some(record.reviewer_kind.clone()),
@@ -2156,6 +2243,13 @@ fn pending_ec_review_hitl_question(
     }
 }
 
+fn ec_review_success_next_command(ctx: &EcProjectContext) -> String {
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        return format!("aw ec lock --project {}", ctx.project);
+    }
+    format!("aw ec gen --project {} --verify", ctx.project)
+}
+
 /// #1829: structured agent review envelope prompt — the R3 inspection
 /// checklist (#1504) rendered for a host-dispatched independent reviewer
 /// subagent. `aw` emits this protocol only; the host owns dispatching the
@@ -2173,7 +2267,7 @@ Inspect the current EC inventory (external-contracts/**, aw.toml EC section) aga
 5. loopholes_checked — no trivially-satisfiable or gameable case exists.\n\
 6. false_green_risk_checked — a broken implementation would plausibly fail at least one case.\n\n\
 You must NOT be the same identity that authored this EC content (independence is enforced at submission and will reject a same-identity review even if attempted).\n\n\
-Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` naming an existing Markdown source under external-contracts/**, or under tech-design/** for a legacy TD-derived inventory), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
+Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` naming the affected source under external-contracts/**, or under tech-design/** for a legacy TD-derived inventory), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
         project = ctx.project,
         payload = payload_path.display()
     )
@@ -2250,18 +2344,24 @@ fn ec_review_payload_template(ctx: &EcProjectContext, manifest: &EcManifest) -> 
     }
 }
 
-/// #1799: initialize the workspace review payload only when nothing exists
-/// there yet. A populated payload (any decision, any digest) is caller
-/// evidence and must never be overwritten by this scaffold step — a stale
-/// digest is reported to the caller by `validate_ec_review_payload`, not
-/// silently reset to a blank pending template.
+/// Initialize a workspace-owned review payload for the current EC digest.
+///
+/// `run_review` calls this only when the caller did not pass
+/// `--evidence-file`: the payload is therefore AW-owned, rather than
+/// caller-supplied evidence. A non-pending record from a previous EC digest
+/// cannot be submitted for the new contract, so replace it with a pending
+/// template and let the caller dispatch a new independent review. Explicit
+/// evidence files deliberately bypass this helper and remain immutable.
 fn ensure_ec_review_payload(
     ctx: &EcProjectContext,
     manifest: &EcManifest,
     payload_path: &Path,
 ) -> Result<()> {
     if payload_path.exists() {
-        return Ok(());
+        let record = read_ec_review_record(payload_path)?;
+        if record.source_digest == manifest.generated_from_td_digest {
+            return Ok(());
+        }
     }
     write_ec_review_record(payload_path, &ec_review_payload_template(ctx, manifest))
 }
@@ -2280,19 +2380,30 @@ fn write_ec_review_record(path: &Path, record: &EcReviewRecord) -> Result<()> {
 }
 
 /// #1829: identity of the current actor (human or agent) for author/review
-/// recording. `AW_ACTOR_ID` takes precedence for explicit host-provided
-/// identity; `AW_AGENT_ID` is a fallback for agent-hosted runs that only
-/// set an agent id; otherwise `unknown-actor`.
+/// recording. Explicit AW identity takes precedence; common host agent/session
+/// variables follow. An interactive local run falls back to its OS user rather
+/// than recording an unusable `unknown-actor` identity.
 fn current_actor_identity() -> String {
-    std::env::var("AW_ACTOR_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("AW_AGENT_ID")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .unwrap_or_else(|| "unknown-actor".to_string())
+    actor_identity_from(|name| std::env::var(name).ok())
+}
+
+fn actor_identity_from(mut value_for: impl FnMut(&str) -> Option<String>) -> String {
+    for name in [
+        "AW_ACTOR_ID",
+        "AW_AGENT_ID",
+        "CODEX_AGENT_ID",
+        "CODEX_THREAD_ID",
+        "CLAUDE_AGENT_ID",
+        "CLAUDE_SESSION_ID",
+        "AGY_AGENT_ID",
+        "USER",
+        "USERNAME",
+    ] {
+        if let Some(value) = value_for(name).filter(|value| !value.trim().is_empty()) {
+            return value.trim().to_string();
+        }
+    }
+    "local-cli".to_string()
 }
 
 fn ec_author_path(ctx: &EcProjectContext) -> PathBuf {
@@ -2304,11 +2415,19 @@ fn ec_author_path(ctx: &EcProjectContext) -> PathBuf {
 /// finalized). Best-effort: a write failure here must not block `ec gen`
 /// (it only weakens independence enforcement, not the digest/gate itself).
 fn write_ec_author_record(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+    write_ec_author_record_for_identity(ctx, manifest, current_actor_identity())
+}
+
+fn write_ec_author_record_for_identity(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+    author: String,
+) -> Result<()> {
     let record = EcAuthorRecord {
         version: EC_AUTHOR_VERSION,
         project: ctx.project.clone(),
         source_digest: manifest.generated_from_td_digest.clone(),
-        author: current_actor_identity(),
+        author,
         recorded_at: chrono::Utc::now().to_rfc3339(),
     };
     let path = ec_author_path(ctx);
@@ -2317,6 +2436,25 @@ fn write_ec_author_record(ctx: &EcProjectContext, manifest: &EcManifest) -> Resu
     }
     let content = format!("{}\n", serde_json::to_string_pretty(&record)?);
     fs::write(&path, content).with_context(|| format!("write {}", path.display()))
+}
+
+/// Hand-authored Python EC projects do not pass through `aw ec gen`, so their
+/// declared author is persisted at review time. This gives the existing
+/// reviewer-independence policy the same digest-bound identity evidence as a
+/// generated legacy EC without treating the reviewer as the author.
+fn ensure_python_ec_author_record(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+    if ctx.artifact_model != crate::models::project::ProjectArtifactModel::PythonV1 {
+        return Ok(());
+    }
+    let inventory = crate::services::python_ec::discover_python_ec_inventory(&ctx.ec_root)?;
+    if !inventory.findings.is_empty() {
+        bail!(
+            "Python EC inventory is invalid; run `aw ec check --project {}` before review: {}",
+            ctx.project,
+            inventory.findings.join("; ")
+        );
+    }
+    write_ec_author_record_for_identity(ctx, manifest, inventory.author)
 }
 
 fn load_ec_author_record(ctx: &EcProjectContext) -> Option<EcAuthorRecord> {
@@ -2427,9 +2565,9 @@ fn validate_ec_review_payload(
             if record.findings.is_empty() {
                 bail!("needs_revision EC review requires at least one finding");
             }
-            if ec_fill_command_for_target(ctx, &record.target_path).is_none() {
+            if !ec_review_target_is_valid(ctx, &record.target_path) {
                 bail!(
-                    "needs_revision EC review target_path must name an existing markdown file under {} or the legacy TD source root {}",
+                    "needs_revision EC review target_path must name an existing EC source under {} or the legacy TD source root {}",
                     relative_to(&ctx.project_root, &ctx.ec_root),
                     relative_to(&ctx.project_root, &ctx.td_root)
                 );
@@ -2438,6 +2576,20 @@ fn validate_ec_review_payload(
         EcReviewDecision::Pending => bail!("EC review payload decision is still pending"),
     }
     Ok(())
+}
+
+fn ec_review_target_is_valid(ctx: &EcProjectContext, target_path: &str) -> bool {
+    if ec_fill_command_for_target(ctx, target_path).is_some() {
+        return true;
+    }
+    if ctx.artifact_model != crate::models::project::ProjectArtifactModel::PythonV1 {
+        return false;
+    }
+    let target = ctx.project_root.join(target_path);
+    target.starts_with(&ctx.ec_root)
+        && target.is_file()
+        && (target == ctx.ec_root.join("pyproject.toml")
+            || target.extension().and_then(|extension| extension.to_str()) == Some("py"))
 }
 
 fn ec_review_record_findings(
@@ -2707,10 +2859,14 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     // accepted review then owns the existing `ec gen --verify` transition.
     let inventory_check = check_ec_context(&ctx)?;
     if inventory_check.stale {
-        let next = command_with_wi(
-            format!("aw ec review --project {}", ctx.project),
-            args.wi.as_deref(),
-        );
+        let next = if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+            command_with_wi(format!("aw ec check --project {}", ctx.project), args.wi.as_deref())
+        } else {
+            command_with_wi(
+                format!("aw ec review --project {}", ctx.project),
+                args.wi.as_deref(),
+            )
+        };
         if let Some(wi) = args.wi.as_deref() {
             persist_ec_first_next_action(&project_root, wi, next.clone())?;
         }
@@ -2743,11 +2899,43 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
         }
         return Ok(());
     }
-    let summary = verify_ec_context(&ctx, args.required_only)?;
+    let summary = verify_ec_context_with_stage(&ctx, args.required_only, args.stage.as_deref())?;
     let semantic_review_required = ec_verify_requires_semantic_review(&summary);
     let mut routed_next = None;
     let lifecycle_state = if let Some(wi) = args.wi.as_deref() {
-        if semantic_review_required {
+        if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+            let next = if summary.clean {
+                match args.stage.as_deref() {
+                    Some("core") => format!(
+                        "aw ec verify --project {} --required-only --stage operational --wi {wi}",
+                        ctx.project
+                    ),
+                    Some("operational") | None => format!("aw td code-check {wi}"),
+                    Some(_) => unreachable!("clap validates EC stage"),
+                }
+            } else {
+                let dimension = summary
+                    .results
+                    .iter()
+                    .find(|result| result.status != "passed" && result.status != "skipped")
+                    .map(|result| result.category.as_str())
+                    .filter(|dimension| {
+                        matches!(*dimension, "behavior" | "security" | "stability" | "efficiency")
+                    })
+                    .unwrap_or("behavior");
+                crate::cli::run::python_artifact_lifecycle_step(
+                    &project_root,
+                    &ctx.project,
+                    wi,
+                    Some(&format!("ec_{dimension}_red")),
+                )?
+                .expect("python-v1 project must resolve the Python artifact phase")
+                .command
+            };
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+            routed_next = Some(next);
+            None
+        } else if semantic_review_required {
             let next = command_with_wi(format!("aw ec review --project {}", ctx.project), Some(wi));
             persist_ec_first_next_action(&project_root, wi, next.clone())?;
             routed_next = Some(next);
@@ -3038,7 +3226,7 @@ fn check_ec_lock_context(ctx: &EcProjectContext) -> Result<EcLockStatus> {
         || lock.project != ctx.project
         || lock.ir_kind != "ec"
         || lock.ec_path != relative_to(&ctx.project_root, &ctx.ec_root)
-        || lock.inventory_path != relative_to(&ctx.project_root, &ctx.inventory_path);
+        || lock.inventory_path != ec_effective_inventory_path(ctx)?;
     let locked_entries = lock_entries(&lock);
     let current_entries = snapshot_entries(&snapshot);
     let (changed, added, removed) = diff_lock_entries(&locked_entries, &current_entries);
@@ -3095,12 +3283,17 @@ fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)>
         }
     }
     let snapshot = snapshot_ec_ir(ctx)?;
+    Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true))
+}
+
+fn write_ec_lock_snapshot(ctx: &EcProjectContext, snapshot: &EcIrSnapshot) -> Result<EcLockStatus> {
+    let lock_path = ec_lock_path(ctx);
     let lock = EcLockFile {
         version: EC_MANIFEST_VERSION,
         project: ctx.project.clone(),
         ir_kind: "ec".to_string(),
         ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
-        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        inventory_path: ec_effective_inventory_path(ctx)?,
         generated_at: chrono::Utc::now().to_rfc3339(),
         ir_digest: snapshot.ir_digest.clone(),
         source_digest: snapshot.source_digest.clone(),
@@ -3113,21 +3306,119 @@ fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)>
     }
     let encoded = toml::to_string_pretty(&lock).context("serialize ec lock")?;
     fs::write(&lock_path, encoded).with_context(|| format!("write {}", lock_path.display()))?;
-    Ok((
-        ec_lock_status_from_parts(
-            ctx,
-            EcLockState::Locked,
-            true,
-            &snapshot,
-            Some(snapshot.ir_digest.clone()),
-            Some(snapshot.source_digest.clone()),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            "ec lock clean".to_string(),
-        ),
+    Ok(ec_lock_status_from_parts(
+        ctx,
+        EcLockState::Locked,
         true,
+        snapshot,
+        Some(snapshot.ir_digest.clone()),
+        Some(snapshot.source_digest.clone()),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        "ec lock clean".to_string(),
     ))
+}
+
+fn parse_ec_lock_path_migration(value: &str) -> Result<(String, String)> {
+    let Some((old_prefix, new_prefix)) = value.split_once('=') else {
+        anyhow::bail!("--migrate-paths must use OLD=NEW project-relative prefixes");
+    };
+    let old_prefix = normalize_ec_lock_path_prefix(old_prefix);
+    let new_prefix = normalize_ec_lock_path_prefix(new_prefix);
+    if old_prefix.is_empty()
+        || new_prefix.is_empty()
+        || old_prefix == new_prefix
+        || old_prefix.split('/').any(|part| part == "..")
+        || new_prefix.split('/').any(|part| part == "..")
+    {
+        anyhow::bail!("--migrate-paths requires distinct, non-empty project-relative prefixes");
+    }
+    Ok((old_prefix.to_string(), new_prefix.to_string()))
+}
+
+fn normalize_ec_lock_path_prefix(prefix: &str) -> &str {
+    prefix.trim().trim_matches('/').trim_start_matches("./")
+}
+
+/// Permit a project-root move without weakening the removed-contract guard.
+/// Existing lock entries are rewritten only in their stored path fields and
+/// then compared with the current IR. Newly added entries are safe, but any
+/// changed or still-removed old entry remains a hard refusal.
+fn migrate_ec_lock_paths_context(
+    ctx: &EcProjectContext,
+    old_prefix: &str,
+    new_prefix: &str,
+) -> Result<(EcLockStatus, bool)> {
+    let lock_path = ec_lock_path(ctx);
+    if !lock_path.is_file() {
+        anyhow::bail!(
+            "ec lock missing at {}; run `aw ec lock --project {}`",
+            relative_to(&ctx.project_root, &lock_path),
+            ctx.project
+        );
+    }
+    let content =
+        fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
+    let mut lock: EcLockFile =
+        toml::from_str(&content).with_context(|| format!("parse {}", lock_path.display()))?;
+    let rewrites = rewrite_ec_lock_paths(&mut lock, old_prefix, new_prefix);
+    if rewrites == 0 {
+        anyhow::bail!(
+            "--migrate-paths {}={} matched no paths in {}; inspect `aw ec lock --project {} --show`",
+            old_prefix,
+            new_prefix,
+            relative_to(&ctx.project_root, &lock_path),
+            ctx.project
+        );
+    }
+
+    let snapshot = snapshot_ec_ir(ctx)?;
+    let (changed, _added, removed) =
+        diff_lock_entries(&lock_entries(&lock), &snapshot_entries(&snapshot));
+    if !changed.is_empty() || !removed.is_empty() {
+        anyhow::bail!(
+            "ec lock path migration cannot prove every existing contract survived ({} changed, {} removed); inspect `aw ec lock --project {} --show` and preserve or deliberately retire the affected contracts before regenerating",
+            changed.len(),
+            removed.len(),
+            ctx.project
+        );
+    }
+
+    Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true))
+}
+
+fn rewrite_ec_lock_paths(lock: &mut EcLockFile, old_prefix: &str, new_prefix: &str) -> usize {
+    let mut rewrites = 0usize;
+    for source in &mut lock.sources {
+        rewrites += rewrite_ec_lock_path(&mut source.path, old_prefix, new_prefix) as usize;
+    }
+    for case in &mut lock.cases {
+        rewrites += rewrite_ec_lock_path(&mut case.source_ref, old_prefix, new_prefix) as usize;
+        rewrites += rewrite_ec_lock_path(&mut case.test_path, old_prefix, new_prefix) as usize;
+        case.digest = digest_ec_lock_case(case);
+    }
+    for tool in &mut lock.tool_contracts {
+        rewrites += rewrite_ec_lock_path(&mut tool.source_ref, old_prefix, new_prefix) as usize;
+        rewrites += rewrite_ec_lock_path(&mut tool.manifest_path, old_prefix, new_prefix) as usize;
+        tool.digest = digest_ec_lock_tool(tool);
+    }
+    rewrites
+}
+
+fn rewrite_ec_lock_path(value: &mut String, old_prefix: &str, new_prefix: &str) -> bool {
+    let suffix = if value == old_prefix {
+        Some("")
+    } else {
+        value
+            .strip_prefix(old_prefix)
+            .filter(|suffix| suffix.starts_with('/') || suffix.starts_with('#'))
+    };
+    let Some(suffix) = suffix else {
+        return false;
+    };
+    *value = format!("{new_prefix}{suffix}");
+    true
 }
 
 fn snapshot_ec_ir(ctx: &EcProjectContext) -> Result<EcIrSnapshot> {
@@ -3160,6 +3451,26 @@ fn collect_ec_ir_sources(
     ctx: &EcProjectContext,
     manifest: &EcManifest,
 ) -> Result<Vec<EcLockSource>> {
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        let inventory = crate::services::python_ec::discover_python_ec_inventory(&ctx.ec_root)?;
+        if !inventory.findings.is_empty() {
+            bail!(
+                "Python EC inventory is invalid; cannot lock incomplete contract bundle: {}",
+                inventory.findings.join("; ")
+            );
+        }
+        let mut sources = inventory
+            .input_files
+            .iter()
+            .map(|input| EcLockSource {
+                path: relative_to(&ctx.project_root, &input.path),
+                digest: input.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        sources.sort_by(|left, right| left.path.cmp(&right.path));
+        sources.dedup_by(|left, right| left.path == right.path);
+        return Ok(sources);
+    }
     let mut paths = BTreeSet::new();
     if ctx.ec_root.is_dir() {
         for entry in WalkDir::new(&ctx.ec_root)
@@ -3242,6 +3553,17 @@ fn ec_lock_path(ctx: &EcProjectContext) -> PathBuf {
     ctx.ec_root.join(EC_LOCK_FILE)
 }
 
+/// Python EC projects have no project-local `aw.toml` inventory. Their
+/// hand-authored `pyproject.toml` is the canonical inventory metadata and
+/// must therefore be named in lock status/metadata as well.
+fn ec_effective_inventory_path(ctx: &EcProjectContext) -> Result<String> {
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        let inventory = crate::services::python_ec::discover_python_ec_inventory(&ctx.ec_root)?;
+        return Ok(relative_to(&ctx.project_root, &inventory.inventory_path));
+    }
+    Ok(relative_to(&ctx.project_root, &ctx.inventory_path))
+}
+
 fn ec_lock_status_from_parts(
     ctx: &EcProjectContext,
     status: EcLockState,
@@ -3258,7 +3580,8 @@ fn ec_lock_status_from_parts(
         project: ctx.project.clone(),
         ir_kind: "ec".to_string(),
         ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
-        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        inventory_path: ec_effective_inventory_path(ctx)
+            .unwrap_or_else(|_| relative_to(&ctx.project_root, &ctx.inventory_path)),
         lock_path: relative_to(&ctx.project_root, &ec_lock_path(ctx)),
         status,
         clean,
@@ -3318,6 +3641,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
     let row =
         crate::services::project_registry::resolve_project_config_row(project_root, requested)
             .with_context(|| format!("resolve project `{requested}`"))?;
+    let artifact_model = row.effective_artifact_model();
     let source_root = project_root.join(&row.path);
     let ec_root = source_root.join(EC_SOURCE_REL);
     let td_root =
@@ -3358,6 +3682,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
     Ok(EcProjectContext {
         project_root: project_root.to_path_buf(),
         project: row.name,
+        artifact_model,
         source_root,
         ec_root,
         td_root,
@@ -3441,6 +3766,9 @@ fn language_target_name(language: crate::models::tech_stack::Language) -> &'stat
 }
 
 fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        return build_python_ec_manifest(ctx);
+    }
     let (mut cases, mut tool_manifests) = extract_ec_markdown_contracts(ctx)?;
     if cases.is_empty() && tool_manifests.is_empty() {
         cases = extract_td_e2e_cases(ctx)?;
@@ -3457,6 +3785,92 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases,
         tool_manifests,
     })
+}
+
+/// Adapt the direct Python EC inventory into the review/lock manifest without
+/// generating or importing Python. The manifest digest deliberately includes
+/// both aggregate artifact digests: source changes and every declared
+/// dependency/configuration change (including pyproject inventory metadata)
+/// invalidate review evidence and the lock.
+fn build_python_ec_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
+    let inventory = crate::services::python_ec::discover_python_ec_inventory(&ctx.ec_root)?;
+    if !inventory.findings.is_empty() {
+        bail!(
+            "Python EC inventory is invalid; run `aw ec check --project {}`: {}",
+            ctx.project,
+            inventory.findings.join("; ")
+        );
+    }
+    let inventory_path = relative_to(&ctx.project_root, &inventory.inventory_path);
+    let mut cases = inventory
+        .cases
+        .into_iter()
+        .map(|case| {
+            let test_path = relative_to(&ctx.project_root, &ctx.ec_root.join(&case.test_path));
+            let assertions = python_ec_assertions(&case);
+            let evidence = case
+                .evidence_paths
+                .iter()
+                .map(|path| EcEvidenceArtifact {
+                    kind: "external-evidence".to_string(),
+                    path: path.clone(),
+                    label: case.oracle.clone(),
+                    locator: String::new(),
+                    format: String::new(),
+                    command: String::new(),
+                    screenshots: Vec::new(),
+                    highlights: Vec::new(),
+                    steps: Vec::new(),
+                })
+                .collect();
+            EcManifestCase {
+                id: case.id.clone(),
+                capability_id: case.capability_id,
+                claim_id: case.use_case_id,
+                contract_id: case.id.clone(),
+                category: case.dimension,
+                td_ref: format!("{inventory_path}#case:{}", case.id),
+                command: case.command.clone(),
+                test_path,
+                // All declared Python EC cases receive semantic review. The
+                // `applicability` field still controls when their tests gate
+                // the TD/post-generation lifecycle; it must not make a
+                // stability or efficiency contract invisible to approval.
+                required_for_production: true,
+                assertions,
+                evidence,
+                evaluators: Vec::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+    cases = canonicalize_ec_cases(cases);
+    let manifest_digest = digest_manifest_inputs(&cases, &[]);
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, "aw.python-ec.bundle.v1");
+    hash_field(&mut hasher, &inventory.source_digest);
+    hash_field(&mut hasher, &inventory.dependency_lock_digest);
+    hash_field(&mut hasher, &manifest_digest);
+    let digest = format!("sha256:{:x}", hasher.finalize());
+    Ok(EcManifest {
+        version: EC_MANIFEST_VERSION,
+        project: ctx.project.clone(),
+        generated_from_td_digest: digest,
+        cases,
+        tool_manifests: Vec::new(),
+    })
+}
+
+fn python_ec_assertions(case: &crate::services::python_ec::PythonEcCase) -> Vec<String> {
+    let mut assertions = vec![
+        case.promise.clone(),
+        format!("artifact: {}", case.artifact_id),
+        format!("oracle: {}", case.oracle),
+    ];
+    if let Some(threshold) = case.threshold.as_deref().filter(|value| !value.is_empty()) {
+        assertions.push(format!("threshold: {threshold}"));
+    }
+    assertions.push(format!("target: {}", case.target));
+    assertions
 }
 
 fn canonicalize_ec_cases(mut cases: Vec<EcManifestCase>) -> Vec<EcManifestCase> {
@@ -4037,13 +4451,14 @@ fn ec_review_false_green_reason(command: &str) -> Option<&'static str> {
     None
 }
 
-/// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
-/// on the gate command: `rig run` -> a lifecycle case TOML (mode-1, rig DSL);
-/// `cargo test` -> a native Rust `#[test]` body (mode-2); anything else -> none.
+/// Which additional executable artifact `aw ec gen` should scaffold for a
+/// claim. The canonical wrapper is always generated at `case.test_path`;
+/// only rig gates need an extra native case TOML. Cargo test gates must not
+/// derive another filename from `--test`, because that creates inert legacy
+/// duplicates beside the canonical wrapper.
 #[derive(Debug, PartialEq, Eq)]
 enum CaseGenMode {
     Rig,
-    NativeRust,
     Other,
 }
 
@@ -4055,8 +4470,6 @@ fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
         || cmd.starts_with("target/debug/rig test")
     {
         CaseGenMode::Rig
-    } else if cmd.starts_with("cargo test") {
-        CaseGenMode::NativeRust
     } else {
         CaseGenMode::Other
     }
@@ -4064,12 +4477,6 @@ fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
 
 fn rig_dir_from_command(cmd: &str) -> Option<&str> {
     cmd.split("--dir ")
-        .nth(1)
-        .and_then(|s| s.split_whitespace().next())
-}
-
-fn cargo_test_target(cmd: &str) -> Option<&str> {
-    cmd.split("--test ")
         .nth(1)
         .and_then(|s| s.split_whitespace().next())
 }
@@ -4134,34 +4541,10 @@ delegate = \"vat-cow\"\n",
     )
 }
 
-/// Mode-2: a native Rust `#[test]` body skeleton from a non-rig claim. The author
-/// fills the in-process drive + assertions (goes beyond a gate wrapper).
-fn render_native_rust_skeleton(case: &EcManifestCase, fn_name: &str) -> String {
-    let asserts: String = case
-        .assertions
-        .iter()
-        .map(|a| format!("    // contract: {a}\n"))
-        .collect();
-    format!(
-        "// SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` — fill the body.\n\
-// @ec {id}\n\
-// @capability {cap}\n\
-#[test]\n\
-fn {fn_name}() {{\n\
-{asserts}    // fill: drive the in-process target and assert the contract above.\n\
-    todo!(\"implement EC claim {contract}\");\n\
-}}\n",
-        contract = case.contract_id,
-        id = case.id,
-        cap = case.capability_id,
-        fn_name = fn_name,
-        asserts = asserts,
-    )
-}
-
-/// Generate an executable skeleton per claim: rig-integrated -> case TOML;
-/// native rust -> a `#[test]` body. Skips any file that already exists (same
-/// guard as gate tests) so hand-authored cases are never clobbered.
+/// Generate only the extra rig case artifact. The executable EC wrapper for
+/// every target is already generated at the manifest's canonical `test_path`.
+/// Skips any file that already exists so hand-authored cases are never
+/// clobbered.
 fn generate_case_skeletons(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
     for case in &manifest.cases {
         match case_gen_mode(case) {
@@ -4187,18 +4570,6 @@ fn generate_case_skeletons(ctx: &EcProjectContext, manifest: &EcManifest) -> Res
                     .and_then(|s| s.to_str())
                     .unwrap_or(case.category.as_str());
                 let body = render_case_toml_skeleton(case, &ctx.project, dimension, &stem);
-                write_skeleton_if_absent(&path, &body)?;
-            }
-            CaseGenMode::NativeRust => {
-                let Some(target) = cargo_test_target(&case.command) else {
-                    continue;
-                };
-                let path = ec_case_test_path(ctx, &case.test_path)
-                    .parent()
-                    .map(|dir| dir.join(format!("{target}.rs")))
-                    .unwrap_or_else(|| ctx.project_root.join("tests").join(format!("{target}.rs")));
-                let fn_name = sanitize_ident(target);
-                let body = render_native_rust_skeleton(case, &fn_name);
                 write_skeleton_if_absent(&path, &body)?;
             }
             CaseGenMode::Other => {}
@@ -4760,7 +5131,7 @@ fn ec_lock_stale_message(
 ) -> String {
     if !removed.is_empty() {
         return format!(
-            "ec lock migration required ({} locked entry/entries removed from current EC IR); refusing to overwrite `{}`. Preserve or deliberately retire each locked contract through a migration, then regenerate the lock. Inspect the affected entries with `aw ec lock --project {project} --show`",
+            "ec lock migration required ({} locked entry/entries removed from current EC IR); refusing to overwrite `{}`. Inspect the affected entries with `aw ec lock --project {project} --show`. For a reviewed project-root move, run `aw ec lock --project {project} --migrate-paths <old-prefix>=<new-prefix>`; it rewrites only paths and still refuses if any existing locked contract changed or disappeared.",
             removed.len(),
             EC_LOCK_FILE,
         );
@@ -4822,6 +5193,9 @@ fn load_ec_manifest(ctx: &EcProjectContext) -> Result<Option<(PathBuf, EcManifes
 }
 
 fn check_ec_context(ctx: &EcProjectContext) -> Result<EcCheckSummary> {
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        return check_python_ec_context(ctx);
+    }
     let expected = build_expected_manifest(ctx)?;
     let loaded = load_ec_manifest(ctx)?;
     check_manifest_against_expected(
@@ -4829,6 +5203,118 @@ fn check_ec_context(ctx: &EcProjectContext) -> Result<EcCheckSummary> {
         &expected,
         loaded.as_ref().map(|(_, manifest)| manifest),
     )
+}
+
+/// Python-v1 projects author their EC modules and inventory in
+/// `external-contracts/pyproject.toml`. This deliberately does not reach the
+/// legacy Markdown extractor, generated `aw.toml` inventory, or EC test
+/// scaffold renderer.
+fn check_python_ec_context(ctx: &EcProjectContext) -> Result<EcCheckSummary> {
+    let inventory = crate::services::python_ec::discover_python_ec_inventory(&ctx.ec_root)?;
+    let mut findings = inventory.findings;
+    let capability_ids = python_ec_capability_ids(ctx, &mut findings);
+    for case in &inventory.cases {
+        if !case.capability_id.is_empty() && !capability_ids.contains(&case.capability_id) {
+            findings.push(format!(
+                "Python EC case `{}` references unknown capability `{}`; declare it in CAPABILITIES.md before authoring the contract",
+                case.id, case.capability_id
+            ));
+        }
+        if !case.target.is_empty() && case.target != ctx.target {
+            findings.push(format!(
+                "Python EC case `{}` targets `{}`, but project `{}` target is `{}`",
+                case.id, case.target, ctx.project, ctx.target
+            ));
+        }
+    }
+    let has_efficiency = inventory
+        .cases
+        .iter()
+        .any(|case| case.dimension == "efficiency");
+    let efficiency_policy = if ctx.target == "rust" && inventory.efficiency_policy.is_empty() {
+        "required"
+    } else {
+        inventory.efficiency_policy.as_str()
+    };
+    if efficiency_policy.is_empty() {
+        findings.push(format!(
+            "Python EC project target `{}` must declare efficiency_policy = required|optional|not-applicable",
+            ctx.target
+        ));
+    } else if efficiency_policy == "required" && !has_efficiency {
+        findings.push(format!(
+            "Python EC target `{}` requires an efficiency case (Rust defaults to required)",
+            ctx.target
+        ));
+    }
+    findings.sort();
+    findings.dedup();
+
+    let case_count = inventory.cases.len();
+    Ok(EcCheckSummary {
+        project: ctx.project.clone(),
+        clean: findings.is_empty(),
+        configured: true,
+        inventory_path: relative_to(&ctx.project_root, &inventory.inventory_path),
+        // `EcCheckSummary` is shared with the legacy model. In Python mode
+        // this compatibility field is the hand-authored source digest, never
+        // a TD-derived/generated inventory digest.
+        generated_from_td_digest: inventory.source_digest,
+        inventory_td_digest: None,
+        expected_case_count: case_count,
+        case_count,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        stale: false,
+        missing_test_paths: Vec::new(),
+        orphan_test_paths: Vec::new(),
+        missing_tool_manifest_paths: Vec::new(),
+        findings,
+        ec_binding_warnings: Vec::new(),
+    })
+}
+
+fn python_ec_capability_ids(
+    ctx: &EcProjectContext,
+    findings: &mut Vec<String>,
+) -> BTreeSet<String> {
+    let cap_path = match crate::cli::capability::resolve_capability_path(
+        &ctx.project_root,
+        &ctx.project,
+        None,
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            findings.push(format!(
+                "Python EC cannot resolve CAPABILITIES.md for capability references: {error}"
+            ));
+            return BTreeSet::new();
+        }
+    };
+    let content = match fs::read_to_string(&cap_path) {
+        Ok(content) => content,
+        Err(error) => {
+            findings.push(format!(
+                "Python EC requires capability references at {}: {error}",
+                relative_to(&ctx.project_root, &cap_path)
+            ));
+            return BTreeSet::new();
+        }
+    };
+    match crate::cli::capability::parse_capability_document(&content, &cap_path) {
+        Ok(document) => document
+            .capabilities
+            .into_iter()
+            .map(|capability| capability.id)
+            .collect(),
+        Err(error) => {
+            findings.push(format!(
+                "Python EC cannot parse capability references at {}: {error}",
+                relative_to(&ctx.project_root, &cap_path)
+            ));
+            BTreeSet::new()
+        }
+    }
 }
 
 fn check_manifest_against_expected(
@@ -5244,6 +5730,14 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
 /// commands have no `required_for_production` concept and always run.
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVerifySummary> {
+    verify_ec_context_with_stage(ctx, required_only, None)
+}
+
+fn verify_ec_context_with_stage(
+    ctx: &EcProjectContext,
+    required_only: bool,
+    stage: Option<&str>,
+) -> Result<EcVerifySummary> {
     // #2084: the generated manifest is executable input. Fail closed before
     // loading or spawning anything when the current TD/EC source digest has
     // drifted from that input. Other generated-artifact findings retain their
@@ -5257,13 +5751,21 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
             ctx.project
         );
     }
-    let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
-        bail!(
-            "EC inventory missing in {}; run `aw ec gen --project {}` first",
-            relative_to(&ctx.project_root, &ctx.inventory_path),
-            ctx.project
-        );
-    };
+    let (inventory_path, manifest) =
+        if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+            (
+                ctx.ec_root.join("pyproject.toml"),
+                build_expected_manifest(ctx)?,
+            )
+        } else if let Some(manifest) = load_ec_manifest(ctx)? {
+            manifest
+        } else {
+            bail!(
+                "EC inventory missing in {}; run `aw ec gen --project {}` first",
+                relative_to(&ctx.project_root, &ctx.inventory_path),
+                ctx.project
+            );
+        };
     let review_findings = ec_review_gate_findings(ctx, &manifest)?;
     if !review_findings.is_empty() {
         return Ok(EcVerifySummary {
@@ -5308,33 +5810,37 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
     }
     let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
+        if let Some(stage) = stage {
+            let in_stage = match stage {
+                "core" => matches!(case.category.as_str(), "behavior" | "security"),
+                "operational" => matches!(case.category.as_str(), "stability" | "efficiency"),
+                _ => unreachable!("clap validates stage"),
+            };
+            if !in_stage {
+                results.push(skipped_ec_case(case, format!("skipped ({stage} stage)")));
+                continue;
+            }
+        }
         if required_only && !case.required_for_production {
-            results.push(EcVerifyCommandResult {
-                case_id: case.id.clone(),
-                capability_id: case.capability_id.clone(),
-                claim_id: case.claim_id.clone(),
-                category: case.category.clone(),
-                command: case.command.clone(),
-                status: "skipped".to_string(),
-                failure_kind: None,
-                exit_code: None,
-                stdout_tail: String::new(),
-                stderr_tail: "skipped (advisory)".to_string(),
-            });
+            results.push(skipped_ec_case(case, "skipped (advisory)".to_string()));
             continue;
         }
         if !case.command.trim().is_empty() && !seen_commands.insert(case.command.trim().to_string())
         {
             continue;
         }
-        results.push(run_ec_verify_command(
+        let mut result = run_ec_verify_command(
             case.id.clone(),
             case.capability_id.clone(),
             case.claim_id.clone(),
             case.category.clone(),
             case.command.clone(),
             &ctx.project_root,
-        ));
+        );
+        if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+            validate_python_ec_result_evidence(ctx, case, &mut result);
+        }
+        results.push(result);
     }
     for tool in &manifest.tool_manifests {
         if !tool.command.trim().is_empty() && !seen_commands.insert(tool.command.trim().to_string())
@@ -5361,6 +5867,53 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
         failed_count,
         results,
     })
+}
+
+fn validate_python_ec_result_evidence(
+    ctx: &EcProjectContext,
+    case: &EcManifestCase,
+    result: &mut EcVerifyCommandResult,
+) {
+    if result.status != "passed" {
+        return;
+    }
+    let missing = case
+        .evidence
+        .iter()
+        .filter(|artifact| artifact.kind == "external-evidence")
+        .filter(|artifact| {
+            let path = ctx.ec_root.join(&artifact.path);
+            !path.is_file()
+                || fs::metadata(path)
+                    .map(|metadata| metadata.len() == 0)
+                    .unwrap_or(true)
+        })
+        .map(|artifact| artifact.path.clone())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    result.status = "failed".to_string();
+    result.failure_kind = Some(EcVerifyFailureKind::CommandFailed);
+    result.stderr_tail = format!(
+        "external evidence missing or empty after verification: {}",
+        missing.join(", ")
+    );
+}
+
+fn skipped_ec_case(case: &EcManifestCase, reason: String) -> EcVerifyCommandResult {
+    EcVerifyCommandResult {
+        case_id: case.id.clone(),
+        capability_id: case.capability_id.clone(),
+        claim_id: case.claim_id.clone(),
+        category: case.category.clone(),
+        command: case.command.clone(),
+        status: "skipped".to_string(),
+        failure_kind: None,
+        exit_code: None,
+        stdout_tail: String::new(),
+        stderr_tail: reason,
+    }
 }
 
 /// Prepare the terminal `aw td code-check` EC gate (issue #858, #1579):
@@ -6044,7 +6597,9 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
     for entry in WalkDir::new(&ctx.tests_root)
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| {
+            entry.file_type().is_file() && is_generated_ec_test_candidate(entry.path())
+        })
     {
         let path = entry.path();
         if path == ctx.legacy_manifest_path {
@@ -6058,6 +6613,16 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
     }
     paths.sort();
     Ok(paths)
+}
+
+/// Generated EC wrappers are source test files.  Restricting the marker scan
+/// to their supported extensions keeps Python bytecode and other binary test
+/// artifacts out of the UTF-8 reader.
+fn is_generated_ec_test_candidate(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("rs" | "py" | "ts" | "tsx" | "js" | "mjs" | "cjs")
+    )
 }
 
 fn write_ec_manifest(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
@@ -6409,8 +6974,9 @@ fn write_generated_tool_manifests(ctx: &EcProjectContext, manifest: &EcManifest)
     Ok(())
 }
 
-// Real EC gate test: runs the contract `command` from the project root (the dir
-// containing `.aw/`, where EC commands are defined to run) and asserts success.
+// Real EC gate test: runs the contract `command` from the repository root
+// (the ancestor with the canonical `aw.toml` project registration) and asserts
+// success.
 // `#[ignore]` keeps it out of the default `cargo test` (EC commands are heavy and
 // may themselves invoke cargo test); run via `cargo test -- --ignored` or
 // `aw health --verify-ec`. `__FN__`/`__CMD_BINDING__`/`__ID__` are substituted,
@@ -6421,10 +6987,10 @@ fn __FN__() {
     __CMD_BINDING__
     let id = __ID__;
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }
@@ -6760,6 +7326,7 @@ e2e_tests:
         EcProjectContext {
             project_root: project_root.to_path_buf(),
             project: "demo".to_string(),
+            artifact_model: crate::models::project::ProjectArtifactModel::Legacy,
             source_root: project_root.join("projects/demo"),
             ec_root: project_root.join("projects/demo/external-contracts"),
             td_root: project_root.join("projects/demo/tech-design"),
@@ -6774,6 +7341,22 @@ e2e_tests:
             review_backing: "human".to_string(),
             review_mode: "blocking".to_string(),
         }
+    }
+
+    #[test]
+    fn python_lock_transition_preserves_the_owning_wi_for_td_check() {
+        let root = Path::new("/repo root");
+        let mut ctx = ctx_with_root(root);
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::PythonV1;
+
+        assert_eq!(
+            command_with_wi(ec_review_success_next_command(&ctx), Some("2303")),
+            "aw ec lock --project demo --wi 2303"
+        );
+        assert_eq!(
+            python_td_check_next_command(&ctx, "2303"),
+            "aw td check '/repo root/projects/demo/tech-design' --project demo --wi 2303"
+        );
     }
 
     fn case(id: &str, capability_id: &str, category: &str) -> EcManifestCase {
@@ -6946,6 +7529,7 @@ e2e_tests:
         let ctx = EcProjectContext {
             project_root: root.to_path_buf(),
             project: "tape".to_string(),
+            artifact_model: crate::models::project::ProjectArtifactModel::Legacy,
             source_root: root.to_path_buf(),
             ec_root: root.join("external-contracts"),
             td_root: root.join("tech-design"),
@@ -6992,10 +7576,30 @@ e2e_tests:
         assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
         c.command = "rig test --case x".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
+        // The canonical EC wrapper is already emitted at `test_path`; a
+        // cargo `--test` target must not generate a second legacy filename.
         c.command = "cargo test -p lumen --test api_e2e".into();
-        assert_eq!(case_gen_mode(&c), CaseGenMode::NativeRust);
+        assert_eq!(case_gen_mode(&c), CaseGenMode::Other);
         c.command = "pytest x".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Other);
+    }
+
+    #[test]
+    fn actor_identity_uses_host_session_then_local_user_without_unknown_fallback() {
+        let mut identities = BTreeMap::new();
+        identities.insert("CODEX_THREAD_ID", "thread-2179".to_string());
+        identities.insert("USER", "local-user".to_string());
+        assert_eq!(
+            actor_identity_from(|name| identities.get(name).cloned()),
+            "thread-2179"
+        );
+
+        identities.insert("AW_AGENT_ID", "ec-author-agent".to_string());
+        assert_eq!(
+            actor_identity_from(|name| identities.get(name).cloned()),
+            "ec-author-agent"
+        );
+        assert_eq!(actor_identity_from(|_| None), "local-cli");
     }
 
     #[test]
@@ -7200,34 +7804,25 @@ e2e_tests:
         record
     }
 
-    // #1799 regression: rerunning `aw ec review` (no `--evidence-file`) over
-    // an already-populated, fully accepted workspace payload must evaluate
-    // that payload as submitted, not silently reset it to the blank pending
-    // template before evaluation. Before the fix, `ensure_ec_review_payload`
-    // unconditionally overwrote any payload whose `source_digest` did not
-    // match the freshly computed manifest digest; that reset happened
-    // *before* the file was ever read, so the accepted decision, identity,
-    // summary, and checklist a human had just filled in vanished with no
-    // error. The fixed `run_review` only reports staleness via
-    // `validate_ec_review_payload`'s explicit "is stale" error, and the
-    // payload bytes on disk are untouched either way.
+    // #2262 regression: after an agent review requests revision and EC source
+    // changes, the default workspace payload remains AW-owned. Rerunning the
+    // emitted `aw ec review` command must replace that stale non-pending
+    // verdict with a pending record for the new digest, so an independent
+    // reviewer can be dispatched again without manual /tmp cleanup.
     #[test]
-    fn ec_review_rerun_without_evidence_file_evaluates_existing_payload_not_reset() {
+    fn ec_review_rerun_without_evidence_file_refreshes_stale_workspace_payload() {
         let (tmp, ctx) = write_demo_repo();
         write_clean_required_ec_case(&tmp, &ctx);
         let manifest = build_expected_manifest(&ctx).unwrap();
 
         let mut record = fully_populated_accepted_record(&ctx, &manifest);
-        // Deliberately stale relative to the manifest just computed above —
-        // this is exactly the condition that used to trigger
-        // `ensure_ec_review_payload`'s unconditional rewrite-to-pending.
+        record.decision = EcReviewDecision::NeedsRevision;
         record.source_digest = "sha256:already-reviewed-stale-digest".to_string();
         let payload_path = ec_review_payload_path(&ctx);
         write_ec_review_record(&payload_path, &record).unwrap();
-        let original_bytes = fs::read_to_string(&payload_path).unwrap();
 
         let guard = CwdGuard::enter(tmp.path());
-        let error = run_review(
+        run_review(
             &ctx.project,
             EcReviewArgs {
                 evidence_file: None,
@@ -7235,21 +7830,17 @@ e2e_tests:
                 wi: None,
             },
         )
-        .expect_err("a genuinely stale digest must still be reported, not silently reset");
+        .expect("a stale workspace payload must be refreshed for a new review");
         drop(guard);
 
-        assert!(
-            error.to_string().contains("stale"),
-            "expected the stale-evidence error, got: {error}"
-        );
         let after_bytes = fs::read_to_string(&payload_path).unwrap();
-        assert_eq!(
-            after_bytes, original_bytes,
-            "the populated payload must not be rewritten before evaluation"
-        );
         let after_record: EcReviewRecord = serde_json::from_str(&after_bytes).unwrap();
-        assert_eq!(after_record.decision, EcReviewDecision::Accepted);
-        assert_eq!(after_record.reviewed_by, "human-reviewer");
+        assert_eq!(after_record.decision, EcReviewDecision::Pending);
+        assert_eq!(
+            after_record.source_digest,
+            manifest.generated_from_td_digest
+        );
+        assert!(after_record.reviewed_by.is_empty());
     }
 
     // #1799 regression: an explicit `--evidence-file <path>` names
@@ -7332,13 +7923,11 @@ e2e_tests:
         );
     }
 
-    // #1799 regression: `ensure_ec_review_payload` itself must only ever
-    // scaffold a payload when nothing exists at the target path yet — it
-    // must never rewrite an existing file's content, whatever its
-    // version/project/digest fields say. This is the exact function whose
-    // unconditional rewrite-on-mismatch condition caused the issue.
+    // #2262 regression: the helper owns only the default workspace payload,
+    // and therefore refreshes an old digest into a pending current-digest
+    // template. Explicit evidence is not passed to this helper.
     #[test]
-    fn ensure_ec_review_payload_never_rewrites_an_existing_payload() {
+    fn ensure_ec_review_payload_refreshes_an_existing_stale_workspace_payload() {
         let (_tmp, ctx) = write_demo_repo();
         let manifest = build_expected_manifest(&ctx).unwrap();
 
@@ -7350,16 +7939,18 @@ e2e_tests:
         stale_record.project = "not-the-project".to_string(); // project mismatch
         stale_record.source_digest = "sha256:stale".to_string(); // digest mismatch
         write_ec_review_record(&payload_path, &stale_record).unwrap();
-        let before = fs::read_to_string(&payload_path).unwrap();
-
         ensure_ec_review_payload(&ctx, &manifest, &payload_path)
-            .expect("scaffolding an already-existing payload must succeed as a no-op");
+            .expect("a stale workspace payload must refresh to a pending template");
 
-        let after = fs::read_to_string(&payload_path).unwrap();
+        let after: EcReviewRecord =
+            serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
         assert_eq!(
-            before, after,
-            "an existing payload must never be rewritten, even with mismatched version/project/digest"
+            after.decision,
+            EcReviewDecision::Pending,
+            "a stale workspace payload must be replaced with a pending template"
         );
+        assert_eq!(after.source_digest, manifest.generated_from_td_digest);
+        assert_eq!(after.project, ctx.project);
     }
 
     // AC2: explicit `ec_review_backing = "human"` (opt-in blocking human-only
@@ -7864,23 +8455,32 @@ e2e_tests:
     }
 
     #[test]
-    fn native_skeleton_has_test_fn_and_ec_marker() {
-        let c = case("lumen-x", "search", "behavior");
-        let s = render_native_rust_skeleton(&c, "api_e2e");
-        assert!(s.contains("#[test]"));
-        assert!(s.contains("fn api_e2e()"));
-        assert!(s.contains("@ec lumen-x"));
+    fn native_cargo_case_does_not_emit_a_second_legacy_test_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_root(tmp.path());
+        let mut c = case("controls-contract", "search", "behavior");
+        c.test_path = "projects/demo/tests/behavior_controls.rs".to_string();
+        c.command = "cargo test -p demo-crate --test controls -- --ignored".to_string();
+        let manifest = EcManifest {
+            version: EC_MANIFEST_VERSION,
+            project: ctx.project.clone(),
+            generated_from_td_digest: "fixture".to_string(),
+            cases: vec![c],
+            tool_manifests: Vec::new(),
+        };
+
+        generate_case_skeletons(&ctx, &manifest).unwrap();
+        assert!(
+            !tmp.path().join("tests/controls.rs").exists(),
+            "a cargo --test target must not create a duplicate beside test_path"
+        );
     }
 
     #[test]
-    fn command_parsers_extract_dir_and_target() {
+    fn rig_command_parser_extracts_legacy_directory() {
         assert_eq!(
             rig_dir_from_command("rig run --dir cases/load"),
             Some("cases/load")
-        );
-        assert_eq!(
-            cargo_test_target("cargo test -p lumen --test api_e2e -- --ignored"),
-            Some("api_e2e")
         );
     }
 
@@ -9255,9 +9855,72 @@ tool_contracts:
         assert!(!status.clean);
         assert!(status.removed.contains(&"case:demo-happy-path".to_string()));
         assert!(status.message.contains("refusing to overwrite"));
+        assert!(status.message.contains("--migrate-paths"));
 
         let error = write_ec_lock_context(&ctx).unwrap_err();
         assert!(format!("{error:#}").contains("migration required"));
+        assert_eq!(fs::read_to_string(&lock_path).unwrap(), before);
+    }
+
+    #[test]
+    fn ec_lock_migrate_paths_preserves_contracts_after_project_root_move() {
+        let (tmp, old_ctx) = write_demo_repo();
+        write_ec_lock_context(&old_ctx).unwrap();
+
+        fs::create_dir_all(tmp.path().join("apps")).unwrap();
+        fs::rename(
+            tmp.path().join("projects/demo"),
+            tmp.path().join("apps/demo"),
+        )
+        .unwrap();
+        let config = fs::read_to_string(tmp.path().join("aw.toml"))
+            .unwrap()
+            .replace("projects/demo", "apps/demo");
+        fs::write(tmp.path().join("aw.toml"), config).unwrap();
+        let ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+
+        let before = check_ec_lock_context(&ctx).unwrap();
+        assert_eq!(before.status, EcLockState::MigrationRequired);
+        assert!(!before.removed.is_empty());
+
+        let (status, migrated) =
+            migrate_ec_lock_paths_context(&ctx, "projects/demo", "apps/demo").unwrap();
+        assert!(migrated);
+        assert!(status.clean, "{status:?}");
+        assert_eq!(status.status, EcLockState::Locked);
+        assert!(check_ec_lock_context(&ctx).unwrap().clean);
+
+        let rewritten = fs::read_to_string(ctx.ec_root.join(EC_LOCK_FILE)).unwrap();
+        assert!(rewritten.contains("apps/demo/tech-design/specs/contract.md"));
+        assert!(!rewritten.contains("projects/demo"));
+    }
+
+    #[test]
+    fn ec_lock_migrate_paths_refuses_changed_contracts() {
+        let (tmp, old_ctx) = write_demo_repo();
+        write_ec_lock_context(&old_ctx).unwrap();
+
+        fs::create_dir_all(tmp.path().join("apps")).unwrap();
+        fs::rename(
+            tmp.path().join("projects/demo"),
+            tmp.path().join("apps/demo"),
+        )
+        .unwrap();
+        let config = fs::read_to_string(tmp.path().join("aw.toml"))
+            .unwrap()
+            .replace("projects/demo", "apps/demo");
+        fs::write(tmp.path().join("aw.toml"), config).unwrap();
+        let ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+        let lock_path = ctx.ec_root.join(EC_LOCK_FILE);
+        let before = fs::read_to_string(&lock_path).unwrap();
+        let source = tmp.path().join("apps/demo/tech-design/specs/contract.md");
+        let changed = fs::read_to_string(&source)
+            .unwrap()
+            .replace("demo_happy_path", "demo_changed_path");
+        fs::write(source, changed).unwrap();
+
+        let error = migrate_ec_lock_paths_context(&ctx, "projects/demo", "apps/demo").unwrap_err();
+        assert!(format!("{error:#}").contains("cannot prove every existing contract survived"));
         assert_eq!(fs::read_to_string(&lock_path).unwrap(), before);
     }
 
@@ -9278,6 +9941,66 @@ tool_contracts:
         assert!(!content.contains(
             "    let command = \"cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture\";"
         ));
+    }
+
+    #[test]
+    fn generated_rust_ec_wrapper_runs_from_registered_aw_toml_root_without_legacy_aw_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        let crate_root = repo_root.join("apps/demo");
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::create_dir_all(crate_root.join("tests")).unwrap();
+        fs::write(
+            repo_root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "apps/demo"
+
+[[projects.workspaces]]
+paths = ["apps/demo/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
+
+        let mut ec_case = case("behavior-root-resolution", "demo", "behavior");
+        ec_case.command = "test -f aw.toml".to_string();
+        let generated = render_rust_ec_test(&ec_case);
+        assert!(generated.contains("root.join(\"aw.toml\").is_file()"));
+        assert!(!generated.contains(".aw"));
+        fs::write(
+            crate_root.join("tests/behavior_root_resolution.rs"),
+            generated,
+        )
+        .unwrap();
+
+        let output = std::process::Command::new("cargo")
+            .current_dir(repo_root)
+            .args([
+                "test",
+                "--manifest-path",
+                "apps/demo/Cargo.toml",
+                "--test",
+                "behavior_root_resolution",
+                "--",
+                "--ignored",
+                "--nocapture",
+            ])
+            .output()
+            .expect("cargo must run the generated EC wrapper");
+        assert!(
+            output.status.success(),
+            "generated EC wrapper failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 
     #[test]
@@ -9328,6 +10051,29 @@ generated_from_td_digest = "stale"
         let summary = check_ec_context(&ctx).unwrap();
         assert!(summary.clean, "{:?}", summary.findings);
         assert_eq!(summary.inventory_path, "projects/demo/aw.toml");
+    }
+
+    #[test]
+    fn generated_ec_test_paths_skip_binary_python_cache_entries() {
+        let (_tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(ctx.tests_root.join("__pycache__")).unwrap();
+        fs::write(
+            ctx.tests_root
+                .join("__pycache__/test_contract.cpython-312.pyc"),
+            [0_u8, 0xFF, 0xFE],
+        )
+        .unwrap();
+        fs::create_dir_all(&ctx.tests_root).unwrap();
+        fs::write(
+            ctx.tests_root.join("behavior_contract.rs"),
+            "// AW-EC-BEGIN\n// generated contract\n// AW-EC-END\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            generated_ec_test_paths(&ctx).unwrap(),
+            vec!["projects/demo/tests/behavior_contract.rs"]
+        );
     }
 
     #[test]

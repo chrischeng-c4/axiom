@@ -1,6 +1,6 @@
 ---
 name: aw:wi
-description: Work-item management — create, update, list, show. Mainthread-only validation loop; no subagent dispatch.
+description: Work-item management — create, update, list, graph, show. Mainthread-only validation loop; no subagent dispatch.
 user-invocable: true
 amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 amended_on: "2026-05-03"
@@ -34,19 +34,20 @@ old references to `aw wi`.
 /aw:wi create "<title>" --type <type> --project <name> [--priority <pN>] [--agent <name>]
 /aw:wi update <slug>
 /aw:wi list [--state open|closed] [--project <name>]
+/aw:wi graph --project <name> [--json]
 /aw:wi show <slug>
-/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+/aw:wi plan --project <name> [--title "<plan>"] [--json]
 /aw:wi epicize --project <name> [--title "<phase>"] [--json]
 /aw:wi atomize --project <name> [--title "<plan>"] [--json]
 /aw:wi prioritize --project <name> [--title "<plan>"] [--json]
-aw capability run --project <name> --non-interactive --max-ticks 1
+aw goal capability --project <name>
 ```
 
 `--label` is rejected on create. Labels are derived from typed flags:
 
-* `--type` (required, closed enum): `bug | enhancement | refactor | test | epic`
+* `--type` (required, closed enum): `epic | change`
 * `--project <name>` (repeatable): resolved against `[[projects]]` in
-  `aw.toml`. `epic` accepts 0 or 1; other types require exactly 1.
+  `aw.toml`. `epic` accepts 0 or 1; `change` requires exactly 1.
 * `--priority <p0|p1|p2|p3>` (optional)
 * `--agent <name>` (optional): resolved against `[[agents]]` in
   `aw.toml`.
@@ -119,17 +120,27 @@ Currently non-envelope (legacy). Run `aw wi update <slug> --body-file -`
 directly from mainthread if needed, or wait until `update` joins the
 envelope protocol.
 
-## list / show
+## list / graph / show
 
 Thin passthrough:
 ```bash
 aw wi list [--state <state>] [--project <name>]
+aw wi graph --project <name> [--json]
 aw wi show <slug>
 ```
 
 Prefer `--project <name>` for project-scoped lists; it resolves the
 configured project label from `aw.toml`. Use `--label` only as a
-raw low-level label filter.
+raw low-level label filter. Use `--type epic|change` for the canonical type
+filter; `change` also reads legacy `bug`, `enhancement`, `refactor`, and `test`
+labels without mutating tracker history.
+
+`graph` is the read-only project aggregate gate. It loads the complete tracker
+inventory, normalizes canonical and legacy epic ownership, and projects
+priority inheritance, dependencies, duplicate recommendations, and sibling
+supersession. Invalid ownership exits non-zero after emitting the complete
+`aw.wi.graph.v1` JSON diagnostics; unchanged reads never write tracker state
+and retain the same digest.
 
 ## Planning operators
 
@@ -142,31 +153,28 @@ stay as `type=epic` or a local planning artifact until atomized into bounded
 WI candidates.
 
 ```bash
-aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+aw wi plan --project <name> [--title "<plan>"] [--json]
 aw wi epicize --project <name> [--title "<phase>"] [--json]
 aw wi atomize --project <name> [--title "<plan>"] [--json]
 aw wi prioritize --project <name> [--title "<plan>"] [--json]
 aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
-- `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
-  or `[[projects]].path/README.md`, cross-checks it against open work-items,
-  and writes a local capability-to-WI planning draft under
-  `/tmp/aw/workspaces/<workspace>/workitems/<project>/capability-plan/`.
-- `epicize` inventories every open issue for the project, groups
-  requirements into epic candidates, and writes the local classification
-  draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/epics/`. The artifact explicitly requires
-  agent review before publishing tracker changes.
-- `atomize` inventories epic/roadmap-sized issues and writes atomic WI
-  candidates under `/tmp/aw/workspaces/<workspace>/workitems/<project>/atomize/`. The artifact requires human
-  review before any candidate is published.
-- `prioritize` inventories every open issue for the project and writes a
-  local readiness review draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/priorities/`,
-  covering `ready_now`, `blocked_by_dependency`, `needs_atomize`,
-  `needs_triage`, and `deferred` lanes.
-  The artifact explicitly requires agent review before publishing priority
-  label or ordering changes.
-- `aw capability run --project` is the run-to-end project root. It consumes
+- `plan` is the authority. It first atomizes and prioritizes every open epic,
+  splitting mixed active/deferred horizons, then reconciles each epic with its
+  existing changes, duplicates, gaps, dependencies, and oversized siblings.
+  It writes one deterministic `aw.wi.project-plan.v1` preview under
+  `/tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.json`.
+- `epicize`, `atomize`, and `prioritize` are compatibility entrypoints. They
+  delegate to the same project-plan path, bytes, digest, and independent
+  `project_plan` review; they never create competing authoritative artifacts.
+- Planning reads the complete configured issue inventory and first validates
+  `aw.wi.graph.v1`. Invalid ownership or relation state fails closed with the
+  graph diagnostics. The producer and `needs_revision` write only local
+  `/tmp/aw` state. Accepted independent review preflights the exact tracker
+  snapshot and applies its ordered digest-bound mutation manifest as one
+  retry-safe transaction; duplicate and superseded issues are retained.
+- `aw goal capability --project` is the run-to-end project root. It consumes
   capability status and prioritized WI readiness instead of relying on
   cron-style sprint batches. There is no `estimate`/`sprintize` verb — those
   were removed.
@@ -180,7 +188,7 @@ Non-epic work-items must be atomic before they enter `/aw:td`:
 - `## Scope` with concrete in-scope and out-of-scope bullets.
 - `## Acceptance Criteria` with at least one real list item.
 - `## Reference Context` with related specs and a concrete spec plan.
-- Roadmap-sized or decision-blocked work goes back to `atomize` or HITL review.
+- Roadmap-sized or decision-blocked work goes back to `aw wi plan` or review.
 
 ## Recovery
 

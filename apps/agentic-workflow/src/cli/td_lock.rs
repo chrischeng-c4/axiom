@@ -122,6 +122,7 @@ struct TdLockEntry {
 #[derive(Debug)]
 struct TdLockTarget {
     project: String,
+    artifact_model: crate::models::project::ProjectArtifactModel,
     td_path: PathBuf,
     td_path_display: String,
     lock_path: PathBuf,
@@ -267,7 +268,7 @@ fn write_project_td_lock_file_at_root(
             return Ok((status, false));
         }
     }
-    let snapshot = snapshot_td_root(&target.td_path)?;
+    let snapshot = snapshot_td_lock_target(&target)?;
     let lock = TdLockFile {
         version: TD_LOCK_VERSION,
         project: target.project.clone(),
@@ -507,7 +508,7 @@ pub(crate) fn check_project_td_lock_at_root(
     project: &str,
 ) -> Result<TdLockStatus> {
     let target = resolve_td_lock_target(project_root, project)?;
-    let current = snapshot_td_root(&target.td_path)?;
+    let current = snapshot_td_lock_target(&target)?;
     if !target.lock_path.is_file() {
         let current_digest = current.source_digest.clone();
         let file_count = current.files.len();
@@ -782,8 +783,14 @@ fn resolve_td_lock_target(project_root: &Path, requested: &str) -> Result<TdLock
     }
     let lock_path = td_path.join("td.lock");
     let lock_path_display = format!("{}/td.lock", td_path_display.trim_end_matches('/'));
+    let artifact_model = crate::services::project_registry::resolve_project_config_row(
+        project_root,
+        &project.name,
+    )?
+    .effective_artifact_model();
     Ok(TdLockTarget {
         project: project.name,
+        artifact_model,
         td_path,
         td_path_display,
         lock_path,
@@ -816,6 +823,22 @@ fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
         ir_digest,
         files,
     })
+}
+
+fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
+    let mut snapshot = snapshot_td_root(&target.td_path)?;
+    if target.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        snapshot.ir_digest = crate::services::python_td::compile_python_td_project(&target.td_path)?
+            .semantic_digest;
+        // Python-v1 has one compiler-owned semantic root digest. Markdown
+        // per-file AST parse failures are not meaningful for this adapter.
+        for entry in &mut snapshot.files {
+            entry.ir_digest = None;
+            entry.parse_error = None;
+            entry.section_count = None;
+        }
+    }
+    Ok(snapshot)
 }
 
 fn collect_td_files(root: &Path, current: &Path, files: &mut Vec<TdLockEntry>) -> Result<()> {
@@ -1309,6 +1332,29 @@ path = "projects/demo"
 
         assert_eq!(before.source_digest, after.source_digest);
         assert_eq!(after.files.len(), 1);
+    }
+
+    #[test]
+    fn python_v1_lock_snapshot_uses_python_semantic_digest_not_markdown_ast() {
+        let root = TempDir::new().unwrap();
+        write(
+            &root.path().join("aw.toml"),
+            "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\nartifact_model = \"python-v1\"\n",
+        );
+        let td_root = root.path().join("projects/demo/tech-design/src/demo/domain");
+        std::fs::create_dir_all(&td_root).unwrap();
+        write(
+            &td_root.join("invoice.py"),
+            "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\ndef issue_invoice() -> None:\n    pass\n",
+        );
+
+        let target = resolve_td_lock_target(root.path(), "demo").unwrap();
+        let snapshot = snapshot_td_lock_target(&target).unwrap();
+        let compiled = crate::services::python_td::compile_python_td_project(&target.td_path).unwrap();
+
+        assert_eq!(snapshot.ir_digest, compiled.semantic_digest);
+        assert!(snapshot.files.iter().all(|entry| entry.parse_error.is_none()));
+        assert!(snapshot.files.iter().all(|entry| entry.ir_digest.is_none()));
     }
 
     #[test]

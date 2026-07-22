@@ -7,13 +7,16 @@
 // @contract artifact-quality-fixture-roundtrip
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --lib artifact_quality -- --nocapture
+// @command cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture
 // AW-EC-END
 
+// Contract: every serialized fixture decodes, validates, and re-encodes to the same typed profile
+// Contract: each profile exposes intent_read, quality_dials, source_policy, and preflight_gate_set in review context
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn artifact_quality_fixture_roundtrip() {
-    let command = "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture";
+    let command =
+        "cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture";
     let id = "artifact-quality-fixture-roundtrip";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

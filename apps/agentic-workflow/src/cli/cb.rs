@@ -119,6 +119,20 @@ pub struct CbClaimArgs {
 pub struct CbGenArgs {
     // Issue slug identifying the approved tech-design.
     pub slug: Option<String>,
+    // Target-native generator to run. Python consumes a Python TD project
+    // source tree and emits a DDD Python package plus native unit tests.
+    #[arg(long)]
+    pub target: Option<String>,
+    // Input project root for a target-native generator.
+    #[arg(long)]
+    pub source_root: Option<String>,
+    // Output root for a target-native generator.
+    #[arg(long)]
+    pub output_dir: Option<String>,
+    /// Root-owned Python-artifact lifecycle WI. Target-native generation
+    /// records the core EC handoff only when this explicit owner is present.
+    #[arg(long)]
+    pub wi: Option<String>,
     // Path to the spec file (relative to the current checkout root).
     #[arg(long)]
     pub spec_path: Option<String>,
@@ -357,6 +371,12 @@ fn print_gen_source_terminal(
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub async fn run_gen(args: CbGenArgs) -> Result<()> {
+    if let Some(target) = args.target.as_deref() {
+        return run_target_native_gen(target, &args);
+    }
+    if args.source_root.is_some() || args.output_dir.is_some() {
+        anyhow::bail!("--source-root and --output-dir require --target python");
+    }
     if args.force_regen {
         if args.slug.is_some() || args.spec_path.is_some() {
             anyhow::bail!("--force-regen cannot be combined with slug or --spec-path");
@@ -437,6 +457,59 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
         spec_path: args.spec_path,
     };
     td::run_gen_code(td_args).await
+}
+
+fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
+    if !matches!(target, "python" | "rust" | "typescript") {
+        anyhow::bail!("unsupported td generation target {target:?}; supported targets: python, rust, typescript");
+    }
+    if args.slug.is_some()
+        || args.spec_path.is_some()
+        || args.force_regen
+        || args.workspace.is_some()
+        || args.dry_run
+        || args.verify
+        || args.verify_cold
+        || args.semantic_sample.is_some()
+        || args.sync_public_api
+    {
+        anyhow::bail!(
+            "--target {target} accepts --source-root/--output-dir plus optional --project/--wi lifecycle ownership"
+        );
+    }
+    let source_root = args
+        .source_root
+        .as_deref()
+        .context("--target requires --source-root <python-project>")?;
+    let output_dir = args
+        .output_dir
+        .as_deref()
+        .context("--target requires --output-dir <target>")?;
+    let ir =
+        crate::services::python_td::compile_python_td_project(std::path::Path::new(source_root))?;
+    let output_root = std::path::Path::new(output_dir);
+    let manifest = match target {
+        "python" => serde_json::to_value(crate::services::python_td_target::emit_python_td_target(&ir, output_root)?)?,
+        "rust" => serde_json::to_value(crate::services::python_td_rust_target::emit_python_td_rust_target(&ir, output_root)?)?,
+        "typescript" => serde_json::to_value(crate::services::python_td_typescript_target::emit_python_td_typescript_target(&ir, output_root)?)?,
+        _ => unreachable!("validated target"),
+    };
+    if let Some(wi) = args.wi.as_deref() {
+        let project = args
+            .project
+            .as_deref()
+            .context("--target --wi requires --project <project>")?;
+        let project_root = crate::find_project_root()?;
+        crate::cli::ec::persist_ec_first_next_action(
+            &project_root,
+            wi,
+            format!(
+                "aw ec verify --project {project} --required-only --stage core --wi {wi}"
+            ),
+        )?;
+    }
+    println!("{}", serde_json::to_string_pretty(&manifest)?);
+    Ok(())
 }
 
 /// Re-run only the accepted TD's touched CODEGEN targets when `aw td gen`
@@ -4583,13 +4656,13 @@ pub fn signature_only() -> Result<()>
     // fields, not a freeform body, so `run_create`'s own structured skeleton
     // fills in the description.
     #[test]
-    fn claim_issue_create_args_uses_typed_refactor_fields_and_bounded_skeleton() {
+    fn claim_issue_create_args_uses_typed_change_fields_and_bounded_skeleton() {
         let title = claim_issue_title("projects/tool/src/lib.rs");
         let args = claim_issue_create_args(&title, "tool".to_string());
         assert_eq!(args.title.as_deref(), Some(title.as_str()));
         assert!(matches!(
             args.issue_type,
-            Some(crate::cli::issues::TypeFilter::Refactor)
+            Some(crate::cli::issues::TypeFilter::Change)
         ));
         assert_eq!(args.projects, vec!["tool".to_string()]);
         assert!(args.body.is_none(), "no free-form body");
@@ -7064,12 +7137,10 @@ impl ClaimIssueRef {
 // never fails the claim, since `aw td code-claim` has to keep working
 // offline / with no issue backend configured.
 //
-// `--type refactor`, not `enhancement`: adopting already-written code into
-// the spec-driven regenerability lifecycle is maintenance/tech-debt work
-// on existing code, not a new user-facing capability — matching
-// `IssueType::Refactor`'s "maintenance" bucket in `issues.rs`'s planning
-// groups (`groups.maintenance.push(issue)`), as distinct from
-// `ensure_gap_issue`'s `enhancement` (a genuine HANDWRITE-coverage gap).
+// `--type change`: adopting already-written code into the spec-driven
+// regenerability lifecycle is executable maintenance work. The bounded body
+// carries the maintenance context; the WI type stays within the canonical
+// epic/change taxonomy.
 //
 // Backend/durability note: this lands in whatever backend
 // `aw.toml` resolves for the project that owns `code_path_rel`
@@ -7119,7 +7190,7 @@ fn ensure_claim_issue(
             let backend = crate::issues::make_backend(&kind, project_root, repo, host)?;
             let filter = crate::issues::IssueFilter {
                 state: None,
-                issue_type: Some(crate::issues::IssueType::Refactor),
+                issue_type: Some(crate::issues::IssueType::Change),
                 label: None,
                 author: None,
             };
@@ -7166,7 +7237,7 @@ fn claim_issue_title(code_path_rel: &str) -> String {
 
 // Build the exact `CreateArgs` `ensure_claim_issue` hands to the real
 // `aw wi create` internal path (`crate::cli::issues::run`) for adopted
-// code — typed `--type refactor` + `--project <project_name>` fields, no
+// code — typed `--type change` + `--project <project_name>` fields, no
 // free-form `--body` (so `run_create`'s own canonical structured skeleton
 // is what gets filed). Split out from `ensure_claim_issue` so the
 // field/skeleton shape is unit-testable without a configured issue
@@ -7175,7 +7246,7 @@ fn claim_issue_create_args(title: &str, project_name: String) -> crate::cli::iss
     crate::cli::issues::CreateArgs {
         draft_path: None,
         title: Some(title.to_string()),
-        issue_type: Some(crate::cli::issues::TypeFilter::Refactor),
+        issue_type: Some(crate::cli::issues::TypeFilter::Change),
         body: None,
         body_file: None,
         projects: vec![project_name],

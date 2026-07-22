@@ -67,6 +67,7 @@ pub mod agents;
 pub mod branch_switch;
 pub mod context;
 pub mod context_builder;
+pub mod context_map;
 pub mod defaults;
 pub mod fillback;
 pub mod generate;

@@ -575,6 +575,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_non_epic_frontmatter_reads_as_change_without_mutation() {
+        let tmp = TempDir::new().unwrap();
+        let backend = LocalBackend::at(tmp.path().to_path_buf());
+        let open = backend.issues_dir().join("open");
+        std::fs::create_dir_all(&open).unwrap();
+
+        for (index, legacy) in ["bug", "enhancement", "refactor", "test"]
+            .into_iter()
+            .enumerate()
+        {
+            std::fs::write(
+                open.join(format!("{}.md", index + 1)),
+                format!(
+                    "---\ntype: {legacy}\ntitle: Legacy {legacy}\nstate: open\nlabels:\n  - type:{legacy}\n---\n\nlegacy body {legacy}\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let changes = backend
+            .list(&IssueFilter {
+                issue_type: Some(IssueType::Change),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(changes.len(), 4);
+        for issue in &changes {
+            assert_eq!(issue.issue_type.as_str(), "change");
+            assert_eq!(serde_json::to_value(issue).unwrap()["type"], "change");
+            assert!(issue.body.trim_start().starts_with("legacy body"));
+        }
+        for (index, legacy) in ["bug", "enhancement", "refactor", "test"]
+            .into_iter()
+            .enumerate()
+        {
+            let raw = std::fs::read_to_string(open.join(format!("{}.md", index + 1))).unwrap();
+            assert!(raw.contains(&format!("type: {legacy}")));
+            assert!(raw.contains(&format!("type:{legacy}")));
+        }
+    }
+
+    #[tokio::test]
     async fn get_by_numeric_id() {
         let tmp = TempDir::new().unwrap();
         let backend = LocalBackend::at(tmp.path().to_path_buf());

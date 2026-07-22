@@ -18,9 +18,9 @@
 //!     file and emits a terminal `gave_up` status without dropping the
 //!     recorded intent from the report.
 //!
-//! This is explicitly not a daemon and does not replace `aw wi run`/`aw
-//! capability run` completion semantics: gates are executable commands
-//! only (no LLM-judged/prose-only conditions), and goal state never
+//! The ad-hoc leaf is explicitly not a daemon and does not replace the
+//! `wi`/`capability`/`backlog` lifecycle roots: its gates are executable
+//! commands only (no LLM-judged/prose-only conditions), and goal state never
 //! crosses sessions/workspaces.
 
 use std::io::Read;
@@ -75,9 +75,9 @@ pub enum GoalCommand {
     /// no capability id is given (#1899: unified re-home of the retired
     /// `aw capability run [<cap-id>] --project <p>`).
     Capability(GoalCapabilityArgs),
-    /// Tracker-driven drain of every open work item for a project, one WI
-    /// per tick via the same shared engine `aw goal wi <id>` uses; blocked
-    /// WIs are parked (not surfaced) so the drain continues (#1899 R7).
+    /// Drain ready changes from the accepted published epic graph; blocked
+    /// leaves are parked and terminal epics roll up through `aw goal wi`
+    /// (#1899 R7, #2389).
     Backlog(GoalBacklogArgs),
 }
 

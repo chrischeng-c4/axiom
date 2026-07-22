@@ -34,7 +34,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 | `drift` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
 | `ec` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
 | `fillback` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
-| `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 79 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
+| `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 80 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
 | `generator` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
 | `goal` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
 | `guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
@@ -44,26 +44,27 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 | `issues` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
 | `llm` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
 | `loop_state` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
-| `merge_target` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 56 |  |
+| `merge_target` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 57 |  |
 | `meta` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
 | `meta_docs` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
-| `migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 51 |  |
+| `migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 52 |  |
 | `production` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
 | `project` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
 | `regenerability_policy` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
 | `remote_push` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
-| `run` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
-| `shell_env` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 38 |  |
-| `slug_workspace` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
-| `standard_cli` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
-| `standardize` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
-| `td` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
-| `td_check_section_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
-| `td_lock` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
-| `td_migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
-| `update` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 46 |  |
-| `validate_spec_structure` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 47 |  |
-| `workflow_guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 48 |  |
+| `review` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
+| `run` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
+| `shell_env` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 39 |  |
+| `slug_workspace` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
+| `standard_cli` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
+| `standardize` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
+| `td` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
+| `td_check_section_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
+| `td_lock` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
+| `td_migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 46 |  |
+| `update` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 47 |  |
+| `validate_spec_structure` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 48 |  |
+| `workflow_guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 49 |  |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -106,6 +107,10 @@ pub mod production;
 pub mod project;
 pub mod regenerability_policy;
 pub mod remote_push;
+pub mod review;
+pub mod review_doc_projection;
+pub mod review_obs_rules;
+pub mod review_rules;
 pub mod run;
 pub(crate) mod shell_env;
 pub mod slug_workspace;

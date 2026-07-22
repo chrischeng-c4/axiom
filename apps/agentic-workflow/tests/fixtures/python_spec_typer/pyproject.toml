@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aw-python-spec-typer-fixture"
+version = "0.1.0"
+dependencies = ["typer>=0.17,<0.18"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "external-contracts/tests"]

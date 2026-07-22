@@ -2,10 +2,22 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-20T07:32:25.299360+00:00"
-digest = "sha256:93418aee69cb902e780ad4d57f887f3566a5aa1d72e92b5c42fcef880c62b00e"
-source_digest = "sha256:93418aee69cb902e780ad4d57f887f3566a5aa1d72e92b5c42fcef880c62b00e"
-ir_digest = "sha256:065a3b313de086b7f73278767be0b2aec8b2e2eb152234b15604b2a4e0514c2a"
+generated_at = "2026-07-20T17:38:05.051848+00:00"
+digest = "sha256:ce2aeeb25a4a4aa216a13c0ecde8dcc7a4ccc3846b4a0c779f2eda16e1ac3abf"
+source_digest = "sha256:ce2aeeb25a4a4aa216a13c0ecde8dcc7a4ccc3846b4a0c779f2eda16e1ac3abf"
+ir_digest = "sha256:f77cf886cc3db5e5f0d762427e7e26973d0603c7c34630cb26e7a714be8bf3d4"
+
+[[files]]
+path = "config/aw-review-resolve-project-profile-cli-report-skeleton.md"
+digest = "sha256:03e485bb38562b06342f6b633f212cc93793c988ddc7dfc8ca54347c0b967e41"
+ir_digest = "sha256:d9844d97d2cb5d68a3a7a3d0b69ab09a171ad228ba0c941a9f2842588f02585d"
+section_count = 3
+
+[[files]]
+path = "config/aw-review-shared-service-kit-adoption-rules-profile-negative-ass.md"
+digest = "sha256:4c3dddc161c5890de64b0d765f721b2cfc56204af5c9492b0ba2292e8cc339ce"
+ir_digest = "sha256:dd8f42829bc75557ec793e795d0fb61a90d9d8698cf0e27529fd37c8bf87058d"
+section_count = 3
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5007,8 +5019,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:c108d6da7abb12ae56c6160630b982c4f78682c5f6888579aef67436f263a540"
-ir_digest = "sha256:e0092347dd453ceed2a99a9b21a2c4d1e9c7cfe5ff7005bb0ad0d028be1f1584"
+digest = "sha256:a3cc14116f3bcb74be43c93d41f37f457ac368ef6e9870b528d6906f02e0764f"
+ir_digest = "sha256:e8e8b131867909e3618f64c1cc77cddee712b3d17580a56dd29bf7222f62555b"
 section_count = 2
 
 [[files]]
@@ -5043,8 +5055,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:a1e9bd33ea2521b968080c897ebe2fd14decdcd660503c655da0d4526e28e903"
-ir_digest = "sha256:06987e0f96de15048207e5a1cec9cf039c4f7d94869f5bcba1c860e8834585a5"
+digest = "sha256:87a05ffe8bcd08ee7b642571e519fed94e118f252aca0722814b2dad57965007"
+ir_digest = "sha256:a270089d615e6c8086f71ba11b63314c85fcd3aa3718f10200e332e9b34c38fd"
 section_count = 2
 
 [[files]]
@@ -5055,8 +5067,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/lib.md"
-digest = "sha256:b59af700061860fa731d8093ea1c01222f2d504f2e8539fb3011094e416fff71"
-ir_digest = "sha256:0666b213a54be8e8ff85a6ab839f42a99ff31962e5fb9e0ef38ca1bd04f8294a"
+digest = "sha256:575d2bba080a7490f1d957916e8627bf0c1bfcb398cb8bcd791cff6bdca7596d"
+ir_digest = "sha256:9ce5623350ae515ad7488cfa79bc1c0f7d271b04de1a73bd2db9441b8c61da54"
 section_count = 2
 
 [[files]]
@@ -5692,10 +5704,22 @@ ir_digest = "sha256:aa098993f9d5c95ba50d20dd288cd81030d372323f6b192bf424b434742d
 section_count = 2
 
 [[files]]
+path = "validate/aw-review-structured-observability-raft-telemetry-conformance-ru.md"
+digest = "sha256:de5c464e386b674d6f73f98fd9a504268508df80db6b95b7c2236f625955df2d"
+ir_digest = "sha256:38d5d2cef2181af09404ff0b8ac4167a3d5b28598a7a72d6ec160a08d35b8180"
+section_count = 3
+
+[[files]]
 path = "validate/health-defaults-to-streaming-full-verification.md"
 digest = "sha256:2d03f72a2d29de72b56a01388aa453306aab72bd738b46379d92f4d1275a6078"
 ir_digest = "sha256:f5f64c1067dab2dc05e4ab5bf442554fff9c11fdf67f92dde7548abe0490a8c1"
 section_count = 22
+
+[[files]]
+path = "validate/review-skill-doc-trait-projection-with-drift-tests.md"
+digest = "sha256:603a889521f311412c5d2ac80acdea375fded20727152e561b5be98e3bbb85be"
+ir_digest = "sha256:7873b81f795779e5904c7a32ed2962cbe3f5e3a7e4aa47b205fee41f286a9bb6"
+section_count = 3
 
 [[files]]
 path = "validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md"

@@ -124,10 +124,14 @@ requirement ENVELOPE_COMPAT {
 
 ```yaml
 e2e_tests:
-  - name: artifact_quality_fixture_roundtrip
+  - id: artifact-quality-fixture-roundtrip
+    name: artifact_quality_fixture_roundtrip
     capability_id: td-cb-lifecycle-automation
     claim_id: td-lifecycle-dispatch
-    command: "cargo test -p agentic-workflow artifact_quality -- --nocapture"
+    command: "cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture"
+    assertions:
+      - "every serialized fixture decodes, validates, and re-encodes to the same typed profile"
+      - "each profile exposes intent_read, quality_dials, source_policy, and preflight_gate_set in review context"
 ```
 
 ## Source
@@ -476,6 +480,14 @@ mod tests {
         for raw in fixtures {
             let profile: ArtifactQualityProfile = serde_json::from_str(raw).unwrap();
             profile.validate().unwrap();
+            let encoded = serde_json::to_value(&profile).unwrap();
+            let decoded: ArtifactQualityProfile = serde_json::from_value(encoded.clone()).unwrap();
+            assert_eq!(decoded, profile, "serialized fixture must round-trip exactly");
+            assert!(encoded.get("artifact_kind").is_some());
+            assert!(encoded.get("intent_read").is_some());
+            assert!(encoded.get("quality_dials").is_some());
+            assert!(encoded.get("source_policy").is_some());
+            assert!(encoded.get("preflight_gate_set").is_some());
             let context = profile.to_review_prompt_context();
             assert!(context.contains("intent_read:"));
             assert!(context.contains("quality_dials:"));

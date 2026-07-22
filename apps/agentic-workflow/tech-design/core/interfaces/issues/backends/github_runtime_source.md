@@ -27,7 +27,9 @@ Public API manifest for `apps/agentic-workflow/src/issues/backends/github.rs` ge
 `IssueBackend::update` selects the explicit-removal write variant so requested
 unmanaged removals are included in the same REST label-set patch. A resulting
 empty label set is encoded with `gh api -F labels[]`; omitting the labels field
-continues to mean that labels are unchanged.
+continues to mean that labels are unchanged. Read fixtures normalize every
+legacy non-epic type label to canonical `change` output without mutating the
+original remote label set.
 
 ### Symbols
 
@@ -51,5 +53,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:github-backend-runtime>"
-    description: "Source template owns GitHub backend runtime behavior and tests, including authoritative IssuePatch label removals and explicit empty-array encoding."
+    description: "Source template owns GitHub backend runtime behavior and tests, including legacy type compatibility reads, authoritative IssuePatch label removals, and explicit empty-array encoding."
 ```

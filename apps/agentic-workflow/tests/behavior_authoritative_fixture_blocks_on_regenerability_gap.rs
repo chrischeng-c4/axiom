@@ -7,14 +7,16 @@
 // @contract authoritative-fixture-blocks-on-regenerability-gap
 // @category behavior
 // @required_for_production true
-// @command bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh
+// @command cargo test -p agentic-workflow --test cli_tests authoritative_regenerability_gaps_block_project_health -- --nocapture
 // AW-EC-END
 
+// Contract: a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap
+// Contract: the health payload exposes the regenerability production blocker and a runnable remediation command
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn authoritative_fixture_blocks_on_regenerability_gap() {
     let command =
-        "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh";
+        "cargo test -p agentic-workflow --test cli_tests authoritative_regenerability_gaps_block_project_health -- --nocapture";
     let id = "authoritative-fixture-blocks-on-regenerability-gap";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -137,7 +137,7 @@ passes only the current target's typed IR partition to its generator.
 | `resolve_issue_td_spec_paths` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2729 | resolve_issue_td_spec_paths(     project_root: &std::path::Path,     issue: &Issue,     fallback_slug: &str, ) -> Result<Vec<String>> |
 | `run` | apps/agentic-workflow/src/cli/td.rs | function | pub | 3438 | run(args: TdArgs) -> Result<()> |
 | `run_audit` | apps/agentic-workflow/src/cli/td.rs | function | pub | 5054 | run_audit(args: AuditArgs) -> Result<()> |
-| `run_check` | apps/agentic-workflow/src/cli/td.rs | function | pub | 3526 | run_check(args: CheckArgs) -> Result<()> |
+| `run_check` | apps/agentic-workflow/src/cli/td.rs | function | pub |  | run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()> |
 | `run_claim` | apps/agentic-workflow/src/cli/td.rs | function | pub | 8061 | run_claim(args: TdClaimArgs) -> Result<()> |
 | `run_gen_code` | apps/agentic-workflow/src/cli/td.rs | function | pub | 4817 | run_gen_code(args: GenCodeArgs) -> Result<()> |
 | `stage_lifecycle_paths` | apps/agentic-workflow/src/cli/td.rs | function | pub | 1072 | stage_lifecycle_paths(     worktree_path: &std::path::Path,     git_bin: &std::path::Path,     paths: &[&str], ) -> Result<()> |
@@ -401,6 +401,9 @@ pub struct CheckArgs {
     /// `tech-design/surface/specs/score-section-type-registry.md`.
     #[arg(long)]
     pub section_type_conformance: bool,
+    /// Root-owned Python artifact lifecycle WI.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -3615,7 +3618,10 @@ pub async fn run(args: TdArgs) -> Result<()> {
             }
         }
         TdCommand::Gen(a) => {
-            if let Some(slug) = a.slug.as_deref() {
+            if a.target.is_some() {
+                // Target-native generation is an offline compiler operation;
+                // it has no issue mutation or lifecycle phase to guard.
+            } else if let Some(slug) = a.slug.as_deref() {
                 super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", slug)))
                     .await?;
             } else {
@@ -3649,7 +3655,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
     let project = args.project.clone();
     match args.command {
         TdCommand::Create(a) => run_create(a, project.as_deref()).await,
-        TdCommand::Check(a) => run_check(a),
+        TdCommand::Check(a) => run_check(a, project.as_deref()),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
@@ -3680,7 +3686,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
 /// 1 with violations, 2 on invocation error.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-pub fn run_check(args: CheckArgs) -> Result<()> {
+pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()> {
     // R2 of #1212: section-type-conformance dispatch runs before any
     // target resolution — the verb defaults to scanning the project root
     // and treats `target` as an optional positional path.

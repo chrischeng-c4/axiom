@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::models::project::{EcBinding, Project, Workspace};
+use crate::models::project::{EcBinding, Project, ProjectArtifactModel, Workspace};
 use crate::services::project_discovery::discover_projects;
 use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
 
@@ -106,6 +106,7 @@ pub struct ProjectConfigRow {
     pub aliases: Vec<String>,
     pub path: String,
     pub td_path: Option<String>,
+    pub artifact_model: Option<ProjectArtifactModel>,
     pub cap_path: Option<String>,
     pub label: Option<String>,
 }
@@ -130,6 +131,11 @@ impl ProjectConfigRow {
             }
             None => format!("{prefix}:{}", self.name),
         }
+    }
+
+    /// Compatibility model used when `artifact_model` is absent from aw.toml.
+    pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
+        self.artifact_model.unwrap_or_default()
     }
 }
 
@@ -229,6 +235,8 @@ struct ProjectAwIdentity {
     #[serde(default, alias = "tech_design_dir")]
     td_path: Option<String>,
     #[serde(default)]
+    artifact_model: Option<ProjectArtifactModel>,
+    #[serde(default)]
     cap_path: Option<String>,
     #[serde(default)]
     label: Option<String>,
@@ -269,6 +277,8 @@ struct ProjectRowToml {
     #[serde(default, alias = "tech_design_dir")]
     td_path: Option<String>,
     #[serde(default)]
+    artifact_model: Option<ProjectArtifactModel>,
+    #[serde(default)]
     cap_path: Option<String>,
     #[serde(default)]
     label: Option<String>,
@@ -298,6 +308,9 @@ fn merge_project(mut existing: Project, incoming: Project) -> Project {
     }
     if incoming.tech_design_dir.is_some() {
         existing.tech_design_dir = incoming.tech_design_dir;
+    }
+    if incoming.artifact_model.is_some() {
+        existing.artifact_model = incoming.artifact_model;
     }
     if !incoming.ec.is_empty() {
         existing.ec = incoming.ec;
@@ -337,6 +350,7 @@ fn merge_project_config_row(
     existing.name = incoming.name;
     let incoming_has_identity_override = !incoming.aliases.is_empty()
         || incoming.td_path.is_some()
+        || incoming.artifact_model.is_some()
         || incoming.cap_path.is_some()
         || incoming.label.is_some();
     for alias in incoming.aliases {
@@ -349,6 +363,9 @@ fn merge_project_config_row(
     }
     if incoming.td_path.is_some() {
         existing.td_path = incoming.td_path;
+    }
+    if incoming.artifact_model.is_some() {
+        existing.artifact_model = incoming.artifact_model;
     }
     if incoming.cap_path.is_some() {
         existing.cap_path = incoming.cap_path;
@@ -452,6 +469,7 @@ fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
         name,
         path: PathBuf::from(source_path),
         tech_design_dir,
+        artifact_model: manifest.project.artifact_model,
         ec: manifest.ec,
         ec_review_backing: manifest.ec_review_backing,
         ec_review_mode: manifest.ec_review_mode,
@@ -484,6 +502,7 @@ fn load_project_config_rows_from_file(
             aliases: row.aliases,
             path: row.path,
             td_path: row.td_path,
+            artifact_model: row.artifact_model,
             cap_path: row.cap_path,
             label: row.label,
         })
@@ -504,6 +523,7 @@ fn load_project_config_rows_from_file(
                 .td_path
                 .as_deref()
                 .map(|value| normalize_project_local_path(&source_path, value)),
+            artifact_model: project.artifact_model,
             cap_path: project
                 .cap_path
                 .as_deref()
@@ -702,6 +722,7 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(format!("crates/{}", name)),
             tech_design_dir: None,
+            artifact_model: None,
             ec: Default::default(),
             ec_review_backing: None,
             ec_review_mode: None,
@@ -1218,6 +1239,7 @@ mod resolver_tests {
             aliases: Vec::new(),
             path: path.to_string(),
             td_path: None,
+            artifact_model: None,
             cap_path: None,
             label: label.map(str::to_string),
         }

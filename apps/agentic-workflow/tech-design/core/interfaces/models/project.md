@@ -21,7 +21,9 @@ registry types shared between `project_discovery` (writes) and `project_registry
 Seven structs declared in this spec:
 
 - `Project` — a discovered or manually declared project entry in `.aw/projects.toml`.
-  Seven fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
+  Eight fields: `name`, `path` (PathBuf), optional `tech_design_dir`, optional
+  typed `artifact_model` (`legacy` or `python-v1`, defaulting to legacy when
+  absent),
   `ec: BTreeMap<String, EcBinding>` (EC tool bindings by category, declared
   before `workspaces` so the contract reads before the implementation),
   optional `ec_review_backing` (`human` | `agent` | `either` EC review policy,
@@ -72,6 +74,10 @@ definitions:
         type: string
         description: "Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent."
         x-serde-skip-if: "Option::is_none"
+      artifact_model:
+        $ref: "#/definitions/ProjectArtifactModel"
+        description: "Explicit lifecycle artifact model. Omitted projects retain the legacy compatibility default."
+        x-serde-skip-if: "Option::is_none"
       ec:
         type: object
         x-rust-type: "BTreeMap<String, EcBinding>"
@@ -93,6 +99,16 @@ definitions:
         description: "Non-empty list of workspaces contained in this project."
     x-rust-struct:
       derive: [Debug, Clone, Serialize, Deserialize, PartialEq]
+
+  ProjectArtifactModel:
+    type: string
+    enum: [legacy, python-v1]
+    description: "Explicit project artifact lifecycle; unknown values are configuration errors and the omitted value defaults to legacy compatibility."
+    x-rust-enum:
+      derive: [Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize]
+      variants:
+        - { name: Legacy, doc: "Compatibility Markdown artifact lifecycle." }
+        - { name: PythonV1, doc: "Opt-in CPython project artifact lifecycle." }
 
   EcBinding:
     type: object

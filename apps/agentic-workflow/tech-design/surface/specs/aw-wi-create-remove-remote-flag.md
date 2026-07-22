@@ -151,7 +151,7 @@ e2e_tests:
     capability_id: work-item-planning
     claim_id: capability-to-epic-planning
     name: wi create help smoke
-    command: ./target/debug/aw wi create --help
+    command: cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture
     assertions:
       - help output does not list --remote
 ```

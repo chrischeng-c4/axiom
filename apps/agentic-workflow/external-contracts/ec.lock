@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-16T06:08:08.048819+00:00"
-ir_digest = "sha256:bbeed4ae16e479e3431436c762803def91bf3fb175fb9dd759dcd9f085df077c"
-source_digest = "sha256:e46913a7414d14ecc674abb26c1712bfa63e9918e7f822c4dd67773ebdefbce8"
+generated_at = "2026-07-22T04:39:25.670692+00:00"
+ir_digest = "sha256:39dd07761cd1b41de64714495313e54a523619c2a44f87482db042124e6abd41"
+source_digest = "sha256:77ed8c340a8046f109b78e33ecd71e387a798955cbbc9d47e1e8730764102d2a"
 tool_contracts = []
 
 [[sources]]
@@ -42,7 +42,7 @@ digest = "sha256:8c1c64cb8a08ae594f713b2f3b59e1ccd3fed6ab76efa4f666093470b27da88
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3901.md"
-digest = "sha256:749c62d79287e1d9b7d3c949a870761bb286c8d30608649234826391b4c9e914"
+digest = "sha256:8b1c33566e1ee8feea9ab3b3399de71346ada8e87ad6fb537e8ace7512a04276"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3903.md"
@@ -50,7 +50,7 @@ digest = "sha256:7289d025c0f7c1d59c192f01197a96a45b8b7eb8c69118b062db550c2e679b5
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3904.md"
-digest = "sha256:16d6852748e0f59d5196931387379a09f83d7ba58419141d9a6b636a7d605fb9"
+digest = "sha256:293f67740506fd7614257d0ae7732cb089047ae223b732e3121c15681fb49836"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3905.md"
@@ -70,7 +70,7 @@ digest = "sha256:d7a754f5e0a30efaa20afe22f290f360a33105526f2e38f2a3d334851c597fb
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3909.md"
-digest = "sha256:2d2a6b8afce828711694e2db9cb4b77e54cbebfd73867fdbf8f5b1a8078ddcfb"
+digest = "sha256:f05dc3e09cc98ea58811f595aa4b6cdc4ba7c0917cf6c352e0d2ffa501b92fd6"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3910.md"
@@ -78,11 +78,11 @@ digest = "sha256:60544171b27df79b8e55ba0994325d605244b7623e75f9dde4598467e47de7b
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/4124.md"
-digest = "sha256:c4864e3bd148eb41f7b6419e21f8cca8af9c77bf0ad7e9575e2b4237f54c01f3"
+digest = "sha256:b8231e830bea64cfba985b0468769554489c6579bc973dcbb47bc27efb58fb2f"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md"
-digest = "sha256:6672b3ac235f7b4431ce32551d88da9fd1cd546554039976eab8faeb87ab09f2"
+digest = "sha256:7f1e35c61f0ac697fa0d697bf60936b882e536bd8e01c508c87af63184022876"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md"
@@ -101,12 +101,16 @@ path = "apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-gr
 digest = "sha256:a974a00e9d89a389a17b4beaf911b471a01c5d2b006578ac34b57c6dae911f42"
 
 [[sources]]
+path = "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md"
+digest = "sha256:7dff41e0d6c390f642bafef30618088ad3a9686d94dfcdab82f9dd0ca8c4e39a"
+
+[[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
-digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda63"
+digest = "sha256:6dddab612746f93fcabeb1bae33cd4f077e5fac1b5006eb930187a7a2989bb6e"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
-digest = "sha256:fb0ccab3becc7bfe1263ddd481807065696cb5383c78ad6e4a5d9bdeedb260d9"
+digest = "sha256:98ca37f7bf673c2cb520cbaceb679ac6fcb2ffea56d6c546c5671be173f7dce8"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md"
@@ -114,11 +118,11 @@ digest = "sha256:bab4bc21cb99161d6f16822ecf5d0be49664bea1106cefcf5724333d67a511a
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
-digest = "sha256:b5dcb44c466197cf0924152aea63b2cdfc72c017cfb852315d1bceae23e92913"
+digest = "sha256:c55bb77881a681cc62d87162e4a7ca9c15abbc1b3cbdf73eb250832c0a00ae49"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md"
-digest = "sha256:2d03f72a2d29de72b56a01388aa453306aab72bd738b46379d92f4d1275a6078"
+digest = "sha256:410990fcc2ea901b89243f8c347d0f61b365023ed454d0539663fc5e876866c1"
 
 [[cases]]
 id = "api-contract-source-passes"
@@ -146,7 +150,7 @@ contract_id = "artifact-preflight-health-rollup"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/3904.md#artifact-preflight-health-rollup"
 test_path = "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs"
-command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q axes"
+command = "cargo test -p agentic-workflow --test cli_tests preflight_ -- --nocapture"
 required_for_production = true
 assertions = [
     "missing hard evidence appears in production_blockers",
@@ -155,7 +159,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:39e19d215719bb024e4a3fbe7554ef04815bf4178d4a87490c37c2b030f22176"
+digest = "sha256:19d448aeeb32233abf5b8daa0193322adffeeb807987d66a8f3be53cf225e443"
 
 [[cases]]
 id = "artifact-quality-fixture-roundtrip"
@@ -165,12 +169,15 @@ contract_id = "artifact-quality-fixture-roundtrip"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md#artifact-quality-fixture-roundtrip"
 test_path = "apps/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs"
-command = "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+command = "cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = [
+    "every serialized fixture decodes, validates, and re-encodes to the same typed profile",
+    "each profile exposes intent_read, quality_dials, source_policy, and preflight_gate_set in review context",
+]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a03c5bd0030ce52521dccc915c9a808fa0dd5008701b756410e280662b3d67e6"
+digest = "sha256:0b91f0dfdcaf4664f496ec8b2088f7f5eac4d34ef8dd2f7af46deef451dbd478"
 
 [[cases]]
 id = "authoritative-fixture-blocks-on-regenerability-gap"
@@ -180,12 +187,15 @@ contract_id = "authoritative-fixture-blocks-on-regenerability-gap"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/3901.md#authoritative-fixture-blocks-on-regenerability-gap"
 test_path = "apps/agentic-workflow/tests/behavior_authoritative_fixture_blocks_on_regenerability_gap.rs"
-command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh"
+command = "cargo test -p agentic-workflow --test cli_tests authoritative_regenerability_gaps_block_project_health -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = [
+    "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap",
+    "the health payload exposes the regenerability production blocker and a runnable remediation command",
+]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:caf822666d128c68812c2ad5e3c9704c5a9186a9fbf62d0e248415227389074b"
+digest = "sha256:ba191fcd1728daa9f844d06cde8a06591142949043da3779bf2b02d9c8e28ea2"
 
 [[cases]]
 id = "aw-core-client-agent-first-cli-product-model"
@@ -327,7 +337,7 @@ contract_id = "aw-health-default-full-verification-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md#aw-health-default-full-verification-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs"
-command = "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path"
+command = "cargo test -p agentic-workflow --test cli_tests health_verbose_stdout_streams_progress_before_result -- --nocapture"
 required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run",
@@ -336,7 +346,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1d76f00f4e1088e54648b0c4221bbdc5ab294fa53e58ee8f7a72a4aab609ca04"
+digest = "sha256:d64cf136f1054f31f17260b09353d6f907ed4bccd7b41f64d9ce341481cf2f14"
 
 [[cases]]
 id = "aw-td-apply-section-lookup-parity-real-cli"
@@ -540,12 +550,34 @@ contract_id = "external-fixture-reports-advisory-gap"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/3901.md#external-fixture-reports-advisory-gap"
 test_path = "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs"
-command = "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh"
+command = "cargo test -p agentic-workflow --lib regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture"
 required_for_production = true
-assertions = []
+assertions = [
+    "the external-advisory fixture reports the regenerability gap as an advisory warning",
+    "the advisory gap does not add a production blocker when all required gates are clean",
+]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cc7b33db2236c000bcaa2a64fd66c0f738e6593fc98d07585451cb02f9598a05"
+digest = "sha256:afca5abf907043117f7e1c35b5fcaed659081b40c08ae6a636280dee545cd931"
+
+[[cases]]
+id = "goal-backlog-drain"
+capability_id = "workflow-root-runner"
+claim_id = "goal-unified-loop-verb"
+contract_id = "goal-backlog-drain"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md#goal-backlog-drain"
+test_path = "apps/agentic-workflow/tests/behavior_goal_backlog_drain.rs"
+command = "cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture"
+required_for_production = true
+assertions = [
+    "a reviewed epic graph parks one blocked child and dispatches its ready sibling deterministically",
+    "the terminal envelope names the still-parked WI and its reason with no spinning or premature completion",
+    "an already-reviewed epic is never redispatched for atomization",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:02e3ee8dfbbc5c350b1cc7557598fe6d7afc3f74bd51d4f4caa10bcaa2a7f706"
 
 [[cases]]
 id = "jet-health-verification-dedup-smoke"
@@ -555,7 +587,7 @@ contract_id = "jet-health-verification-dedup-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/4124.md#jet-health-verification-dedup-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs"
-command = "cargo test -p agentic-workflow --lib capability"
+command = "cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture"
 required_for_production = false
 assertions = [
     "health command succeeds or reports only real project blockers",
@@ -563,7 +595,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fe54e2e41defa07d287a5cb0d3b3a568fcac1a4699da90bbd09e327678bbbe96"
+digest = "sha256:00417edf1e7e128cf45606fd89385a26b4285154525193e57fa80c4308c7a1e7"
 
 [[cases]]
 id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema"
@@ -772,6 +804,25 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:62656d6385beb7910746bd7cd8bf3ec434b68cff15f231a9f4759adfa59113e2"
 
 [[cases]]
+id = "reviewed-graph-root-parity"
+capability_id = "workflow-root-runner"
+claim_id = "goal-unified-loop-verb"
+contract_id = "reviewed-graph-root-parity"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md#reviewed-graph-root-parity"
+test_path = "apps/agentic-workflow/tests/behavior_reviewed_graph_root_parity.rs"
+command = "cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture"
+required_for_production = true
+assertions = [
+    "epic and backlog roots select the same ready leaf after epic-first priority ordering",
+    "terminal child rollup closes the epic without re-atomizing",
+    "stale or invalid graph metadata fails closed with issue-specific remediation",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a61d1f6d5acf479f778c6f5be28c502ece251e1e3494606629dc9e971c734298"
+
+[[cases]]
 id = "runtime-envelope-backward-compatibility"
 capability_id = "workflow-root-runner"
 claim_id = "runtime-envelope-backward-compatibility"
@@ -806,6 +857,21 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:03748d4690388545b6242965a7494f8d97a698c1a783c5a30c875028b09703a9"
+
+[[cases]]
+id = "self-hosting-goal-root-parity"
+capability_id = "workflow-root-runner"
+claim_id = "goal-unified-loop-verb"
+contract_id = "self-hosting-goal-root-parity"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md#self-hosting-goal-root-parity"
+test_path = "apps/agentic-workflow/tests/behavior_self_hosting_goal_root_parity.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_wi_identity_and_rollup_never_reenter_root_runner -- --nocapture"
+required_for_production = true
+assertions = ["self-AW WI identity resolution and rollup routing reject before loop-state or dispatch touch the fixture tree"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:62a11195fe1a49515686799303c12c6c318bcc140c1bbaeb8cc8e25586c7f71f"
 
 [[cases]]
 id = "self-hosting-health-policy"
@@ -1240,12 +1306,12 @@ contract_id = "wi-create-help-command"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md#wi-create-help-command"
 test_path = "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs"
-command = "./target/debug/aw wi create --help"
+command = "cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
 required_for_production = true
 assertions = ["help output does not list --remote"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ae86742a8b8ea8f8aec998f6f5f31b323ec94cd5113ab28bf433023fa1ce208c"
+digest = "sha256:196714e215bca9862d7f0ebcc811ca407e08a3cc5b7e291ed58ddb9e3fb95c04"
 
 [[cases]]
 id = "wi-create-help-smoke"
@@ -1255,12 +1321,12 @@ contract_id = "wi-create-help-smoke"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/specs/3909.md#wi-create-help-smoke"
 test_path = "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs"
-command = "./target/debug/aw wi create --help"
+command = "cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
 required_for_production = true
 assertions = ["stdout does not contain --remote"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:365326c338d853f1f4be37231666f2d3e2497c0b4a9303dadd96155922846f4e"
+digest = "sha256:f174aefe78839e16e1a5b5372b77c971a20a9b7baa61f672d1bc3ec02be22b81"
 
 [[cases]]
 id = "wi-create-remote-flag-tests"

@@ -346,6 +346,12 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                instead of substituting a PROJECT placeholder",
     },
     EmitSite {
+        source: "run.rs:open_epic_envelope (unregistered project bootstrap)",
+        sample: "aw conf init --project-label app:workbench",
+        note: "#2182: a valid tracker project identity without a discoverable project config \
+               routes through the project-local configuration producer before atomization",
+    },
+    EmitSite {
         source: "run.rs:capability_run_command",
         sample: "aw goal capability work-item-planning --project jet",
         note: "#1899: canonical `aw goal capability <capability-id> --project <project>` \
@@ -490,6 +496,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: false,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "review",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
     // -- top-level core -------------------------------------------------
     VerbLifecycle {
         path: "health",
@@ -524,12 +536,30 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         sunset_criterion: "",
     },
     VerbLifecycle {
+        path: "guard.bypass",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "guard.resume",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
         path: "guard.pretool",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- conf (core: aw.toml project registry the loop reads from) ------
+    VerbLifecycle {
+        path: "conf.init",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
     VerbLifecycle {
         path: "conf.check",
         class: VerbLifecycleClass::Core,
@@ -582,6 +612,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.list",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.graph",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
         sunset_criterion: "",
@@ -1506,6 +1542,19 @@ mod tests {
             "non-migration verb(s) carrying a sunset_criterion (only Migration entries should): \
              {non_migration_with_sunset:?}"
         );
+    }
+
+    #[test]
+    fn guard_bypass_resume_and_review_classification_matches_support_semantics() {
+        for path in ["guard.bypass", "guard.resume", "review"] {
+            let entry = VERB_LIFECYCLE_REGISTRY
+                .iter()
+                .find(|entry| entry.path == path)
+                .unwrap_or_else(|| panic!("{path} must have a lifecycle classification"));
+            assert_eq!(entry.class, VerbLifecycleClass::Utility, "{path}");
+            assert!(!entry.mutates_lifecycle, "{path}");
+            assert!(entry.sunset_criterion.is_empty(), "{path}");
+        }
     }
 
     // #1417: spot-check the `mutates_lifecycle` classification for a

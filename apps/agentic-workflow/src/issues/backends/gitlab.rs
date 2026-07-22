@@ -516,6 +516,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_glab_issue_normalizes_legacy_types_without_mutating_labels() {
+        for (offset, legacy) in ["bug", "enhancement", "refactor", "test"]
+            .into_iter()
+            .enumerate()
+        {
+            let iid = 2000 + offset as u64;
+            let value = json!({
+                "iid": iid,
+                "title": format!("Legacy {legacy}"),
+                "state": "opened",
+                "labels": [format!("type:{legacy}")],
+                "description": format!("legacy body {legacy}")
+            });
+
+            let issue = parse_glab_issue(&value).unwrap();
+
+            assert_eq!(issue.gitlab_id, Some(iid));
+            assert_eq!(issue.issue_type.as_str(), "change");
+            assert_eq!(serde_json::to_value(&issue).unwrap()["type"], "change");
+            assert_eq!(issue.labels, vec![format!("type:{legacy}")]);
+            assert!(IssueFilter {
+                issue_type: Some(IssueType::Change),
+                ..Default::default()
+            }
+            .matches(&issue));
+        }
+    }
+
+    #[test]
     fn issue_list_state_args_match_glab_cli() {
         let mut open = Vec::new();
         GitLabBackend::push_issue_list_state_args(&mut open, Some(IssueState::Open));

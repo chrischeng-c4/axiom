@@ -76,7 +76,7 @@ explicitly asks for Claude-specific behavior.
 | Verb | About |
 |------|-------|
 | `aw meta` | Initialize, synchronize, and check repository/project META-docs |
-| `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends |
+| `aw wi` | Manage work-items — list/graph/show/create/validate across local + GitHub backends |
 | `aw capability` | Product capability completion loop: report/next/run/check |
 | `aw td` | Tech-design and generated-code lifecycle |
 | `aw ec` | External-contract lifecycle: draft/fill, independent semantic review, generate, and verify |
@@ -88,9 +88,13 @@ explicitly asks for Claude-specific behavior.
 verifier. `aw goal wi <id>` drives one work item to terminal, `aw goal
 capability [<cap-id>] --project <project>` drives one capability's work-root
 WIs (omit `<cap-id>` to run the whole project end to end), and `aw goal
-backlog --project <project>` drains every open work item for a project one
-at a time, parking (not blocking) on HITL/hard blockers so the drain
-continues. Follow `invoke.command` and `agent_prompt` from any of the three
+backlog --project <project>` drains executable change leaves from the current
+accepted and published project graph. Both epic and backlog roots select epic
+priority first, then dependency readiness and explicit/inherited change
+priority; HITL/hard-blocked leaves are parked so the drain continues. A goal
+root fails closed when the published graph or review provenance is stale or
+invalid, and it never re-atomizes a reviewed epic. Follow `invoke.command` and
+`agent_prompt` from any of the three
 until `completion.workflow_complete=true` or `requires_hitl=true`. If a HITL
 envelope includes `hitl_question.interaction.kind=user_question`, invoke the
 host's native user-question tool immediately with its question, choices, and
@@ -102,11 +106,15 @@ the host has no such tool, present every field as a blocking human question.
 run` verbs are gone — `wi`/`capability`/`backlog` are `aw goal` root types
 now.)
 
-`aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
-`create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
+`aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `graph`, `show`,
+`create`, `update`, `close`, `find`, canonical two-stage `plan`, compatibility
+`epicize`/`atomize`/`prioritize`,
 `enrich`, `validate`, `fill-section`; drive one WI to terminal with `aw goal
-wi <id>` (see above). Planning commands write local artifacts under
-`/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
+wi <id>` (see above). Planning producers write local artifacts under
+`/tmp/aw/workspaces/<workspace>/workitems/{project}/...` without tracker
+mutation. An accepted independent `project_plan` review preflights the exact
+reviewed tracker snapshot, then applies its digest-bound ordered mutation
+manifest as one retry-safe transaction; `needs_revision` writes nothing. There is no
 `estimate`/`sprintize`; use `aw goal backlog --project <name>` to drain every
 open issue for a project, or `aw goal capability --project <name>` as the
 run-to-end driver for one capability/the whole project, instead of
@@ -208,8 +216,8 @@ ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 Claude Code (live-denies out-of-lifecycle writes).
 
 `aw goal` has a closed four-leaf root-type enum: `wi` and `capability`
-(the lifecycle roots described above), `backlog` (drain every open WI for a
-project — `aw goal backlog --project <project>`), and `adhoc` for bounded
+(the lifecycle roots described above), `backlog` (drain ready change leaves
+from the accepted project graph — `aw goal backlog --project <project>`), and `adhoc` for bounded
 work OUTSIDE the WI/TD/EC lifecycle — test-pass gates, migration sweeps, and
 other ad-hoc tasks a human hands an agent directly. `aw goal set --gate
 "<command>" <intent>` records the prose intent plus one or more required
@@ -280,10 +288,17 @@ CLI surface.
   flags to `aw wi`.
 - `--label` is not the public create path. Labels are derived from typed flags:
   `--type`, `--project`, `--priority`, and `--agent`.
+- Work-item type is canonically `epic | change`. Legacy `bug`, `enhancement`,
+  `refactor`, and `test` labels are read-only compatibility aliases for
+  `change`; new authoring never emits them.
+- Every open change has exactly one epic owner; only epics may own children.
+  Run `aw wi graph --project <name> --json` to validate the deterministic
+  issue-platform projection, effective priority inheritance, dependencies,
+  duplicate recommendations, and sibling-only supersession without writes.
 - Non-epic work-items must be bounded before TD: include `## Capability
   Alignment`, `## Scope`, `## Acceptance Criteria`, and `## Reference
   Context`. Roadmap-sized or decision-blocked work must go through `aw wi
-  atomize` or HITL review before `aw td`.
+  plan` or review before `aw td`.
 
 ## SDD and Codegen Rules
 
@@ -355,7 +370,7 @@ or configured `cap_path`; capability document structure is Markdown-first:
 `## Capabilities` owns the capability registry, and `### Capability Index`
 is the compact scan surface. H3-Hn capability headings use field-style
 contracts and work-root tables to map headings to epic/subepic WI roots.
-Atomic `change` WIs usually come from `aw wi atomize` rather than
+Atomic `change` WIs usually come from the second stage of `aw wi plan` rather than
 CAPABILITIES.md rows. README-resident capability structure is migration
 input — `aw capability migrate` relocates it to CAPABILITIES.md and leaves
 a human-readable summary in README. YAML `## Capability:` sections and

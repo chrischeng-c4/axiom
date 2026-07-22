@@ -357,6 +357,45 @@ maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
 construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/service-k8s`
 when the helper is incomplete.
 
+### `aw review` rule catalog — architecture/profile conformance findings
+
+`aw review --project <project>` resolves a project's reference profile shape
+(kind/surface, workload, state ownership, replication, serving role) and runs
+the rule catalog below against it, reporting shared-service-kit adoption
+gaps, profile-shape negative assertions, and observability/Raft telemetry
+conformance findings together in one envelope. This table is generated from
+the live rule registries (`review_rules::known_rule_docs()` +
+`review_obs_rules::known_rule_docs()`, in
+`apps/agentic-workflow/src/cli/review_doc_projection.rs`) and drift-tested
+against `cli::review_doc_projection::tests::contributing_review_rule_table_matches_live_registry`
+— never hand-edit the table between the markers; re-run the drift test after
+any rule id changes and re-splice its output here.
+
+<!-- aw:review-rule-table:start -->
+| Rule ID | Family | Fires when |
+|---|---|---|
+| `shared-kit:server-tcp` | `shared-kit` | served-surface bind/listen setup |
+| `shared-kit:server-lifecycle` | `shared-kit` | retry/backoff and health-check plumbing |
+| `shared-kit:service-observability` | `shared-kit` | structured logging/metrics setup |
+| `shared-kit:raft` | `shared-kit` | raft consensus/leader-ingest plumbing |
+| `negative-assertion:pgpool:statefulset-shape` | `negative-assertion` | Deployment/ExternalState profile carries StatefulSet/PVC/headless-service manifest content or a raft dependency |
+| `negative-assertion:tape:raft-or-primary-replica-signal` | `negative-assertion` | StatefulSet/ReplicatedLog profile carries raft-dependency or primary/replica-role source markers |
+| `negative-assertion:relay-defer:passive-replica-signal` | `negative-assertion` | StatefulSet/RaftConsensus profile carries a primary_replicas trait or primary/replica-role source markers |
+| `negative-assertion:lumen:raft-leader-ingest-signal` | `negative-assertion` | StatefulSet/PrimaryReplica profile carries a raft dependency plus leader-ingest source markers |
+| `obs:structured-logging-metrics-adoption` | `obs` | service surface has not adopted libs/service-observability for structured logging/metrics/correlation |
+| `obs:w3c-context-propagation-adoption` | `obs` | service surface has not adopted libs/service-http or libs/transport-h2c for W3C trace-context (traceparent) propagation |
+| `raft:proposal-routing-telemetry-gap` | `raft` | raft leader-ingest surface has no proposal-routing telemetry (local-vs-forwarded proposal counts, forward duration, or forwarded bytes) |
+| `raft:leader-route-and-replication-lag-telemetry-gap` | `raft` | raft leader-ingest surface has no leader-route or replication-lag telemetry (leader-route retries/changes, commit/applied lag, or peer RPC visibility) |
+| `raft:high-cardinality-label-antipattern` | `raft` | a metric-emission site carries a high-cardinality label key (queue/topic/message_id/message) in the same file as a raft telemetry metric |
+| `raft:trace-context-continuity-gap` | `raft` | raft leader-ingest surface has no trace-context continuity evidence (traceparent/trace_id/span_id propagation or tracing::instrument/info_span! spans) across the forwarded-proposal path |
+| `raft:follower-local-mutation-outside-consensus` | `raft` | a follower/replica-role marker co-occurs with an explicit consensus-bypass marker in the same file -- a follower appears to mutate local state outside raft consensus |
+| `raft:loss-of-leader-fail-open-bypass` | `raft` | an explicit fail-open marker allows accepting writes without a confirmed leader / bypassing the quorum check on loss-of-leader |
+<!-- aw:review-rule-table:end -->
+
+`aw health` owns readiness, gates, and production-blocker status; `aw
+review` owns architecture/profile-shape and this rule catalog. The two
+commands never overlap and never substitute for each other.
+
 ### Service workload profiles — common, StatefulSet, Deployment
 
 Every service composes one common baseline and exactly one primary workload

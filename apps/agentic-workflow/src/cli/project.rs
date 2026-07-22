@@ -5,6 +5,7 @@ use clap::{Args, ValueEnum};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -143,6 +144,8 @@ pub struct ProjectHealthReport {
     pub scoped_capabilities: Vec<ProductionCapabilityReadiness>,
     pub capability: CapabilityHealthReport,
     pub test_gates: ProjectTestGateReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_artifact: Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
     pub ec: ProjectEcGateReport,
     pub claim_closure: ProjectClaimClosureReport,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -639,6 +642,7 @@ fn build_health_report_with_options_internal(
     )
     .and_then(|mut report| {
         apply_ec_to_report(&mut report, verify_ec)?;
+        apply_python_artifact_readiness_to_report(&mut report)?;
         apply_claim_closure_to_report(&mut report)?;
         Ok(report)
     })
@@ -1323,6 +1327,7 @@ impl ProjectHealthReport {
             scoped_capabilities: Vec::new(),
             capability: CapabilityHealthReport::ready_fixture(project),
             test_gates,
+            python_artifact: None,
             ec: ProjectEcGateReport::not_evaluated(project),
             claim_closure: ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),
@@ -1546,21 +1551,57 @@ impl<'a> HealthProgressSink<'a> {
     }
 
     fn emit(&self, percent: u8, phase: &str, message: &str, command: Option<&str>) {
-        if !self.enabled {
-            return;
-        }
-        let event = serde_json::json!({
-            "schema_version": "aw.cli.v1",
-            "event": "progress",
-            "project": self.project,
-            "percent": percent.min(100),
-            "phase": phase,
-            "message": message,
-            "elapsed_ms": self.started.elapsed().as_millis(),
-            "command": command,
-        });
-        println!("{event}");
+        let mut stdout = std::io::stdout().lock();
+        self.emit_to(&mut stdout, percent, phase, message, command)
+            .expect("write health progress event");
     }
+
+    fn emit_to<W: Write>(
+        &self,
+        writer: &mut W,
+        percent: u8,
+        phase: &str,
+        message: &str,
+        command: Option<&str>,
+    ) -> std::io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        writeln!(
+            writer,
+            "{}",
+            health_progress_event(
+                self.project,
+                percent,
+                phase,
+                message,
+                self.started.elapsed().as_millis(),
+                command,
+            )
+        )
+    }
+}
+
+/// Render one verbose health progress record without writing to stdout.
+/// Keeping this pure makes the NDJSON event contract independently testable.
+fn health_progress_event(
+    project: &str,
+    percent: u8,
+    phase: &str,
+    message: &str,
+    elapsed_ms: u128,
+    command: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "progress",
+        "project": project,
+        "percent": percent.min(100),
+        "phase": phase,
+        "message": message,
+        "elapsed_ms": elapsed_ms,
+        "command": command,
+    })
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2762,6 +2803,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             },
         );
     }
+    if let Some(readiness) = report.python_artifact.as_ref().filter(|readiness| !readiness.ready) {
+        return readiness.next_command.clone();
+    }
     if !report.ec.lock_clean {
         if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
             return None;
@@ -2793,6 +2837,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             "aw health --project {} --verify-ec",
             report.project
         ));
+    }
+    if claim_closure_requires_capability_contract_authoring(report) {
+        return None;
     }
     if report.claim_closure.blocker_count > 0 {
         return Some(format!("aw health --project {} claims", report.project));
@@ -2855,6 +2902,18 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         "aw goal capability --project {} --non-interactive --max-ticks 1",
         report.project
     ))
+}
+
+/// Unknown capability/claim references require an authored capability-contract
+/// correction. There is no one-step mutation command: `capability draft` is a
+/// review artifact and `apply-draft` requires accepted review evidence, so
+/// health must stop rather than route an agent back to its read-only claim view.
+fn claim_closure_requires_capability_contract_authoring(report: &ProjectHealthReport) -> bool {
+    report.claim_closure.blockers.iter().any(|blocker| {
+        blocker.starts_with("claim closure EC case `")
+            && (blocker.contains("references unknown claim")
+                || blocker.contains("references unknown capability"))
+    })
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -3147,9 +3206,15 @@ fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     fs::create_dir_all(&dir)
         .with_context(|| format!("create health payload dir {}", dir.display()))?;
     let path = dir.join("report.json");
-    let bytes = serde_json::to_vec_pretty(report)?;
+    let bytes = health_payload_bytes(report)?;
     fs::write(&path, bytes).with_context(|| format!("write health payload {}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Serialize the complete health report stored at a result envelope's
+/// `payload_path`; compact stdout deliberately omits this detail.
+fn health_payload_bytes(report: &ProjectHealthReport) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec_pretty(report)?)
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -3366,6 +3431,21 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     }
 
     report.ec = ec_report;
+    report.refresh_takeover_readiness();
+    Ok(())
+}
+
+pub(crate) fn apply_python_artifact_readiness_to_report(
+    report: &mut ProjectHealthReport,
+) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let readiness = crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
+    if let Some(readiness) = &readiness {
+        for blocker in &readiness.blockers {
+            block_health_report(report, format!("python artifact: {blocker}"));
+        }
+    }
+    report.python_artifact = readiness;
     report.refresh_takeover_readiness();
     Ok(())
 }
@@ -4475,6 +4555,46 @@ mod tests {
     }
 
     #[test]
+    fn health_progress_event_and_payload_preserve_full_verification_evidence() {
+        let sink = HealthProgressSink::new("demo", true);
+        let mut stdout = Vec::new();
+        sink.emit_to(
+            &mut stdout,
+            120,
+            "test-gates",
+            "running configured tests",
+            Some("cargo test -p demo"),
+        )
+        .unwrap();
+        let mut report = ready_project_health_report("demo");
+        report.blockers = vec!["test gate failed".to_string()];
+        report.test_gates = ProjectTestGateReport::passed_fixture("cargo test -p demo");
+        let result = project_health_compact_summary_with_payload_path(
+            &report,
+            "/tmp/aw/demo/health/report.json",
+        );
+        let progress: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        let stream = vec![progress, result];
+
+        assert_eq!(stream[0]["event"].as_str(), Some("progress"));
+        assert_eq!(stream[0]["percent"].as_u64(), Some(100));
+        assert_eq!(stream[0]["command"].as_str(), Some("cargo test -p demo"));
+        assert_eq!(stream[1]["event"].as_str(), Some("result"));
+        assert_eq!(
+            stream[1]["payload_path"].as_str(),
+            Some("/tmp/aw/demo/health/report.json")
+        );
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&health_payload_bytes(&report).unwrap()).unwrap();
+        assert_eq!(payload["blockers"][0].as_str(), Some("test gate failed"));
+        assert_eq!(
+            payload["test_gates"]["commands"][0]["command"].as_str(),
+            Some("cargo test -p demo")
+        );
+    }
+
+    #[test]
     fn health_with_one_verify_flag_preserves_targeted_debug_mode() {
         let flags =
             effective_health_verification_flags(&health_args(false, false, false, true, false));
@@ -4680,6 +4800,28 @@ mod tests {
         assert_eq!(project_health_next_command(&report), None);
         assert_eq!(project_health_next_kind(&report, false), "hitl");
         assert!(project_health_next_reason(&report).contains("migration required"));
+    }
+
+    #[test]
+    fn health_unknown_ec_claim_blocker_is_terminal_not_a_self_referential_read() {
+        let mut report = ready_project_health_report("demo");
+        report.production_ready = false;
+        report.status = ProjectHealthStatus::Blocked;
+        report.production_status = ProductionStatus::Blocked;
+        report.claim_closure.blocker_count = 1;
+        report.claim_closure.blockers = vec![
+            "claim closure EC case `folder-agent-artifact-journey` references unknown claim \
+             `folder-agent-artifact-production-journey` for capability `folder-agent-artifact`"
+                .to_string(),
+        ];
+
+        assert_eq!(project_health_next_command(&report), None);
+        assert_eq!(project_health_next_kind(&report, false), "blocked");
+        assert_eq!(project_health_loop_status(&report), "blocked");
+        let next = project_health_next(&report);
+        assert_eq!(next["kind"], "blocked");
+        assert!(next.get("command").is_none());
+        assert!(next["reason"].as_str().unwrap().contains("unknown claim"));
     }
 
     // #1828 AC3/R5: `review_mode = "deferred"` classifies an outstanding
@@ -5221,6 +5363,7 @@ mod tests {
             name: "demo".into(),
             path: "projects/demo".into(),
             tech_design_dir: None,
+            artifact_model: None,
             ec,
             ec_review_backing: None,
             ec_review_mode: None,

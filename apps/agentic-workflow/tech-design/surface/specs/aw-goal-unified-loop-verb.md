@@ -93,18 +93,26 @@ completes correctly after it, because the string is rewritten before
 ## Backlog drain root type (R7)
 <!-- type: doc lang: markdown -->
 
-`aw goal backlog --project <p>` (`run_backlog_root`) is a tracker-driven
-drain of every open work item for a project, one WI per envelope tick via
-the same shared engine `aw goal wi <id>` uses. A candidate whose next tick
-is HITL-blocked or hard-blocked is **parked** (its reason recorded in
-project-scoped ephemeral backlog state) instead of surfacing the block, and
-the drain continues with the next open WI in priority order. Terminal
-(`completion.workflow_complete=true`) once every open WI is either closed or
-parked; the terminal envelope reports the parked set (id + reason) for human
-follow-up. Verifier: zero open unparked WIs for the project. This is the
-superset sweep -- issues with no capability linkage are still in scope,
-unlike `aw goal capability --project <p>`'s capability-work-root-driven
-rollup.
+`aw goal backlog --project <p>` (`run_backlog_root`) consumes only the current
+accepted and completely published `aw.wi.project-plan.v1` graph. The shared
+ready-leaf selector orders epics first by explicit epic priority, then orders
+ready children within that epic by dependency readiness and explicit or
+inherited child priority. `aw goal wi <epic>` uses the same loader and selector,
+so both roots name the same next change for the same reviewed graph.
+
+A selected change whose own root is HITL-blocked or hard-blocked is **parked**
+(its reason recorded in project-scoped ephemeral backlog state), after which
+the selector continues across remaining ready leaves. A blocked high-priority
+change therefore does not hide a ready sibling or a ready leaf under the next
+epic. When every reviewed child of an open epic is closed, the epic root reuses
+the terminal child-rollup contract and emits `aw wi close <epic> --push`; it
+never re-atomizes the reviewed epic. Terminal backlog output reports the parked
+set for human follow-up.
+
+Graph ownership/parent invariants, unresolved dependencies, stale review or
+transaction provenance, and graph-label drift all fail closed with an exact
+planning or issue-inspection command. Lifecycle state, body evidence, and
+non-graph labels may advance after publication without invalidating the plan.
 
 ## Self-hosting admission parity (R6)
 <!-- type: doc lang: markdown -->
@@ -170,16 +178,26 @@ scenarios:
       - "normalize_legacy_next_action rewrites the string to the equivalent aw goal wi / aw goal capability form before dispatch"
       - "the workflow completes normally, never hitting the retired-verb redirect bail"
   - id: S5
-    title: aw goal backlog drains a mixed runnable/HITL/epic backlog
+    title: epic and backlog roots select from the same reviewed graph
     given:
-      - "a project with one runnable change WI, one HITL-blocked change WI, and one open epic"
+      - "an accepted published project graph with a high-priority epic, one HITL-blocked child, and one runnable sibling"
+      - "a lower-priority epic whose child has a stronger explicit child priority"
     when:
-      - "an agent invokes aw goal backlog --project <p> repeatedly"
+      - "an agent invokes aw goal backlog --project <p> and aw goal wi <high-priority-epic>"
     then:
-      - "the runnable WI closes via the shared aw goal wi hand-off"
-      - "the epic is dispatched per the existing atomize dispatch rule"
       - "the blocked WI is parked with its reason and the drain continues"
-      - "the terminal envelope reports the parked set and never spins on the parked WI"
+      - "both roots select the runnable sibling from the high-priority epic"
+      - "child priority is compared only after epic direction is chosen"
+      - "once every reviewed child closes, the epic emits its terminal close command and is never re-atomized"
+  - id: S7
+    title: stale or invalid reviewed graph fails closed
+    given:
+      - "an accepted published project graph"
+    when:
+      - "graph ownership, priority, dependency, or transaction provenance changes afterward"
+    then:
+      - "epic and backlog roots dispatch no change"
+      - "the blocked envelope names the exact issue inspection or project replanning command"
   - id: S6
     title: self-hosting admission rejects every goal lifecycle root type identically
     given:
@@ -311,8 +329,17 @@ e2e_tests:
     claim_id: goal-unified-loop-verb
     command: cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture
     assertions:
-      - "a mixed runnable/HITL-blocked/epic backlog drains deterministically across repeated aw goal backlog invocations"
+      - "a reviewed epic graph parks one blocked child and dispatches its ready sibling deterministically"
       - "the terminal envelope names the still-parked WI and its reason with no spinning or premature completion"
+      - "an already-reviewed epic is never redispatched for atomization"
+  - id: reviewed-graph-root-parity
+    capability_id: workflow-root-runner
+    claim_id: goal-unified-loop-verb
+    command: cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture
+    assertions:
+      - "epic and backlog roots select the same ready leaf after epic-first priority ordering"
+      - "terminal child rollup closes the epic without re-atomizing"
+      - "stale or invalid graph metadata fails closed with issue-specific remediation"
   - id: self-hosting-goal-root-parity
     capability_id: workflow-root-runner
     claim_id: goal-unified-loop-verb
@@ -335,7 +362,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "#1899 R1/R3/R6/R7: re-home every next/resume_command/agent_prompt emission site onto the aw goal form; add emit_retired_verb_redirect; add run_backlog_root's parked-drain loop; self-hosting admission covers all three goal lifecycle roots."
+    description: "#1899 R1/R3/R6/R7 and #2389: re-home every next/resume_command/agent_prompt emission site onto the aw goal form; run backlog and epic roots through one accepted-graph ready-leaf selector with parked-leaf continuation and terminal epic rollup; self-hosting admission covers all three goal lifecycle roots."
   - path: apps/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli
@@ -355,7 +382,12 @@ changes:
     action: create
     section: e2e-test
     impl_mode: hand-written
-    description: "#1899 R7 AC6: real-binary fixture proof for the backlog drain's runnable/HITL/epic mix."
+    description: "#1899 R7 AC6 and #2389: real-binary fixture proof for reviewed-graph selection, parked-leaf continuation, and no re-atomization."
+  - path: apps/agentic-workflow/tests/wi_reviewed_graph_goal_cli_test.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    description: "#2389: compiled epic/backlog parity, terminal rollup, stale-plan, and invalid-graph proof."
   - path: apps/agentic-workflow/templates/cli/mainthread/skills/aw-goal/SKILL.md
     action: modify
     section: cli

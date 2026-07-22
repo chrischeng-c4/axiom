@@ -32,10 +32,18 @@ Public API manifest for `apps/agentic-workflow/src/services/mod.rs` generated fr
 | `pre_clarifications_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 18 |  |
 | `project_discovery` | apps/agentic-workflow/src/services/mod.rs | module | pub | 19 |  |
 | `project_registry` | apps/agentic-workflow/src/services/mod.rs | module | pub | 20 |  |
-| `reference_context_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 21 |  |
-| `review_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 22 |  |
-| `spec_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 23 |  |
-| `tech_stack_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 24 |  |
+| `python_artifact` | apps/agentic-workflow/src/services/mod.rs | module | pub | 21 |  |
+| `python_artifact_code_check` | apps/agentic-workflow/src/services/mod.rs | module | pub | 22 |  |
+| `python_artifact_readiness` | apps/agentic-workflow/src/services/mod.rs | module | pub | 23 |  |
+| `python_ec` | apps/agentic-workflow/src/services/mod.rs | module | pub | 24 |  |
+| `python_td` | apps/agentic-workflow/src/services/mod.rs | module | pub | 25 |  |
+| `python_td_rust_target` | apps/agentic-workflow/src/services/mod.rs | module | pub | 26 |  |
+| `python_td_target` | apps/agentic-workflow/src/services/mod.rs | module | pub | 27 |  |
+| `python_td_typescript_target` | apps/agentic-workflow/src/services/mod.rs | module | pub | 28 |  |
+| `reference_context_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 29 |  |
+| `review_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 30 |  |
+| `spec_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 31 |  |
+| `tech_stack_service` | apps/agentic-workflow/src/services/mod.rs | module | pub | 32 |  |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: handwrite-gap standardize:claim-code -->
@@ -60,6 +68,14 @@ pub mod post_clarifications_service;
 pub mod pre_clarifications_service;
 pub mod project_discovery;
 pub mod project_registry;
+pub mod python_artifact;
+pub mod python_artifact_code_check;
+pub mod python_artifact_readiness;
+pub mod python_ec;
+pub mod python_td;
+pub mod python_td_rust_target;
+pub mod python_td_target;
+pub mod python_td_typescript_target;
 pub mod reference_context_service;
 pub mod review_service;
 pub mod spec_service;

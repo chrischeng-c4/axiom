@@ -41,7 +41,7 @@ scenarios:
   - id: S3
     title: planning output is estimate-free
     given:
-      - "aw wi atomize or aw wi prioritize renders local planning artifacts"
+      - "aw wi plan or a compatibility planning alias renders the canonical local project-plan artifact"
     then:
       - "artifact lines do not summarize agent_minutes or human_attention"
       - "roadmap-sized routing is based on issue type and size heuristics"

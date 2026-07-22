@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/issues/types.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Issue {
-    /// Issue kind. Maps 1:1 to GitHub type:* labels.
+    /// Canonical issue kind. Existing legacy tracker labels decode as `change`.
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     /// Full title (preserves prefixes like 'score(2.5):' for human context).
@@ -250,20 +250,21 @@ pub enum IssueState {
     Draft,
 }
 
-/// Issue kind. Must match GitHub type:* labels 1:1.
+/// Canonical issue kind with decode-only aliases for legacy tracker history.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/issues/types.md#schema
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy)]
 pub enum IssueType {
     /// Large multi-issue initiative (may omit crate: label).
     Epic,
-    /// A defect in existing behavior.
+    /// Canonical executable work-item leaf.
+    Change,
+    /// Legacy compatibility alias decoded from existing tracker history.
     Bug,
-    /// New capability or improvement.
+    /// Legacy compatibility alias decoded from existing tracker history.
     Enhancement,
-    /// Code restructuring with no behavior change.
+    /// Legacy compatibility alias decoded from existing tracker history.
     Refactor,
-    /// Test coverage work.
+    /// Legacy compatibility alias decoded from existing tracker history.
     Test,
 }
 
@@ -283,6 +284,39 @@ pub enum ShipStatus {
     Rejected,
 }
 // CODEGEN-END
+
+// HANDWRITE-BEGIN gap="missing-generator:schema-enum-compatibility-codec" tracker="#2385" reason="IssueType keeps legacy Rust variants for source compatibility while exposing only canonical epic/change wire values."
+impl PartialEq for IssueType {
+    fn eq(&self, other: &Self) -> bool {
+        self.workflow_role() == other.workflow_role()
+    }
+}
+
+impl Eq for IssueType {}
+
+impl Serialize for IssueType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for IssueType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "unsupported issue type `{value}`; expected epic or change"
+            ))
+        })
+    }
+}
+// HANDWRITE-END
 
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/issues/types_phase_namespaces_source.md#source
 // CODEGEN-BEGIN
@@ -753,17 +787,18 @@ impl IssueType {
     pub fn as_str(&self) -> &'static str {
         match self {
             IssueType::Epic => "epic",
-            IssueType::Bug => "bug",
-            IssueType::Enhancement => "enhancement",
-            IssueType::Refactor => "refactor",
-            IssueType::Test => "test",
+            IssueType::Change
+            | IssueType::Bug
+            | IssueType::Enhancement
+            | IssueType::Refactor
+            | IssueType::Test => "change",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "epic" => Some(IssueType::Epic),
-            "change" => Some(IssueType::Enhancement),
+            "change" => Some(IssueType::Change),
             "bug" => Some(IssueType::Bug),
             "enhancement" | "feature" => Some(IssueType::Enhancement),
             "refactor" => Some(IssueType::Refactor),
@@ -773,16 +808,11 @@ impl IssueType {
     }
 
     pub fn workflow_role(&self) -> &'static str {
-        match self {
-            IssueType::Epic => "epic",
-            IssueType::Bug | IssueType::Enhancement | IssueType::Refactor | IssueType::Test => {
-                "change"
-            }
-        }
+        self.as_str()
     }
 
     /// Extract the issue type from a list of labels by finding the
-    /// `type:*` label. Defaults to `Enhancement` if none found.
+    /// `type:*` label. Defaults to canonical `Change` if none is found.
     pub fn from_labels(labels: &[String]) -> Self {
         for label in labels {
             if let Some(kind) = label.strip_prefix("type:") {
@@ -791,7 +821,7 @@ impl IssueType {
                 }
             }
         }
-        IssueType::Enhancement
+        IssueType::Change
     }
 }
 
@@ -1137,7 +1167,7 @@ mod tests {
         issue.gitlab_id = None;
         assert_eq!(
             issue.default_slug(),
-            "enhancement-issue-authoring-notation-agent"
+            "change-issue-authoring-notation-agent"
         );
     }
 
@@ -1151,15 +1181,32 @@ mod tests {
         assert_eq!(IssueType::from_labels(&labels), IssueType::Epic);
 
         let labels = vec!["priority:p1".into()];
-        assert_eq!(IssueType::from_labels(&labels), IssueType::Enhancement);
+        assert!(matches!(IssueType::from_labels(&labels), IssueType::Change));
     }
 
     #[test]
     fn issue_type_change_alias_is_executable_work() {
-        assert_eq!(IssueType::parse("change"), Some(IssueType::Enhancement));
+        assert!(matches!(
+            IssueType::parse("change"),
+            Some(IssueType::Change)
+        ));
         assert_eq!(IssueType::Epic.workflow_role(), "epic");
-        assert_eq!(IssueType::Enhancement.workflow_role(), "change");
+        assert_eq!(IssueType::Change.workflow_role(), "change");
         assert_eq!(IssueType::Bug.workflow_role(), "change");
+    }
+
+    #[test]
+    fn issue_type_legacy_aliases_serialize_as_canonical_change() {
+        for legacy in ["bug", "enhancement", "feature", "refactor", "test"] {
+            let decoded: IssueType = serde_json::from_str(&format!("\"{legacy}\"")).unwrap();
+            assert_eq!(decoded, IssueType::Change, "legacy alias {legacy}");
+            assert_eq!(decoded.as_str(), "change", "legacy alias {legacy}");
+            assert_eq!(serde_json::to_string(&decoded).unwrap(), "\"change\"");
+        }
+        assert_eq!(
+            serde_json::to_string(&IssueType::Enhancement).unwrap(),
+            "\"change\""
+        );
     }
 
     #[test]

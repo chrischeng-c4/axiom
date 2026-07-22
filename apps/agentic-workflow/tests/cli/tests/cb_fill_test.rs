@@ -788,7 +788,10 @@ async fn test_apply_marker_replaces_block() {
     // The CLI already initialized the payload template at that absolute
     // path; overwrite it with the marker's real fill content, proving the
     // apply step reads back from /tmp, not from the repo tree.
-    let app_payload_body = "// filled app marker\n";
+    let app_payload_body = format!(
+        "// filled app marker\n\n{} marker: {} path: {} reason: unfilled -->\n",
+        "<!--", first_marker_id, app_marker_rel
+    );
     std::fs::write(&payload_path, app_payload_body).expect("write app payload at /tmp/aw path");
 
     // Apply the app marker. The continuation must remain in fill and point at
@@ -858,6 +861,11 @@ async fn test_apply_marker_replaces_block() {
     assert!(
         updated_app.contains("filled app marker") && !updated_app.contains("TODO: hand-write"),
         "app source must contain its payload body in place of the stub, got:\n{}",
+        updated_app
+    );
+    assert!(
+        !updated_app.contains("<!-- marker:"),
+        "generated payload metadata must never be copied into source, got:\n{}",
         updated_app
     );
     let updated_lib =

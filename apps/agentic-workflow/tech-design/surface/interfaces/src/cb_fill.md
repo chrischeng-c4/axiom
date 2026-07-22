@@ -142,7 +142,24 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !matches!(
         ext,
-        "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+        "rs" | "py"
+            | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "css"
+            | "scss"
+            | "md"
+            | "html"
+            | "toml"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "sh"
+            | "bash"
+            | "zsh"
     ) && file_name != "Dockerfile"
     {
         return;
@@ -493,7 +510,7 @@ fn parse_handwrite_begin_end(content: &str) -> Vec<BeginEndMarker> {
 // can pattern-match the body uniformly.
 fn strip_lead(line: &str) -> &str {
     let s = line.trim_start();
-    for prefix in ["///", "//!", "//", "# ", "#", "<!--"] {
+    for prefix in ["///", "//!", "//", "# ", "#", "<!--", "/*"] {
         if let Some(rest) = s.strip_prefix(prefix) {
             return rest.trim_start();
         }
@@ -1302,7 +1319,7 @@ fn should_preserve_handwrite_markers(source_path: &str) -> bool {
     }
     !matches!(
         path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        "json" | "toml" | "yaml" | "yml"
+        "html" | "json" | "toml" | "yaml" | "yml"
     )
 }
 
@@ -1883,6 +1900,7 @@ pub fn existing() { 42; }\n\
     fn enumerate_worktree_markers_includes_config_artifact_files() {
         let tmp = tempfile::tempdir().unwrap();
         let files = [
+            "frontend/index.html",
             "frontend/package.json",
             "backend/pyproject.toml",
             "k8s/base/backend-deployment.yaml",
@@ -2210,6 +2228,125 @@ pub fn before() {}\n\
         assert!(out.contains("\"scripts\": {}"));
         assert!(out.starts_with("{\n"));
         assert!(out.ends_with("}\n"));
+
+        let html = format!(
+            "{}\n// TODO: hand-write content for `frontend/index.html`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:html\" reason=\"bootstrap document\""),
+            handwrite_end(),
+        );
+        let out = replace_block_body_for_path(
+            &html,
+            1,
+            3,
+            "<!doctype html><title>Workbench</title>",
+            "frontend/index.html",
+        )
+        .unwrap();
+        assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!out.contains(HANDWRITE_END_TOKEN));
+        assert_eq!(out, "<!doctype html><title>Workbench</title>\n");
+    }
+
+    #[test]
+    fn css_and_javascript_markers_enumerate_and_css_fill_stays_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ui = tmp.path().join("apps/workbench/ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("shell.css"),
+            "/* HANDWRITE-BEGIN gap=\"missing-generator:css\" reason=\"shell styles\" */\n\
+             /* TODO: hand-write content for shell CSS. */\n\
+             /* HANDWRITE-END */\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ui.join("shell.js"),
+            "// HANDWRITE-BEGIN gap=\"missing-generator:js\" reason=\"shell behavior\"\n\
+             // TODO: hand-write content for shell JavaScript.\n\
+             // HANDWRITE-END\n",
+        )
+        .unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 2);
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:css"));
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:js"));
+
+        let css = std::fs::read_to_string(ui.join("shell.css")).unwrap();
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:css")
+            .unwrap();
+        let filled = apply_marker_payload(&css, marker, ":root { color: #fff; }", "2210").unwrap();
+        assert!(filled.contains("/* HANDWRITE-BEGIN"));
+        assert!(filled.contains("/* HANDWRITE-END */"));
+        assert!(filled.contains(":root { color: #fff; }"));
+        assert!(!filled.contains("// HANDWRITE"));
+    }
+
+    #[test]
+    fn toml_markers_enumerate_and_fill_stay_parseable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("apps/workbench/tests/fixtures/aw-context/aw.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let scaffold =
+            "# HANDWRITE-BEGIN gap=\"missing-generator:toml\" reason=\"fixture config\"\n\
+                         # TODO: hand-write content for fixture TOML.\n\
+                         # HANDWRITE-END\n";
+        std::fs::write(&path, scaffold).unwrap();
+        toml::from_str::<toml::Table>(scaffold).expect("TOML scaffold must parse");
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:toml")
+            .expect("TOML marker must be discovered");
+        let filled = apply_marker_payload(scaffold, marker, "name = \"workbench\"", "2223")
+            .expect("TOML marker payload must apply");
+
+        assert!(!filled.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!filled.contains(HANDWRITE_END_TOKEN));
+        let parsed = toml::from_str::<toml::Table>(&filled).expect("filled TOML must parse");
+        assert_eq!(
+            parsed.get("name").and_then(toml::Value::as_str),
+            Some("workbench")
+        );
+    }
+
+    #[test]
+    fn shell_markers_enumerate_and_fill_stay_syntax_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("libs/service-observability/tests/soak_metrics_window_contract.sh");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let scaffold = "# HANDWRITE-BEGIN gap=\"missing-generator:soak-metrics\" tracker=\"pending-tracker\" reason=\"soak contract\"\n\
+                         # TODO: hand-write content for soak metrics.\n\
+                         # HANDWRITE-END\n";
+        std::fs::write(&path, scaffold).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:soak-metrics")
+            .expect("shell marker must be discovered instead of false-greening fill");
+        let filled = apply_marker_payload(scaffold, marker, "echo soak-metrics", "2287")
+            .expect("shell marker payload must apply");
+        assert!(filled.contains("tracker=\"#2287\""));
+        assert!(filled.contains("echo soak-metrics"));
+        std::fs::write(&path, &filled).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(&path)
+            .status()
+            .expect("sh must validate the filled shell contract");
+        assert!(status.success(), "filled shell contract must parse");
     }
 
     #[test]

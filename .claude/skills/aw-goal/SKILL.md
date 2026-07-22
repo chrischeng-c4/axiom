@@ -1,6 +1,6 @@
 ---
 name: aw:goal
-description: aw's single loop-verb dispatcher — drive a work item, a capability/project root, a project's whole open backlog, or an ad-hoc verifiable condition to a machine-checked terminal state. Route every "do X until done" request through the closed four-leaf decision tree below.
+description: aw's single loop-verb dispatcher — drive a work item, a capability/project root, a project's accepted reviewed graph, or an ad-hoc verifiable condition to a machine-checked terminal state. Route every "do X until done" request through the closed four-leaf decision tree below.
 user-invocable: true
 ---
 
@@ -16,7 +16,7 @@ style choice.
 |---|---|---|
 | wi | `aw goal wi <id>` | lifecycle chain of that root (EC / terminal / rollup) |
 | capability | `aw goal capability [<capability-id>] --project <p>` | capability work-root closure / project promise rollup |
-| backlog | `aw goal backlog --project <p>` | zero open unparked WIs for the project |
+| backlog | `aw goal backlog --project <p>` | no ready unparked change remains in the current accepted published graph |
 | adhoc | `aw goal set --gate "<cmd>" <intent>` → `aw goal check <id>` | every recorded gate command exits 0 |
 
 ## Decision tree

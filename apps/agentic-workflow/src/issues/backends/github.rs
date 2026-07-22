@@ -773,6 +773,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_gh_issue_normalizes_legacy_types_without_mutating_labels() {
+        for (offset, legacy) in ["bug", "enhancement", "refactor", "test"]
+            .into_iter()
+            .enumerate()
+        {
+            let number = 2000 + offset as u64;
+            let value = json!({
+                "number": number,
+                "title": format!("Legacy {legacy}"),
+                "state": "OPEN",
+                "labels": [{"name": format!("type:{legacy}")}],
+                "body": format!("legacy body {legacy}")
+            });
+
+            let issue = parse_gh_issue(&value).unwrap();
+
+            assert_eq!(issue.github_id, Some(number));
+            assert_eq!(issue.issue_type.as_str(), "change");
+            assert_eq!(serde_json::to_value(&issue).unwrap()["type"], "change");
+            assert_eq!(issue.labels, vec![format!("type:{legacy}")]);
+            assert!(IssueFilter {
+                issue_type: Some(IssueType::Change),
+                ..Default::default()
+            }
+            .matches(&issue));
+        }
+    }
+
+    #[test]
     fn parse_rest_issue_shape_uses_user_and_snake_case_timestamps() {
         let value = json!({
             "number": 1888,
