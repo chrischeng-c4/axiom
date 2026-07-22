@@ -78,9 +78,12 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(collector.contains("configMapKeyRef:"));
     assert!(collector.contains("fieldPath: spec.nodeName"));
     assert!(collector.contains("runAsNonRoot: true"));
+    assert!(collector.contains("- name: collector\n          image: example.invalid/sift:1.2.3"));
+    assert!(collector.contains("runAsNonRoot: false\n            runAsUser: 0"));
     assert!(collector.contains("readOnlyRootFilesystem: true"));
     assert!(collector.contains("seccompProfile:"));
     assert!(collector.contains("drop: [\"ALL\"]"));
+    assert!(!collector.contains("privileged: true"));
     assert!(collector.contains("requests: { cpu: 25m, memory: 64Mi }"));
     assert!(collector.contains("limits: { cpu: 500m, memory: 256Mi }"));
     assert!(!collector.contains("kind: ClusterRole"));
