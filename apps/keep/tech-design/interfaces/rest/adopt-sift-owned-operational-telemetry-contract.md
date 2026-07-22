@@ -108,23 +108,29 @@ changes:
 
 ```mermaid
 ---
-id: keep-sift-operational-telemetry-verification
+id: keep-sift-operational-telemetry-contract-verification
 requirements:
   collector_ingest:
-    id: R5
-    text: "The Sift-owned VAT operational-log integration starts a real Keep process and can query its accepted durable records by the stable keep identity without rejected events."
+    id: R6
+    text: "The Sift-owned VAT operational-log integration starts a real Keep process and queries its accepted durable records by stable keep identity without rejected events."
     kind: e2e
     risk: high
     verify: cargo test -p sift --test vat_service_observability_e2e
+  deployment_json:
+    id: R5
+    text: "Base Kubernetes manifests and operator-rendered StatefulSet configuration choose KEEP_LOG_FORMAT=json for all deployed Keep service roles."
+    kind: deployment
+    risk: high
+    verify: cargo test -p keep --test operator --features operator
   invalid_or_missing_w3c:
     id: R3
-    text: "Invalid or missing traceparent input remains available as a fresh nonzero correlation context and does not fail a Keep HTTP request."
+    text: "Invalid or absent traceparent input keeps request behavior successful and emits an independent nonzero correlation context."
     kind: regression
     risk: medium
     verify: cargo test -p keep --test structured_stdout_traceparent
   sift_agnostic:
     id: R4
-    text: "Keep exposes standard producer controls only and has no direct Sift crate dependency or Sift endpoint, credential, or transport configuration."
+    text: "Keep exposes standard producer controls only and contains no direct Sift crate dependency or Sift endpoint credential or transport configuration."
     kind: boundary
     risk: high
     verify: cargo test -p keep --test structured_stdout_traceparent
@@ -136,7 +142,7 @@ requirements:
     verify: cargo test -p keep --test structured_stdout_traceparent
   valid_w3c:
     id: R2
-    text: "A valid W3C traceparent sent to Keep's HTTP data plane preserves its trace id, parent span id, and flags in the correlated structured request event."
+    text: "A valid W3C traceparent sent to Keep's HTTP data plane preserves trace id parent span id and flags in the correlated structured request event."
     kind: functional
     risk: medium
     verify: cargo test -p keep --test structured_stdout_traceparent
@@ -146,5 +152,6 @@ flowchart TD
     r2[R2 valid w3c] --> cargo_test_p_keep_test_structured_stdout_traceparent
     r3[R3 invalid or missing w3c] --> cargo_test_p_keep_test_structured_stdout_traceparent
     r4[R4 sift agnostic] --> cargo_test_p_keep_test_structured_stdout_traceparent
-    r5[R5 collector ingest] --> cargo_test_p_sift_test_vat_service_observability_e2e[cargo test -p sift --test vat_service_observability_e2e]
+    r5[R5 deployment json] --> cargo_test_p_keep_test_operator_features_operator[cargo test -p keep --test operator --features operator]
+    r6[R6 collector ingest] --> cargo_test_p_sift_test_vat_service_observability_e2e[cargo test -p sift --test vat_service_observability_e2e]
 ```
