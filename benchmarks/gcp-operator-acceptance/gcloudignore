@@ -1,0 +1,10 @@
+.git
+.git/**
+target
+target/**
+**/target
+**/target/**
+node_modules
+**/node_modules/**
+.DS_Store
+benchmarks/gcp-operator-acceptance/evidence

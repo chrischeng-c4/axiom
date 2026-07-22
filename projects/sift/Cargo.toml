@@ -50,6 +50,7 @@ tracing.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 
 [dev-dependencies]
+serde_yaml.workspace = true
 tempfile = "3"
 vat = { path = "../../apps/vat", default-features = false, features = ["emulator"] }
 

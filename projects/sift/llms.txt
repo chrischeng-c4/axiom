@@ -32,3 +32,15 @@
 - [build.sh](build.sh): debug/release build entrypoint.
 - [install.sh](install.sh): project-local install entrypoint.
 <!-- CODEGEN-END -->
+<!-- HANDWRITE-BEGIN gap="sift-live-backup-agent-context" tracker="2367" reason="Keep the runtime backup safety boundary explicit until the semantic context generator projects command-level operations." -->
+
+## Backup Safety Boundary
+
+- Scheduled and online backups use `sift backup --url <service> --dest gs://...`
+  and the protected `GET /admin/backup` endpoint. Supply an admin token with
+  `--token` or `SIFT_BACKUP_TOKEN` when auth is required.
+- `sift backup --data-dir <path>` is legacy offline-only operation for a stopped
+  journal. Never open the live service PVC from a second process.
+- Restore remains `sift restore --data-dir <stopped-path> --source <uri>`.
+
+<!-- HANDWRITE-END -->

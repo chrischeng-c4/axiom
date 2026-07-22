@@ -70,7 +70,7 @@ first-class domain roots.
 | Durability And Acknowledgment | 1659 | implemented | partial | conformance | not_ready | blob and sharded raw fsync-before-ack plus single-node Raft apply pass; three-node proof remains #1676 |
 | Shard-Aware Hot Storage | 1659 | implemented | partial | conformance | not_ready | 4096 buckets, future-only epochs, sealed segments, movement, recovery, and embedded rebuild index pass; retention remains |
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
-| Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
+| Backup And Restore | 1659 | implemented | partial | conformance | not_ready | protected live snapshot plus real GCS transport and Vat-backed cold restore pass locally; GKE and three-node proof remain #1676 |
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy, fixed projection-index allowlist, metric cardinality, and profile blob reference validation are verified; GenAI/evaluation schemas remain |
 | Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, metric, audit/change, and OTel profile stores pass; GenAI/evaluation remains #1670 |
 | Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, metric, audit/change, and profile analysis reads pass; unified cross-signal query and streaming tail remain #1671 |
@@ -253,30 +253,37 @@ ID: backup-and-restore
 Type: Service
 Root WI: 1659
 Status: confirmed
-Surfaces: CLI: `sift backup export|restore`; Storage: consistent raw-journal
-and state-machine snapshots, archive manifests, and object-storage destination
-policy; K8s: scheduled backup job and restore status.
+Surfaces: CLI: live `sift backup --url <service> --dest gs://...`, explicit
+offline `sift backup --data-dir <stopped-journal> --dest <uri>`, and `sift
+restore --data-dir <dir> --source <uri>`; HTTP: protected `GET /admin/backup`;
+Storage: consistent raw-journal and state-machine snapshots, archive manifests,
+and object-storage destination policy; K8s: scheduled backup job and restore
+status.
 EC Dimensions: behavior: snapshot restore plus Vat-backed GCS segment/blob/
 epoch-map cold restore pass; projection checkpoints remain #1660. Stability:
-scheduled off-node backup and three-node restore remain #1676.
+protected live snapshot transport passes locally; GKE scheduled-object and
+three-node restore evidence remain #1676.
 Required Verification: conformance, dogfood
 Promise:
 Expose consistent snapshot and restore through the Sift state machine and the
-shared `service-backup` policy/runner shape. A production Sift instance has a
-scheduled off-node object-storage backup; GCS is the required GCP destination
-when the shared adapter is available, and no local-only backup is called
-production-ready.
+shared `service-backup` policy/runner shape. Scheduled runners fetch exact bytes
+from the protected live `GET /admin/backup` boundary, optionally authenticate
+with an admin token, and write them to a real `gs://` destination without
+mounting the serving PVC. `--data-dir` remains a legacy offline-only path for a
+stopped journal; opening it beside a live writer is unsupported. No local-only
+backup is called production-ready.
 Gate Inventory:
 - implemented state snapshot restore: projects/sift/tests/ha_backup_e2e.rs
 - implemented Vat GCS archive/cold restore: projects/sift/tests/gcs_archive.rs
-- pending scheduled off-node/three-node restore: 1676
+- implemented protected live snapshot/transport: projects/sift/tests/live_backup.rs
+- pending GKE scheduled object/three-node restore proof: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | consistent-state-machine-snapshot | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
 | service-backup-policy-and-runner | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
 | real-service-backup-gcs-sink | change | 1659 | implemented | passing | conformance | projects/sift/tests/gcs_archive.rs |
-| scheduled-gcs-object-backup | change | 1676 | planned | planned | dogfood | CronJob, object snapshot, and cold-restore gate |
+| scheduled-gcs-object-backup | change | 1676 | implemented | partial | dogfood | protected live-snapshot CronJob is wired; GKE object and cold-restore evidence remain |
 
 ### Schema Governance
 

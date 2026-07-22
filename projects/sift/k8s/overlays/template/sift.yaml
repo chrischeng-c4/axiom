@@ -1,0 +1,14 @@
+# HANDWRITE-BEGIN gap="sift-kustomize-template-instance" tracker="1606" reason="Expose only the currently supported 1x1 Sift deployment topology."
+apiVersion: sift.axiom.dev/v1alpha1
+kind: Sift
+metadata:
+  name: REPLACE_ME__NAME
+  namespace: REPLACE_ME__NAMESPACE
+spec:
+  image: REPLACE_ME__IMAGE
+  replicasPerShard: 1
+  voterCount: 1
+  dataSize: REPLACE_ME__DATA_SIZE
+  auth: required
+  tokensSecret: REPLACE_ME__SIFT_TOKENS_SECRET
+# HANDWRITE-END

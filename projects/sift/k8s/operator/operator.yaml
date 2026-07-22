@@ -1,4 +1,9 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: sift-system
+---
+apiVersion: v1
 # Controller entrypoint: sift k8s operator run
 kind: ServiceAccount
 metadata:
@@ -11,14 +16,23 @@ metadata:
   name: sift-operator
 rules:
   - apiGroups: ["sift.axiom.dev"]
-    resources: ["sifts", "sifts/status"]
-    verbs: ["get", "list", "watch", "create", "patch", "update"]
+    resources: ["sifts"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["sift.axiom.dev"]
+    resources: ["sifts/status", "sifts/finalizers"]
+    verbs: ["get", "patch", "update"]
   - apiGroups: [""]
-    resources: ["services", "configmaps", "persistentvolumeclaims"]
+    resources: ["services", "configmaps", "persistentvolumeclaims", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -55,7 +69,11 @@ spec:
       containers:
         - name: operator
           image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+          imagePullPolicy: IfNotPresent
           args: ["k8s", "operator", "run"]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
