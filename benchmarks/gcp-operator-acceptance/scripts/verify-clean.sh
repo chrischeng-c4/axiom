@@ -9,6 +9,7 @@ set -euo pipefail
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
 : "${GCS_SOURCE_PREFIX:?GCS_SOURCE_PREFIX is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
+PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 
 prefix="axo-${RUN_ID}"
 bucket="${PROJECT_ID}-${prefix}-backup"
@@ -26,9 +27,17 @@ check_empty() {
   fi
 }
 
-check_empty "GKE cluster" \
-  gcloud container clusters list --project="$PROJECT_ID" --zone="$GKE_ZONE" \
-    --filter="name=${prefix}-gke" --format='value(name)'
+if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
+  --project="$PROJECT_ID" --zone="$GKE_ZONE" >/dev/null 2>&1; then
+  echo "persistent GKE cluster is missing: $PERSISTENT_CLUSTER_NAME" >&2
+  leftovers=1
+fi
+check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
+check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
+check_empty "Sift namespace" kubectl get namespace sift --no-headers
+check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
+check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
 check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
   --filter="name=${bucket}" --format='value(name)'
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
