@@ -30,11 +30,22 @@ start_forward() {
   local local_port="$3"
   local remote_port="$4"
   local log="$5"
-  kubectl -n "$namespace" port-forward "service/$service" \
-    "${local_port}:${remote_port}" >"$log" 2>&1 &
-  forward_pids+=("$!")
+  local forward_pid=""
   local deadline=$((SECONDS + 90))
   while (( SECONDS < deadline )); do
+    # A service forward binds to one endpoint pod.  The operator's bounded
+    # drift/takeover tests can replace that pod after the forward starts, so
+    # renew a dead forward instead of converting expected reconciliation churn
+    # into a false readiness failure.
+    if [[ -z "$forward_pid" ]] || ! kill -0 "$forward_pid" >/dev/null 2>&1; then
+      if [[ -n "$forward_pid" ]]; then
+        wait "$forward_pid" >/dev/null 2>&1 || true
+      fi
+      kubectl -n "$namespace" port-forward "service/$service" \
+        "${local_port}:${remote_port}" >>"$log" 2>&1 &
+      forward_pid="$!"
+      forward_pids+=("$forward_pid")
+    fi
     if curl --silent --show-error --fail "http://127.0.0.1:${local_port}/readyz" >/dev/null 2>&1; then
       return 0
     fi
