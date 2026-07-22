@@ -2471,13 +2471,33 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     let grace = Duration::from_secs(args.grace_secs);
+    let shutdown_engine = engine.clone();
+    let shutdown_aof = aof_writer.clone();
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
     // with the standard SIGTERM drain sequence flipping `/readyz` to 503
-    // before the listener closes.
+    // before the listener closes. The single-replica segment AOF is synced at
+    // the *start* of termination, not after the full drain window: the pod's
+    // termination grace can equal that window, so a post-drain sync may lose
+    // the race with Kubernetes' SIGKILL.
     service_http::serve(
         listener,
         app,
-        service_http::shutdown_with_drain(move || engine.start_drain(), grace),
+        service_http::shutdown_with_drain(
+            move || {
+                shutdown_engine.start_drain();
+                if let Some(aof) = shutdown_aof {
+                    match aof.lock() {
+                        Ok(mut writer) => {
+                            if let Err(e) = writer.sync() {
+                                tracing::warn!(error = %e, "sync local AOF during shutdown failed");
+                            }
+                        }
+                        Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
+                    }
+                }
+            },
+            grace,
+        ),
     )
     .await;
     #[cfg(feature = "raft-wal")]
