@@ -55,6 +55,23 @@ start_forward() {
   return 1
 }
 
+capture_collector_diagnostics() {
+  # Preserve the producer, collector, and durable collector state before the
+  # outer run trap removes the namespaces.  A query miss can be caused by the
+  # producer's JSONL contract, CRI discovery, decoder quarantine, or delivery;
+  # these artifacts distinguish those cases without leaving cloud resources.
+  kubectl -n lumen logs statefulset/lumen --all-containers --tail=500 \
+    > "$EVIDENCE_DIR/kubernetes/lumen-serving.log" 2>&1 || true
+  kubectl -n sift logs daemonset/sift-collector --all-containers --tail=500 \
+    > "$EVIDENCE_DIR/kubernetes/sift-collector.log" 2>&1 || true
+  kubectl -n sift exec daemonset/sift-collector -c collector -- \
+    cat /var/lib/sift-collector/checkpoint.json \
+    > "$EVIDENCE_DIR/kubernetes/sift-collector-checkpoint.json" 2>&1 || true
+  kubectl -n sift exec daemonset/sift-collector -c collector -- \
+    cat /var/lib/sift-collector/rejected.jsonl \
+    > "$EVIDENCE_DIR/kubernetes/sift-collector-rejected.jsonl" 2>&1 || true
+}
+
 wait_for_collected_lumen_log() {
   local collection="$1"
   local result="$EVIDENCE_DIR/kubernetes/sift-collected-lumen-log.json"
@@ -78,7 +95,8 @@ wait_for_collected_lumen_log() {
     sleep 3
   done
   echo "Sift did not materialize the collector-tagged Lumen log for $collection" >&2
-  kubectl -n sift logs daemonset/sift-collector --all-containers --tail=500 >&2 || true
+  capture_collector_diagnostics
+  cat "$EVIDENCE_DIR/kubernetes/sift-collector.log" >&2 || true
   return 1
 }
 
@@ -131,8 +149,7 @@ printf '%s\n' "$object_size" > "$EVIDENCE_DIR/gcs/sift-first-object-bytes.txt"
 gcloud storage cat "$first_object" > "$EVIDENCE_DIR/gcs/sift-first-object.json"
 jq -e 'type == "object"' "$EVIDENCE_DIR/gcs/sift-first-object.json" >/dev/null
 
-kubectl -n sift logs daemonset/sift-collector --all-containers --tail=500 \
-  > "$EVIDENCE_DIR/kubernetes/sift-collector.log"
+capture_collector_diagnostics
 kubectl -n sift get sift/sift -o json > "$EVIDENCE_DIR/kubernetes/sift-final.json"
 kubectl get deployment,daemonset,statefulset,cronjob,job,pod,pvc,serviceaccount -A -o json \
   > "$EVIDENCE_DIR/kubernetes/workloads-final.json"
