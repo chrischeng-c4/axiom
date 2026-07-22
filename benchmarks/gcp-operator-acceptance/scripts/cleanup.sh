@@ -14,6 +14,7 @@ set -euo pipefail
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
+TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 export KUBECONFIG
 
 state="$STATE_DIR/environment.tfstate"
@@ -116,7 +117,7 @@ if [[ -f "$state" ]]; then
     -var="image_tag=$IMAGE_TAG"
   )
   for attempt in 1 2 3; do
-    if TF_DATA_DIR="$tf_data" terraform -chdir="$ACCEPTANCE_ROOT/environment" \
+    if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
       destroy "${destroy_args[@]}"; then
       break
     fi

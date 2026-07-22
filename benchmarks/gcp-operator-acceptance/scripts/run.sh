@@ -19,6 +19,7 @@ LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
+TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 GCS_SOURCE_PREFIX="${GCS_SOURCE_PREFIX:-gs://${PROJECT_ID}_cloudbuild/source/axiom-gcp-operator-${RUN_ID}}"
 MAX_CLOUD_SECONDS="${MAX_CLOUD_SECONDS:-2700}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
@@ -59,6 +60,7 @@ cleanup() {
     cleanup_started=1
     if ! PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" \
       STATE_DIR="$STATE_DIR" ACCEPTANCE_ROOT="$ACCEPTANCE_ROOT" \
+      TERRAFORM_ENVIRONMENT_DIR="$TERRAFORM_ENVIRONMENT_DIR" \
       REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
       GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
       ARTIFACT_REGISTRY_REPOSITORY="$ARTIFACT_REGISTRY_REPOSITORY" \
@@ -333,10 +335,12 @@ export RUN_ID MANIFEST_DIR
 "$SCRIPT_DIR/render-manifests.sh"
 
 echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
+mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
+cp "$ACCEPTANCE_ROOT/environment"/*.tf "$TERRAFORM_ENVIRONMENT_DIR/"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
-  -chdir="$ACCEPTANCE_ROOT/environment" init -input=false
+  -chdir="$TERRAFORM_ENVIRONMENT_DIR" init -input=false
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
-  -chdir="$ACCEPTANCE_ROOT/environment" apply \
+  -chdir="$TERRAFORM_ENVIRONMENT_DIR" apply \
   -state="$STATE_DIR/environment.tfstate" \
   -auto-approve \
   -var="project_id=$PROJECT_ID" \
@@ -347,7 +351,7 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
   -var="image_tag=$IMAGE_TAG"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
-  -chdir="$ACCEPTANCE_ROOT/environment" output \
+  -chdir="$TERRAFORM_ENVIRONMENT_DIR" output \
   -state="$STATE_DIR/environment.tfstate" -json > "$EVIDENCE_DIR/terraform-output.json"
 
 cluster="$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")"
