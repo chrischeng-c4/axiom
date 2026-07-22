@@ -102,7 +102,8 @@ runtime_image:
         #   docker build -f apps/lumen/Dockerfile.release -t lumen:0.4.5 \
         #     --build-arg LUMEN_VERSION=lumen@0.4.5 .
         #
-        # The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
+        # The image arch selects the matching linux tarball. BuildKit supplies
+        # TARGETARCH automatically; classic Docker builders use the amd64 default:
         #   --platform linux/amd64 → x86_64-unknown-linux-musl
         #   --platform linux/arm64 → aarch64-unknown-linux-musl
 
@@ -110,7 +111,7 @@ runtime_image:
         FROM debian:bookworm-slim AS fetch
         ARG LUMEN_VERSION=lumen@0.4.5
         ARG LUMEN_REPO=chrischeng-c4/axiom
-        ARG TARGETARCH
+        ARG TARGETARCH=amd64
         RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
             && rm -rf /var/lib/apt/lists/*
         RUN set -eux; \
