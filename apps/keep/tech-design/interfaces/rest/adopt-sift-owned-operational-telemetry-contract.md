@@ -64,7 +64,19 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: ServeArgs
-    description: Add pretty/json log-format and optional OTLP endpoint settings under Keep-owned flags and environment names; initialize shared service-http observability with identity keep before server or operator logs rather than installing a local fmt subscriber.
+    description: Add pretty/json log-format and optional OTLP endpoint settings under Keep-owned flags and environment names.
+  - path: apps/keep/src/bin/keep.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: serve_main
+    description: Map parsed Keep observability settings into service_http::HttpConfig and ServiceIdentity, and initialize shared tracing before startup logs replace the local fmt subscriber.
+  - path: apps/keep/src/bin/keep.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run_operator
+    description: Initialize the controller with the same shared producer contract from KEEP_LOG_LEVEL, KEEP_LOG_FORMAT, and KEEP_OTLP_ENDPOINT environment settings.
   - path: apps/keep/k8s/base/configmap.yaml
     action: modify
     section: logic
