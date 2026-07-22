@@ -762,14 +762,29 @@ async fn k8s(args: K8sArgs) -> Result<()> {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in keep.rs is hand-written pending codegen support">
 #[cfg(feature = "operator")]
 async fn run_operator() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let log_format = match std::env::var("KEEP_LOG_FORMAT").as_deref() {
+        Ok("json") => service_http::LogFormat::Json,
+        Ok("pretty") | Err(_) => service_http::LogFormat::Pretty,
+        Ok(value) => anyhow::bail!(
+            "KEEP_LOG_FORMAT must be `pretty` or `json`, got `{value}`"
+        ),
+    };
+    let config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        std::env::var("KEEP_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+        log_format,
+        0,
+        0,
+        std::env::var("KEEP_OTLP_ENDPOINT")
+            .ok()
+            .filter(|endpoint| !endpoint.is_empty()),
+    );
+    let identity = service_http::ServiceIdentity::new("keep", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)?;
     keep::operator::run().await
 }
 // </HANDWRITE>
