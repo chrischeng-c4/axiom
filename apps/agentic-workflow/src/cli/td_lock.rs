@@ -321,6 +321,19 @@ fn write_project_td_lock_file_at_root(
     ))
 }
 
+/// Write a TD lock snapshot without creating the lifecycle commit used by the
+/// public CLI.  Hermetic graph-verification tests use this to prepare a
+/// committed-equivalent lock without depending on a git fixture.
+#[cfg(test)]
+pub(crate) fn write_project_td_lock_snapshot_at_root(
+    project_root: &Path,
+    project: &str,
+) -> Result<TdLockStatus> {
+    let target = resolve_td_lock_target(project_root, project)?;
+    let (status, _) = write_project_td_lock_file_at_root(project_root, &target)?;
+    Ok(status)
+}
+
 /// Commit only the generated lock while deliberately allowing unrelated index
 /// state. The shared lifecycle commit helper rejects any pre-existing staged
 /// change, so this lock handoff needs the narrower `git commit --only` policy.

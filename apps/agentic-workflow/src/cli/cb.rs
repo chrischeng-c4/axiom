@@ -5565,6 +5565,47 @@ async fn run_check_lifecycle_terminal(
             return Ok(true);
         }
 
+        // Python-v1 has an explicit terminal graph rather than the legacy
+        // path-anchor closure: verify its TD/EC locks, DDD identity edges,
+        // cold target manifest, and target-native unit inventory before any
+        // EC evaluation or lifecycle/tracker mutation can close this WI.
+        if let Some(project) = project_label_for_wi(&issue) {
+            match crate::services::python_artifact_code_check::verify_python_artifact_code_check(
+                project_root,
+                project,
+            ) {
+                Ok(Some(report)) if !report.clean => {
+                    let next = if report.next_command.starts_with("aw td gen --project ") {
+                        format!("aw td gen {slug}")
+                    } else {
+                        report.next_command.clone()
+                    };
+                    let env = serde_json::json!({
+                        "action": "error",
+                        "error_kind": "python_artifact_code_check_failed",
+                        "slug": slug,
+                        "project": report.project,
+                        "findings": report.findings,
+                        "next": { "command": next },
+                    });
+                    println!("{}", serde_json::to_string(&env)?);
+                    return Ok(true);
+                }
+                Ok(Some(_)) | Ok(None) => {}
+                Err(error) => {
+                    let env = serde_json::json!({
+                        "action": "error",
+                        "error_kind": "python_artifact_code_check_unverifiable",
+                        "slug": slug,
+                        "message": format!("td code-check refused because the Python artifact graph could not be verified: {error:#}"),
+                        "next": { "command": format!("aw td gen {slug}") },
+                    });
+                    println!("{}", serde_json::to_string(&env)?);
+                    return Ok(true);
+                }
+            }
+        }
+
         // EC gate (issue #858, epic #1270 R1b): "the gate is EC" is the
         // lifecycle's stated contract, but until this WI, terminal close
         // ran no EC/verification gate at all — only the weaker

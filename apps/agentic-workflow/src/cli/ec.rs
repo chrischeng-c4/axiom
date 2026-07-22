@@ -1157,8 +1157,31 @@ pub fn project_ec_check_summary(project: &str) -> Result<EcCheckSummary> {
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn project_ec_lock_status(project: &str) -> Result<EcLockStatus> {
     let project_root = crate::find_project_root()?;
-    let ctx = resolve_ec_project_context(&project_root, project)?;
+    project_ec_lock_status_at_root(&project_root, project)
+}
+
+/// Read a project's EC lock from an explicit repository root.  Terminal
+/// code-check uses this rather than process CWD so a Python artifact graph is
+/// verifiable from its owning project root and in hermetic fixtures.
+pub(crate) fn project_ec_lock_status_at_root(
+    project_root: &Path,
+    project: &str,
+) -> Result<EcLockStatus> {
+    let ctx = resolve_ec_project_context(project_root, project)?;
     check_ec_lock_context(&ctx)
+}
+
+/// Write an EC lock snapshot without the CLI presentation layer.  Kept
+/// crate-visible for hermetic terminal-graph tests; normal callers continue
+/// through `aw ec lock`.
+#[cfg(test)]
+pub(crate) fn write_project_ec_lock_snapshot_at_root(
+    project_root: &Path,
+    project: &str,
+) -> Result<EcLockStatus> {
+    let ctx = resolve_ec_project_context(project_root, project)?;
+    let (status, _) = write_ec_lock_context(&ctx)?;
+    Ok(status)
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
