@@ -71,7 +71,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("kind: Sift"));
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("auth: \"off\""));
-    assert!(instance.contains("sift:0.1.1"));
+    assert!(instance.contains("sift:0.1.0"));
 
     let collector = sift(&[
         "k8s",
@@ -196,6 +196,7 @@ fn operator_yaml_is_parseable_and_contains_gke_control_plane_dependencies() {
     let spec_schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
         ["spec"]["properties"];
     assert_eq!(spec_schema["replicasPerShard"]["maximum"], 1);
+    assert_eq!(spec_schema["auth"]["enum"], json!(["off", "required"]));
     assert_eq!(
         spec_schema["backup"]["properties"]["adminTokenSecret"]["type"],
         "string"
