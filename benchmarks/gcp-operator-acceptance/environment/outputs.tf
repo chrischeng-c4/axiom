@@ -1,5 +1,5 @@
 output "cluster_name" {
-  value = data.google_container_cluster.acceptance.name
+  value = google_container_cluster.acceptance.name
 }
 
 output "region" {
@@ -28,8 +28,4 @@ output "tagged_images" {
 
 output "artifact_registry_repository" {
   value = data.google_artifact_registry_repository.existing.name
-}
-
-output "lumen_authcsi_secret_id" {
-  value = google_secret_manager_secret.lumen_authcsi_tokens.secret_id
 }

@@ -7,7 +7,6 @@
     "schema",
     "project_id",
     "region",
-    "mode",
     "run_id",
     "backup_bucket",
     "acceptance"
@@ -24,9 +23,6 @@
       "type": "string",
       "minLength": 1
     },
-    "mode": {
-      "enum": ["full", "lumen-only"]
-    },
     "gke_zone": {
       "type": "string",
       "minLength": 1
@@ -41,7 +37,7 @@
     },
     "acceptance": {
       "type": "object",
-      "required": ["lumen"],
+      "required": ["lumen", "sift"],
       "properties": {
         "lumen": {
           "type": "object",
@@ -64,17 +60,5 @@
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {"mode": {"const": "full"}}
-      },
-      "then": {
-        "properties": {
-          "acceptance": {"required": ["lumen", "sift"]}
-        }
-      }
-    }
-  ]
+  }
 }

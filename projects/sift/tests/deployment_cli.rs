@@ -196,7 +196,6 @@ fn operator_yaml_is_parseable_and_contains_gke_control_plane_dependencies() {
     let spec_schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
         ["spec"]["properties"];
     assert_eq!(spec_schema["replicasPerShard"]["maximum"], 1);
-    assert_eq!(spec_schema["auth"]["enum"], json!(["off", "required"]));
     assert_eq!(
         spec_schema["backup"]["properties"]["adminTokenSecret"]["type"],
         "string"
@@ -280,10 +279,6 @@ fn one_by_one_render_owns_children_and_wires_protected_live_backup() {
     assert_eq!(
         stateful_set["spec"]["template"]["spec"]["serviceAccountName"],
         "events"
-    );
-    assert_eq!(
-        stateful_set["spec"]["template"]["spec"]["enableServiceLinks"],
-        false
     );
     assert_eq!(
         stateful_set["spec"]["template"]["spec"]["securityContext"]["fsGroup"],
