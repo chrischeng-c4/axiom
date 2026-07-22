@@ -137,7 +137,7 @@ fn backup_cron_job(keep: &Keep, cx: &RenderCtx) -> Option<Value> {
     }))
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in render.rs is hand-written pending codegen support">
 /// keep's serving ConfigMap: the config-driven runtime knobs a pod reads (so a
 /// ConfigMap edit can roll pods). Cluster/topology values ride the downward-API
 /// env instead.
@@ -147,6 +147,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
         "KEEP_PORT": CLIENT_PORT.to_string(),
         "KEEP_SHARDS": keep.spec.engine_shards.to_string(),
         "KEEP_LOG_LEVEL": keep.spec.log_level.clone().unwrap_or_else(|| "info".to_string()),
+        "KEEP_LOG_FORMAT": "json",
     });
     json!({
         "apiVersion": "v1",
