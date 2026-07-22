@@ -39,6 +39,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
         "sift@0.1.0",
     ]);
     assert!(release_dockerfile.contains("SIFT_VERSION=0.1.0"));
+    assert!(release_dockerfile.contains("ARG TARGETARCH=amd64"));
     assert!(release_dockerfile.contains("x86_64-unknown-linux-gnu"));
     assert!(release_dockerfile.contains("aarch64-unknown-linux-gnu"));
     assert!(release_dockerfile.contains("install -m 755"));
