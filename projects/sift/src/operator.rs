@@ -179,6 +179,7 @@ impl ManagedService for Sift {
                         "spec": {
                           "serviceAccountName": name,
                           "automountServiceAccountToken": false,
+                          "enableServiceLinks": false,
                           "securityContext": pod_security_context.clone(), "volumes": pod_volumes, "containers": [{
                             "name": "sift", "image": self.spec.image,
                             "args": ["serve", "--data-dir", "/var/lib/sift"],
