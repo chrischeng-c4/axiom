@@ -87,6 +87,17 @@ ARTIFACT_REGISTRY_REPOSITORY=courier \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
+For routine acceptance, pass the immutable GitHub-release-derived image
+digests and no Cloud Build or staged source archive is used. A candidate can
+replace just one service; the harness builds only the missing service target.
+
+```bash
+PROJECT_ID=axiom-502607 \
+LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
+SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
 The first run bootstraps `axiom-operator-acceptance`; later runs reuse it. To
 create it explicitly (or select a different persistent name), run:
 
@@ -100,9 +111,9 @@ benchmarks/gcp-operator-acceptance/scripts/bootstrap-cluster.sh
 
 1. verify pre-existing APIs/repository and build the Lumen/Sift deployment
    CLIs locally;
-2. submit one Cloud Build using one shared Rust builder stage and two
-   distroless runtime targets;
-3. resolve both pushed tags to `sha256` digest references;
+2. reuse caller-supplied immutable release/candidate images, or submit a
+   target-specific Cloud Build only for each service image that was omitted;
+3. resolve any source-built tag to a `sha256` digest reference;
 4. use each app CLI to render CRD, operator, and instance layers, then validate
    the overlays with `kubectl kustomize`;
 5. bootstrap or reuse the zonal Standard cluster and bounded node pool, then
