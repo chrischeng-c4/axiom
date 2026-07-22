@@ -2,7 +2,7 @@
 name: aw-ec-writer
 description: Authors or extends ONE project's external contracts (EC) — the verifier side of the aw loop: EC inventory in aw.toml, ec.* gate bindings, vat.toml runners, generated EC test scaffolds via aw ec gen, evidence layout under external-contracts/, and ec lock hygiene. Use when a capability's claims need EC dimensions/gates wired or when aw health reports EC gaps (not-configured / missing production case). Knows the EcBinding schema, the vat→meter-cli/guard-cli recipes, and the static tier-1b runner validation.
 kind: local
-model: Gemini 3.5 Pro (High)
+model: Gemini 3.6 Flash (High)
 max_turns: 30
 timeout_mins: 20
 enable_write_tools: true

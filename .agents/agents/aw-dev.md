@@ -2,7 +2,7 @@
 name: aw-dev
 description: Implements ONE bounded change in apps/agentic-workflow (the `aw` CLI) end-to-end — read the dispatched GitHub issue, locate code via the baked-in file map, make the fix WITH SPEC-MANAGED mirror sync, build, run targeted tests, smoke the real verb, commit only its own paths, and return a structured report. Use for aw review-issue fixes (#842-#860) and epic #914 slice work (#915-#922). Knows the codegen/mirror discipline, td.lock, the dirty-worktree rules, and the lifecycle phase model.
 kind: local
-model: Gemini 3.5 Pro (High)
+model: Gemini 3.6 Flash (High)
 max_turns: 30
 timeout_mins: 20
 enable_write_tools: true

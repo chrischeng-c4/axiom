@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 use crate::cli::doc_mirror;
 use crate::models::{SddConfig, SddInterface};
+use crate::services::project_registry;
 use crate::{Context, Result};
 use anyhow::bail;
 use clap::Args;
@@ -48,6 +49,12 @@ const AGENT_AW_EC_REVIEWER: &str =
     include_str!("../../templates/cli/mainthread/agents/aw-ec-reviewer.md");
 const AGENT_AW_HW_FILLER: &str =
     include_str!("../../templates/cli/mainthread/agents/aw-hw-filler.md");
+const AGENT_PROJECT_PLANNER: &str =
+    include_str!("../../templates/cli/mainthread/agents/project-planner.md");
+const AGENT_PROJECT_DEV: &str =
+    include_str!("../../templates/cli/mainthread/agents/project-dev.md");
+const AGENT_PROJECT_RESEARCH: &str =
+    include_str!("../../templates/cli/mainthread/agents/project-research.md");
 
 // Claude Code settings.json template
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R9
@@ -1220,6 +1227,69 @@ fn aw_agent_entries() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// A fully rendered canonical agent entry. The five `aw-*` entries are
+/// static, while project roles replace the project/name placeholders in one
+/// of the three role templates below before projection.
+#[derive(Debug, Clone)]
+struct AgentFleetEntry {
+    name: String,
+    raw: String,
+}
+
+/// The three user-facing roles that every registered app and `projects/mamba`
+/// receives. Their templates are host-neutral; the `model_tier` frontmatter
+/// selects the one explicit three-host mapping in [`AGENT_MODEL_TIERS`].
+const PROJECT_AGENT_ROLES: &[(&str, &str)] = &[
+    ("planner", AGENT_PROJECT_PLANNER),
+    ("dev", AGENT_PROJECT_DEV),
+    ("research", AGENT_PROJECT_RESEARCH),
+];
+
+/// Render the project-specific role fleet from the repository's authoritative
+/// `[[projects]]` registry. Scope is deliberately narrow: all direct
+/// `apps/*` projects plus the top-level `projects/mamba`; libraries, Sift,
+/// nested Mamba libraries, and legacy duplicate project roots are excluded.
+///
+/// A non-Axiom project has no matching registry rows and therefore continues
+/// to receive only the reusable `aw-*` fleet.
+fn project_role_entries(project_root: &Path) -> Result<Vec<AgentFleetEntry>> {
+    let mut entries = Vec::new();
+    for project in project_registry::load_project_config_rows(project_root)? {
+        let project_path = project.path.replace('\\', "/");
+        let is_direct_app = project_path.starts_with("apps/");
+        let is_mamba = project.name == "mamba" && project_path == "projects/mamba";
+        if !is_direct_app && !is_mamba {
+            continue;
+        }
+
+        for (role, template) in PROJECT_AGENT_ROLES {
+            let name = format!("{}-{role}", project.name);
+            let raw = template
+                .replace("{{agent_name}}", &name)
+                .replace("{{project_name}}", &project.name)
+                .replace("{{project_path}}", &project_path);
+            entries.push(AgentFleetEntry { name, raw });
+        }
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(entries)
+}
+
+/// Every managed agent in the current target. `aw-*` remains available in
+/// every repository; the project-role fleet appears only where the project
+/// registry identifies Axiom's direct apps or Mamba.
+fn agent_fleet_entries(project_root: &Path) -> Result<Vec<AgentFleetEntry>> {
+    let mut entries: Vec<AgentFleetEntry> = aw_agent_entries()
+        .into_iter()
+        .map(|(name, raw)| AgentFleetEntry {
+            name: name.to_string(),
+            raw: raw.to_string(),
+        })
+        .collect();
+    entries.extend(project_role_entries(project_root)?);
+    Ok(entries)
+}
+
 // Legacy/retired subagent definition file names (without extension) pruned
 // from `.claude/agents/` on every asset install (issue #1034: renamed from
 // the previous inline `retired_agents` list in [`install_agents`] to match
@@ -1295,6 +1365,20 @@ fn install_agents(claude_dir: &Path) -> Result<()> {
         write_agent_file(&agents_dir, name, content)?;
     }
 
+    Ok(())
+}
+
+/// Project the already-rendered fleet into Claude Code. Kept separate from
+/// [`install_agents`] so the historical reusable-agent installer remains a
+/// compact unit-test surface while the full producer can include per-project
+/// entries.
+fn install_claude_agent_entries(claude_dir: &Path, entries: &[AgentFleetEntry]) -> Result<()> {
+    let agents_dir = claude_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    prune_deprecated_agents(&agents_dir)?;
+    for entry in entries {
+        write_agent_file(&agents_dir, &entry.name, &entry.raw)?;
+    }
     Ok(())
 }
 
@@ -1419,26 +1503,47 @@ const AGENT_MODEL_TIERS: &[(&str, TierHostModels)] = &[
         TierHostModels {
             claude: Some("opus"),
             codex: Some(("gpt-5.6-sol", "high")),
-            agy: Some("Gemini 3.5 Ultra (High)"),
+            agy: Some("Gemini 3.1 Pro (High)"),
         },
     ),
     (
         "standard",
         TierHostModels {
             claude: Some("sonnet"),
-            codex: Some(("gpt-5.4", "high")),
-            agy: Some("Gemini 3.5 Pro (High)"),
+            codex: Some(("gpt-5.6-terra", "high")),
+            agy: Some("Gemini 3.6 Flash (High)"),
         },
     ),
     (
         "cheap",
         TierHostModels {
             claude: Some("haiku"),
-            // Codex has no dedicated cheap-tier model id in the current
-            // fleet; gpt-5.4 at low reasoning effort is the cheapest sensible
-            // mapping (per issue #1842 model-tier data).
-            codex: Some(("gpt-5.4", "low")),
-            agy: Some("Gemini 3.5 Flash (Medium)"),
+            codex: Some(("gpt-5.6-luna", "medium")),
+            agy: Some("Gemini 3.6 Flash (Medium)"),
+        },
+    ),
+    (
+        "planner",
+        TierHostModels {
+            claude: Some("sonnet"),
+            codex: Some(("gpt-5.6-terra", "xhigh")),
+            agy: Some("Gemini 3.6 Flash (High)"),
+        },
+    ),
+    (
+        "dev",
+        TierHostModels {
+            claude: Some("haiku"),
+            codex: Some(("gpt-5.6-luna", "medium")),
+            agy: Some("Gemini 3.6 Flash (Medium)"),
+        },
+    ),
+    (
+        "research",
+        TierHostModels {
+            claude: Some("opus"),
+            codex: Some(("gpt-5.6-sol", "max")),
+            agy: Some("Gemini 3.1 Pro (High)"),
         },
     ),
 ];
@@ -1452,7 +1557,7 @@ fn tier_host_models(table: &[(&str, TierHostModels)], tier: &str) -> Result<Tier
         .map(|(_, models)| *models)
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "unknown model_tier `{tier}`; declare model_tier: top | standard | cheap in the canonical agent frontmatter"
+                "unknown model_tier `{tier}`; declare a mapped profile in the canonical agent frontmatter"
             )
         })
 }
@@ -1529,12 +1634,21 @@ fn render_codex_agent(
     let name = toml_escape_basic_string(fm.name);
     let description = toml_escape_basic_string(fm.description);
     let nickname_underscored = toml_escape_basic_string(&fm.name.replace('-', "_"));
+    let sandbox_mode = if fm
+        .tools
+        .iter()
+        .any(|tool| *tool == "Write" || *tool == "Edit")
+    {
+        "workspace-write"
+    } else {
+        "read-only"
+    };
     Ok(format!(
         "name = \"{name}\"\n\
          description = \"{description}\"\n\
          model = \"{codex_model}\"\n\
          model_reasoning_effort = \"{codex_effort}\"\n\
-         sandbox_mode = \"workspace-write\"\n\
+         sandbox_mode = \"{sandbox_mode}\"\n\
          nickname_candidates = [\"{name}\", \"{nickname_underscored}\"]\n\
          \n\
          developer_instructions = \"\"\"\n{instructions}\"\"\"\n"
@@ -1576,11 +1690,13 @@ fn render_agy_agent(fm: &CanonicalAgentFrontmatter<'_>, body: &str, agy_model: &
 
 /// Install/refresh every `aw-*` subagent's Codex projection under
 /// `codex_dir/agents/*.toml` (issue #1842).
-fn install_codex_agents(codex_dir: &Path) -> Result<()> {
+fn install_codex_agents(codex_dir: &Path, entries: &[AgentFleetEntry]) -> Result<()> {
     let agents_dir = codex_dir.join("agents");
     std::fs::create_dir_all(&agents_dir)?;
     prune_deprecated_fleet_files(&agents_dir, "toml")?;
-    for (name, raw) in aw_agent_entries() {
+    for entry in entries {
+        let name = entry.name.as_str();
+        let raw = entry.raw.as_str();
         let (fm, body) =
             parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
         let (model, effort) =
@@ -1600,10 +1716,12 @@ fn install_codex_agents(codex_dir: &Path) -> Result<()> {
 /// `install_codex_agents`, which take the parent runtime dir and join
 /// `agents/`) because `.agents/skills/` is this tree's only existing sibling
 /// and already follows that same "pass the leaf dir" shape.
-fn install_agy_agents(agy_agents_dir: &Path) -> Result<()> {
+fn install_agy_agents(agy_agents_dir: &Path, entries: &[AgentFleetEntry]) -> Result<()> {
     std::fs::create_dir_all(agy_agents_dir)?;
     prune_deprecated_fleet_files(agy_agents_dir, "md")?;
-    for (name, raw) in aw_agent_entries() {
+    for entry in entries {
+        let name = entry.name.as_str();
+        let raw = entry.raw.as_str();
         let (fm, body) =
             parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
         let model = resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "agy", |models| {
@@ -1622,8 +1740,10 @@ fn install_agy_agents(agy_agents_dir: &Path) -> Result<()> {
 /// different ways — passthrough source vs. tier-resolved — and must never
 /// silently disagree). Also a cheap way to fail loudly on an unknown tier or
 /// a tier missing its claude mapping before any host projection is written.
-fn validate_agent_fleet_frontmatter() -> Result<()> {
-    for (name, raw) in aw_agent_entries() {
+fn validate_agent_fleet_frontmatter(entries: &[AgentFleetEntry]) -> Result<()> {
+    for entry in entries {
+        let name = entry.name.as_str();
+        let raw = entry.raw.as_str();
         let (fm, _body) =
             parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
         let expected_claude_model =
@@ -1646,10 +1766,11 @@ fn validate_agent_fleet_frontmatter() -> Result<()> {
 /// (`.claude/agents/`, passthrough), Codex (`.codex/agents/`, TOML), and AGY
 /// (`.agents/agents/`, frontmatter-mapped Markdown).
 fn install_agent_fleet(project_root: &Path, claude_dir: &Path) -> Result<()> {
-    validate_agent_fleet_frontmatter()?;
-    install_agents(claude_dir)?;
-    install_codex_agents(&project_root.join(".codex"))?;
-    install_agy_agents(&project_root.join(".agents").join("agents"))?;
+    let entries = agent_fleet_entries(project_root)?;
+    validate_agent_fleet_frontmatter(&entries)?;
+    install_claude_agent_entries(claude_dir, &entries)?;
+    install_codex_agents(&project_root.join(".codex"), &entries)?;
+    install_agy_agents(&project_root.join(".agents").join("agents"), &entries)?;
     Ok(())
 }
 
@@ -1667,13 +1788,16 @@ struct AgentFleetFinding {
 /// byte-mismatched render, and per still-present deprecated fleet file on
 /// any of the three hosts.
 fn check_agent_fleet(project_root: &Path) -> Result<Vec<AgentFleetFinding>> {
-    validate_agent_fleet_frontmatter()?;
+    let entries = agent_fleet_entries(project_root)?;
+    validate_agent_fleet_frontmatter(&entries)?;
     let claude_agents = project_root.join(".claude").join("agents");
     let codex_agents = project_root.join(".codex").join("agents");
     let agy_agents = project_root.join(".agents").join("agents");
 
     let mut findings = Vec::new();
-    for (name, raw) in aw_agent_entries() {
+    for entry in &entries {
+        let name = entry.name.as_str();
+        let raw = entry.raw.as_str();
         let (fm, body) =
             parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
 
@@ -2067,20 +2191,35 @@ mod tests {
         install_agent_fleet(project_root, &claude_dir).unwrap();
 
         let expected_models = [
-            ("aw-dev", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
-            ("aw-td-writer", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
-            ("aw-ec-writer", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
+            (
+                "aw-dev",
+                "sonnet",
+                "gpt-5.6-terra",
+                "Gemini 3.6 Flash (High)",
+            ),
+            (
+                "aw-td-writer",
+                "sonnet",
+                "gpt-5.6-terra",
+                "Gemini 3.6 Flash (High)",
+            ),
+            (
+                "aw-ec-writer",
+                "sonnet",
+                "gpt-5.6-terra",
+                "Gemini 3.6 Flash (High)",
+            ),
             (
                 "aw-ec-reviewer",
                 "opus",
                 "gpt-5.6-sol",
-                "Gemini 3.5 Ultra (High)",
+                "Gemini 3.1 Pro (High)",
             ),
             (
                 "aw-hw-filler",
                 "haiku",
-                "gpt-5.4",
-                "Gemini 3.5 Flash (Medium)",
+                "gpt-5.6-luna",
+                "Gemini 3.6 Flash (Medium)",
             ),
         ];
         for (name, claude_model, codex_model, agy_model) in expected_models {
@@ -2148,6 +2287,135 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    fn write_project_role_test_registry(root: &Path) {
+        fs::write(
+            root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "cap"
+path = "apps/cap"
+[[projects.workspaces]]
+paths = ["apps/cap/**"]
+target = "rust"
+
+[[projects]]
+name = "mamba"
+path = "projects/mamba"
+[[projects.workspaces]]
+paths = ["projects/mamba/**"]
+target = "rust"
+
+[[projects]]
+name = "meter"
+path = "apps/meter"
+[[projects.workspaces]]
+paths = ["apps/meter/**"]
+target = "rust"
+
+[[projects]]
+name = "meter"
+path = "projects/meter"
+[[projects.workspaces]]
+paths = ["projects/meter/**"]
+target = "rust"
+
+[[projects]]
+name = "sift"
+path = "projects/sift"
+[[projects.workspaces]]
+paths = ["projects/sift/**"]
+target = "rust"
+
+[[projects]]
+name = "pg"
+path = "projects/mamba/mambalibs/pgkit"
+[[projects.workspaces]]
+paths = ["projects/mamba/mambalibs/pgkit/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+    }
+
+    // Issue #2400 — direct apps and the top-level Mamba project each get
+    // planner/dev/research roles from the registry; excluded project classes
+    // cannot leak a role into any host projection.
+    #[test]
+    fn test_project_role_fleet_uses_registry_scope_and_model_matrix() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        write_project_role_test_registry(project_root);
+
+        let names: Vec<String> = project_role_entries(project_root)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "cap-dev",
+                "cap-planner",
+                "cap-research",
+                "mamba-dev",
+                "mamba-planner",
+                "mamba-research",
+                "meter-dev",
+                "meter-planner",
+                "meter-research",
+            ]
+        );
+
+        let claude_dir = project_root.join(".claude");
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        let planner = fs::read_to_string(claude_dir.join("agents/cap-planner.md")).unwrap();
+        assert!(planner.contains("model: sonnet"));
+        assert!(planner.contains("effort: xhigh"));
+        assert!(planner.contains("never implement product source"));
+
+        let dev = fs::read_to_string(claude_dir.join("agents/cap-dev.md")).unwrap();
+        assert!(dev.contains("model: haiku"));
+        assert!(dev.contains("effort: medium"));
+
+        let research = fs::read_to_string(claude_dir.join("agents/cap-research.md")).unwrap();
+        assert!(research.contains("model: opus"));
+        assert!(research.contains("effort: max"));
+        assert!(!research.contains("tools: Read, Edit"));
+
+        let planner_codex =
+            fs::read_to_string(project_root.join(".codex/agents/cap-planner.toml")).unwrap();
+        assert!(planner_codex.contains("model = \"gpt-5.6-terra\""));
+        assert!(planner_codex.contains("model_reasoning_effort = \"xhigh\""));
+        assert!(planner_codex.contains("sandbox_mode = \"workspace-write\""));
+
+        let dev_codex =
+            fs::read_to_string(project_root.join(".codex/agents/cap-dev.toml")).unwrap();
+        assert!(dev_codex.contains("model = \"gpt-5.6-luna\""));
+        assert!(dev_codex.contains("model_reasoning_effort = \"medium\""));
+
+        let research_codex =
+            fs::read_to_string(project_root.join(".codex/agents/cap-research.toml")).unwrap();
+        assert!(research_codex.contains("model = \"gpt-5.6-sol\""));
+        assert!(research_codex.contains("model_reasoning_effort = \"max\""));
+        assert!(research_codex.contains("sandbox_mode = \"read-only\""));
+
+        let planner_agy =
+            fs::read_to_string(project_root.join(".agents/agents/cap-planner.md")).unwrap();
+        assert!(planner_agy.contains("model: Gemini 3.6 Flash (High)"));
+        assert!(planner_agy.contains("enable_write_tools: true"));
+
+        let dev_agy = fs::read_to_string(project_root.join(".agents/agents/cap-dev.md")).unwrap();
+        assert!(dev_agy.contains("model: Gemini 3.6 Flash (Medium)"));
+
+        let research_agy =
+            fs::read_to_string(project_root.join(".agents/agents/cap-research.md")).unwrap();
+        assert!(research_agy.contains("model: Gemini 3.1 Pro (High)"));
+        assert!(research_agy.contains("enable_write_tools: false"));
+
+        assert!(check_agent_fleet(project_root).unwrap().is_empty());
     }
 
     // Issue #1842 AC1 — deleting the aw-ec-reviewer Codex/AGY projections and

@@ -2,7 +2,7 @@
 name: aw-hw-filler
 description: Fills HANDWRITE marker blocks left by aw codegen (TD-CB fills via aw td fill, or HANDWRITE spots in generated EC scaffolds) — the bounded tail of the lifecycle where the frame is generated and the contract already written. Drives the per-marker envelope loop, verifies with build + targeted tests, and escalates instead of thrashing. Cheap by design; dispatch with the slug/project and any known marker specifics.
 kind: local
-model: Gemini 3.5 Flash (Medium)
+model: Gemini 3.6 Flash (Medium)
 max_turns: 30
 timeout_mins: 20
 enable_write_tools: true

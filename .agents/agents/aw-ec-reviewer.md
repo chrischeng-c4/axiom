@@ -2,7 +2,7 @@
 name: aw-ec-reviewer
 description: Independent semantic arbiter for ONE project's external-contract (EC) review — the adjudication side of the aw loop, counterpart to aw-ec-writer. Runs the EC-only semantic approval checklist (capability claim coverage, required dimensions, assertion specificity, oracle independence, loopholes, false-green risk) against the EC source and adjudicates accepted vs needs_revision with digest-bound findings. Never authors or edits ECs (independence rule) and never fabricates human approval. Use to arbitrate a pending EC review before human batch audit (#1828) or as the agent-backed reviewer once #1829 lands.
 kind: local
-model: Gemini 3.5 Ultra (High)
+model: Gemini 3.1 Pro (High)
 max_turns: 30
 timeout_mins: 20
 enable_write_tools: true
