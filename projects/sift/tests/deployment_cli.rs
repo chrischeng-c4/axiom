@@ -77,6 +77,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(collector.contains("secretKeyRef:"));
     assert!(collector.contains("configMapKeyRef:"));
     assert!(collector.contains("fieldPath: spec.nodeName"));
+    assert!(collector.contains("chown 0:0 /var/lib/sift-collector"));
     assert!(collector.contains("runAsNonRoot: true"));
     assert!(collector.contains("- name: collector\n          image: example.invalid/sift:1.2.3"));
     assert!(collector.contains("runAsNonRoot: false\n            runAsUser: 0"));

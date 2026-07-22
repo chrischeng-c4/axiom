@@ -45,7 +45,7 @@ spec:
       initContainers:
         - name: prepare-state
           image: busybox:1.36.1
-          command: ["sh", "-ec", "chown 65532:65532 /var/lib/sift-collector && chmod 0700 /var/lib/sift-collector"]
+          command: ["sh", "-ec", "chown 0:0 /var/lib/sift-collector && chmod 0700 /var/lib/sift-collector"]
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
