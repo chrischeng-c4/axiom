@@ -84,7 +84,7 @@ Contract invariants:
 - Source enrichment sets `gcp.resource.type=k8s_container`, `gcp.project_id`, optional `k8s.cluster.name`/`cloud.region`, namespace, pod, uid, container, optional node, `collector.stream`, source identity, and byte offset. The producer payload and trace/span/request fields remain unchanged.
 - CRI calls the same `gcp::stable_id(project, resource_type, timestamp, monitored_resource_labels, jsonPayload)` used for Cloud Logging entries whose payload schema is `axiom.service.log.v1`. Resource labels include project, cluster, location, namespace, pod, and container so equivalent dual delivery has one journal event id while separate workloads cannot collide; Cloud `insertId` is preserved as `gcp.insert_id`, while it remains authoritative for non-Axiom GCP logs.
 - Endpoint failure never calls `source.commit`. The runtime holds at most one batch; node log retention is the outage buffer, and disappearance before acknowledgment is surfaced by durable loss accounting on the next reconciliation.
-- `sift k8s collector render` renders a Sift-owned ServiceAccount and DaemonSet with `/var/log/pods` read-only, `/var/lib/sift-collector` read-write, Secret/ConfigMap-sourced endpoint/token/project/cluster/location, Downward API node name, disabled token automount, non-root UID/GID, seccomp RuntimeDefault, dropped capabilities, read-only root filesystem, and CPU/memory requests/limits. It creates no Role or ClusterRole because it performs no Kubernetes API calls.
+- `sift k8s collector render` renders a Sift-owned ServiceAccount and DaemonSet with `/var/log/pods` read-only, `/var/lib/sift-collector` read-write, Secret/ConfigMap-sourced endpoint/token/project/cluster/location, Downward API node name, disabled token automount, seccomp RuntimeDefault, dropped capabilities, read-only root filesystem, and CPU/memory requests/limits. The collector container alone runs as UID 0 because GKE makes the root-owned CRI log tree unreadable to an arbitrary non-root UID; that UID is constrained to the read-only host mount, and it has no Kubernetes API token, privilege escalation, or Linux capabilities. It creates no Role or ClusterRole because it performs no Kubernetes API calls.
 ## Changes
 <!-- type: changes lang: yaml -->
 
@@ -140,7 +140,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define the zero-API-permission ServiceAccount and hardened node collector DaemonSet.
+    description: Define the zero-API-permission ServiceAccount and hardened node collector DaemonSet; use a capability-free root collector only to traverse GKE's read-only root-owned CRI log tree.
   - path: projects/sift/tests/collector_cri.rs
     action: create
     section: unit-test

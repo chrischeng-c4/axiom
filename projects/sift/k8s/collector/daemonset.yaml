@@ -126,6 +126,12 @@ spec:
                   name: sift-collector
                   key: token
           securityContext:
+            # GKE owns /var/log/pods as root.  The collector needs UID 0 only
+            # to traverse that read-only host mount; it still has no Kubernetes
+            # API token, Linux capabilities, privilege escalation, or writable
+            # root filesystem.
+            runAsNonRoot: false
+            runAsUser: 0
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
