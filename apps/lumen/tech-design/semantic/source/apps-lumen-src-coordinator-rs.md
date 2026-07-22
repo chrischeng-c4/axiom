@@ -339,47 +339,15 @@ impl WriteCoordinator {
                                 if outcome.is_ok() {
                                     if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
                                         let persisted = {
-                                            let mut writer =
-                                                aof.lock().expect("aof writer poisoned");
+                                            let mut writer = aof.lock().expect("aof writer poisoned");
                                             writer
                                                 .append(seq, &rec)
                                                 .and_then(|()| writer.flush())
                                                 .and_then(|()| writer.maybe_sync())
                                         };
                                         if let Err(e) = persisted {
-                                            if is_storage_full(&e) {
-                                                // #2516: local disk is out of
-                                                // space. Flip the sticky
-                                                // degraded flag so every
-                                                // subsequent mutating request
-                                                // fast-fails before touching
-                                                // this path again, and report
-                                                // a distinct, stable error so
-                                                // the caller sees 507
-                                                // Insufficient Storage rather
-                                                // than a generic 400.
-                                                tracing::error!(
-                                                    seq,
-                                                    error = %e,
-                                                    "AOF persist failed: ENOSPC — entering degraded read-only mode"
-                                                );
-                                                engine.metrics().mark_storage_degraded();
-                                                outcome = Err(anyhow::Error::new(
-                                                    StorageFullError(format!(
-                                                        "local storage is full (ENOSPC) persisting sequence {seq}; \
-                                                         node entered degraded read-only mode"
-                                                    )),
-                                                ));
-                                            } else {
-                                                tracing::warn!(
-                                                    seq,
-                                                    error = %e,
-                                                    "AOF persist failed"
-                                                );
-                                                outcome = Err(e.context(
-                                                    "persist applied record to local AOF",
-                                                ));
-                                            }
+                                            tracing::warn!(seq, error = %e, "AOF persist failed");
+                                            outcome = Err(e.context("persist applied record to local AOF"));
                                         }
                                     }
                                 }
@@ -635,86 +603,6 @@ mod tests {
             2
         );
         assert_eq!(restarted.stats("u").unwrap().documents_indexed, 1);
-    }
-
-    /// #2516: prove the REAL ENOSPC detection/classification/metrics path
-    /// end to end, through the actual production write path — not a
-    /// parallel fake. Uses `AofWriter::set_inject_storage_full` (the
-    /// `#[cfg(test)]` fault-injection seam on the real `AofWriter::append`,
-    /// scoped to this test's own writer instance so parallel test threads
-    /// never cross-contaminate) so the apply loop's genuine
-    /// AOF-persist-failure branch runs.
-    #[tokio::test]
-    async fn aof_enospc_returns_storage_full_error_and_marks_degraded() {
-        let dir = tempfile::tempdir().unwrap();
-        let aof_path = dir.path().join("aof.log");
-        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
-        let engine = Arc::new(Engine::new());
-        let wal = Arc::new(MemWal::new());
-        let coord = WriteCoordinator::start_from_with_aof(wal, engine.clone(), 0, aof.clone());
-
-        // A normal write before the disk fills must succeed and must not
-        // touch the degraded flag.
-        coord
-            .submit(RaftLogEntry::CreateCollection {
-                collection_id: "u".into(),
-                req: keyword_schema(),
-            })
-            .await
-            .unwrap();
-        assert!(!engine.metrics().is_storage_degraded());
-
-        // Arm the fault injection: the next AofWriter::append hits a
-        // synthetic ENOSPC, exercising the real coordinator apply-loop
-        // branch that classifies it and flips the sticky flag.
-        aof.lock().unwrap().set_inject_storage_full(true);
-        let err = coord
-            .submit(RaftLogEntry::Index {
-                collection_id: "u".into(),
-                req: IndexRequest {
-                    items: vec![IndexItem {
-                        external_id: "u1".into(),
-                        field: "email".into(),
-                        value: FieldValue::String("a@x.com".into()),
-                        version: None,
-                    }],
-                    request_id: None,
-                },
-            })
-            .await
-            .unwrap_err();
-        aof.lock().unwrap().set_inject_storage_full(false);
-
-        assert!(
-            err.downcast_ref::<StorageFullError>().is_some(),
-            "expected StorageFullError, got: {err}"
-        );
-        assert!(
-            engine.metrics().is_storage_degraded(),
-            "ENOSPC on the AOF write path must flip the sticky degraded gauge"
-        );
-        assert_eq!(engine.metrics().storage_full_errors_total.get(), 1);
-
-        // Probe/clear (what the periodic re-probe does once space returns):
-        // writes must resume once the flag is cleared.
-        engine.metrics().clear_storage_degraded();
-        let indexed = coord
-            .submit(RaftLogEntry::Index {
-                collection_id: "u".into(),
-                req: IndexRequest {
-                    items: vec![IndexItem {
-                        external_id: "u2".into(),
-                        field: "email".into(),
-                        value: FieldValue::String("b@x.com".into()),
-                        version: None,
-                    }],
-                    request_id: None,
-                },
-            })
-            .await
-            .unwrap();
-        assert!(matches!(indexed, ApplyOutcome::Indexed(r) if r.indexed == 1));
-        assert!(!engine.metrics().is_storage_degraded());
     }
 
     #[tokio::test]
