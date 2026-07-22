@@ -42,6 +42,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(release_dockerfile.contains("x86_64-unknown-linux-gnu"));
     assert!(release_dockerfile.contains("aarch64-unknown-linux-gnu"));
     assert!(release_dockerfile.contains("install -m 755"));
+    assert!(release_dockerfile.contains("sha256sum -c -"));
 
     let crd = sift(&["k8s", "crd", "render"]);
     assert!(crd.contains("kind: CustomResourceDefinition"));
