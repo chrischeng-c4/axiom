@@ -49,3 +49,31 @@ flowchart TD
   collector --> query[VAT starts Keep, collects with Sift, and queries durable evidence]
   query --> done[Keep stays Sift-agnostic and events remain queryable]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/keep/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add Keep's opt-in otel feature as a thin forwarding feature to service-http/otlp; the default build stays structured-log-only.
+  - path: apps/keep/src/bin/keep.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: ServeArgs
+    description: Add KEEP_LOG_FORMAT and KEEP_OTLP_ENDPOINT CLI/environment configuration, map Keep's values to service_http::HttpConfig and ServiceIdentity, and replace the local tracing-subscriber initialization in the default server path with shared observability initialization.
+  - path: apps/keep/tests/structured_stdout_traceparent.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Start the compiled Keep server with JSON logging, issue valid, invalid, and absent traceparent HTTP requests, capture stdout, and assert axiom.service.log.v1 identity, W3C correlation behavior, and no Sift dependency.
+  - path: apps/keep/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document the standard --log-format and optional KEEP_OTLP_ENDPOINT operating controls, while stating that Sift collector endpoint, credentials, and delivery policy remain deployment-owned.
+```
