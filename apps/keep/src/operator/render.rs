@@ -137,6 +137,7 @@ fn backup_cron_job(keep: &Keep, cx: &RenderCtx) -> Option<Value> {
     }))
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
 /// keep's serving ConfigMap: the config-driven runtime knobs a pod reads (so a
 /// ConfigMap edit can roll pods). Cluster/topology values ride the downward-API
 /// env instead.
@@ -154,6 +155,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
         "data": data,
     })
 }
+// </HANDWRITE>
 
 /// The sharded, durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = shardCount * replicasPerShard`, the raft-runtime env quartet + the

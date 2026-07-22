@@ -411,6 +411,7 @@ enum DockerfileVariant {
     Release,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
 #[derive(clap::Args, Debug)]
 struct ServeArgs {
     /// Bind host. k8s passes 0.0.0.0.
@@ -459,6 +460,7 @@ struct ServeArgs {
     #[arg(long, env = "KEEP_PEERS", value_delimiter = ',')]
     peers: Vec<String>,
 }
+// </HANDWRITE>
 
 /// This binary's identity + build provenance for the standard CLI ops
 /// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.

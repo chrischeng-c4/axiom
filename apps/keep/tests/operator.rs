@@ -75,6 +75,7 @@ fn crd_flattens_cluster_spec() {
     assert!(props.get("storage").is_some());
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in operator.rs is hand-written pending codegen support">
 /// R2 — the rendered StatefulSet carries the downward-API env raft-runtime reads,
 /// the right replica count, keep's runtime knobs + disk tier, and drives a
 /// readiness/status contract.
@@ -160,6 +161,7 @@ fn render_emits_downward_api_statefulset() {
     });
     assert_eq!(status["status"]["phase"], "Pending");
 }
+// </HANDWRITE>
 
 /// R3 (#776) — the operator renders a backup CronJob invoking `keep backup`
 /// when `spec.backup` is configured, and omits it otherwise.
