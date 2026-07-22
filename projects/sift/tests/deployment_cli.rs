@@ -263,6 +263,10 @@ fn one_by_one_render_owns_children_and_wires_protected_live_backup() {
         "events"
     );
     assert_eq!(
+        stateful_set["spec"]["template"]["spec"]["enableServiceLinks"],
+        false
+    );
+    assert_eq!(
         stateful_set["spec"]["template"]["spec"]["securityContext"]["fsGroup"],
         65532
     );

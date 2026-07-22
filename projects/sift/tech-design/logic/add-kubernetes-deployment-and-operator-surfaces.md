@@ -73,7 +73,7 @@ changes:
     impl_mode: hand-written
     gap: sift-shared-operator-controller
     tracker: "1606"
-    description: Define the Sift custom-resource type and compose the shared leader-elected operator reconcile loop.
+    description: Define the Sift custom-resource type and compose the shared leader-elected operator reconcile loop, including a service-link-free data pod so Kubernetes Service environment variables cannot override Sift CLI configuration.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     section: logic
