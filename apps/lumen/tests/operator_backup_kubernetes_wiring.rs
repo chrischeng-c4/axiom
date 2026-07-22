@@ -23,12 +23,9 @@ fn lumen_with_backup() -> Lumen {
         auth: AuthMode::Off,
         tokens_secret: None,
         tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
-        admission: None,
-        service_account_name: None,
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
@@ -182,19 +179,13 @@ fn operator_cli_renders_requested_immutable_image_and_preserves_default() {
     };
 
     let default_yaml = render(&[]);
-    assert!(default_yaml.contains(&format!(
-        "image: ghcr.io/chrischeng-c4/lumen:{}",
-        env!("CARGO_PKG_VERSION")
-    )));
+    assert!(default_yaml.contains("image: lumen:latest"));
 
     let immutable = "asia-east1-docker.pkg.dev/axiom/lumen/lumen@sha256:0123456789abcdef";
     let immutable_yaml = render(&["--namespace", "lumen-live", "--image", immutable]);
     assert!(immutable_yaml.contains("namespace: lumen-live"));
     assert!(immutable_yaml.contains(&format!("image: {immutable}")));
-    assert!(!immutable_yaml.contains(&format!(
-        "image: ghcr.io/chrischeng-c4/lumen:{}",
-        env!("CARGO_PKG_VERSION")
-    )));
+    assert!(!immutable_yaml.contains("image: lumen:latest"));
 
     let invalid = Command::new(env!("CARGO_BIN_EXE_lumen"))
         .args(["k8s", "operator", "render", "--image", "bad\nimage"])

@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Build both source candidates together only when neither immutable image was
-# supplied.  The one-service candidate Dockerfiles live beside this file: the
-# classic Cloud Build Docker daemon evaluates preceding stages even with
-# --target, so a separate Dockerfile is the only reliable pruning boundary.
+# One workspace build stage owns both binaries. Cloud Build targets the two
+# distroless runtime stages separately and reuses this layer from its local
+# Docker cache for the second target.
 FROM rust:1.96-bookworm AS service-builder
 WORKDIR /workspace
 COPY . .

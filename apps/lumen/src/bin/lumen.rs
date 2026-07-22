@@ -208,9 +208,9 @@ struct K8sOperatorRenderArgs {
     #[arg(long, default_value = "lumen-system")]
     namespace: String,
     /// Operator container image. Supply an immutable registry digest for
-    /// reproducible cluster deployment; the default is this build's
-    /// published GHCR release, matching the checked-in operator manifest.
-    #[arg(long, default_value_t = format!("ghcr.io/chrischeng-c4/lumen:{}", env!("CARGO_PKG_VERSION")))]
+    /// reproducible cluster deployment; the default preserves the checked-in
+    /// local-development manifest.
+    #[arg(long, default_value = "lumen:latest")]
     image: String,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
@@ -1745,7 +1745,17 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn render_operator_yaml(namespace: &str) -> String {
+fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
+    if image.is_empty()
+        || image.starts_with('-')
+        || image
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        anyhow::bail!(
+            "operator image must be a non-empty, whitespace-free OCI image reference that does not start with '-'"
+        );
+    }
     let mut out = String::new();
     out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
@@ -1755,14 +1765,19 @@ fn render_operator_yaml(namespace: &str) -> String {
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+    let deployment = cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
             "../../k8s/operator/deployment.yaml"
         )),
         "lumen-system",
         namespace,
-    ));
-    cli_std::artifact::ensure_trailing_newline(&out)
+    );
+    let checked_in_image = "          image: lumen:latest";
+    if !deployment.contains(checked_in_image) {
+        anyhow::bail!("checked-in operator manifest is missing its canonical image field");
+    }
+    out.push_str(&deployment.replacen(checked_in_image, &format!("          image: {image}"), 1));
+    Ok(cli_std::artifact::ensure_trailing_newline(&out))
 }
 
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
