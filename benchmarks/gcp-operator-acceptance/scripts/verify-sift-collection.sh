@@ -84,9 +84,13 @@ wait_for_collected_lumen_log() {
       > "$result"
     if jq -e --arg collection "$collection" '
       .records[] | select(
-        .json_payload.attributes.collection_id == $collection
+      .json_payload.attributes.collection_id == $collection
         and .resource["k8s.namespace.name"] == "lumen"
-        and .resource["k8s.container.name"] == "lumen"
+        # `service.name` identifies the producer.  The serving container name
+        # is renderer-owned topology detail (`server` today), so requiring the
+        # service id here would make a real collection look like a false miss.
+        and ((.resource["k8s.container.name"] | type) == "string")
+        and (.resource["k8s.container.name"] | length > 0)
         and .resource["gcp.resource.type"] == "k8s_container"
       )
     ' "$result" >/dev/null; then
