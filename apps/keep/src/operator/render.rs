@@ -157,6 +157,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
 /// The sharded, durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = shardCount * replicasPerShard`, the raft-runtime env quartet + the
 /// headless-service env, the `/data` PVC) hardened with keep's probes, security
@@ -221,6 +222,7 @@ fn statefulset(keep: &Keep, cx: &RenderCtx, headless: &str) -> Value {
     harden(&mut sts, s.grace_secs);
     sts
 }
+// </HANDWRITE>
 
 /// Layer keep's production hardening onto the toolkit's base StatefulSet:
 /// rolling-update policy, prometheus scrape annotations, non-root pod/container
