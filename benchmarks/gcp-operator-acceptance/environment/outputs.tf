@@ -1,5 +1,5 @@
 output "cluster_name" {
-  value = google_container_cluster.acceptance.name
+  value = data.google_container_cluster.acceptance.name
 }
 
 output "region" {
