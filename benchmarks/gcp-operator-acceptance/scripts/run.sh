@@ -15,6 +15,7 @@ IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-${RUN_ID}}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}"
 INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
+LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
@@ -101,6 +102,22 @@ if [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
   IMAGE_PROVENANCE="prebuilt"
 else
   IMAGE_PROVENANCE="cloud-build"
+fi
+if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
+  [[ -f "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
+    echo "LUMEN_PRIOR_ACCEPTANCE must name an existing Lumen acceptance JSON file" >&2
+    exit 1
+  }
+  jq -e '
+    .schema == "axiom.gcp.lumen.acceptance.v1"
+    and .operator_reconcile_1x1 == "passed"
+    and .pod_restart_data_retention == "passed"
+    and .gcs_backup_before_split == "passed"
+    and .auto_split_delta == 1
+  ' "$LUMEN_PRIOR_ACCEPTANCE" >/dev/null || {
+    echo "LUMEN_PRIOR_ACCEPTANCE is not a completed Lumen acceptance proof" >&2
+    exit 1
+  }
 fi
 
 for run_dir in "$STATE_DIR" "$EVIDENCE_DIR"; do
@@ -334,7 +351,16 @@ export EVIDENCE_DIR
 "$SCRIPT_DIR/deploy.sh" lumen
 "$SCRIPT_DIR/verify-operator-cell.sh" lumen
 export PROJECT_ID REGION BACKUP_BUCKET
-"$SCRIPT_DIR/verify-lumen.sh"
+if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
+  cp "$LUMEN_PRIOR_ACCEPTANCE" "$EVIDENCE_DIR/lumen-acceptance-prior.json"
+  export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance-prior.json"
+  export LUMEN_ACCEPTANCE_PROVENANCE="prior-gke-proof"
+  echo ">> current Lumen operator cell passed; reusing supplied prior persistence, backup, and split proof"
+else
+  "$SCRIPT_DIR/verify-lumen.sh"
+  export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
+  export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
+fi
 
 # Only a successful Lumen phase starts the Sift data plane. The collector then
 # reads Lumen's structured stdout from Standard GKE node logs and the proof
