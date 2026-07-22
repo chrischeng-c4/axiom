@@ -21,12 +21,22 @@ trap stop_forward EXIT INT TERM
 
 start_forward() {
   stop_forward
-  kubectl -n lumen port-forward service/lumen 17373:7373 \
-    >"$EVIDENCE_DIR/kubernetes/lumen-port-forward.log" 2>&1 &
-  forward_pid="$!"
   local deadline=$((SECONDS + 90))
   while (( SECONDS < deadline )); do
-    if curl --silent --show-error --fail http://127.0.0.1:17373/readyz >/dev/null 2>&1; then
+    # The operator-cell test intentionally replaces a Lumen pod immediately
+    # before this probe. `kubectl port-forward service/...` pins one selected
+    # endpoint, so it can exit while the Service already has a healthy
+    # replacement. Recreate the local forward rather than turning that normal
+    # hand-off into a false readiness failure.
+    if [[ -z "$forward_pid" ]] || ! kill -0 "$forward_pid" >/dev/null 2>&1; then
+      stop_forward
+      kubectl -n lumen port-forward service/lumen 17373:7373 \
+        >>"$EVIDENCE_DIR/kubernetes/lumen-port-forward.log" 2>&1 &
+      forward_pid="$!"
+      sleep 1
+    fi
+    if curl --max-time 5 --silent --show-error --fail \
+      http://127.0.0.1:17373/readyz >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
