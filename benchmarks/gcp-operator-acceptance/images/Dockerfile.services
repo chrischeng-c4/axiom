@@ -1,25 +1,29 @@
 # syntax=docker/dockerfile:1
 
-# One workspace build stage owns both binaries. Cloud Build targets the two
-# distroless runtime stages separately and reuses this layer from its local
-# Docker cache for the second target.
-FROM rust:1.96-bookworm AS service-builder
+# Candidate builds are deliberately target-specific: routine acceptance uses
+# published immutable images, while an unreleased Sift change must not compile
+# Lumen first just to produce its own image.
+FROM rust:1.96-bookworm AS workspace
 WORKDIR /workspace
 COPY . .
+
+FROM workspace AS lumen-builder
 RUN cargo build --locked --release -p lumen --bin lumen \
       --features "otel operator raft-wal jieba" \
- && cargo build --locked --release -p sift --bin sift \
- && install -D -m 0755 target/release/lumen /out/lumen \
+ && install -D -m 0755 target/release/lumen /out/lumen
+
+FROM workspace AS sift-builder
+RUN cargo build --locked --release -p sift --bin sift \
  && install -D -m 0755 target/release/sift /out/sift
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS lumen
-COPY --from=service-builder /out/lumen /usr/local/bin/lumen
+COPY --from=lumen-builder /out/lumen /usr/local/bin/lumen
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS sift
-COPY --from=service-builder /out/sift /usr/local/bin/sift
+COPY --from=sift-builder /out/sift /usr/local/bin/sift
 ENV SIFT_HOST=0.0.0.0 \
     SIFT_PORT=7380 \
     SIFT_DATA_DIR=/var/lib/sift \

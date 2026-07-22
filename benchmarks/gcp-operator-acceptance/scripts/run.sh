@@ -90,16 +90,16 @@ done
   echo "MAX_CLOUD_SECONDS must be an integer no greater than 2700" >&2
   exit 1
 }
-if [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
-  [[ -n "$INPUT_LUMEN_IMAGE" && -n "$INPUT_SIFT_IMAGE" ]] || {
-    echo "LUMEN_IMAGE and SIFT_IMAGE must be supplied together as immutable digest references" >&2
+for input_image in "$INPUT_LUMEN_IMAGE" "$INPUT_SIFT_IMAGE"; do
+  [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
+    echo "caller-supplied service images must be immutable @sha256 digest references" >&2
     exit 1
   }
-  [[ "$INPUT_LUMEN_IMAGE" == *@sha256:* && "$INPUT_SIFT_IMAGE" == *@sha256:* ]] || {
-    echo "prebuilt LUMEN_IMAGE and SIFT_IMAGE must be immutable @sha256 digest references" >&2
-    exit 1
-  }
+done
+if [[ -n "$INPUT_LUMEN_IMAGE" && -n "$INPUT_SIFT_IMAGE" ]]; then
   IMAGE_PROVENANCE="prebuilt"
+elif [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
+  IMAGE_PROVENANCE="mixed"
 else
   IMAGE_PROVENANCE="cloud-build"
 fi
@@ -160,25 +160,27 @@ require_empty_list "backup service account" gcloud iam service-accounts list \
   --project="$PROJECT_ID" \
   --filter="email:axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com" \
   --format='value(email)'
-source_bucket_path="${GCS_SOURCE_PREFIX#gs://}"
-source_bucket="${source_bucket_path%%/*}"
-[[ -n "$source_bucket" && "$source_bucket" != "$GCS_SOURCE_PREFIX" ]] || {
-  echo "GCS_SOURCE_PREFIX must be a gs://bucket/prefix URI" >&2
-  exit 1
-}
-if ! gcloud storage buckets describe "gs://${source_bucket}" --project="$PROJECT_ID" \
-  --format=json > "$EVIDENCE_DIR/preexisting-cloud-build-source-bucket.json"; then
-  echo "Cloud Build source bucket must already exist; the harness will not create or leak one" >&2
-  exit 1
-fi
-if ! gcloud storage ls --recursive "gs://${source_bucket}" \
-  > "$EVIDENCE_DIR/preexisting-cloud-build-source-objects.txt"; then
-  echo "could not inventory the pre-existing Cloud Build source bucket" >&2
-  exit 1
-fi
-if rg -F "${GCS_SOURCE_PREFIX}/" "$EVIDENCE_DIR/preexisting-cloud-build-source-objects.txt" >/dev/null; then
-  echo "refusing to reuse Cloud Build source prefix: $GCS_SOURCE_PREFIX" >&2
-  exit 1
+if [[ "$IMAGE_PROVENANCE" != "prebuilt" ]]; then
+  source_bucket_path="${GCS_SOURCE_PREFIX#gs://}"
+  source_bucket="${source_bucket_path%%/*}"
+  [[ -n "$source_bucket" && "$source_bucket" != "$GCS_SOURCE_PREFIX" ]] || {
+    echo "GCS_SOURCE_PREFIX must be a gs://bucket/prefix URI" >&2
+    exit 1
+  }
+  if ! gcloud storage buckets describe "gs://${source_bucket}" --project="$PROJECT_ID" \
+    --format=json > "$EVIDENCE_DIR/preexisting-cloud-build-source-bucket.json"; then
+    echo "Cloud Build source bucket must already exist; the harness will not create or leak one" >&2
+    exit 1
+  fi
+  if ! gcloud storage ls --recursive "gs://${source_bucket}" \
+    > "$EVIDENCE_DIR/preexisting-cloud-build-source-objects.txt"; then
+    echo "could not inventory the pre-existing Cloud Build source bucket" >&2
+    exit 1
+  fi
+  if rg -F "${GCS_SOURCE_PREFIX}/" "$EVIDENCE_DIR/preexisting-cloud-build-source-objects.txt" >/dev/null; then
+    echo "refusing to reuse Cloud Build source prefix: $GCS_SOURCE_PREFIX" >&2
+    exit 1
+  fi
 fi
 
 for image in lumen sift; do
@@ -258,12 +260,18 @@ if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
   SIFT_IMAGE="$INPUT_SIFT_IMAGE"
 else
-  echo ">> Cloud Build: one shared Rust stage, two immutable runtime images"
+  CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.yaml"
+  if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift.yaml"
+  elif [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
+  fi
+  echo ">> Cloud Build: source candidate only for service image(s) not supplied by digest"
   build_id="$(gcloud builds submit "$REPO_ROOT" \
     --async \
     --project="$PROJECT_ID" \
     --region="$REGION" \
-    --config="$ACCEPTANCE_ROOT/cloudbuild.yaml" \
+    --config="$CLOUD_BUILD_CONFIG" \
     --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
     --ignore-file="$ACCEPTANCE_ROOT/gcloudignore" \
     --substitutions="_REGISTRY=$REGISTRY,_TAG=$IMAGE_TAG" \
@@ -300,8 +308,16 @@ else
   done
   gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
     --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
-  LUMEN_IMAGE="$(resolve_digest lumen)"
-  SIFT_IMAGE="$(resolve_digest sift)"
+  if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
+    LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
+  else
+    LUMEN_IMAGE="$(resolve_digest lumen)"
+  fi
+  if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+    SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+  else
+    SIFT_IMAGE="$(resolve_digest sift)"
+  fi
 fi
 jq -n --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
   '{lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
