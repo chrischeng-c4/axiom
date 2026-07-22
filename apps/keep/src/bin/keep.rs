@@ -978,13 +978,25 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in keep.rs is hand-written pending codegen support">
 /// Run the keep server (the default, no-subcommand path).
 async fn serve_main(args: ServeArgs) -> Result<()> {
-    // RUST_LOG wins; otherwise fall back to --log-level.
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let log_format = match args.log_format.as_str() {
+        "pretty" => service_http::LogFormat::Pretty,
+        "json" => service_http::LogFormat::Json,
+        value => anyhow::bail!("--log-format must be `pretty` or `json`, got `{value}`"),
+    };
+    let config = service_http::HttpConfig::new(
+        args.host.clone(),
+        args.port,
+        args.log_level.clone(),
+        log_format,
+        args.grace_secs,
+        args.body_limit,
+        args.otlp_endpoint.clone(),
+    );
+    let identity = service_http::ServiceIdentity::new("keep", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)?;
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     info!(%addr, shards = args.shards, "starting keep");
