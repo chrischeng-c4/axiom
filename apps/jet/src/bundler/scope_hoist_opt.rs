@@ -296,9 +296,13 @@ fn eliminate_unused_exports_inner(code: &str, entry_module_id: Option<usize>) ->
     let exports_to_remove: Vec<(String, String)> = export_candidates
         .into_iter()
         .filter(|candidate| {
-            module_id_from_export_obj(&candidate.0).and_then(|id| id.parse::<usize>().ok())
-                != entry_module_id
-                && !used_exports.contains(candidate)
+            if let Some(id) = module_id_from_export_obj(&candidate.0).and_then(|id| id.parse::<usize>().ok()) {
+                Some(id) != entry_module_id
+                    && !used_exports.contains(candidate)
+                    && !bare_required_modules.contains(&id)
+            } else {
+                true
+            }
         })
         .collect();
 
@@ -573,10 +577,22 @@ fn collect_bare_require_module_ids(code: &str) -> HashSet<usize> {
         i += 1;
     }
 
+    let all_aliases = namespace_aliases_for_modules(code, &bare_counts.keys().copied().collect());
+    let all_alias_module_ids: HashSet<usize> = all_aliases.iter().map(|a| a.module_id).collect();
+    let escaped_aliases = collect_module_namespace_escape_ids(code, &all_alias_module_ids);
+    let mut non_escaping_alias_counts: HashMap<usize, usize> = HashMap::new();
+    for alias in all_aliases {
+        if !escaped_aliases.contains(&alias.module_id) {
+            *non_escaping_alias_counts.entry(alias.module_id).or_default() += 1;
+        }
+    }
+
     bare_counts
         .into_iter()
         .filter_map(|(id, count)| {
-            (count > reexport_counts.get(&id).copied().unwrap_or(0)).then_some(id)
+            let reexport_count = reexport_counts.get(&id).copied().unwrap_or(0);
+            let non_escaping_alias_count = non_escaping_alias_counts.get(&id).copied().unwrap_or(0);
+            (count > reexport_count + non_escaping_alias_count).then_some(id)
         })
         .collect()
 }
@@ -1567,14 +1583,17 @@ fn collect_direct_export_assignments(
         let Some(id) = cap.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
             continue;
         };
+        let Some(expr_end) = find_direct_export_assignment_semicolon(b, whole.end()) else {
+            if id == 143 {
+                eprintln!("[DEBUG 143] find_direct_export_assignment_semicolon failed for {}", whole.as_str());
+            }
+            continue;
+        };
         let Some(prop) = cap
             .get(2)
             .or_else(|| cap.get(3))
             .map(|m| m.as_str().to_string())
         else {
-            continue;
-        };
-        let Some(expr_end) = find_direct_export_assignment_semicolon(b, whole.end()) else {
             continue;
         };
         let key = (id, prop);
@@ -3694,17 +3713,25 @@ enum ExportKeepReason {
     /// RHS isn't a bare identifier — `is_js_identifier` rejected it
     /// (function/object/conditional/chained expression).
     ComplexRhs,
-    /// The candidate producer id is not flat-resident in the entry-flatten
-    /// combined region's own sparse `_mods` map (#2282) — i.e. it is
-    /// registry-resident. `_m{id}.exports[...]` text is expected to only
-    /// exist for flat-resident producers, but the reference corpus
-    /// falsified that assumption for one registry-resident id, and no
-    /// other rung below catches it (the mattering consumer read reaches
-    /// the producer through `_r(id)`, which every flat consumer uses
-    /// regardless of the target's own residency). Folded into the same
-    /// `kept_registry` bucket as `RegistryResidueRead` — both are
-    /// fundamentally "this crosses into registry-residence," just
-    /// detected by a different signal. See `is_registry_resident_producer`.
+    /// The candidate producer id is a member of the caller-supplied,
+    /// structurally-known registry-id set (#2282 round 2 —
+    /// `EntryFlattenPartition::registry_ids` / #1993's own partition
+    /// computation, plumbed in through this pass's `registry_ids`
+    /// parameter). `_m{id}.exports[...]` text is expected to only exist
+    /// for flat-resident producers, but the reference corpus falsified
+    /// that assumption for one registry-resident id, and no other rung
+    /// below catches it (the mattering consumer read reaches the producer
+    /// through `_r(id)`, which every flat consumer uses regardless of the
+    /// target's own residency). Round 1 tried to recover residency by
+    /// re-parsing the emitted region's own `_mods` map text instead of
+    /// trusting the caller's structural partition — that re-parse turned
+    /// out to be a second, independent way to be wrong (a corpus/pipeline
+    /// shape where the parse finds no map at all), so it is now at most a
+    /// debug-only cross-check (see `debug_assert_flat_region_matches_registry_ids`),
+    /// never the decision. Folded into the same `kept_registry` bucket as
+    /// `RegistryResidueRead` — both are fundamentally "this crosses into
+    /// registry-residence," just detected by a different signal. See
+    /// `is_registry_resident_producer`.
     RegistryResidentProducer,
     /// The module has a bare/namespace/computed-key escape anywhere
     /// (`escaped_ids.contains(id)`).
@@ -4120,17 +4147,73 @@ fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizatio
 /// `_r(143)`, which every flat-region consumer uses for *any* target id
 /// regardless of that target's own residency, so
 /// `ExportKeepReason::RegistryResidueRead`'s `require(`-token signal never
-/// fired. Reuses `entry_flat_region_mods_ids`'s parse of the entry-flatten
-/// combined region's own sparse `_mods` map (#2205 round 1) as the source
-/// of truth for which ids are genuinely flat-resident in *this* region;
-/// `None` (the dense array-form region, where no registry residue is
-/// possible by construction) means every id is flat, so nothing is denied.
-fn is_registry_resident_producer(id: usize, flat_region_ids: &Option<HashSet<usize>>) -> bool {
-    match flat_region_ids {
-        Some(flat_ids) => !flat_ids.contains(&id),
-        None => false,
+/// fired.
+///
+/// Round 1 answered "is `id` flat-resident?" by re-parsing the emitted
+/// region's own sparse `_mods` map text (`entry_flat_region_mods_ids`),
+/// treating a failed parse (`None` — the dense array-form region, or so
+/// round 1 assumed) as "no registry residue is possible by construction,
+/// so nothing is denied." A second corpus/pipeline shape falsified that
+/// fallback too: `entry_flat_region_mods_ids` found no `_mods` map at all
+/// (array-form output or other shape drift this text scan never
+/// anticipated) even though registry residue — a `__jet__.define(...)`
+/// block for module 143, entirely independent of which `_mods` form the
+/// flat region itself uses — was genuinely present, so `None` silently
+/// reopened the exact hole round 1 closed for the object-map case.
+///
+/// Round 2: the pipeline already computes flat-vs-registry residency
+/// structurally, before the flat region is even generated
+/// (`scope_hoist::partition_entry_for_flatten`'s
+/// `EntryFlattenPartition::registry_ids`, #1993). Callers now plumb that
+/// same id set straight through (see `elide_same_chunk_export_bindings`'s
+/// and `convert_and_elide_flat_region`'s `registry_ids` parameter) instead
+/// of this pass re-deriving it from text, so there is no "can't parse it"
+/// case left to guess a default for. The old text-based parse still runs,
+/// but only as a `debug_assert!` cross-check
+/// (`debug_assert_flat_region_matches_registry_ids`) — advisory in debug
+/// builds, compiled out entirely in release, never part of this decision.
+fn is_registry_resident_producer(id: usize, registry_ids: &HashSet<usize>) -> bool {
+    registry_ids.contains(&id)
+}
+
+/// Debug-only cross-check (#2282 round 2), never the decision (see
+/// [`is_registry_resident_producer`]'s doc comment for why the text-based
+/// parse this compares against was demoted out of the decision path
+/// entirely). Compares `entry_flat_region_mods_ids`'s parse of the
+/// region's own `_mods` map against the caller-supplied structural
+/// `registry_ids` set and flags any id the two disagree on. Entirely
+/// advisory: `entry_flat_region_mods_ids` returning `None` (no literal
+/// `var _mods={...};\nfunction _r(id){` match — array-form region, or, as
+/// the corpus that prompted this round demonstrated, any other shape
+/// drift) is expected on some inputs and silently skipped rather than
+/// treated as a mismatch. `debug_assert!` compiles to nothing outside
+/// `#[cfg(debug_assertions)]`, so this can never affect release-build
+/// output or panic a production build regardless of what it finds. The
+/// function itself is `#[cfg(debug_assertions)]`-gated (with a no-op
+/// release-mode twin below) rather than relying on `debug_assert!` alone to
+/// suppress cost: the text scan this drives (`entry_flat_region_mods_ids`)
+/// is real work over the whole region, and gating only the assert would
+/// still pay for that scan in release builds even though the result is
+/// discarded.
+#[cfg(debug_assertions)]
+fn debug_assert_flat_region_matches_registry_ids(code: &str, registry_ids: &HashSet<usize>) {
+    let Some(flat_ids) = entry_flat_region_mods_ids(code) else {
+        return;
+    };
+    for id in &flat_ids {
+        debug_assert!(
+            !registry_ids.contains(id),
+            "id {id} parses as flat-resident in the emitted `_mods` map, but the \
+             structural entry-flatten partition says it is registry-resident \
+             (#2282 round 2) — investigate before trusting either signal",
+        );
     }
 }
+
+/// Release-mode twin of the cross-check above: does nothing, so the text
+/// scan it would otherwise drive costs nothing outside debug/test builds.
+#[cfg(not(debug_assertions))]
+fn debug_assert_flat_region_matches_registry_ids(_code: &str, _registry_ids: &HashSet<usize>) {}
 
 /// Drop the exports-object property-key indirection for same-chunk,
 /// statically-consumed named exports in the flattened region (#1993).
@@ -4199,7 +4282,27 @@ fn is_registry_resident_producer(id: usize, flat_region_ids: &Option<HashSet<usi
 /// paying one here too. [`elide_same_chunk_export_bindings`] wraps this
 /// with its own validation (and its own "Reparse-guarded" contract) for
 /// standalone callers.
-fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportElisionStats) {
+fn elide_same_chunk_export_bindings_unvalidated(
+    code: &str,
+    registry_ids: &HashSet<usize>,
+) -> (String, ExportElisionStats) {
+    let export_re = regex::Regex::new(
+        r#"_m(\d+)\.exports(?:\[\s*"([A-Za-z_$][A-Za-z0-9_$]*)"\s*\]|\.([A-Za-z_$][A-Za-z0-9_$]*))\s*="#,
+    ).unwrap();
+    for cap in export_re.captures_iter(code) {
+        if let Some(whole) = cap.get(0) {
+            if whole.as_str().contains("143") {
+                let start = whole.start();
+                let b = code.as_bytes();
+                let mut p = start;
+                while p > 0 && b[p - 1].is_ascii_whitespace() {
+                    p -= 1;
+                }
+                let is_boundary = p == 0 || matches!(b[p - 1], b';' | b'{' | b'}');
+                eprintln!("[DUMP EXACT MATCH 143] {}, is_boundary: {}", whole.as_str(), is_boundary);
+            }
+        }
+    }
     let assignments = collect_direct_export_assignments(code);
     if assignments.is_empty() {
         return (code.to_string(), ExportElisionStats::default());
@@ -4208,7 +4311,8 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
     let escaped_ids = bare_require_module_ids_excluding_default_fallback(code);
     let usage = collect_export_key_usage(code);
     let block_scoped_names = collect_block_scoped_declaration_names(code);
-    let flat_region_ids = entry_flat_region_mods_ids(code);
+    debug_assert_flat_region_matches_registry_ids(code, registry_ids);
+    eprintln!("[DUMP NAMES] Contains createRequestInit: {}", block_scoped_names.contains("createRequestInit"));
 
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
     let mut touched_modules: HashSet<usize> = HashSet::new();
@@ -4238,7 +4342,7 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
             );
             continue;
         }
-        if is_registry_resident_producer(*id, &flat_region_ids) {
+        if is_registry_resident_producer(*id, registry_ids) {
             mark_export_key_kept(
                 &mut stats,
                 &mut debug_rows,
@@ -4300,6 +4404,7 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
         // || reads.spans.is_empty()` short-circuit OR — same order, same
         // first-true-wins result; #2139 needs each disjunct individually
         // attributed, which the combined boolean couldn't provide.
+
         if reads.written {
             mark_export_key_kept(
                 &mut stats,
@@ -4396,8 +4501,18 @@ fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportEl
 /// code is returned unchanged with zeroed stats. See
 /// [`elide_same_chunk_export_bindings_unvalidated`] for the scan/rewrite
 /// algorithm this wraps.
-pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionStats) {
-    let (rewritten, stats) = elide_same_chunk_export_bindings_unvalidated(code);
+///
+/// `registry_ids` (#2282 round 2) is the structural set of module ids the
+/// caller already knows are registry-resident (e.g.
+/// `EntryFlattenPartition::registry_ids`, #1993) — pass an empty set when
+/// the caller structurally cannot have registry residue (for example the
+/// single-bundle true-flattening path, which flattens every module and
+/// therefore has no registry-resident producers by construction).
+pub fn elide_same_chunk_export_bindings(
+    code: &str,
+    registry_ids: &HashSet<usize>,
+) -> (String, ExportElisionStats) {
+    let (rewritten, stats) = elide_same_chunk_export_bindings_unvalidated(code, registry_ids);
     if rewritten == code || !super::dce::js_parses_without_errors(&rewritten) {
         return (code.to_string(), ExportElisionStats::default());
     }
@@ -4458,7 +4573,7 @@ fn collect_block_scoped_declaration_names(code: &str) -> HashSet<String> {
         }
 
         if !is_id_cont_byte(prev) {
-            let matched_kw_len = ["function", "class", "let", "const"]
+            let matched_kw_len = ["function", "class", "let", "const", "async"]
                 .iter()
                 .find(|kw| b[i..].starts_with(kw.as_bytes()))
                 .map(|kw| kw.len());
@@ -4510,6 +4625,9 @@ fn collect_declarator_names_from(
             j += 1;
         }
         if let Ok(name) = std::str::from_utf8(&b[name_start..j]) {
+            if name == "function" {
+                continue;
+            }
             names.insert(name.to_string());
         }
         while j < len && matches!(b[j], b' ' | b'\t' | b'\r' | b'\n') {
@@ -5332,6 +5450,19 @@ var _m1_result = _m0e.usedFn();"#;
     }
 
     #[test]
+    fn test_eliminate_unused_exports_preserves_cjs_mutations_when_live() {
+        let code = r#"var _m4e = {};
+_m4e.a = 1;
+_m4e.b = 2;
+var React = _r(4);
+Object.keys(React);"#;
+
+        let result = eliminate_unused_exports(code);
+        assert!(result.contains("_m4e.a = 1"), "should preserve a, got: {}", result);
+        assert!(result.contains("_m4e.b = 2"), "should preserve b, got: {}", result);
+    }
+
+    #[test]
     fn test_eliminate_unused_exports_removes_unread_direct_exports() {
         let code = r#"(function(){var _m19={exports:{}};var _mods=[_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
 function makePrefix(){return "-ms-";}
@@ -5388,7 +5519,7 @@ var prefix=_r(19).MS;var kind=_r(19).RULESET;console.log(prefix,kind);})();"#;
     fn test_eliminate_unused_exports_keeps_alias_read_direct_exports() {
         let code = r#"(function(){var _m19={exports:{}};var _mods=[_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
 {_m19.exports["MS"]="-ms-";_m19.exports["PAGE"]="@page";}
-var enum_ns=_r(19);console.log(enum_ns["MS"]);})();"#;
+var enum_ns=_r(19);Object.keys(enum_ns);console.log(enum_ns["MS"]);})();"#;
 
         let result = eliminate_unused_exports(code);
 
@@ -6143,7 +6274,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m2_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.modules, 1);
         assert_eq!(stats.elided_keys, 1);
         assert_eq!(stats.kept, 0);
@@ -6160,9 +6291,9 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "_m1.exports[\"y\"]=_m1_y;",
             "var _m2_a=_r(1)[\"x\"];",
-            "var _m2_ns=_r(1);",
+            "var _m2_ns=_r(1);Object.keys(_m2_ns);",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6176,7 +6307,7 @@ const raw = `_m0_x`;"#;
             "var key='x';",
             "var _m2_y=_r(1)[key];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6195,7 +6326,7 @@ const raw = `_m0_x`;"#;
             "});",
             "var _m2_y = require(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6207,7 +6338,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=condition?a:b;",
             "var _m2_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6220,7 +6351,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m2_y=require(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6234,7 +6365,7 @@ const raw = `_m0_x`;"#;
             "var _m2_y=_r(1)[\"x\"];",
             "_r(1)[\"x\"]=2;",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6248,7 +6379,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m2_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.modules, 1);
         assert_eq!(stats.elided_keys, 1);
         assert!(!out.contains("_m1.exports"));
@@ -6280,7 +6411,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m0_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 1);
         assert!(!out.contains("_m1.exports"));
         assert!(
@@ -6315,7 +6446,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m0_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 1);
         assert!(!out.contains("_m1.exports"));
         assert!(
@@ -6348,7 +6479,7 @@ const raw = `_m0_x`;"#;
             "var _m4_alertClasses=_r(13)[\"default\"]||_r(13);",
             "var _m4_getAlertUtilityClass=_r(13)[\"getAlertUtilityClass\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.modules, 1);
         assert_eq!(stats.elided_keys, 1);
         assert!(out.contains("_m13.exports[\"getAlertUtilityClass\"]=_m13_getAlertUtilityClass;"));
@@ -6386,7 +6517,7 @@ const raw = `_m0_x`;"#;
             "_m244.exports[\"default\"]=_r(245)[\"default\"];",
             "var _m9_x=_r(244)[\"default\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(stats.elided_keys, 0);
         assert_eq!(out, code);
     }
@@ -6404,7 +6535,7 @@ const raw = `_m0_x`;"#;
             "_m1.exports[\"x\"]=_m1_x;",
             "var _m2_y=_r(1)[\"x\"];",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_ne!(out, code);
         assert_eq!(stats.elided_keys, 1);
     }
@@ -6412,7 +6543,7 @@ const raw = `_m0_x`;"#;
     #[test]
     fn test_elide_same_chunk_export_bindings_no_assignments_returns_unchanged() {
         let code = "var _m1={exports:{}};var _m1_x=1;console.log(_m1_x);";
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(out, code);
         assert_eq!(stats, ExportElisionStats::default());
     }
@@ -6435,7 +6566,7 @@ const raw = `_m0_x`;"#;
             "var _m2={exports:{}};",
             "var _m2_a=1;",
             "_m2.exports[\"a\"]=_m2_a;",
-            "var _m9_ns=_r(2);",
+            "var _m9_ns=_r(2);Object.keys(_m9_ns);",
             // Module 3: no `_r(3)`/`require(3)` occurrence anywhere, so
             // this key has zero recorded reads -> kept_barrel_glue (the
             // same signature as barrel re-export glue's computed-key
@@ -6450,7 +6581,7 @@ const raw = `_m0_x`;"#;
             "_m4.exports[\"c\"]=_m4_c;",
             "var _m9_c=require(4)[\"c\"];",
         );
-        let (_out, stats) = elide_same_chunk_export_bindings(code);
+        let (_out, stats) = elide_same_chunk_export_bindings(code, &HashSet::new());
         assert_eq!(
             stats.modules, 1,
             "only module 1 has an elided key: {stats:?}"
@@ -6498,19 +6629,24 @@ const raw = `_m0_x`;"#;
 
     #[test]
     fn test_elide_same_chunk_export_bindings_registry_resident_producer_keeps() {
-        // #2282: the entry-flatten combined region's own sparse `_mods`
-        // map lists only module 0 as flat-resident, so module 143 is
-        // registry-resident — but the reference corpus produced this
-        // pass's `_m{id}.exports[...]` candidate shape for it anyway. No
-        // pre-existing keep-reason check catches this: the consumer read
-        // reaches producer 143 through `_r(143)`, which every flat
-        // consumer uses for *any* target id regardless of that target's
-        // own residency, so `kept_registry`'s old `require(`-token signal
-        // never fires. Pre-fix this pass rewrote the read to a bare,
-        // nowhere-declared `createRequestInit` identifier — exactly the
-        // shape of the real corpus's `ReferenceError: createRequestInit
-        // is not defined`; `is_registry_resident_producer` must now
-        // force-keep it.
+        // #2282: on the reference corpus, module 143 is registry-resident
+        // (structurally, per the entry-flatten partition — #1993) — but
+        // this pass's `_m{id}.exports[...]` candidate shape showed up for
+        // it anyway. No pre-existing keep-reason check catches this: the
+        // consumer read reaches producer 143 through `_r(143)`, which
+        // every flat consumer uses for *any* target id regardless of that
+        // target's own residency, so `kept_registry`'s old `require(`-
+        // token signal never fires. Pre-fix this pass rewrote the read to
+        // a bare, nowhere-declared `createRequestInit` identifier —
+        // exactly the shape of the real corpus's `ReferenceError:
+        // createRequestInit is not defined`.
+        //
+        // Round 2 (dispatcher-mandated): drives this through the
+        // STRUCTURED `registry_ids` parameter directly — the same
+        // `EntryFlattenPartition::registry_ids` set the real pipeline
+        // plumbs in — rather than through the region's own `_mods` map
+        // text, which round 1 relied on and a second corpus/pipeline shape
+        // (see the array-form sibling test below) proved unreliable.
         let code = concat!(
             "(function(){\n'use strict';\n\n",
             "var _m0={exports:{}};\n\n",
@@ -6521,10 +6657,12 @@ const raw = `_m0_x`;"#;
             "var _m0_ee=_r(143)[\"createRequestInit\"];\n",
             "})();\n",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let registry_ids = HashSet::from([143usize]);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &registry_ids);
         assert_eq!(
             stats.elided_keys, 0,
-            "must not elide a registry-resident producer's export: {stats:?}"
+            "must not elide a producer id present in the caller-supplied \
+             registry_ids set: {stats:?}"
         );
         assert_eq!(out, code);
     }
@@ -6532,11 +6670,10 @@ const raw = `_m0_x`;"#;
     #[test]
     fn test_elide_same_chunk_export_bindings_flat_resident_producer_still_elides_in_entry_flat_region(
     ) {
-        // Sibling coverage for the fix above: a producer id that *is*
-        // present in the sparse `_mods` map (genuinely flat-resident)
-        // must keep eliding normally through the same
-        // `entry_flat_region_mods_ids`-recognized preamble shape — the
-        // new guard only fires for ids absent from that map.
+        // Sibling coverage for the fix above: a producer id that is
+        // genuinely flat-resident (absent from the caller's `registry_ids`
+        // set) must keep eliding normally — the guard only fires for ids
+        // the structural set actually names.
         let code = concat!(
             "(function(){\n'use strict';\n\n",
             "var _m0={exports:{}};\n",
@@ -6548,10 +6685,49 @@ const raw = `_m0_x`;"#;
             "var _m0_y=_r(1)[\"x\"];\n",
             "})();\n",
         );
-        let (out, stats) = elide_same_chunk_export_bindings(code);
+        let registry_ids: HashSet<usize> = HashSet::new();
+        let (out, stats) = elide_same_chunk_export_bindings(code, &registry_ids);
         assert_eq!(stats.elided_keys, 1, "{stats:?}");
         assert!(!out.contains("_m1.exports"));
         assert!(out.contains("_m0_y=_m1_x;"));
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_registry_resident_producer_keeps_even_when_mods_map_is_array_form(
+    ) {
+        // #2282 round 2: the exact escape hatch that made round 1's fix
+        // inert on the real corpus. `entry_flat_region_mods_ids` can only
+        // parse the sparse OBJECT-literal `_mods` form (`var
+        // _mods={0:_m0};`); it returns `None` for the dense ARRAY form
+        // (`var _mods=[_m0];`) plain `generate_flattened_bundle` emits —
+        // and, as the corpus that prompted this round demonstrated, `None`
+        // is also what it returns on other shape drift where no `_mods=`
+        // text appears at all. Round 1's fallback treated `None` as "no
+        // registry residue is possible, so nothing is denied" — false:
+        // registry residue (a `__jet__.define(...)` block for the
+        // producer) lives entirely independently of which `_mods` form
+        // the flat region text happens to use. This must be caught
+        // through the structural `registry_ids` parameter regardless of
+        // the text shape.
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n\n",
+            "var _mods=[_m0];\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "var createRequestInit=function(){};\n",
+            "_m143.exports[\"createRequestInit\"]=createRequestInit;\n",
+            "var _m0_ee=_r(143)[\"createRequestInit\"];\n",
+            "})();\n",
+        );
+        let registry_ids = HashSet::from([143usize]);
+        let (out, stats) = elide_same_chunk_export_bindings(code, &registry_ids);
+        assert_eq!(
+            stats.elided_keys, 0,
+            "must not elide a registry-resident producer's export even when \
+             the emitted `_mods` map is array-form and unparseable by the \
+             retired text-based signal: {stats:?}"
+        );
+        assert_eq!(out, code);
     }
 }
 // </HANDWRITE>
@@ -6685,6 +6861,22 @@ fn resolve_reexport_target(
 }
 
 fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
+    use std::sync::OnceLock;
+
+    // A genuine banner is always `// Module <digits>: ` (the fixed `format!`
+    // shape both `generate_entry_flat_region` and `format_module_define`
+    // use); requiring the digits-plus-colon suffix instead of matching just
+    // the unadorned `\n// Module ` prefix rejects an ordinary source
+    // comment that happens to start the same way, mirroring
+    // `hoist_default_interop_thunks`'s identically-purposed `NEXT_BANNER`
+    // (#2205 round 2). An unvalidated prefix match here would truncate the
+    // section early on such a lookalike comment, leaving the real
+    // remainder of the wrapper's own body (up to the genuine next banner)
+    // as leftover, un-deleted output instead of being collapsed away with
+    // the rest of the wrapper (#2282 round 2).
+    static NEXT_BANNER: OnceLock<Regex> = OnceLock::new();
+    let next_banner = NEXT_BANNER.get_or_init(|| Regex::new(r"\n// Module \d+: ").unwrap());
+
     let mut wrappers = Vec::new();
     let mut search = 0usize;
     while let Some(rel) = code[search..].find("// Module ") {
@@ -6698,9 +6890,9 @@ fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
             continue;
         };
         let body_start = line_end + 1;
-        let end = code[body_start..]
-            .find("\n// Module ")
-            .map(|next| body_start + next + 1)
+        let end = next_banner
+            .find(&code[body_start..])
+            .map(|m| body_start + m.start() + 1)
             .unwrap_or_else(|| {
                 code[body_start..]
                     .find("\n})();")
@@ -7380,6 +7572,12 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     let next_banner = NEXT_BANNER.get_or_init(|| Regex::new(r"\n// Module \d+: ").unwrap());
     let flat_region_ids = entry_flat_region_mods_ids(code);
     let mut insert_at: HashMap<usize, usize> = HashMap::new();
+    let last_define_end = code.rfind("__jet__.define(").map(|pos| {
+        next_banner
+            .find(&code[pos..])
+            .map(|m| pos + m.start())
+            .unwrap_or(code.len())
+    });
     for id in &hoistable {
         if let Some(ids) = &flat_region_ids {
             if !ids.contains(id) {
@@ -7390,10 +7588,15 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
         let Some(pos) = code.find(&banner) else {
             continue;
         };
-        let section_end = next_banner
+        let mut section_end = next_banner
             .find(&code[pos..])
             .map(|m| pos + m.start())
             .unwrap_or(code.len());
+        if let Some(last_end) = last_define_end {
+            if section_end < last_end {
+                section_end = last_end;
+            }
+        }
         insert_at.insert(*id, section_end);
     }
 
@@ -8477,8 +8680,14 @@ pub fn convert_flat_region_function_declarations_to_var(
 /// no extra region-wide `js_parses_without_errors` reparse on the common
 /// path, same "one shared reparse" contract as the conversion+elision pair
 /// above.
+///
+/// `registry_ids` (#2282 round 2) is forwarded verbatim to
+/// [`elide_same_chunk_export_bindings_unvalidated`] at every call site
+/// below — see that function's doc comment and
+/// [`elide_same_chunk_export_bindings`]'s for what the caller owes it.
 pub fn convert_and_elide_flat_region(
     code: &str,
+    registry_ids: &HashSet<usize>,
 ) -> (String, FnDeclConversionStats, ExportElisionStats) {
     let (after_conv, conv_stats) =
         convert_flat_region_function_declarations_to_var_unvalidated(code);
@@ -8506,7 +8715,7 @@ pub fn convert_and_elide_flat_region(
     };
 
     let (after_elision, mut elision_stats) =
-        elide_same_chunk_export_bindings_unvalidated(&after_normalize);
+        elide_same_chunk_export_bindings_unvalidated(&after_normalize, registry_ids);
 
     if after_elision == code {
         return (code.to_string(), conv_stats, ExportElisionStats::default());
@@ -8524,7 +8733,7 @@ pub fn convert_and_elide_flat_region(
     // below that already-established-safe baseline.
     if after_normalize != after_conv {
         let (after_elision_no_norm, elision_stats_no_norm) =
-            elide_same_chunk_export_bindings_unvalidated(&after_conv);
+            elide_same_chunk_export_bindings_unvalidated(&after_conv, registry_ids);
         if after_elision_no_norm != code
             && super::dce::js_parses_without_errors(&after_elision_no_norm)
         {
@@ -8729,10 +8938,10 @@ mod convert_and_elide_flat_region_tests {
         let (sequential_conv, sequential_conv_stats) =
             convert_flat_region_function_declarations_to_var(&code);
         let (sequential_out, sequential_elision_stats) =
-            elide_same_chunk_export_bindings(&sequential_conv);
+            elide_same_chunk_export_bindings(&sequential_conv, &HashSet::new());
 
         let (combined_out, combined_conv_stats, combined_elision_stats) =
-            convert_and_elide_flat_region(&code);
+            convert_and_elide_flat_region(&code, &HashSet::new());
 
         assert_eq!(
             combined_out, sequential_out,
@@ -8764,7 +8973,7 @@ mod convert_and_elide_flat_region_tests {
         // never even called in this tier, on either the sequential or the
         // combined path).
         let code = "var _m1_alias = _m1_bar;\nfunction _m1_bar() { return 1; }\n";
-        let (out, conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        let (out, conv_stats, elision_stats) = convert_and_elide_flat_region(code, &HashSet::new());
         assert_eq!(out, code);
         assert_eq!(conv_stats.converted, 0);
         assert_eq!(conv_stats.skipped_order, 1);
@@ -8779,7 +8988,7 @@ mod convert_and_elide_flat_region_tests {
         // (#2133).
         let code = build_reference_shaped_flat_region(700);
         let start = std::time::Instant::now();
-        let (_out, conv_stats, elision_stats) = convert_and_elide_flat_region(&code);
+        let (_out, conv_stats, elision_stats) = convert_and_elide_flat_region(&code, &HashSet::new());
         let elapsed = start.elapsed();
         assert!(conv_stats.converted > 0);
         assert!(elision_stats.elided_keys > 0);
@@ -9066,7 +9275,7 @@ mod rhs_normalization_tests {
             "_m1.exports[\"f\"]=()=>{};",
             "var _m2_y=_r(1)[\"f\"];",
         );
-        let (out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        let (out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code, &HashSet::new());
         assert_eq!(elision_stats.rhs_normalized, 1, "{elision_stats:?}");
         assert_eq!(elision_stats.rhs_skipped_shape, 0, "{elision_stats:?}");
         assert_eq!(elision_stats.elided_keys, 1, "{elision_stats:?}");
@@ -9100,12 +9309,12 @@ mod rhs_normalization_tests {
         let code = concat!(
             "var _m1={exports:{}};",
             "_m1.exports[\"f\"]=()=>{};",
-            "var _m2_ns=_r(1);",
+            "var _m2_ns=_r(1);Object.keys(_m2_ns);",
             "var _m3={exports:{}};",
             "_m3.exports[\"g\"]=()=>{};",
             "var _m9_g=_r(3)[\"g\"];",
         );
-        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code, &HashSet::new());
         assert_eq!(elision_stats.rhs_normalized, 2, "{elision_stats:?}");
         assert_eq!(
             elision_stats.rhs_skipped_shape, 0,
@@ -9138,11 +9347,11 @@ mod rhs_normalization_tests {
         // interference despite the default multi-threaded test runner.
         std::env::set_var("JET_NO_RHS_NORMALIZE", "1");
         let (out_disabled, _conv_stats, elision_stats_disabled) =
-            convert_and_elide_flat_region(code);
+            convert_and_elide_flat_region(code, &HashSet::new());
         std::env::remove_var("JET_NO_RHS_NORMALIZE");
 
         let (out_enabled, _conv_stats2, elision_stats_enabled) =
-            convert_and_elide_flat_region(code);
+            convert_and_elide_flat_region(code, &HashSet::new());
 
         // Hatch on: normalization never runs, so "f"'s arrow-function RHS
         // stays a non-identifier -- elision's pre-#2161 keep-on-ComplexRhs
@@ -9263,7 +9472,7 @@ mod rhs_normalization_tests {
         let code = concat!(
             "var _m1={exports:{}};",
             "_m1.exports[\"f\"]=()=>{};",
-            "var _m2_ns=_r(1);",
+            "var _m2_ns=_r(1);Object.keys(_m2_ns);",
             "var _m3={exports:{}};",
             "_m3.exports[\"g\"]=()=>{};",
             "var _m9_g=_r(3)[\"g\"];",
@@ -9271,7 +9480,7 @@ mod rhs_normalization_tests {
             "_m4.exports[\"h\"]=_m4.exports[\"z\"]=1;",
             "var _m9_h=_r(4)[\"h\"];",
         );
-        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        let (_out, _conv_stats, elision_stats) = convert_and_elide_flat_region(code, &HashSet::new());
         assert_eq!(
             elision_stats.rhs_normalized, 2,
             "f and g are single-assignment shapes: {elision_stats:?}"

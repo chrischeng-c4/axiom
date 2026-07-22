@@ -256,7 +256,12 @@ pub fn render_js_index_html(
     css_filenames: &[String],
 ) -> String {
     let entry = entry.to_string_lossy().replace('\\', "/");
-    let script_tag = format!(r#"<script type="module" src="./{}"></script>"#, js_filename);
+    let script_src = if js_filename.starts_with('/') || js_filename.starts_with("./") {
+        js_filename.to_string()
+    } else {
+        format!("/{}", js_filename)
+    };
+    let script_tag = format!(r#"<script type="module" src="{}"></script>"#, script_src);
     let (html, script_replaced) = replace_module_entry_script(template, &entry, &script_tag);
     let html = if script_replaced {
         html
@@ -439,7 +444,14 @@ fn inject_stylesheet_links(html: &str, css_filenames: &[String]) -> String {
 
     let links = css_filenames
         .iter()
-        .map(|filename| format!(r#"    <link rel="stylesheet" href="./{filename}" />"#))
+        .map(|filename| {
+            let path = if filename.starts_with('/') || filename.starts_with("./") {
+                filename.to_string()
+            } else {
+                format!("/{filename}")
+            };
+            format!(r#"    <link rel="stylesheet" href="{path}" />"#)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     inject_before_head_end(html, &format!("{links}\n"))
@@ -581,7 +593,7 @@ import './styles.css';
 
         let html = render_js_index_html(template, Path::new("src/main.tsx"), "main.1234.js", &[]);
 
-        assert!(html.contains(r#"<script type="module" src="./main.1234.js"></script>"#));
+        assert!(html.contains(r#"<script type="module" src="/main.1234.js"></script>"#));
         assert!(!html.contains("/src/main.tsx"));
     }
 

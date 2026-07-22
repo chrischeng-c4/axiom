@@ -431,7 +431,7 @@ test_cmd = "cargo test -p agentkit-backend"
 name = "jet"
 path = "apps/jet"
 td_path = "apps/jet/tech-design"
-cap_path = "apps/jet/README.md"
+cap_path = "apps/jet/CAPABILITIES.md"
 label = "app:jet"
 
 [[projects.workspaces]]

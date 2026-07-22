@@ -6095,7 +6095,7 @@ mod build_index_html_tests {
         let html =
             render_build_index_html(template, Path::new("src/main.tsx"), "main.12345678.js", &[]);
 
-        assert!(html.contains(r#"<script type="module" src="./main.12345678.js"></script>"#));
+        assert!(html.contains(r#"<script type="module" src="/main.12345678.js"></script>"#));
         assert!(!html.contains("/src/main.tsx"));
     }
 
@@ -6106,8 +6106,8 @@ mod build_index_html_tests {
         let html =
             render_build_index_html(template, Path::new("src/main.ts"), "main.abcdef12.js", &[]);
 
-        assert!(html.contains(r#"<script type="module" src="./main.abcdef12.js"></script>"#));
-        assert!(html.find("./main.abcdef12.js").unwrap() < html.find("</body>").unwrap());
+        assert!(html.contains(r#"<script type="module" src="/main.abcdef12.js"></script>"#));
+        assert!(html.find("/main.abcdef12.js").unwrap() < html.find("</body>").unwrap());
     }
 
     #[test]
@@ -6126,8 +6126,8 @@ mod build_index_html_tests {
             &css,
         );
 
-        assert!(html.contains(r#"<link rel="stylesheet" href="./main.deadbeef.css" />"#));
-        assert!(html.find("./main.deadbeef.css").unwrap() < html.find("</head>").unwrap());
+        assert!(html.contains(r#"<link rel="stylesheet" href="/main.deadbeef.css" />"#));
+        assert!(html.find("/main.deadbeef.css").unwrap() < html.find("</head>").unwrap());
     }
 
     #[test]

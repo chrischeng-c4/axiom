@@ -1446,6 +1446,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_oxc_minify_cjs_iiife() {
+        let source = "var _m4e={};\n(function(module,exports){\nexports.a=1;\n})({exports:_m4e},_m4e);\nconsole.log(_m4e);\n";
+        let minified = oxc_minify_js_candidate(source);
+        println!("Minified: {:?}", minified);
+    }
+
+    #[test]
     fn test_minify_whitespace() {
         let source = "const  x  =  1 ;\nconst  y  =  2 ;";
         let result = minify_js(source, &[]);

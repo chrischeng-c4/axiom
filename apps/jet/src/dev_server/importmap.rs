@@ -32,6 +32,10 @@ pub fn build_importmap_full(
             specifier.clone(),
             format!("/node_modules/.jet/{}", filename),
         );
+        let slash = format!("{}/", specifier);
+        if !imports.contains_key(&slash) {
+            imports.insert(slash, format!("/node_modules/{}/", specifier));
+        }
     }
 
     // ESM dependency mappings (served directly from node_modules)
@@ -188,6 +192,10 @@ pub fn mui_emotion_patches() -> &'static [(&'static str, &'static str)] {
             "@mui/utils/chainPropTypes",
             "/node_modules/@mui/utils/chainPropTypes/index.mjs",
         ),
+        (
+            "@mui/material/utils",
+            "/node_modules/@mui/material/utils/index.js",
+        ),
         // Emotion root packages — the legacy `main`/`module` fields can point
         // at CJS-flavored bundles. Use the package's published ESM dist files.
         (
@@ -230,6 +238,11 @@ pub fn mui_emotion_patches() -> &'static [(&'static str, &'static str)] {
         (
             "@emotion/is-prop-valid",
             "/node_modules/@emotion/is-prop-valid/dist/emotion-is-prop-valid.esm.js",
+        ),
+        ("@mui/system/", "/node_modules/@mui/system/"),
+        (
+            "@mui/system/styleFunctionSx",
+            "/node_modules/@mui/system/styleFunctionSx/index.js",
         ),
     ]
 }

@@ -888,6 +888,10 @@ fn has_parent_dir_component(path: &str) -> bool {
 }
 
 async fn serve_static_file(config: &ServerConfig, path: &str) -> Option<Response> {
+    // node_modules paths must be handled by serve_root_file for CJS/ESM transforms & importmap rewriting
+    if path.starts_with("node_modules/") {
+        return None;
+    }
     // GH #3082 — reject `..` components so a request like `/../etc/passwd`
     // can't escape `public_dir`. Mirrors wasm_dev::handle_static.
     if has_parent_dir_component(path) {
@@ -1284,8 +1288,13 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
         );
     }
 
-    // Plain .js files in node_modules: wrap CJS on-the-fly if needed
-    if ext == "js" && path.contains("node_modules/") {
+    // Plain .js/.cjs files in node_modules: wrap CJS on-the-fly if needed
+    let is_node_modules_js = path.contains("node_modules/")
+        && matches!(
+            file_path.extension().and_then(|s| s.to_str()),
+            Some("js" | "cjs" | "mjs")
+        );
+    if is_node_modules_js {
         // GH #3143 — surface IO errors instead of returning None and
         // falling through to the SPA shell, which causes the browser
         // to refuse the response as "wrong MIME type" with no path
@@ -1313,13 +1322,13 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
         let module_url = format!("/{}", path);
         let hot_preamble = hmr_client::generate_hot_preamble(&module_url);
 
-        // Detect CJS: has `require(`, `module.exports`, or `exports.X =` but no top-level import/export
-        let is_cjs = (source.contains("require(")
-            || source.contains("module.exports")
-            || source.contains("exports.")
-            || source.contains("Object.defineProperty(exports"))
-            && !source.starts_with("import ")
-            && !source.contains("\nexport ");
+        // Detect CJS: has `require(`, `module.exports`, or `exports.X =` but no top-level ESM import/export
+        let is_cjs = !prebundle::is_esm_module_source(&source)
+            && (source.contains("require(")
+                || source.contains("module.exports")
+                || source.contains("exports.")
+                || source.contains("Object.defineProperty(exports"));
+        eprintln!("[jet dev DEBUG] path={path} is_cjs={is_cjs}");
 
         // Resolve Node.js subpath imports (#foo → actual path) in node_modules.
         // GH #3234 — both call sites use the same helper now; read/parse errors warn.
@@ -1367,52 +1376,8 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
             rewrite_bare_specifiers_for_path(&resolved_source, &config.root_dir, &file_path);
 
         let output = if is_cjs {
-            let named = extract_named_reexports(&resolved_source);
-
-            // Collect require('...') deps and generate import statements
-            let require_re = regex::Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap();
-            let mut deps: Vec<String> = Vec::new();
-            for cap in require_re.captures_iter(&resolved_source) {
-                let dep = cap[1].to_string();
-                if !deps.contains(&dep) {
-                    deps.push(dep);
-                }
-            }
-
-            let mut wrapped = String::with_capacity(
-                hot_preamble.len() + resolved_source.len() + named.len() + 500,
-            );
-            wrapped.push_str(&hot_preamble);
-
-            // Import deps so the require shim can return them
-            for (i, dep) in deps.iter().enumerate() {
-                // Resolve: relative paths stay relative, bare specifiers go to importmap
-                if dep.starts_with('.') || dep.starts_with('/') {
-                    wrapped.push_str(&format!("import __cjs_dep_{}__ from '{}';\n", i, dep));
-                } else {
-                    // Bare specifier — use importmap resolution (just import it)
-                    wrapped.push_str(&format!("import __cjs_dep_{}__ from '{}';\n", i, dep));
-                }
-            }
-
-            wrapped.push_str("var module = { exports: {} };\nvar exports = module.exports;\n");
-            wrapped.push_str(&format!(
-                "(function(module, exports, require) {{\n{}\n}})(module, exports, function require(id) {{\n",
-                resolved_source
-            ));
-            for (i, dep) in deps.iter().enumerate() {
-                wrapped.push_str(&format!(
-                    "  if (id === '{}') return __cjs_dep_{}__;\n",
-                    dep, i
-                ));
-            }
-            wrapped.push_str("  console.warn('[jet] Dynamic require(\"' + id + '\") — no pre-bundled module');\n  return {};\n});\n");
-            wrapped.push_str("export default module.exports;\n");
-            if !named.is_empty() {
-                wrapped.push_str(&named);
-                wrapped.push('\n');
-            }
-            wrapped
+            let wrapped = prebundle::convert_cjs_file_to_esm(&resolved_source, &file_path);
+            format!("{hot_preamble}{wrapped}")
         } else {
             format!("{hot_preamble}{resolved_source}")
         };
@@ -1901,7 +1866,11 @@ fn pre_bundle_cjs_deps(root_dir: &PathBuf) {
              }};\n\
              {flattened}\n\
              window.__jetRequireCache['{dep_name}'] = module.exports;\n\
-             export default module.exports;\n",
+             export default module.exports;\n\
+             {named}\n",
+            dep_name = dep_name,
+            flattened = flattened,
+            named = extract_named_reexports(&flattened),
         );
 
         match std::fs::write(&cached, &esm) {
@@ -2107,10 +2076,24 @@ fn flatten_cjs(
                 }
             }
             // Non-relative require or resolution failed — keep as-is
-            output.push_str(line);
+            let line_to_write = if line.starts_with("const ") {
+                format!("var {}", &line[6..])
+            } else if line.starts_with("let ") {
+                format!("var {}", &line[4..])
+            } else {
+                line.to_string()
+            };
+            output.push_str(&line_to_write);
             output.push('\n');
         } else {
-            output.push_str(line);
+            let line_to_write = if line.starts_with("const ") {
+                format!("var {}", &line[6..])
+            } else if line.starts_with("let ") {
+                format!("var {}", &line[4..])
+            } else {
+                line.to_string()
+            };
+            output.push_str(&line_to_write);
             output.push('\n');
         }
     }
@@ -2239,22 +2222,21 @@ fn resolve_cjs_require(base_dir: &std::path::Path, req: &str) -> Option<std::pat
 fn extract_named_reexports(code: &str) -> String {
     let mut names = std::collections::BTreeSet::new();
 
-    for line in code.lines() {
-        let trimmed = line.trim();
-        // Pattern: exports.Name = ...
-        if let Some(rest) = trimmed.strip_prefix("exports.") {
-            if let Some(eq_pos) = rest.find(" =") {
-                let name = &rest[..eq_pos];
-                if name
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-                    && !name.is_empty()
-                    && name != "__esModule"
-                    && name != "default"
-                {
-                    names.insert(name.to_string());
-                }
-            }
+    // 1. Match exports.foo = / module.exports.foo =
+    let re_dot = regex::Regex::new(r#"(?:module\.)?exports\.([a-zA-Z0-9_$]+)\s*="#).unwrap();
+    for cap in re_dot.captures_iter(code) {
+        let name = &cap[1];
+        if name != "__esModule" && name != "default" {
+            names.insert(name.to_string());
+        }
+    }
+
+    // 2. Match Object.defineProperty(exports, 'foo', ...)
+    let re_def = regex::Regex::new(r#"Object\.defineProperty\s*\(\s*(?:module\.)?exports\s*,\s*['"]([^'"]+)['"]"#).unwrap();
+    for cap in re_def.captures_iter(code) {
+        let name = &cap[1];
+        if name != "__esModule" && name != "default" {
+            names.insert(name.to_string());
         }
     }
 
@@ -2360,6 +2342,12 @@ fn generate_importmap(root_dir: &PathBuf) -> String {
             format!("/node_modules/{}/{}", pkg_name, entry),
         );
 
+        // Always insert package trailing-slash prefix for W3C importmap subpath mapping
+        imports.insert(
+            format!("{}/", pkg_name),
+            format!("/node_modules/{}/", pkg_name),
+        );
+
         // Also map subpath exports like 'react/jsx-runtime'
         if let Some(exports) = parsed.get("exports").and_then(|e| e.as_object()) {
             for (key, val) in exports {
@@ -2373,9 +2361,19 @@ fn generate_importmap(root_dir: &PathBuf) -> String {
                     .or_else(|| prebundle::resolve_exports_entry(val));
                 if let Some(target) = target {
                     let target = target.trim_start_matches("./");
+                    let sub_key = if subpath.ends_with('*') {
+                        subpath.trim_end_matches('*').to_string()
+                    } else {
+                        subpath.to_string()
+                    };
+                    let sub_val = if target.ends_with('*') {
+                        target.trim_end_matches('*').to_string()
+                    } else {
+                        target.to_string()
+                    };
                     imports.insert(
-                        format!("{}/{}", pkg_name, subpath),
-                        format!("/node_modules/{}/{}", pkg_name, target),
+                        format!("{}/{}", pkg_name, sub_key),
+                        format!("/node_modules/{}/{}", pkg_name, sub_val),
                     );
                 }
             }
@@ -2469,26 +2467,40 @@ fn generate_importmap(root_dir: &PathBuf) -> String {
     // truncated the prebundle entries on EACCES / EIO. NotFound is already
     // guarded by the `jet_dir.exists()` check, so remaining errors must surface.
     if jet_dir.exists() {
-        match std::fs::read_dir(&jet_dir) {
-            Ok(jet_entries) => {
-                for entry in jet_entries.flatten() {
-                    let fname = entry.file_name().to_string_lossy().to_string();
-                    if fname.ends_with(".mjs") {
-                        let bare_name = fname.trim_end_matches(".mjs").replace("__", "/");
-                        if !imports.contains_key(&bare_name) {
-                            imports.insert(bare_name, format!("/node_modules/.jet/{}", fname));
+        let cached_map = jet_dir.join("_importmap.json");
+        if cached_map.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cached_map) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(obj) = val.get("imports").and_then(|i| i.as_object()) {
+                        for (k, v) in obj {
+                            if let Some(v_str) = v.as_str() {
+                                imports.entry(k.clone()).or_insert_with(|| v_str.to_string());
+                            }
                         }
                     }
                 }
             }
-            Err(err) => {
-                tracing::warn!(
-                    target: "jet::dev::prebundle",
-                    path = %jet_dir.display(),
-                    error = %err,
-                    "GH #3294 unreadable .jet/ during importmap scan; \
-                     every pre-bundled subpath entry will be omitted from the importmap"
-                );
+        } else {
+            match std::fs::read_dir(&jet_dir) {
+                Ok(jet_entries) => {
+                    for entry in jet_entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.ends_with(".mjs") {
+                            let bare_name = fname.trim_end_matches(".mjs").replace("__", "/");
+                            if !imports.contains_key(&bare_name) {
+                                imports.insert(bare_name, format!("/node_modules/.jet/{}", fname));
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "jet::dev::prebundle",
+                        path = %jet_dir.display(),
+                        error = %err,
+                        "GH #3294 unreadable .jet/ during importmap scan"
+                    );
+                }
             }
         }
     }
@@ -2674,11 +2686,11 @@ fn bare_specifier_to_jet_filename(specifier: &str) -> String {
     let sanitized = if specifier.starts_with('@') {
         let parts: Vec<&str> = specifier.splitn(2, '/').collect();
         if parts.len() == 2 {
-            let scope_and_name: Vec<&str> = parts[1].splitn(2, '/').collect();
-            if scope_and_name.len() == 2 {
-                format!("{}__{}_{}", parts[0], scope_and_name[0], scope_and_name[1])
+            let (pkg_name, subpath) = parts[1].split_once('/').unwrap_or((parts[1], ""));
+            if subpath.is_empty() {
+                format!("{}__{}", parts[0], pkg_name)
             } else {
-                format!("{}__{}", parts[0], parts[1])
+                format!("{}__{}_{}", parts[0], pkg_name, subpath.replace('/', "_"))
             }
         } else {
             specifier.to_string()
@@ -2983,10 +2995,63 @@ fn virtual_node_module_fallback_source(path: &str) -> Option<&'static str> {
 }
 
 fn babel_runtime_helper_fallback_source(path: &str) -> Option<&'static str> {
-    let helper = path.strip_prefix("node_modules/@babel/runtime/helpers/")?;
-    let helper = helper.strip_prefix("esm/").unwrap_or(helper);
+    let helper_str = if let Some(h) = path.strip_prefix("node_modules/@babel/runtime/helpers/") {
+        let h = h.strip_prefix("esm/").unwrap_or(h);
+        h.to_string()
+    } else if let Some(h) = path.strip_prefix("node_modules/.jet/@babel__runtime_helpers/") {
+        let h = h.strip_suffix(".mjs").unwrap_or(h);
+        format!("{}.js", h)
+    } else {
+        return None;
+    };
 
-    match helper {
+    match helper_str.as_str() {
+        "interopRequireDefault.js" => Some(
+            r#"export default function _interopRequireDefault(obj) {
+  return obj && obj.__esModule ? obj : { default: obj };
+}
+"#,
+        ),
+        "interopRequireWildcard.js" => Some(
+            r#"export default function _interopRequireWildcard(obj, nodeInterop) {
+  if (!nodeInterop && obj && obj.__esModule) {
+    return obj;
+  }
+  if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) {
+    return { default: obj };
+  }
+  var cache = _getRequireWildcardCache(nodeInterop);
+  if (cache && cache.has(obj)) {
+    return cache.get(obj);
+  }
+  var newObj = {};
+  var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+  for (var key in obj) {
+    if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+      var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+      if (desc && (desc.get || desc.set)) {
+        Object.defineProperty(newObj, key, desc);
+      } else {
+        newObj[key] = obj[key];
+      }
+    }
+  }
+  newObj.default = obj;
+  if (cache) {
+    cache.set(obj, newObj);
+  }
+  return newObj;
+}
+function _getRequireWildcardCache(nodeInterop) {
+  if (typeof WeakMap !== "function") return null;
+  var cacheBabelInterop = new WeakMap();
+  var cacheNodeInterop = new WeakMap();
+  return (_getRequireWildcardCache = function (nodeInterop) {
+    return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+  })(nodeInterop);
+}
+"#,
+        ),
         "arrayWithoutHoles.js" => Some(
             r#"export default function _arrayWithoutHoles(arr) {
   if (Array.isArray(arr)) return Array.prototype.slice.call(arr);
@@ -3518,6 +3583,19 @@ async fn rebuild_css(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cjs_named_reexports_supports_module_exports_dot() {
+        let output = extract_named_reexports(
+            r#"
+module.exports = parse;
+module.exports.parse = parse;
+module.exports.parseString = parseString;
+module.exports.splitCookiesString = splitCookiesString;
+"#,
+        );
+        assert!(output.contains("splitCookiesString"), "output must contain splitCookiesString: {output}");
+    }
 
     #[test]
     fn cjs_named_reexports_do_not_duplicate_default() {

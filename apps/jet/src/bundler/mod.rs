@@ -628,9 +628,14 @@ pub fn generate_script_preload_tags(hints: &[PreloadHint]) -> String {
     let mut tags = String::new();
     for hint in hints {
         if hint.is_static {
+            let href = if hint.href.starts_with('/') {
+                hint.href.clone()
+            } else {
+                format!("/{}", hint.href)
+            };
             tags.push_str(&format!(
-                "<link rel=\"preload\" as=\"script\" href=\"{}\">\n",
-                hint.href
+                "<script type=\"module\" src=\"{}\"></script>\n",
+                href
             ));
         }
     }
@@ -4296,6 +4301,7 @@ impl Bundler {
                 let after_interop =
                     scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
                 lap("interop_thunks");
+                let _ = std::fs::write("/Users/chrischeng/projects/tw-monitor/after_interop_1.js", &after_interop);
                 // Flat-region function-declaration → var-hoisted conversion
                 // (#2132) followed by same-chunk export-binding elision
                 // (#2128): conversion unblocks elision for function-declared
@@ -4312,7 +4318,7 @@ impl Bundler {
                 let no_export_elision = std::env::var_os("JET_NO_EXPORT_ELISION").is_some();
                 let out = if !no_fn_decl_conv && !no_export_elision {
                     let (out, conv_stats, elision_stats) =
-                        scope_hoist_opt::convert_and_elide_flat_region(&after_interop);
+                        scope_hoist_opt::convert_and_elide_flat_region(&after_interop, &std::collections::HashSet::new());
                     if timing {
                         eprintln!(
                             "[bundle-timing]   generate/fn-decl-conversion: converted={} skipped_order={} skipped_shape={}",
@@ -4359,7 +4365,7 @@ impl Bundler {
                         after_fn_decl_conv
                     } else {
                         let (elided, stats) =
-                            scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
+                            scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv, &std::collections::HashSet::new());
                         if timing {
                             eprintln!(
                                 "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",
@@ -4636,9 +4642,10 @@ impl Bundler {
             // ~1.4MB flat region was the dominant per-pass cost (#2133).
             let no_fn_decl_conv = std::env::var_os("JET_NO_FN_DECL_CONVERSION").is_some();
             let no_export_elision = std::env::var_os("JET_NO_EXPORT_ELISION").is_some();
+            let partition_registry_ids: std::collections::HashSet<usize> = partition.registry_ids.iter().copied().collect();
             let processed_body = if !no_fn_decl_conv && !no_export_elision {
                 let (out, conv_stats, elision_stats) =
-                    scope_hoist_opt::convert_and_elide_flat_region(&after_interop);
+                    scope_hoist_opt::convert_and_elide_flat_region(&after_interop, &partition_registry_ids);
                 if timing {
                     eprintln!(
                         "[bundle-timing]   entry-flatten/fn-decl-conversion: converted={} skipped_order={} skipped_shape={}",
@@ -4685,7 +4692,7 @@ impl Bundler {
                     after_fn_decl_conv
                 } else {
                     let (elided, stats) =
-                        scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
+                        scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv, &partition_registry_ids);
                     if timing {
                         eprintln!(
                             "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={} kept_registry={} kept_cross_chunk={} kept_namespace={} kept_string_indexed={} kept_barrel_glue={} kept_other={}",

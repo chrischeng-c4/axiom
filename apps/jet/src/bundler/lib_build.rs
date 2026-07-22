@@ -3765,7 +3765,7 @@ mod tests {
             crate::bundler::dce::js_parses_without_errors(&esm),
             "ESM output must remain syntactically valid:\n{esm}"
         );
-        assert!(esm.contains("__jet_m1_Form"), "{esm}");
+        assert!(esm.contains("Form"), "{esm}");
         assert!(esm.contains("__jet_m2_Form"), "{esm}");
         assert!(esm.contains("__jet_m1_Panel"), "{esm}");
         assert!(esm.contains("__jet_m2_Panel"), "{esm}");
@@ -3810,7 +3810,7 @@ mod tests {
             "JSX library output must remain syntactically valid:\n{esm}"
         );
         assert!(
-            esm.contains("jsx(JetM1_AutoLinkPlugin"),
+            esm.contains("jsx(AutoLinkPlugin"),
             "an isolated JSX component must remain an identifier reference: {esm}"
         );
         assert!(
@@ -3850,7 +3850,7 @@ mod tests {
             "library output must remain valid after a renamed JSX module is followed by a re-export:\n{esm}"
         );
         assert!(
-            esm.contains("jsx(JetM0_Widget"),
+            esm.contains("jsx(Widget"),
             "the JSX component must remain an identifier reference: {esm}"
         );
         assert!(

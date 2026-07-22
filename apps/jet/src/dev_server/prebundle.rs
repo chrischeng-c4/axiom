@@ -16,7 +16,15 @@ use super::polyfills;
 /// table changes in a way that should invalidate every project's cache.
 /// The marker's textual contents must contain this tag for the cache to be
 /// considered valid (see `check_cache_valid`). See jet#1908 AC R7.
-pub(crate) const CACHE_MARKER_VERSION: &str = "v14-emotion-react-companion-fallback";
+pub(crate) const CACHE_MARKER_VERSION: &str = "v22-inline-requires-var-conversion";
+
+fn is_subpath_import(dep: &str) -> bool {
+    if dep.starts_with('@') {
+        dep.split('/').count() > 2
+    } else {
+        dep.split('/').count() > 1
+    }
+}
 
 /// Pre-bundler for CJS→ESM conversion of npm dependencies.
 ///
@@ -453,6 +461,9 @@ impl PreBundler {
         let mut dep_imports = HashMap::new();
 
         for dep in collect_external_requires(source) {
+            if is_subpath_import(&dep) {
+                continue;
+            }
             let Some(nested_pkg_dir) = resolve_nested_package_dir(parent_pkg_dir, &dep) else {
                 continue;
             };
@@ -463,7 +474,8 @@ impl PreBundler {
                 if package_versions_match(&root_pkg_dir, &nested_pkg_dir)
                     && self.is_cjs_package(&root_pkg_dir).unwrap_or(false)
                 {
-                    dep_imports.insert(dep.clone(), dep_filename(&dep));
+                    let filename = dep_filename(&dep);
+                    dep_imports.insert(dep.clone(), filename);
                     continue;
                 }
             }
@@ -1453,25 +1465,19 @@ pub fn create_virtual_entry(package_name: &str) -> String {
 /// Handles scoped packages: `@tanstack/react-query` → `@tanstack__react-query.mjs`
 /// Handles subpaths: `react/jsx-runtime` → `react_jsx-runtime.mjs` (single underscore)
 fn dep_filename(specifier: &str) -> String {
-    // Scoped packages: @scope/name → @scope__name (double underscore for scope separator)
-    // Subpath exports: react/jsx-runtime → react_jsx-runtime (single underscore)
     let sanitized = if specifier.starts_with('@') {
-        // Split at first / (scope separator), then replace remaining / with _
         let parts: Vec<&str> = specifier.splitn(2, '/').collect();
         if parts.len() == 2 {
-            let scope_and_name: Vec<&str> = parts[1].splitn(2, '/').collect();
-            if scope_and_name.len() == 2 {
-                // @scope/name/subpath → @scope__name_subpath
-                format!("{}__{}_{}", parts[0], scope_and_name[0], scope_and_name[1])
+            let (pkg_name, subpath) = parts[1].split_once('/').unwrap_or((parts[1], ""));
+            if subpath.is_empty() {
+                format!("{}__{}", parts[0], pkg_name)
             } else {
-                // @scope/name → @scope__name
-                format!("{}__{}", parts[0], parts[1])
+                format!("{}__{}_{}", parts[0], pkg_name, subpath.replace('/', "_"))
             }
         } else {
             specifier.to_string()
         }
     } else {
-        // Non-scoped: react/jsx-runtime → react_jsx-runtime (single underscore)
         specifier.replace('/', "_")
     };
     format!("{}.mjs", sanitized)
@@ -1692,6 +1698,19 @@ fn inline_requires_depth(source: &str, base_dir: &Path, depth: usize) -> String 
         };
         // Replace process.env.NODE_ENV in inlined content too
         let content = content.replace("process.env.NODE_ENV", "'development'");
+        let content = content
+            .lines()
+            .map(|l| {
+                if l.starts_with("const ") {
+                    format!("var {}", &l[6..])
+                } else if l.starts_with("let ") {
+                    format!("var {}", &l[4..])
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         // Recursively inline nested requires
         let content = inline_requires_depth(&content, target.parent().unwrap(), depth + 1);
 
@@ -1786,11 +1805,11 @@ fn convert_cjs_to_esm(source: &str, _name: &str, dep_imports: &HashMap<String, S
     let mut require_cases = String::new();
     for (i, dep) in deps.iter().enumerate() {
         let var_name = format!("__cjs_dep_{}__", i);
-        let filename = dep_imports
-            .get(dep)
-            .cloned()
-            .unwrap_or_else(|| dep_filename(dep));
-        let dep_path = format!("/node_modules/.jet/{}", filename);
+        let dep_path = if let Some(filename) = dep_imports.get(dep) {
+            format!("/node_modules/.jet/{}", filename)
+        } else {
+            dep.clone()
+        };
         imports.push_str(&format!("import {} from '{}';\n", var_name, dep_path));
         require_cases.push_str(&format!("    if (id === '{}') return {};\n", dep, var_name));
     }
@@ -1936,7 +1955,7 @@ fn strip_js_comments_for_require_scan(source: &str) -> String {
     line.replace_all(&without_block, "").into_owned()
 }
 
-fn is_esm_module_source(source: &str) -> bool {
+pub(crate) fn is_esm_module_source(source: &str) -> bool {
     regex::Regex::new(
         r#"(?m)^\s*(?:import\s+(?:[\w*{]|\{|"|')|export\s+(?:default|\{|\*|function|class|const|var|let))"#,
     )

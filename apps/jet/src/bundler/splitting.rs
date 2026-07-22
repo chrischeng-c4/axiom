@@ -77,6 +77,26 @@ pub struct ManualChunkConfig {
 
 /// Split modules into chunks based on dynamic import boundaries.
 ///
+fn get_eagerly_reachable(
+    entry: usize,
+    static_deps: &HashMap<usize, Vec<usize>>,
+) -> HashSet<usize> {
+    let mut visited = HashSet::new();
+    let mut queue = vec![entry];
+    visited.insert(entry);
+    while let Some(current) = queue.pop() {
+        if let Some(deps) = static_deps.get(&current) {
+            for &dep in deps {
+                if !visited.contains(&dep) {
+                    visited.insert(dep);
+                    queue.push(dep);
+                }
+            }
+        }
+    }
+    visited
+}
+
 /// `entry` is the entry point's module id. `edges` describes the dependency
 /// graph with static/dynamic markers, keyed by module id — never by path
 /// string (see the module doc comment). `id_to_path` is consulted only for
@@ -95,7 +115,7 @@ pub fn split_chunks(
 
     for edge in edges {
         if edge.is_dynamic {
-            dynamic_deps.entry(edge.from).or_default().push(edge.to);
+            // dynamic_deps logic removed
         } else {
             static_deps.entry(edge.from).or_default().push(edge.to);
         }
@@ -108,7 +128,7 @@ pub fn split_chunks(
         .map(|e| e.to)
         .collect();
 
-    // BFS from entry following only static imports → entry chunk
+    // BFS from entry along static edges → entry chunk modules
     let entry_modules = bfs_static(entry, &static_deps, &split_points);
 
     // BFS from each split point → async chunks
