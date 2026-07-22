@@ -72,20 +72,28 @@ wait_for_gcs_object() {
 
 wait_for_split() {
   local deadline=$((SECONDS + 900))
-  local shard_count workflow_phase status_phase desired ready pvc_count
+  local shard_count workflow_phase status_phase desired ready pvc_count map_version converged_map_version
   while (( SECONDS < deadline )); do
     shard_count="$(kubectl -n lumen get lumen/lumen -o jsonpath='{.spec.shardCount}' 2>/dev/null || true)"
     workflow_phase="$(kubectl -n lumen get lumen/lumen -o jsonpath='{.spec.reshardPolicy.workflow.phase}' 2>/dev/null || true)"
+    map_version="$(kubectl -n lumen get lumen/lumen -o jsonpath='{.spec.shardMap.version}' 2>/dev/null || true)"
+    converged_map_version="$(kubectl -n lumen get lumen/lumen -o jsonpath='{.spec.reshardPolicy.workflow.convergedShardMapVersion}' 2>/dev/null || true)"
     status_phase="$(kubectl -n lumen get lumen/lumen -o jsonpath='{.status.phase}' 2>/dev/null || true)"
     desired="$(kubectl -n lumen get statefulset/lumen -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
     ready="$(kubectl -n lumen get statefulset/lumen -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
     pvc_count="$(kubectl -n lumen get pvc -l app.kubernetes.io/instance=lumen --no-headers 2>/dev/null | wc -l | tr -d ' ')"
-    if [[ "$shard_count" == "2" && "$workflow_phase" == "Complete" && "$status_phase" == "Ready" && "$desired" == "2" && "$ready" == "2" && "$pvc_count" -ge 2 ]]; then
+    # `Complete` means the bucket map has been cut over, not that every
+    # serving pod has picked up that map. Until the driver writes
+    # `convergedShardMapVersion`, it deliberately holds a post-cutover fence;
+    # a Service-routed read can reach a newly created shard before the copied
+    # bucket data is queryable and return 404. Do not treat that expected
+    # transition window as a stable post-split read surface.
+    if [[ "$shard_count" == "2" && "$workflow_phase" == "Complete" && "$map_version" =~ ^[1-9][0-9]*$ && "$converged_map_version" == "$map_version" && "$status_phase" == "Ready" && "$desired" == "2" && "$ready" == "2" && "$pvc_count" -ge 2 ]]; then
       return 0
     fi
     sleep 5
   done
-  echo "Lumen did not complete 1-to-2 split with two ready pods and two PVCs" >&2
+  echo "Lumen did not converge 1-to-2 split with two ready pods and two PVCs" >&2
   kubectl -n lumen get lumen/lumen,statefulset/lumen,pvc -o yaml >&2 || true
   return 1
 }
