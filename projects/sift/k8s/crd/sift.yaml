@@ -28,7 +28,7 @@ spec:
                 replicasPerShard: { type: integer, minimum: 1, maximum: 1 }
                 voterCount: { type: integer, minimum: 1, maximum: 1 }
                 dataSize: { type: string }
-                auth: { type: string, enum: [off, required] }
+                auth: { type: string, enum: ["off", "required"] }
                 tokensSecret: { type: string }
                 backup:
                   type: object
