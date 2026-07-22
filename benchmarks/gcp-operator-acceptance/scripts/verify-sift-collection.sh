@@ -8,6 +8,9 @@ set -euo pipefail
 : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
+: "${LUMEN_ACCEPTANCE_EVIDENCE:=$EVIDENCE_DIR/lumen-acceptance.json}"
+: "${LUMEN_ACCEPTANCE_PROVENANCE:=current-run}"
+test -f "$LUMEN_ACCEPTANCE_EVIDENCE"
 
 mkdir -p "$EVIDENCE_DIR/kubernetes" "$EVIDENCE_DIR/gcs"
 forward_pids=()
@@ -137,7 +140,9 @@ jq -n \
   --arg gke_zone "$GKE_ZONE" \
   --arg run_id "$RUN_ID" \
   --arg bucket "$BACKUP_BUCKET" \
-  --slurpfile lumen "$EVIDENCE_DIR/lumen-acceptance.json" \
+  --arg lumen_evidence "$LUMEN_ACCEPTANCE_EVIDENCE" \
+  --arg lumen_provenance "$LUMEN_ACCEPTANCE_PROVENANCE" \
+  --slurpfile lumen "$LUMEN_ACCEPTANCE_EVIDENCE" \
   --slurpfile sift "$EVIDENCE_DIR/sift-acceptance.json" \
-  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, run_id:$run_id, backup_bucket:$bucket, acceptance:{lumen:$lumen[0],sift:$sift[0]}}' \
+  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, run_id:$run_id, backup_bucket:$bucket, lumen_evidence:$lumen_evidence, lumen_provenance:$lumen_provenance, acceptance:{lumen:$lumen[0],sift:$sift[0]}}' \
   > "$EVIDENCE_DIR/acceptance.json"
