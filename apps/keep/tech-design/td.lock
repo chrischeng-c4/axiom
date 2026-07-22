@@ -1,0 +1,14 @@
+version = 2
+project = "keep"
+ir_kind = "td"
+td_path = "apps/keep/tech-design"
+generated_at = "2026-07-22T23:35:38.141774+00:00"
+digest = "sha256:a30b8e322780005a5f03f4c7d642b43860a5165386b13c7fd5f96cbb66eea013"
+source_digest = "sha256:a30b8e322780005a5f03f4c7d642b43860a5165386b13c7fd5f96cbb66eea013"
+ir_digest = "sha256:2df31dac8b37c6105a9a6a108b13d20f37d29c3699d13eb6b95dbc8d6000e20a"
+
+[[files]]
+path = "interfaces/rest/adopt-sift-owned-operational-telemetry-contract.md"
+digest = "sha256:cba150faa4f56defbe9913cd3b88ef789422d90c1f02bf03199c35cdd0bb7dac"
+ir_digest = "sha256:dc08dda03a48d7aa62175ba6fbdbb84af9dfb783e716ce10c22b9b55f0f0e30c"
+section_count = 3
