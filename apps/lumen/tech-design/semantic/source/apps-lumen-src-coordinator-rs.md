@@ -31,7 +31,7 @@ Public API manifest for `apps/lumen/src/coordinator.rs` generated from AST durin
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write coordinator — the seam between the HTTP write handlers and the
@@ -299,7 +299,8 @@ impl WriteCoordinator {
                                 if outcome.is_ok() {
                                     if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
                                         let persisted = {
-                                            let mut writer = aof.lock().expect("aof writer poisoned");
+                                            let mut writer =
+                                                aof.lock().expect("aof writer poisoned");
                                             writer
                                                 .append(seq, &rec)
                                                 .and_then(|()| writer.flush())
@@ -307,7 +308,9 @@ impl WriteCoordinator {
                                         };
                                         if let Err(e) = persisted {
                                             tracing::warn!(seq, error = %e, "AOF persist failed");
-                                            outcome = Err(e.context("persist applied record to local AOF"));
+                                            outcome = Err(
+                                                e.context("persist applied record to local AOF")
+                                            );
                                         }
                                     }
                                 }
@@ -740,8 +743,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->
