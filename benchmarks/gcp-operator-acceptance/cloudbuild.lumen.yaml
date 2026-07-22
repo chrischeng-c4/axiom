@@ -3,8 +3,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
-      - --target=lumen
+      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.lumen
       - --tag=${_REGISTRY}/lumen:${_TAG}
       - .
 
