@@ -13,6 +13,8 @@ RUN_ID="${RUN_ID:-$(date -u +%m%d%H%M%S)}"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-${RUN_ID}}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}"
+INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
+INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
@@ -87,6 +89,19 @@ done
   echo "MAX_CLOUD_SECONDS must be an integer no greater than 2700" >&2
   exit 1
 }
+if [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
+  [[ -n "$INPUT_LUMEN_IMAGE" && -n "$INPUT_SIFT_IMAGE" ]] || {
+    echo "LUMEN_IMAGE and SIFT_IMAGE must be supplied together as immutable digest references" >&2
+    exit 1
+  }
+  [[ "$INPUT_LUMEN_IMAGE" == *@sha256:* && "$INPUT_SIFT_IMAGE" == *@sha256:* ]] || {
+    echo "prebuilt LUMEN_IMAGE and SIFT_IMAGE must be immutable @sha256 digest references" >&2
+    exit 1
+  }
+  IMAGE_PROVENANCE="prebuilt"
+else
+  IMAGE_PROVENANCE="cloud-build"
+fi
 
 for run_dir in "$STATE_DIR" "$EVIDENCE_DIR"; do
   if [[ -e "$run_dir" && -n "$(find "$run_dir" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
@@ -188,9 +203,10 @@ jq -n \
   --arg git_sha "$GIT_SHA" \
   --arg image_tag "$IMAGE_TAG" \
   --arg registry "$REGISTRY" \
+  --arg image_provenance "$IMAGE_PROVENANCE" \
   --arg cluster_name "$PERSISTENT_CLUSTER_NAME" \
   --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, persistent_cluster:$cluster_name, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, started_at:$started_at}' \
+  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, persistent_cluster:$cluster_name, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, image_provenance:$image_provenance, started_at:$started_at}' \
   > "$EVIDENCE_DIR/run.json"
 
 echo ">> local deployment CLI build and render-surface preflight"
@@ -208,49 +224,6 @@ cleanup_armed=1
 ) &
 watchdog_pid="$!"
 
-echo ">> Cloud Build: one shared Rust stage, two immutable runtime images"
-build_id="$(gcloud builds submit "$REPO_ROOT" \
-  --async \
-  --project="$PROJECT_ID" \
-  --region="$REGION" \
-  --config="$ACCEPTANCE_ROOT/cloudbuild.yaml" \
-  --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
-  --ignore-file="$ACCEPTANCE_ROOT/gcloudignore" \
-  --substitutions="_REGISTRY=$REGISTRY,_TAG=$IMAGE_TAG" \
-  --format='value(id)')"
-[[ -n "$build_id" && "$build_id" != "null" ]] || {
-  echo "Cloud Build did not return a build id" >&2
-  exit 1
-}
-printf '%s\n' "$build_id" > "$STATE_DIR/cloud-build-id.txt"
-gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
-  --format=json > "$EVIDENCE_DIR/cloud-build-submit.json"
-source_object_bucket="$(jq -r '.source.storageSource.bucket' "$EVIDENCE_DIR/cloud-build-submit.json")"
-source_object_name="$(jq -r '.source.storageSource.object' "$EVIDENCE_DIR/cloud-build-submit.json")"
-[[ -n "$source_object_bucket" && "$source_object_bucket" != "null" && -n "$source_object_name" && "$source_object_name" != "null" ]] || {
-  echo "Cloud Build did not expose its exact staged source object" >&2
-  exit 1
-}
-gcloud storage objects describe "gs://${source_object_bucket}/${source_object_name}" \
-  --format=json > "$EVIDENCE_DIR/cloud-build-source-object.json"
-
-while true; do
-  build_status="$(gcloud builds describe "$build_id" --project="$PROJECT_ID" \
-    --region="$REGION" --format='value(status)')"
-  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$build_status" \
-    >> "$EVIDENCE_DIR/cloud-build-status.log"
-  case "$build_status" in
-    SUCCESS) break ;;
-    FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-      echo "Cloud Build ended with $build_status" >&2
-      exit 1
-      ;;
-  esac
-  sleep 10
-done
-gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
-  --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
-
 resolve_digest() {
   local image="$1"
   local digest
@@ -263,8 +236,56 @@ resolve_digest() {
   printf '%s@%s\n' "$REGISTRY/$image" "$digest"
 }
 
-LUMEN_IMAGE="$(resolve_digest lumen)"
-SIFT_IMAGE="$(resolve_digest sift)"
+if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
+  echo ">> using caller-supplied immutable release or candidate images"
+  LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
+  SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+else
+  echo ">> Cloud Build: one shared Rust stage, two immutable runtime images"
+  build_id="$(gcloud builds submit "$REPO_ROOT" \
+    --async \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --config="$ACCEPTANCE_ROOT/cloudbuild.yaml" \
+    --gcs-source-staging-dir="$GCS_SOURCE_PREFIX" \
+    --ignore-file="$ACCEPTANCE_ROOT/gcloudignore" \
+    --substitutions="_REGISTRY=$REGISTRY,_TAG=$IMAGE_TAG" \
+    --format='value(id)')"
+  [[ -n "$build_id" && "$build_id" != "null" ]] || {
+    echo "Cloud Build did not return a build id" >&2
+    exit 1
+  }
+  printf '%s\n' "$build_id" > "$STATE_DIR/cloud-build-id.txt"
+  gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
+    --format=json > "$EVIDENCE_DIR/cloud-build-submit.json"
+  source_object_bucket="$(jq -r '.source.storageSource.bucket' "$EVIDENCE_DIR/cloud-build-submit.json")"
+  source_object_name="$(jq -r '.source.storageSource.object' "$EVIDENCE_DIR/cloud-build-submit.json")"
+  [[ -n "$source_object_bucket" && "$source_object_bucket" != "null" && -n "$source_object_name" && "$source_object_name" != "null" ]] || {
+    echo "Cloud Build did not expose its exact staged source object" >&2
+    exit 1
+  }
+  gcloud storage objects describe "gs://${source_object_bucket}/${source_object_name}" \
+    --format=json > "$EVIDENCE_DIR/cloud-build-source-object.json"
+
+  while true; do
+    build_status="$(gcloud builds describe "$build_id" --project="$PROJECT_ID" \
+      --region="$REGION" --format='value(status)')"
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$build_status" \
+      >> "$EVIDENCE_DIR/cloud-build-status.log"
+    case "$build_status" in
+      SUCCESS) break ;;
+      FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+        echo "Cloud Build ended with $build_status" >&2
+        exit 1
+        ;;
+    esac
+    sleep 10
+  done
+  gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
+    --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
+  LUMEN_IMAGE="$(resolve_digest lumen)"
+  SIFT_IMAGE="$(resolve_digest sift)"
+fi
 jq -n --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
   '{lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
 
