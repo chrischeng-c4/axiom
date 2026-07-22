@@ -58,25 +58,51 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Add Keep's opt-in otel feature as a thin forwarding feature to service-http/otlp; the default build stays structured-log-only.
+    description: Add an opt-in otel feature forwarding only to service-http/otlp, preserving logging-only default builds.
   - path: apps/keep/src/bin/keep.rs
     action: modify
     section: logic
     impl_mode: hand-written
     anchor: ServeArgs
-    description: Add KEEP_LOG_FORMAT and KEEP_OTLP_ENDPOINT CLI/environment configuration, map Keep's values to service_http::HttpConfig and ServiceIdentity, and replace the local tracing-subscriber initialization in the default server path with shared observability initialization.
+    description: Add pretty/json log-format and optional OTLP endpoint settings under Keep-owned flags and environment names; initialize shared service-http observability with identity keep before server or operator logs rather than installing a local fmt subscriber.
+  - path: apps/keep/k8s/base/configmap.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Declare KEEP_LOG_FORMAT=json as the deployed server default while retaining overlay control over the existing config map.
+  - path: apps/keep/k8s/base/statefulset.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Project KEEP_LOG_FORMAT from keep-config into every serving pod so the deployment stdout is collector-compatible.
+  - path: apps/keep/k8s/operator/deployment.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Set KEEP_LOG_FORMAT=json for the controller process, which uses the same shared observability initialization as the server.
+  - path: apps/keep/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: configmap
+    description: Include KEEP_LOG_FORMAT=json in operator-rendered serving ConfigMaps and project that key into all rendered StatefulSet pods.
   - path: apps/keep/tests/structured_stdout_traceparent.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Start the compiled Keep server with JSON logging, issue valid, invalid, and absent traceparent HTTP requests, capture stdout, and assert axiom.service.log.v1 identity, W3C correlation behavior, and no Sift dependency.
+    description: Spawn the compiled Keep server with JSON logging, exercise valid invalid and absent W3C traceparent requests, and assert schema identity correlation and Sift agnosticism from captured stdout.
+  - path: apps/keep/tests/operator.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: render_emits_downward_api_statefulset
+    description: Assert operator-rendered ConfigMap and StatefulSet preserve the JSON logging key and environment projection.
   - path: apps/keep/README.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Document the standard --log-format and optional KEEP_OTLP_ENDPOINT operating controls, while stating that Sift collector endpoint, credentials, and delivery policy remain deployment-owned.
+    description: Document standard producer controls and state that Sift collector transport configuration remains deployment-owned rather than a Keep setting.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
