@@ -1,0 +1,1 @@
+"""FocusFlow domain vocabulary."""

@@ -3496,11 +3496,25 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
     run_slug_check(target, None, args.json)
 }
 
-/// Run `aw td ast <path>` — parse a TD spec into a `TDAst` and emit JSON.
+/// Run `aw td ast <path>` — parse a Markdown, Python-project, or Python UI TD
+/// into its inspectable IR and emit JSON.
 ///
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
 fn run_ast(args: AstArgs) -> Result<()> {
     let path = std::path::PathBuf::from(&args.path);
+    if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("py") {
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("read Python UI TD {}", path.display()))?;
+        let ir = crate::services::python_ui_td::lower_python_ui_td(&source)?;
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&ir)
+        } else {
+            serde_json::to_string(&ir)
+        }
+        .context("failed to serialise Python UI TD IR")?;
+        println!("{}", json);
+        return Ok(());
+    }
     if path.is_dir() && (path.join("src").is_dir() || path.join("pyproject.toml").is_file()) {
         let ir = crate::services::python_td::compile_python_td_project(&path)?;
         let json = if args.pretty {

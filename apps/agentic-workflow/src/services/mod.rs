@@ -26,6 +26,7 @@ pub mod python_td;
 pub mod python_td_rust_target;
 pub mod python_td_target;
 pub mod python_td_typescript_target;
+pub mod python_ui_td;
 pub mod reference_context_service;
 pub mod review_service;
 pub mod spec_service;
