@@ -750,6 +750,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
 #[cfg(feature = "operator")]
 async fn run_operator() -> Result<()> {
     tracing_subscriber::fmt()
@@ -759,6 +760,7 @@ async fn run_operator() -> Result<()> {
         .init();
     keep::operator::run().await
 }
+// </HANDWRITE>
 
 #[cfg(not(feature = "operator"))]
 async fn run_operator() -> Result<()> {
@@ -949,6 +951,7 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
 /// Run the keep server (the default, no-subcommand path).
 async fn serve_main(args: ServeArgs) -> Result<()> {
     // RUST_LOG wins; otherwise fall back to --log-level.
@@ -1070,6 +1073,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     info!("shutdown complete");
     Ok(())
 }
+// </HANDWRITE>
 
 fn derive_cluster_config(args: &ServeArgs) -> Result<keep::ClusterConfig> {
     if let Some(cluster) = local_topology_override(args) {
