@@ -39,5 +39,5 @@ resource "google_service_account_iam_member" "backup_workload_identity" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[${each.value}]"
 
-  depends_on = [google_container_cluster.acceptance]
+  depends_on = [data.google_container_cluster.acceptance]
 }

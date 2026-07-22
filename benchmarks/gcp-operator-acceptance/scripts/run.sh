@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$ACCEPTANCE_ROOT/../.." && pwd)"
 : "${PROJECT_ID:?Set PROJECT_ID explicitly to the disposable GCP billing project}"
 REGION="${REGION:-asia-east1}"
 GKE_ZONE="${GKE_ZONE:-asia-east1-a}"
+PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
 RUN_ID="${RUN_ID:-$(date -u +%m%d%H%M%S)}"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
@@ -58,6 +59,7 @@ cleanup() {
       REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
       GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
       ARTIFACT_REGISTRY_REPOSITORY="$ARTIFACT_REGISTRY_REPOSITORY" \
+      PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
       "$SCRIPT_DIR/cleanup.sh"; then
       echo "cleanup failed; Terraform state remains at $STATE_DIR" >&2
       ec=1
@@ -120,15 +122,8 @@ done
 gcloud artifacts repositories describe "$ARTIFACT_REGISTRY_REPOSITORY" \
   --project="$PROJECT_ID" --location="$REGION" --format=json \
   > "$EVIDENCE_DIR/preexisting-artifact-registry.json"
-require_empty_list "GKE cluster" gcloud container clusters list \
-  --project="$PROJECT_ID" --zone="$GKE_ZONE" \
-  --filter="name=axo-${RUN_ID}-gke" --format='value(name)'
 require_empty_list "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
   --filter="name=${PROJECT_ID}-axo-${RUN_ID}-backup" --format='value(name)'
-require_empty_list "node service account" gcloud iam service-accounts list \
-  --project="$PROJECT_ID" \
-  --filter="email:axo-${RUN_ID}-node@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --format='value(email)'
 require_empty_list "backup service account" gcloud iam service-accounts list \
   --project="$PROJECT_ID" \
   --filter="email:axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com" \
@@ -175,6 +170,15 @@ if [[ -s "$EVIDENCE_DIR/source-git-status.txt" ]]; then
   exit 1
 fi
 
+echo ">> persistent Standard GKE cluster bootstrap or reuse"
+PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" \
+  PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
+  "$SCRIPT_DIR/bootstrap-cluster.sh" > "$EVIDENCE_DIR/persistent-cluster-name.txt"
+test "$(sed -n '1p' "$EVIDENCE_DIR/persistent-cluster-name.txt")" = "$PERSISTENT_CLUSTER_NAME"
+gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
+  --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
+  > "$EVIDENCE_DIR/persistent-cluster.json"
+
 jq -n \
   --arg schema "axiom.gcp.operator.run.v1" \
   --arg project_id "$PROJECT_ID" \
@@ -184,8 +188,9 @@ jq -n \
   --arg git_sha "$GIT_SHA" \
   --arg image_tag "$IMAGE_TAG" \
   --arg registry "$REGISTRY" \
+  --arg cluster_name "$PERSISTENT_CLUSTER_NAME" \
   --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, started_at:$started_at}' \
+  '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, persistent_cluster:$cluster_name, run_id:$run_id, git_sha:$git_sha, git_dirty:false, image_tag:$image_tag, registry:$registry, started_at:$started_at}' \
   > "$EVIDENCE_DIR/run.json"
 
 echo ">> local deployment CLI build and render-surface preflight"
@@ -273,7 +278,7 @@ export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR
 "$SCRIPT_DIR/render-manifests.sh"
 
-echo ">> Terraform: one zonal Standard GKE cluster, one force-destroy backup bucket"
+echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$ACCEPTANCE_ROOT/environment" init -input=false
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
@@ -283,6 +288,7 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="project_id=$PROJECT_ID" \
   -var="region=$REGION" \
   -var="gke_zone=$GKE_ZONE" \
+  -var="cluster_name=$PERSISTENT_CLUSTER_NAME" \
   -var="run_id=$RUN_ID" \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
   -var="image_tag=$IMAGE_TAG"
@@ -292,6 +298,7 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
 
 cluster="$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")"
 test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_ZONE"
+test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
 test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
 gcloud container clusters get-credentials "$cluster" \
