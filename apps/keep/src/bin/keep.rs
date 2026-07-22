@@ -411,7 +411,7 @@ enum DockerfileVariant {
     Release,
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in keep.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in keep.rs is hand-written pending codegen support">
 #[derive(clap::Args, Debug)]
 struct ServeArgs {
     /// Bind host. k8s passes 0.0.0.0.
@@ -426,6 +426,18 @@ struct ServeArgs {
     /// `trace|debug|info|warn|error` (RUST_LOG overrides this).
     #[arg(long, env = "KEEP_LOG_LEVEL", default_value = "info")]
     log_level: String,
+    /// Stdout format: `pretty` for local use or collector-compatible `json`.
+    #[arg(
+        long,
+        env = "KEEP_LOG_FORMAT",
+        default_value = "pretty",
+        value_parser = ["pretty", "json"]
+    )]
+    log_format: String,
+    /// Optional shared OTLP endpoint for trace export; Sift collector routing
+    /// remains entirely deployment-owned.
+    #[arg(long, env = "KEEP_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
     /// Data directory for WAL + snapshots (the disk tier).
     #[arg(long, env = "KEEP_DATA_DIR", default_value = "./data")]
     data_dir: PathBuf,
