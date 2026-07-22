@@ -3,6 +3,8 @@
 
 use anyhow::{bail, Result};
 
+pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.0";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DockerfileVariant {
     Source,
@@ -43,12 +45,16 @@ pub fn crd_yaml() -> String {
 
 // <HANDWRITE gap="missing-generator:logic" tracker="1675" reason="Render validated Sift collector DaemonSet assets beside the existing operator layer.">
 pub fn operator_yaml(namespace: &str) -> Result<String> {
-    if namespace.trim().is_empty() {
-        bail!("operator namespace must not be empty");
-    }
+    operator_yaml_with_image(namespace, DEFAULT_OPERATOR_IMAGE)
+}
+
+pub fn operator_yaml_with_image(namespace: &str, image: &str) -> Result<String> {
+    validate_namespace(namespace)?;
+    validate_image(image)?;
     Ok(
         strip_ownership_markers(include_str!("../k8s/operator/operator.yaml"))
-            .replace("namespace: sift-system", &format!("namespace: {namespace}")),
+            .replace("sift-system", namespace)
+            .replace(DEFAULT_OPERATOR_IMAGE, image),
     )
 }
 
@@ -73,48 +79,45 @@ fn validate_manifest_value(name: &str, value: &str) -> Result<()> {
     }
     Ok(())
 }
+
+fn validate_namespace(namespace: &str) -> Result<()> {
+    if namespace.is_empty()
+        || namespace.len() > 63
+        || namespace.starts_with('-')
+        || namespace.ends_with('-')
+        || namespace.chars().any(|character| {
+            !character.is_ascii_lowercase() && !character.is_ascii_digit() && character != '-'
+        })
+    {
+        bail!("operator namespace must be a valid lowercase DNS label");
+    }
+    Ok(())
+}
+
+fn validate_image(image: &str) -> Result<()> {
+    validate_manifest_value("operator image", image)?;
+    if image.chars().any(|character| {
+        !character.is_ascii_alphanumeric()
+            && !matches!(character, '.' | '_' | '-' | '/' | ':' | '@')
+    }) {
+        bail!("operator image contains characters outside an OCI image reference");
+    }
+    Ok(())
+}
 // </HANDWRITE>
 
 pub fn instance_yaml(profile: InstanceProfile) -> String {
     match profile {
         InstanceProfile::Dev => strip_ownership_markers(include_str!("../k8s/instances/dev.yaml")),
-        InstanceProfile::Staging => r#"apiVersion: sift.axiom.dev/v1alpha1
-kind: Sift
-metadata: { name: sift, namespace: staging }
-spec:
-  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
-  replicasPerShard: 3
-  voterCount: 3
-  dataSize: 100Gi
-  auth: required
-"#
-        .to_string(),
-        InstanceProfile::Prod => r#"apiVersion: sift.axiom.dev/v1alpha1
-kind: Sift
-metadata: { name: sift, namespace: production }
-spec:
-  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
-  replicasPerShard: 3
-  voterCount: 3
-  dataSize: 500Gi
-  auth: required
-  backup:
-    schedule: "0 * * * *"
-    destination: REPLACE_ME__OFF_NODE_BACKUP_URI
-    retentionSecs: 604800
-"#
-        .to_string(),
-        InstanceProfile::Template => r#"apiVersion: sift.axiom.dev/v1alpha1
-kind: Sift
-metadata: { name: REPLACE_ME__NAME, namespace: REPLACE_ME__NAMESPACE }
-spec:
-  image: REPLACE_ME__IMAGE
-  replicasPerShard: REPLACE_ME__REPLICAS
-  voterCount: REPLACE_ME__VOTERS
-  dataSize: REPLACE_ME__DATA_SIZE
-  auth: required
-"#
-        .to_string(),
+        InstanceProfile::Staging => {
+            strip_ownership_markers(include_str!("../k8s/overlays/staging/sift.yaml"))
+        }
+        InstanceProfile::Prod => {
+            strip_ownership_markers(include_str!("../k8s/overlays/prod/sift.yaml"))
+        }
+        InstanceProfile::Template => {
+            strip_ownership_markers(include_str!("../k8s/overlays/template/sift.yaml"))
+        }
     }
 }
 

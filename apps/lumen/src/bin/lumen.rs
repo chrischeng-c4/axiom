@@ -95,8 +95,9 @@ enum Command {
     // @spec apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
     /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
-    /// and ship it to a destination (`file://`, `s3://`, or schema-only
-    /// `gs://`) via `libs/service-backup`. No new snapshot mechanism — this only
+    /// and ship it to a destination (`file://`, `s3://`, or `gs://`) via
+    /// `libs/service-backup`. GCS uses an explicit access token or GKE Workload
+    /// Identity. No new snapshot mechanism — this only
     /// schedules and transports the existing admin API. Typically invoked by
     /// the operator's optional backup CronJob (`spec.serving.backup`, see
     /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
@@ -206,6 +207,11 @@ struct K8sOperatorRenderArgs {
     /// Namespace that owns the operator control plane.
     #[arg(long, default_value = "lumen-system")]
     namespace: String,
+    /// Operator container image. Supply an immutable registry digest for
+    /// reproducible cluster deployment; the default preserves the checked-in
+    /// local-development manifest.
+    #[arg(long, default_value = "lumen:latest")]
+    image: String,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -388,8 +394,8 @@ struct BackupArgs {
     #[arg(long)]
     url: String,
     /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
-    /// schema-only `gs://bucket/prefix` (parsed, but the runner supports
-    /// `file://` and `s3://` sinks today).
+    /// `gs://bucket/prefix`. GCS uses an explicit access token or the
+    /// GCE/GKE metadata-server Workload Identity token.
     #[arg(long)]
     dest: String,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
@@ -1138,7 +1144,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
         K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(args) => {
-                let yaml = render_operator_yaml(&args.namespace);
+                let yaml = render_operator_yaml(&args.namespace, &args.image)?;
                 write_or_print(
                     args.out.as_deref(),
                     "operator.yaml",
@@ -1721,7 +1727,17 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn render_operator_yaml(namespace: &str) -> String {
+fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
+    if image.is_empty()
+        || image.starts_with('-')
+        || image
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        anyhow::bail!(
+            "operator image must be a non-empty, whitespace-free OCI image reference that does not start with '-'"
+        );
+    }
     let mut out = String::new();
     out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
@@ -1731,14 +1747,19 @@ fn render_operator_yaml(namespace: &str) -> String {
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+    let deployment = cli_std::artifact::replace_kubernetes_namespace(
         &cli_std::artifact::strip_source_ownership_markers(include_str!(
             "../../k8s/operator/deployment.yaml"
         )),
         "lumen-system",
         namespace,
-    ));
-    cli_std::artifact::ensure_trailing_newline(&out)
+    );
+    let checked_in_image = "          image: lumen:latest";
+    if !deployment.contains(checked_in_image) {
+        anyhow::bail!("checked-in operator manifest is missing its canonical image field");
+    }
+    out.push_str(&deployment.replacen(checked_in_image, &format!("          image: {image}"), 1));
+    Ok(cli_std::artifact::ensure_trailing_newline(&out))
 }
 
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {

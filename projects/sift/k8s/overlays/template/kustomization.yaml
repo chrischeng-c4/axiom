@@ -3,8 +3,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
-configMapGenerator:
-  - name: sift-instance-profile
-    literals:
-      - profile=template
+  - sift.yaml
 # HANDWRITE-END

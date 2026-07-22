@@ -9,7 +9,11 @@
 //! The objects mirror `k8s/base` + the staging/prod overlays exactly: a
 //! serving StatefulSet (always — its `volumeClaimTemplates`-backed `raft` PVC
 //! is the WAL's only durable home, even at `replicasPerShard:1`), its
-//! headless Service, a ClusterIP Service, ConfigMap, PDB, and ServiceAccount.
+//! headless Service, a ClusterIP Service, ConfigMap, PDB, serving
+//! ServiceAccount, and a dedicated backup ServiceAccount. The backup identity
+//! is intentionally cloud-neutral: deployment harnesses may annotate it for
+//! Workload Identity without giving object-storage credentials to serving
+//! pods.
 //! Stateful data pods are not a direct HPA target. The reconcile loop in [`super::reconcile`]
 //! server-side-applies whatever this returns.
 
@@ -146,6 +150,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     let headless = format!("{name}-headless");
     let mut out = vec![
         render::service_account(&cx, COMPONENT),
+        backup_service_account(&cx),
         serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
         render::headless_service_with_ports(
@@ -169,6 +174,23 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(cj);
     }
     out
+}
+
+/// A stable, per-instance identity for scheduled backup jobs.
+///
+/// It is rendered even when no backup schedule is currently configured. That
+/// keeps its lifecycle declarative across policy toggles and gives platform
+/// automation a stable cloud-neutral target for Workload Identity annotations.
+/// Like every other child, it is owned by the `Lumen` CR and is garbage
+/// collected with the instance.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+fn backup_service_account(cx: &RenderCtx<'_>) -> Value {
+    let name = format!("{}-backup", cx.name);
+    json!({
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": cx.meta(&name, BACKUP_COMPONENT),
+    })
 }
 
 /// The optional backup CronJob (#808): rendered only when
@@ -226,7 +248,7 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         env_from: vec![],
         volumes: vec![],
         volume_mounts: vec![],
-        service_account_name: Some(cx.name),
+        service_account_name: Some(&cron_name),
         cpu: "100m",
         memory: "128Mi",
         successful_jobs_history_limit: 3,

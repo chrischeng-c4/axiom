@@ -1,0 +1,14 @@
+# HANDWRITE-BEGIN gap="sift-kustomize-staging-instance" tracker="1606" reason="Keep staging on the supported 1x1 topology until Sift owns safe membership changes."
+apiVersion: sift.axiom.dev/v1alpha1
+kind: Sift
+metadata:
+  name: sift
+  namespace: staging
+spec:
+  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+  replicasPerShard: 1
+  voterCount: 1
+  dataSize: 100Gi
+  auth: required
+  tokensSecret: REPLACE_ME__SIFT_TOKENS_SECRET
+# HANDWRITE-END

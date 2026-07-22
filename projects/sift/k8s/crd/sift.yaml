@@ -23,21 +23,33 @@ spec:
               required: [image]
               properties:
                 image: { type: string }
-                replicasPerShard: { type: integer, minimum: 1 }
-                voterCount: { type: integer, minimum: 1 }
+                # Safe membership change is tracked separately; this GKE
+                # acceptance CRD intentionally admits only the proven 1x1 path.
+                replicasPerShard: { type: integer, minimum: 1, maximum: 1 }
+                voterCount: { type: integer, minimum: 1, maximum: 1 }
                 dataSize: { type: string }
                 auth: { type: string, enum: [off, required] }
                 tokensSecret: { type: string }
                 backup:
                   type: object
+                  required: [schedule, destination]
                   properties:
                     schedule: { type: string }
                     destination: { type: string }
                     retentionSecs: { type: integer, minimum: 1 }
+                    adminTokenSecret: { type: string }
             status:
               type: object
               properties:
                 phase: { type: string }
+                observedGeneration: { type: integer, format: int64 }
                 readyReplicas: { type: integer }
+                desiredShardCount: { type: integer, minimum: 0 }
+                currentShardCount: { type: integer, minimum: 0 }
+                desiredReplicasPerShard: { type: integer, minimum: 0 }
+                currentReadyReplicasPerShard: { type: integer, minimum: 0 }
+                backupPhase: { type: string }
+                backupMessage: { type: string }
+                message: { type: string }
       subresources:
         status: {}
