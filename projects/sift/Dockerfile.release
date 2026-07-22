@@ -1,28 +1,33 @@
 # HANDWRITE-BEGIN gap="sift-release-image-artifact" tracker="1606" reason="Provide the verified release-binary Sift image contract."
-FROM debian:bookworm-slim
+# Fetch the release asset in a disposable Debian stage, then run the fully
+# static musl binary in the same distroless base used by Lumen. GitHub's
+# Ubuntu release runners can advance past the glibc in a Debian runtime; musl
+# removes that coupling entirely.
+FROM debian:bookworm-slim AS fetch
 ARG SIFT_VERSION=REPLACE_ME
 ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && case "${TARGETARCH}" in \
-         amd64) target="x86_64-unknown-linux-gnu" ;; \
-         arm64) target="aarch64-unknown-linux-gnu" ;; \
+         amd64) target="x86_64-unknown-linux-musl" ;; \
+         arm64) target="aarch64-unknown-linux-musl" ;; \
          *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
     && release="https://github.com/chrischeng-c4/axiom/releases/download/sift@${SIFT_VERSION}/sift-${target}.tar.gz" \
     && curl -fsSL "${release}" -o /tmp/sift.tar.gz \
     && curl -fsSL "${release}.sha256" -o /tmp/sift.tar.gz.sha256 \
     && echo "$(cat /tmp/sift.tar.gz.sha256)  /tmp/sift.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/sift.tar.gz -C /tmp \
-    && install -m 755 "/tmp/sift-${target}/sift" /usr/local/bin/sift \
-    && rm -rf /tmp/sift.tar.gz /tmp/sift.tar.gz.sha256 "/tmp/sift-${target}"
+    && tar -xzf /tmp/sift.tar.gz -C /tmp --strip-components=1 "sift-${target}/sift" \
+    && /tmp/sift --version
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=fetch /tmp/sift /usr/local/bin/sift
 ENV SIFT_HOST=0.0.0.0 \
     SIFT_PORT=7380 \
     SIFT_DATA_DIR=/var/lib/sift \
     SIFT_LOG_FORMAT=json
 VOLUME ["/var/lib/sift"]
 EXPOSE 7380
-USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/sift"]
 CMD ["serve"]
 # HANDWRITE-END

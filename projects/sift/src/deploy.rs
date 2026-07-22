@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Result};
 
-pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.0";
+pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DockerfileVariant {
@@ -64,7 +64,7 @@ pub fn collector_yaml(namespace: &str, image: &str) -> Result<String> {
     Ok(
         strip_ownership_markers(include_str!("../k8s/collector/daemonset.yaml"))
             .replace("REPLACE_NAMESPACE", namespace)
-            .replace("ghcr.io/chrischeng-c4/axiom/sift:0.1.0", image),
+            .replace("ghcr.io/chrischeng-c4/axiom/sift:0.1.1", image),
     )
 }
 

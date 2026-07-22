@@ -5,7 +5,7 @@ metadata:
   name: sift
   namespace: default
 spec:
-  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.1
   replicasPerShard: 1
   voterCount: 1
   dataSize: 10Gi

@@ -5,7 +5,7 @@ metadata:
   name: sift
   namespace: staging
 spec:
-  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+  image: ghcr.io/chrischeng-c4/axiom/sift:0.1.1
   replicasPerShard: 1
   voterCount: 1
   dataSize: 100Gi

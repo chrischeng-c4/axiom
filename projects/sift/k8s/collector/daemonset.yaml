@@ -62,7 +62,7 @@ spec:
               mountPath: /var/lib/sift-collector
       containers:
         - name: collector
-          image: ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+          image: ghcr.io/chrischeng-c4/axiom/sift:0.1.1
           imagePullPolicy: IfNotPresent
           args:
             - collect

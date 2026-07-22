@@ -125,7 +125,7 @@ cargo build -p vat -p lumen -p sift --bins
 cargo test -p sift --test vat_lumen_observability_e2e vat_managed_lumen_stdout_reaches_real_sift_query -- --exact --nocapture
 cargo test -p sift --test collector_cri -- --nocapture
 cargo test -p sift --test deployment_cli
-sift k8s collector render --namespace sift-system --image ghcr.io/chrischeng-c4/axiom/sift:0.1.0
+sift k8s collector render --namespace sift-system --image ghcr.io/chrischeng-c4/axiom/sift:0.1.1
 ```
 
 The test starts real current-workspace VAT, Lumen, and Sift binaries. Its VAT
