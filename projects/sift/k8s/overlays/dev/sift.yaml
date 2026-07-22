@@ -9,5 +9,5 @@ spec:
   replicasPerShard: 1
   voterCount: 1
   dataSize: 10Gi
-  auth: off
+  auth: "off"
 # HANDWRITE-END
