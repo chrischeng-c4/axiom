@@ -53,20 +53,20 @@ search_probe() {
 }
 
 wait_for_gcs_object() {
-  local prefix="gs://${BACKUP_BUCKET}/lumen/${RUN_ID}"
+  local prefix="gs://${BACKUP_BUCKET}/lumen"
   local listing="$EVIDENCE_DIR/gcs/lumen-objects.txt"
   local deadline=$((SECONDS + 180))
   local first
   while (( SECONDS < deadline )); do
     gcloud storage ls --recursive "${prefix}/**" > "$listing" 2>/dev/null || true
-    first="$(sed -n '1p' "$listing")"
+    first="$(rg -F "/lumen/${RUN_ID}-" "$listing" | sed -n '1p' || true)"
     if [[ -n "$first" ]]; then
       printf '%s\n' "$first"
       return 0
     fi
     sleep 3
   done
-  echo "no Lumen backup object appeared below $prefix" >&2
+  echo "no Lumen backup object for run $RUN_ID appeared below $prefix" >&2
   return 1
 }
 

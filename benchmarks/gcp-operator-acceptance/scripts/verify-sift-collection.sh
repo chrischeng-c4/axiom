@@ -69,20 +69,20 @@ wait_for_collected_lumen_log() {
 }
 
 wait_for_gcs_object() {
-  local prefix="gs://${BACKUP_BUCKET}/sift/${RUN_ID}"
+  local prefix="gs://${BACKUP_BUCKET}/sift"
   local listing="$EVIDENCE_DIR/gcs/sift-objects.txt"
   local deadline=$((SECONDS + 180))
   local first
   while (( SECONDS < deadline )); do
     gcloud storage ls --recursive "${prefix}/**" > "$listing" 2>/dev/null || true
-    first="$(sed -n '1p' "$listing")"
+    first="$(rg -F "/sift/${RUN_ID}-" "$listing" | sed -n '1p' || true)"
     if [[ -n "$first" ]]; then
       printf '%s\n' "$first"
       return 0
     fi
     sleep 3
   done
-  echo "no Sift backup object appeared below $prefix" >&2
+  echo "no Sift backup object for run $RUN_ID appeared below $prefix" >&2
   return 1
 }
 
