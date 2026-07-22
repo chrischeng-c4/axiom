@@ -120,10 +120,11 @@ struct CompletionState {
 /// The optional local AOF the apply loop appends every applied record to (Stage
 /// 2 Phase 2f-3). Wrapped in a `Mutex` because the apply loop appends from the
 /// async task while the periodic checkpoint snapshotter calls `truncate_through`
-/// from another task; the lock is held only for the (buffered) append/truncate.
+/// from another task. The apply loop flushes each successfully applied record
+/// before acknowledging its request, making the AOF readable by an immediate
+/// replacement process; the everysec fsync remains off the normal write path.
 /// `None` on the default / non-AOF path, so `start_from` is byte-identical to
-/// today. The everysec fsync runs off the hot path via `maybe_sync` (driven by
-/// the loop after each batch), so an append never blocks on the disk.
+/// today.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
@@ -283,26 +284,34 @@ impl WriteCoordinator {
                                 }
                             };
 
-                            for (seq, outcome, aof_rec) in results {
-                                let applied_ok = outcome.is_ok();
+                            for (seq, mut outcome, aof_rec) in results {
                                 if let Err(e) = &outcome {
                                     tracing::warn!(seq, error = %e, "apply error (entry no-ops)");
                                 }
-                                loop_coord.complete(seq, outcome);
-                                // AOF append AFTER apply + advancing `applied`: the log mirrors
-                                // exactly what the engine folded in. A failed apply no-ops the
-                                // engine, so it is NOT appended.
-                                if applied_ok {
+                                // The AOF is the sole recoverable tail in the embedded segment
+                                // path. `AofWriter` deliberately buffers writes, so completing
+                                // the HTTP waiter before `flush` creates a restart window: a pod
+                                // can be deleted after a 2xx response while the record still only
+                                // lives in this process's BufWriter. Persist it through the OS
+                                // before publishing `applied` or acknowledging the caller. The
+                                // everysec fsync policy remains unchanged (normal crash RPO <=1s),
+                                // while a graceful SIGTERM performs a full sync in `serve()`.
+                                if outcome.is_ok() {
                                     if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
-                                        let mut w = aof.lock().expect("aof writer poisoned");
-                                        if let Err(e) = w.append(seq, &rec) {
-                                            tracing::warn!(seq, error = %e, "AOF append failed");
+                                        let persisted = {
+                                            let mut writer = aof.lock().expect("aof writer poisoned");
+                                            writer
+                                                .append(seq, &rec)
+                                                .and_then(|()| writer.flush())
+                                                .and_then(|()| writer.maybe_sync())
+                                        };
+                                        if let Err(e) = persisted {
+                                            tracing::warn!(seq, error = %e, "AOF persist failed");
+                                            outcome = Err(e.context("persist applied record to local AOF"));
                                         }
-                                        // everysec fsync, off the hot path (no-op unless dirty AND
-                                        // ≥1s elapsed; Always already synced).
-                                        let _ = w.maybe_sync();
                                     }
                                 }
+                                loop_coord.complete(seq, outcome);
                             }
                         }
                         Err(e) => tracing::warn!(error = %e, "apply loop: stream item error"),
@@ -502,6 +511,58 @@ mod tests {
 
         // The write is visible via a direct engine read (read-your-write).
         assert_eq!(engine.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    /// The embedded segment path may be replaced immediately after its write
+    /// endpoint returns. Its AOF must therefore be readable *at acknowledgement
+    /// time*, rather than waiting for the every-second fsync tick or writer drop.
+    /// This is the exact local half of the single-replica pod-restart contract:
+    /// fresh engine -> replay local AOF -> collection and indexed document.
+    #[tokio::test]
+    async fn embedded_aof_is_replayable_when_submit_acknowledges_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start_from_with_aof(wal, engine, 0, aof);
+
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+        coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "u1".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("u1@example.test".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap();
+
+        // Do not flush or sync the test's writer: a returned write itself is
+        // the contract boundary. Before the fix this reader saw an empty AOF
+        // because both frames remained in the process-local BufWriter.
+        let mut seqs = Vec::new();
+        crate::aof::AofReader::replay(&aof_path, 0, |seq, _| seqs.push(seq)).unwrap();
+        assert_eq!(seqs, vec![1, 2]);
+
+        let restarted = Arc::new(Engine::new());
+        assert_eq!(
+            crate::aof::replay_aof_into(&restarted, &aof_path, 0).unwrap(),
+            2
+        );
+        assert_eq!(restarted.stats("u").unwrap().documents_indexed, 1);
     }
 
     #[tokio::test]
