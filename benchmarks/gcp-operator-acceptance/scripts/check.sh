@@ -6,6 +6,10 @@ ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 for script in "$SCRIPT_DIR"/*.sh; do
   bash -n "$script"
+  [[ -x "$script" ]] || {
+    echo "acceptance script is not executable: $script" >&2
+    exit 1
+  }
 done
 jq empty "$ACCEPTANCE_ROOT/evidence/schema.json"
 terraform -chdir="$ACCEPTANCE_ROOT/environment" fmt -check -recursive
