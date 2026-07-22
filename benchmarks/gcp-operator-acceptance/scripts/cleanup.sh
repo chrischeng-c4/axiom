@@ -24,9 +24,9 @@ mkdir -p "$EVIDENCE_DIR/kubernetes"
 capture_failure_evidence() {
   kubectl get deployment,statefulset,cronjob,job,pod,pvc -A -o json \
     > "$EVIDENCE_DIR/kubernetes/workloads-before-cleanup.json" 2>/dev/null || true
-  kubectl logs -n lumen-system deployment/lumen-operator --tail=500 \
+  kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
     > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
-  kubectl logs -n sift-system deployment/sift-operator --tail=500 \
+  kubectl logs -n sift-system deployment/sift-operator --tail=500 --request-timeout=15s \
     > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
 }
 
