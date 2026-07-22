@@ -65,8 +65,29 @@ delete_run_image() {
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
-  kubectl delete namespace lumen lumen-system sift sift-system \
-    --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  namespaces=(lumen lumen-system sift sift-system)
+  for namespace in "${namespaces[@]}"; do
+    kubectl delete namespace "$namespace" --ignore-not-found --wait=false \
+      >/dev/null 2>&1 || true
+  done
+  # Namespace deletion can outlive kubectl's delete response while the
+  # apiserver clears finalizers.  Do not run the no-leftovers gate against that
+  # transient state: wait on the actual namespace objects instead.
+  namespace_deadline=$((SECONDS + 300))
+  while true; do
+    remaining_namespaces=()
+    for namespace in "${namespaces[@]}"; do
+      if kubectl get namespace "$namespace" --no-headers >/dev/null 2>&1; then
+        remaining_namespaces+=("$namespace")
+      fi
+    done
+    [[ "${#remaining_namespaces[@]}" == "0" ]] && break
+    if (( SECONDS >= namespace_deadline )); then
+      echo "namespaces still terminating after cleanup wait: ${remaining_namespaces[*]}" >&2
+      break
+    fi
+    sleep 5
+  done
   kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
     --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
 fi
