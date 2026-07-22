@@ -66,6 +66,24 @@ search_probe() {
     --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-${RUN_ID}\"}},\"limit\":10}"
 }
 
+wait_for_gcs_object() {
+  local prefix="gs://${BACKUP_BUCKET}/lumen"
+  local listing="$EVIDENCE_DIR/gcs/lumen-objects.txt"
+  local deadline=$((SECONDS + 180))
+  local first
+  while (( SECONDS < deadline )); do
+    gcloud storage ls --recursive "${prefix}/**" > "$listing" 2>/dev/null || true
+    first="$(rg -F "/lumen/${RUN_ID}-" "$listing" | sed -n '1p' || true)"
+    if [[ -n "$first" ]]; then
+      printf '%s\n' "$first"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "no Lumen backup object for run $RUN_ID appeared below $prefix" >&2
+  return 1
+}
+
 wait_for_split() {
   local deadline=$((SECONDS + 900))
   local shard_count workflow_phase status_phase desired ready pvc_count map_version converged_map_version
