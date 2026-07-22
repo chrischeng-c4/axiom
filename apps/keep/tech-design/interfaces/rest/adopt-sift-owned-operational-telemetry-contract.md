@@ -97,7 +97,13 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: configmap
-    description: Include KEEP_LOG_FORMAT=json in operator-rendered serving ConfigMaps and project that key into all rendered StatefulSet pods.
+    description: Include KEEP_LOG_FORMAT=json in operator-rendered serving ConfigMaps.
+  - path: apps/keep/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: statefulset
+    description: Project KEEP_LOG_FORMAT from the rendered ConfigMap into all operator-rendered StatefulSet pods.
   - path: apps/keep/tests/structured_stdout_traceparent.rs
     action: create
     section: unit-test
