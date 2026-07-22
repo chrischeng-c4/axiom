@@ -29,6 +29,19 @@ fn help_ships_standard_and_replay_commands() {
 }
 
 #[test]
+fn serve_exposes_shared_structured_log_configuration() {
+    let output = Command::new(tape_bin())
+        .args(["serve", "--help"])
+        .output()
+        .expect("run tape serve --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--log-format"));
+    assert!(stdout.contains("pretty"));
+    assert!(stdout.contains("json"));
+}
+
+#[test]
 fn spec_routes_list_topic_contract() {
     let output = Command::new(tape_bin())
         .args(["spec", "--format", "routes"])
@@ -38,6 +51,7 @@ fn spec_routes_list_topic_contract() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("/topics/{topic}/append"));
     assert!(stdout.contains("/topics/{topic}/replay"));
+    assert!(stdout.contains("/topics/{topic}/replay/stream"));
     assert!(!stdout.contains("/v1/"));
     assert!(stdout.contains("/checkpoint"));
     assert!(stdout.contains("/healthz"));
@@ -62,8 +76,9 @@ fn subscription_cli_surface() {
         .expect("run tape subscription create --help");
     assert!(create_help.status.success());
     let stdout = String::from_utf8_lossy(&create_help.stdout);
-    assert!(stdout.contains("--pull"));
-    assert!(stdout.contains("--push <ENDPOINT>"));
+    assert!(stdout.contains("--store"));
+    assert!(!stdout.contains("--push"));
+    assert!(!stdout.contains("--pull"));
 
     let invalid = Command::new(tape_bin())
         .args([
@@ -71,7 +86,6 @@ fn subscription_cli_surface() {
             "create",
             "orders",
             "worker-a",
-            "--pull",
             "--push",
             "https://hooks.example.invalid/events",
         ])
@@ -92,46 +106,23 @@ fn subscription_resource_roundtrip() {
     ));
     let store_arg = store.to_str().unwrap();
 
-    let pull = Command::new(tape_bin())
+    let create = Command::new(tape_bin())
         .args([
             "subscription",
             "create",
             "orders",
             "worker-a",
-            "--pull",
             "--store",
             store_arg,
         ])
         .output()
         .expect("create pull subscription");
     assert!(
-        pull.status.success(),
+        create.status.success(),
         "{}",
-        String::from_utf8_lossy(&pull.stderr)
+        String::from_utf8_lossy(&create.stderr)
     );
-    assert!(String::from_utf8_lossy(&pull.stdout).contains("\"mode\": \"pull\""));
-
-    let push = Command::new(tape_bin())
-        .args([
-            "subscription",
-            "create",
-            "orders",
-            "webhook",
-            "--push",
-            "https://hooks.example.invalid/tape",
-            "--store",
-            store_arg,
-        ])
-        .output()
-        .expect("create push subscription");
-    assert!(
-        push.status.success(),
-        "{}",
-        String::from_utf8_lossy(&push.stderr)
-    );
-    let push_stdout = String::from_utf8_lossy(&push.stdout);
-    assert!(push_stdout.contains("\"mode\": \"push\""));
-    assert!(push_stdout.contains("hooks.example.invalid/tape"));
+    assert!(String::from_utf8_lossy(&create.stdout).contains("\"name\": \"worker-a\""));
 
     let list = Command::new(tape_bin())
         .args(["subscription", "list", "orders", "--store", store_arg])
@@ -140,7 +131,6 @@ fn subscription_resource_roundtrip() {
     assert!(list.status.success());
     let list_stdout = String::from_utf8_lossy(&list.stdout);
     assert!(list_stdout.contains("worker-a"));
-    assert!(list_stdout.contains("webhook"));
 
     let show = Command::new(tape_bin())
         .args([
@@ -176,7 +166,7 @@ fn subscription_resource_roundtrip() {
     assert!(remaining.status.success());
     let remaining_stdout = String::from_utf8_lossy(&remaining.stdout);
     assert!(!remaining_stdout.contains("worker-a"));
-    assert!(remaining_stdout.contains("webhook"));
+    assert!(remaining_stdout.contains("\"subscriptions\": []"));
 
     let _ = std::fs::remove_file(store);
 }
@@ -199,7 +189,7 @@ fn subscription_spec_inventory() {
     assert!(openapi.status.success());
     let openapi_stdout = String::from_utf8_lossy(&openapi.stdout);
     assert!(openapi_stdout.contains("SubscriptionCreateRequest"));
-    assert!(openapi_stdout.contains("DeliveryConfig"));
+    assert!(!openapi_stdout.contains("DeliveryConfig"));
 
     let schema = Command::new(tape_bin())
         .args(["spec", "--format", "json-schema"])
@@ -208,7 +198,7 @@ fn subscription_spec_inventory() {
     assert!(schema.status.success());
     let schema_stdout = String::from_utf8_lossy(&schema.stdout);
     assert!(schema_stdout.contains("SubscriptionListResponse"));
-    assert!(schema_stdout.contains("\"mode\""));
+    assert!(!schema_stdout.contains("\"mode\""));
 }
 
 #[test]
@@ -243,7 +233,6 @@ fn pull_subscription_cli_roundtrip() {
             "create",
             "orders",
             "worker-a",
-            "--pull",
             "--store",
             store_arg,
         ])

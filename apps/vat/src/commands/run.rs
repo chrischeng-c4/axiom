@@ -11,13 +11,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(unix)]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
+#[cfg(unix)]
+use signal_hook::{
+    consts::signal::{SIGINT, SIGTERM},
+    low_level::{register, unregister},
+    SigId,
+};
 use walkdir::WalkDir;
 
 use crate::cluster::{self, ClusterSpec, ResolvedBackend};
@@ -87,9 +97,131 @@ fn gpu_satisfied(_gpu: GpuRequest, isolation: Isolation, info: &gpu::GpuInfo) ->
     info.accessible && isolation != Isolation::MicroVm
 }
 
+#[derive(Debug, Clone)]
+struct RunInterrupted {
+    signal: i32,
+    reason: String,
+}
+
+impl RunInterrupted {
+    fn new(signal: i32) -> Self {
+        Self {
+            signal,
+            reason: format!("received {} ({signal})", signal_name(signal)),
+        }
+    }
+
+    fn exit_code(&self) -> i32 {
+        128 + self.signal
+    }
+}
+
+impl std::fmt::Display for RunInterrupted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for RunInterrupted {}
+
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        libc::SIGINT => "SIGINT",
+        libc::SIGTERM => "SIGTERM",
+        _ => "signal",
+    }
+}
+
+fn run_interruption(error: &anyhow::Error) -> Option<RunInterrupted> {
+    error.downcast_ref::<RunInterrupted>().cloned()
+}
+
+/// Scoped signal observer for one `vat run` invocation. The handler thread
+/// records only the first SIGINT/SIGTERM; the ordinary run thread remains the
+/// sole owner of process cleanup and metadata persistence.
+#[cfg(unix)]
+struct RunCancellation {
+    first_signal: Arc<AtomicI32>,
+    registrations: Vec<SigId>,
+}
+
+#[cfg(unix)]
+impl RunCancellation {
+    fn new() -> Result<Self> {
+        let first_signal = Arc::new(AtomicI32::new(0));
+        let mut registrations = Vec::new();
+        for signal in [SIGINT, SIGTERM] {
+            let handler_signal = Arc::clone(&first_signal);
+            let registration = unsafe {
+                register(signal, move || {
+                    let _ = handler_signal.compare_exchange(
+                        0,
+                        signal,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                })
+            };
+            match registration {
+                Ok(registration) => registrations.push(registration),
+                Err(error) => {
+                    for registration in registrations {
+                        unregister(registration);
+                    }
+                    return Err(error).context("install scoped vat run cancellation handlers");
+                }
+            }
+        }
+        Ok(Self {
+            first_signal,
+            registrations,
+        })
+    }
+
+    fn received(&self) -> Option<i32> {
+        let signal = self.first_signal.load(Ordering::Acquire);
+        (signal != 0).then_some(signal)
+    }
+
+    fn check(&self) -> Result<()> {
+        match self.received() {
+            Some(signal) => Err(RunInterrupted::new(signal).into()),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RunCancellation {
+    fn drop(&mut self) {
+        for registration in self.registrations.drain(..) {
+            unregister(registration);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct RunCancellation;
+
+#[cfg(not(unix))]
+impl RunCancellation {
+    fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn received(&self) -> Option<i32> {
+        None
+    }
+
+    fn check(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 pub fn exec(args: Args) -> Result<ExitCode> {
+    let cancellation = RunCancellation::new()?;
     let Args {
         target,
         base,
@@ -124,46 +256,55 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             if compose_handoff.is_some() {
                 bail!("compose handoff may only launch a configured runner");
             }
-            exec_direct(DirectArgs {
-                program,
-                program_args,
+            exec_direct(
+                DirectArgs {
+                    program,
+                    program_args,
+                    base,
+                    from,
+                    name,
+                    isolation,
+                    gpu,
+                    microvm_image,
+                    json,
+                    plan,
+                },
+                &cancellation,
+            )
+        }
+        Target::Runner { runner_ids } => exec_runner(
+            RunnerArgs {
                 base,
                 from,
                 name,
                 isolation,
                 gpu,
                 microvm_image,
-                json,
+                runner_ids,
                 plan,
-            })
-        }
-        Target::Runner { runner_ids } => exec_runner(RunnerArgs {
-            base,
-            from,
-            name,
-            isolation,
-            gpu,
-            microvm_image,
-            runner_ids,
-            plan,
-            keep,
-            compose_handoff,
-        }),
+                keep,
+                compose_handoff,
+            },
+            &cancellation,
+        ),
         Target::Scenario { scenario_id } => {
             if compose_handoff.is_some() {
                 bail!("compose handoff may only launch a configured runner");
             }
-            exec_scenario(ScenarioArgs {
-                base,
-                from,
-                name,
-                isolation,
-                gpu,
-                microvm_image,
-                scenario_id,
-                plan,
-                keep,
-            })
+            exec_scenario(
+                ScenarioArgs {
+                    base,
+                    from,
+                    name,
+                    isolation,
+                    gpu,
+                    microvm_image,
+                    scenario_id,
+                    plan,
+                    keep,
+                },
+                &cancellation,
+            )
         }
     }
 }
@@ -206,7 +347,7 @@ struct ScenarioArgs {
     keep: Option<RetentionPolicy>,
 }
 
-fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
+fn exec_direct(args: DirectArgs, cancellation: &RunCancellation) -> Result<ExitCode> {
     let gpu_info = gpu::detect();
     if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
         bail!(
@@ -294,13 +435,46 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
     for (key, value) in &spec.env {
         cmd.env(key, value);
     }
-    let status = cmd
-        .status()
-        .with_context(|| format!("spawn `{prog}` inside vat rootfs"))?;
+    set_process_group(&mut cmd);
+    let outcome = (|| -> Result<ExitStatus> {
+        cancellation.check()?;
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("spawn `{prog}` inside vat rootfs"))?;
+        let mut child = OwnedProcessGroup::new(child);
+        wait_owned_process(&mut child, "direct vat run", cancellation)
+    })();
     let duration_ms = started.elapsed().as_millis() as u64;
-    let code = status.code().unwrap_or(-1);
+    let (code, interruption) = match outcome {
+        Ok(status) => match cancellation.received() {
+            Some(signal) => {
+                let interruption = RunInterrupted::new(signal);
+                (interruption.exit_code(), Some(interruption))
+            }
+            None => (status.code().unwrap_or(-1), None),
+        },
+        Err(error) => match run_interruption(&error) {
+            Some(interruption) => (interruption.exit_code(), Some(interruption)),
+            None => {
+                vat.meta.status = Status::Exited { code: -1 };
+                if let Some(run) = vat.meta.last_run.as_mut() {
+                    run.finished_at = Some(Utc::now());
+                    run.exit_code = Some(-1);
+                    run.duration_ms = Some(duration_ms);
+                }
+                vat.save()?;
+                return Err(error);
+            }
+        },
+    };
 
-    vat.meta.status = Status::Exited { code };
+    vat.meta.status = match interruption.as_ref() {
+        Some(interruption) => Status::Interrupted {
+            signal: interruption.signal,
+            reason: interruption.reason.clone(),
+        },
+        None => Status::Exited { code },
+    };
     if let Some(run) = vat.meta.last_run.as_mut() {
         run.finished_at = Some(Utc::now());
         run.exit_code = Some(code);
@@ -311,10 +485,20 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
     vat.log(
         Event::new(
             EventKind::RunFinished,
-            format!("exit {code} in {duration_ms}ms · {}", changes.oneline()),
+            match interruption.as_ref() {
+                Some(interruption) => format!(
+                    "interrupted by {} in {duration_ms}ms · {}",
+                    signal_name(interruption.signal),
+                    changes.oneline()
+                ),
+                None => format!("exit {code} in {duration_ms}ms · {}", changes.oneline()),
+            },
         )
         .with_data(serde_json::json!({
             "exit_code": code,
+            "interrupted": interruption.is_some(),
+            "signal": interruption.as_ref().map(|value| value.signal),
+            "reason": interruption.as_ref().map(|value| value.reason.as_str()),
             "duration_ms": duration_ms,
             "changes": { "added": changes.added.len(), "modified": changes.modified.len(), "deleted": changes.deleted.len() },
         })),
@@ -329,7 +513,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
     Ok(process_exit_code(code))
 }
 
-fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
+fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
     let retention = args.keep.unwrap_or(cfg.workspace.keep);
@@ -475,36 +659,84 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         format!("runner: {joined_ids}"),
     ))?;
 
-    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false, retention);
+    let result = run_configured(
+        &mut vat,
+        &cfg,
+        &runners,
+        &logs_dir,
+        &[],
+        false,
+        retention,
+        cancellation,
+    );
+    let mut interruption = None;
+    let mut run_error = None;
     let mut code = match result {
-        Ok(code) => code,
+        Ok(code) => match cancellation.received() {
+            Some(signal) => {
+                let observed = RunInterrupted::new(signal);
+                let code = observed.exit_code();
+                interruption = Some(observed);
+                code
+            }
+            None => code,
+        },
+        Err(err) if run_interruption(&err).is_some() => {
+            let observed = run_interruption(&err).expect("checked interruption");
+            let code = observed.exit_code();
+            interruption = Some(observed);
+            code
+        }
         Err(err) => {
-            emit_jsonl(serde_json::json!({
-                "type": "error",
-                "code": "run_failed",
-                "message": err.to_string(),
-            }))?;
-            record_runner_failure(&mut vat, &runners[0], &logs_dir, &err.to_string())?;
+            let message = err.to_string();
+            record_runner_failure(&mut vat, &runners[0], &logs_dir, &message)?;
+            run_error = Some(message);
             -1
         }
     };
     let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
-    if let Some(message) = cleanup_unconfirmed.as_deref() {
-        emit_jsonl(serde_json::json!({
-            "type": "error",
-            "code": "microvm_cleanup_unconfirmed",
-            "message": message,
-        }))?;
+    if cleanup_unconfirmed.is_some() && interruption.is_none() {
         // A runner that passed cannot make an unremoved MicroVM safe to
         // forget. Surface the lifecycle failure and retain its durable name
         // and cleanup evidence for a later retry.
         code = -1;
     }
 
-    vat.meta.status = Status::Exited { code };
+    if let Some(interruption) = interruption.as_ref() {
+        record_runner_interruption(&mut vat, &runners, &logs_dir, interruption)?;
+    }
+    vat.meta.status = match interruption.as_ref() {
+        Some(interruption) => Status::Interrupted {
+            signal: interruption.signal,
+            reason: interruption.reason.clone(),
+        },
+        None => Status::Exited { code },
+    };
     vat.save()?;
+    if let Some(interruption) = interruption.as_ref() {
+        emit_run_interrupted(&vat, interruption)?;
+    }
+    if let Some(message) = run_error.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "run_failed",
+            "message": message,
+        }))?;
+    }
+    if let Some(message) = cleanup_unconfirmed.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
+    }
     let state = vat.project()?;
-    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
+    let should_remove = should_remove_vat(
+        &retention,
+        code,
+        cleanup_unconfirmed.is_some(),
+        interruption.is_some(),
+    );
 
     if should_remove {
         let _ = store::remove(&state.id);
@@ -535,6 +767,9 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         "runners": runner_results,
         "ok": code == 0,
         "exit_code": code,
+        "lifecycle": if interruption.is_some() { "interrupted" } else { "exited" },
+        "signal": interruption.as_ref().map(|value| value.signal),
+        "reason": interruption.as_ref().map(|value| value.reason.as_str()),
         "state": if kept { "kept" } else { "removed" },
         "inspect": if kept {
             serde_json::json!({
@@ -550,7 +785,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     Ok(process_exit_code(code))
 }
 
-fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
+fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
     let retention = args.keep.unwrap_or(cfg.workspace.keep);
@@ -705,33 +940,73 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         &extra_service_ids,
         scenario.network == ScenarioNetworkMode::Hermetic,
         retention,
+        cancellation,
     );
+    let mut interruption = None;
+    let mut run_error = None;
     let mut code = match result {
-        Ok(code) => code,
+        Ok(code) => match cancellation.received() {
+            Some(signal) => {
+                let observed = RunInterrupted::new(signal);
+                let code = observed.exit_code();
+                interruption = Some(observed);
+                code
+            }
+            None => code,
+        },
+        Err(err) if run_interruption(&err).is_some() => {
+            let observed = run_interruption(&err).expect("checked interruption");
+            let code = observed.exit_code();
+            interruption = Some(observed);
+            code
+        }
         Err(err) => {
-            emit_jsonl(serde_json::json!({
-                "type": "error",
-                "code": "run_failed",
-                "message": err.to_string(),
-            }))?;
-            record_runner_failure(&mut vat, &runner, &logs_dir, &err.to_string())?;
+            let message = err.to_string();
+            record_runner_failure(&mut vat, &runner, &logs_dir, &message)?;
+            run_error = Some(message);
             -1
         }
     };
     let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
+    if cleanup_unconfirmed.is_some() && interruption.is_none() {
+        code = -1;
+    }
+
+    if let Some(interruption) = interruption.as_ref() {
+        record_runner_interruption(&mut vat, &runners, &logs_dir, interruption)?;
+    }
+    vat.meta.status = match interruption.as_ref() {
+        Some(interruption) => Status::Interrupted {
+            signal: interruption.signal,
+            reason: interruption.reason.clone(),
+        },
+        None => Status::Exited { code },
+    };
+    vat.save()?;
+    if let Some(interruption) = interruption.as_ref() {
+        emit_run_interrupted(&vat, interruption)?;
+    }
+    if let Some(message) = run_error.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "run_failed",
+            "message": message,
+        }))?;
+    }
     if let Some(message) = cleanup_unconfirmed.as_deref() {
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "microvm_cleanup_unconfirmed",
             "message": message,
         }))?;
-        code = -1;
     }
-
-    vat.meta.status = Status::Exited { code };
-    vat.save()?;
     let state = vat.project()?;
-    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
+    let should_remove = should_remove_vat(
+        &retention,
+        code,
+        cleanup_unconfirmed.is_some(),
+        interruption.is_some(),
+    );
     if should_remove {
         let _ = store::remove(&state.id);
     }
@@ -744,6 +1019,9 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         "runner": runner.id.as_str(),
         "ok": code == 0,
         "exit_code": code,
+        "lifecycle": if interruption.is_some() { "interrupted" } else { "exited" },
+        "signal": interruption.as_ref().map(|value| value.signal),
+        "reason": interruption.as_ref().map(|value| value.reason.as_str()),
         "state": if kept { "kept" } else { "removed" },
         "inspect": if kept {
             serde_json::json!({
@@ -926,7 +1204,9 @@ fn run_configured(
     extra_service_ids: &[String],
     force_hermetic_proxy: bool,
     retention: RetentionPolicy,
+    cancellation: &RunCancellation,
 ) -> Result<i32> {
+    cancellation.check()?;
     let rootfs = vat.rootfs();
     let cwd = rootfs.join(&vat.meta.spec.workdir);
     std::fs::create_dir_all(&cwd).with_context(|| format!("create {}", cwd.display()))?;
@@ -961,6 +1241,7 @@ fn run_configured(
     let mut service_plans = Vec::new();
     let mut run_env = vat.meta.spec.env.clone();
     for service in ordered_required_services(cfg, &service_ids)? {
+        cancellation.check()?;
         let plan = prepare_service(vat, cfg, service, force_hermetic_proxy)?;
         for (key, value) in &plan.env {
             run_env.insert(key.clone(), value.clone());
@@ -981,6 +1262,7 @@ fn run_configured(
     persist_scenario_topology(vat, cfg, &service_plans, force_hermetic_proxy)?;
 
     for step in &cfg.setup {
+        cancellation.check()?;
         if !config::should_run_setup(&rootfs, step) {
             continue;
         }
@@ -992,11 +1274,22 @@ fn run_configured(
             &run_env,
             sandbox_backend.as_ref(),
             &rootfs,
+            cancellation,
         )?;
     }
 
     let mut services = Vec::new();
-    for plan in &service_plans {
+    for plan in &mut service_plans {
+        if let Err(error) = cancellation.check() {
+            let interruption = run_interruption(&error);
+            finalize_services_and_persist(
+                vat,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
+            )?;
+            return Err(error);
+        }
         let handle = match start_service(
             vat,
             plan,
@@ -1008,8 +1301,12 @@ fn run_configured(
         ) {
             Ok(handle) => handle,
             Err(err) => {
-                stop_services(&mut services, should_delete_clusters(&retention, -1));
-                persist_services(vat, &services)?;
+                finalize_services_and_persist(
+                    vat,
+                    &mut services,
+                    should_delete_clusters(&retention, -1),
+                    None,
+                )?;
                 return Err(err);
             }
         };
@@ -1022,14 +1319,23 @@ fn run_configured(
             // A failed metadata write is itself terminal, but the service has
             // already launched. Tear it down before returning so this early
             // persistence checkpoint cannot create an untracked MicroVM.
-            stop_services(&mut services, should_delete_clusters(&retention, -1));
-            let _ = persist_services(vat, &services);
+            finalize_services_and_persist(
+                vat,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                None,
+            )?;
             return Err(err);
         }
         let last = services.len() - 1;
-        if let Err(err) = wait_for_services(vat, &mut services[last..]) {
-            stop_services(&mut services, should_delete_clusters(&retention, -1));
-            persist_services(vat, &services)?;
+        if let Err(err) = wait_for_services(vat, &mut services[last..], cancellation) {
+            let interruption = run_interruption(&err);
+            finalize_services_and_persist(
+                vat,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
+            )?;
             return Err(err);
         }
         persist_services(vat, &services)?;
@@ -1041,6 +1347,17 @@ fn run_configured(
     let single = runners.len() == 1;
     let mut procs = Vec::new();
     for runner in runners {
+        if let Some(signal) = cancellation.received() {
+            let interruption = RunInterrupted::new(signal);
+            finalize_configured_children(
+                vat,
+                &mut procs,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                Some(&interruption),
+            )?;
+            return Err(interruption.into());
+        }
         emit_jsonl(serde_json::json!({
             "type": "runner",
             "id": runner.id.as_str(),
@@ -1057,9 +1374,13 @@ fn run_configured(
         ) {
             Ok(proc) => procs.push(proc),
             Err(err) => {
-                kill_runner_processes(&mut procs);
-                stop_services(&mut services, should_delete_clusters(&retention, -1));
-                persist_services(vat, &services)?;
+                finalize_configured_children(
+                    vat,
+                    &mut procs,
+                    &mut services,
+                    should_delete_clusters(&retention, -1),
+                    None,
+                )?;
                 return Err(err);
             }
         }
@@ -1080,6 +1401,7 @@ fn run_configured(
             exit_code: None,
             duration_ms: None,
             pid: Some(proc.child.id()),
+            cleanup_error: None,
             stdout_log: proc.stdout_log.clone(),
             stderr_log: proc.stderr_log.clone(),
         })
@@ -1088,36 +1410,76 @@ fn run_configured(
         test_run.runner = interim_records.first().cloned();
         test_run.runners = interim_records.clone();
     }
-    vat.save()?;
+    if let Err(error) = vat.save() {
+        finalize_configured_children(
+            vat,
+            &mut procs,
+            &mut services,
+            should_delete_clusters(&retention, -1),
+            None,
+        )?;
+        return Err(error);
+    }
 
     let stop_request = detached_compose_stop_request_path(vat);
-    let records = wait_runner_processes(procs, &stop_request)?;
+    let records = match wait_runner_processes(&mut procs, &stop_request, cancellation) {
+        Ok(records) => records,
+        Err(error) => {
+            let interruption = run_interruption(&error);
+            finalize_configured_children(
+                vat,
+                &mut procs,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
+            )?;
+            return Err(error);
+        }
+    };
 
     // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
     let code = records
         .iter()
         .map(|r| r.exit_code.unwrap_or(-1))
         .fold(0, |acc, c| if acc < 0 || c < 0 { -1 } else { acc.max(c) });
-    for record in &records {
-        emit_jsonl(serde_json::json!({
-            "type": "runner",
-            "id": record.id.as_str(),
-            "state": "exited",
-            "exit_code": record.exit_code,
-        }))?;
-    }
-    if let Some(test_run) = vat.meta.test_run.as_mut() {
-        test_run.runner = records.first().cloned();
-        test_run.runners = records.clone();
-        let mut artifacts = Vec::new();
-        for runner in runners {
-            artifacts.extend(collect_artifacts(&rootfs, &runner.artifacts)?);
+    let evidence = (|| -> Result<()> {
+        for record in &records {
+            emit_jsonl(serde_json::json!({
+                "type": "runner",
+                "id": record.id.as_str(),
+                "state": "exited",
+                "exit_code": record.exit_code,
+            }))?;
         }
-        test_run.artifacts = artifacts;
+        if let Some(test_run) = vat.meta.test_run.as_mut() {
+            test_run.runner = records.first().cloned();
+            test_run.runners = records.clone();
+            let mut artifacts = Vec::new();
+            for runner in runners {
+                artifacts.extend(collect_artifacts(&rootfs, &runner.artifacts)?);
+            }
+            test_run.artifacts = artifacts;
+        }
+        vat.save()
+    })();
+    let cleanup = finalize_configured_children(
+        vat,
+        &mut procs,
+        &mut services,
+        should_delete_clusters(&retention, code),
+        None,
+    );
+    match (evidence, cleanup) {
+        (Ok(()), Ok(())) => {}
+        (Err(evidence), Ok(())) => return Err(evidence),
+        (Ok(()), Err(cleanup)) => return Err(cleanup),
+        (Err(evidence), Err(cleanup)) => {
+            return Err(cleanup).context(format!(
+                "configured-run evidence also failed before cleanup: {evidence:#}"
+            ));
+        }
     }
-    vat.save()?;
-    stop_services(&mut services, should_delete_clusters(&retention, code));
-    persist_services(vat, &services)?;
+    cancellation.check()?;
     let summary = records
         .iter()
         .map(|r| format!("{} exited {}", r.id, r.exit_code.unwrap_or(-1)))
@@ -1237,10 +1599,92 @@ fn scenario_route_records(cfg: &VatConfig, plans: &[ServicePlan]) -> Vec<RouteRe
     records
 }
 
-fn kill_runner_processes(procs: &mut [RunnerProc]) {
+fn finalize_runner_processes(procs: &mut [RunnerProc]) -> Result<()> {
+    let mut failures = Vec::new();
     for proc in procs {
-        kill_child(&mut proc.child);
-        let _ = proc.child.wait();
+        match proc.child.finalize(&format!("runner `{}`", proc.runner.id)) {
+            Ok(_) => proc.cleanup_error = None,
+            Err(error) => {
+                let detail = format!("runner `{}`: {error:#}", proc.runner.id);
+                proc.cleanup_error = Some(detail.clone());
+                failures.push(detail);
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "VAT-owned runner cleanup unconfirmed: {}",
+            failures.join("; ")
+        )
+    }
+}
+
+/// Persist every started runner as terminal when process-group cleanup itself
+/// fails. Successful siblings must not remain `Running`, while the failed
+/// group's still-live leader PID (if any) and cleanup diagnosis stay durable.
+fn record_runner_cleanup_outcomes(vat: &mut store::Vat, procs: &[RunnerProc]) {
+    if !procs.iter().any(|proc| proc.cleanup_error.is_some()) {
+        return;
+    }
+    let previous = vat
+        .meta
+        .test_run
+        .as_ref()
+        .map(|run| run.runners.clone())
+        .unwrap_or_default();
+    let records = procs
+        .iter()
+        .map(|proc| {
+            if let Some(error) = proc.cleanup_error.as_deref() {
+                if let Ok(mut stderr) = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&proc.stderr_log)
+                {
+                    let _ = writeln!(stderr, "{error}");
+                }
+                return RunnerRunRecord {
+                    id: proc.runner.id.clone(),
+                    command: proc.runner.cmd.clone(),
+                    status: ProcessStatus::Failed,
+                    exit_code: Some(-1),
+                    duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    pid: (!proc.child.leader_reaped()).then_some(proc.child.id()),
+                    cleanup_error: Some(error.to_string()),
+                    stdout_log: proc.stdout_log.clone(),
+                    stderr_log: proc.stderr_log.clone(),
+                };
+            }
+            let mut record = previous
+                .iter()
+                .find(|record| record.id == proc.runner.id)
+                .cloned()
+                .unwrap_or_else(|| RunnerRunRecord {
+                    id: proc.runner.id.clone(),
+                    command: proc.runner.cmd.clone(),
+                    status: ProcessStatus::Exited,
+                    exit_code: proc.child.final_status.and_then(|status| status.code()),
+                    duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    pid: None,
+                    cleanup_error: None,
+                    stdout_log: proc.stdout_log.clone(),
+                    stderr_log: proc.stderr_log.clone(),
+                });
+            if record.status == ProcessStatus::Running {
+                record.status = ProcessStatus::Exited;
+                record.exit_code = proc.child.final_status.and_then(|status| status.code());
+                record.duration_ms = Some(proc.started.elapsed().as_millis() as u64);
+            }
+            record.pid = None;
+            record.cleanup_error = None;
+            record
+        })
+        .collect::<Vec<_>>();
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.runner = records.first().cloned();
+        test_run.runners = records;
     }
 }
 
@@ -1280,10 +1724,122 @@ fn visit_required_service<'a>(
     Ok(())
 }
 
+const OWNED_GROUP_TERM_GRACE: Duration = Duration::from_millis(300);
+const OWNED_GROUP_STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const OWNED_GROUP_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// One direct child and the private process group whose numeric PGID it pins.
+/// Every exit path converges here: TERM, bounded grace, KILL, leader reap, and
+/// an explicit group-absence proof. A completed finalizer is an idempotent
+/// no-op, including when cleanup is requested a second time.
+struct OwnedProcessGroup {
+    child: Child,
+    pgid: u32,
+    final_status: Option<ExitStatus>,
+    finalized: bool,
+    /// A leader was already reaped, but PGID absence could not be confirmed.
+    /// The numeric PGID is no longer pinned and must never be signalled again;
+    /// repeated cleanup returns this cached failure without side effects.
+    post_reap_cleanup_error: Option<String>,
+}
+
+impl OwnedProcessGroup {
+    fn new(child: Child) -> Self {
+        let pgid = child.id();
+        Self {
+            child,
+            pgid,
+            final_status: None,
+            finalized: false,
+            post_reap_cleanup_error: None,
+        }
+    }
+
+    fn id(&self) -> u32 {
+        self.pgid
+    }
+
+    fn leader_reaped(&self) -> bool {
+        self.final_status.is_some()
+    }
+
+    /// Observe leader completion without reaping it, then finalize the whole
+    /// group before returning the leader status. Keeping the leader waitable
+    /// until group signalling prevents accidental signalling of a recycled
+    /// numeric PGID while an owned descendant remains.
+    fn finished_status(&mut self, label: &str) -> Result<Option<ExitStatus>> {
+        if self.finalized {
+            return Ok(self.final_status);
+        }
+        if let Some(error) = self.post_reap_cleanup_error.as_deref() {
+            bail!("{error}");
+        }
+        if self.final_status.is_some() {
+            bail!("{label} leader was reaped but process-group absence remains unconfirmed");
+        }
+        #[cfg(not(unix))]
+        if let Some(status) = self.child.try_wait()? {
+            self.final_status = Some(status);
+            self.finalized = true;
+            return Ok(Some(status));
+        }
+        #[cfg(unix)]
+        if child_has_exited_without_reap(&self.child)? {
+            return self.finalize(label).map(Some);
+        }
+        Ok(None)
+    }
+
+    fn finalize(&mut self, label: &str) -> Result<ExitStatus> {
+        if self.finalized {
+            return self
+                .final_status
+                .context("finalized owned process group is missing exit status");
+        }
+        if let Some(error) = self.post_reap_cleanup_error.as_deref() {
+            bail!("{error}");
+        }
+        if self.final_status.is_some() {
+            bail!("{label} leader was reaped but process-group absence remains unconfirmed");
+        }
+        let status = terminate_and_reap_owned_process_group(
+            &mut self.child,
+            self.pgid,
+            label,
+            OWNED_GROUP_TERM_GRACE,
+            OWNED_GROUP_STOP_TIMEOUT,
+        )?;
+        self.final_status = Some(status);
+        match confirm_owned_process_group_absent(self.pgid, label, OWNED_GROUP_STOP_TIMEOUT) {
+            Ok(()) => {
+                self.finalized = true;
+                Ok(status)
+            }
+            Err(error) => {
+                let message = format!(
+                    "{label} leader {} was reaped, but process-group absence is unconfirmed: {error:#}; numeric PGID will not be signalled again",
+                    self.pgid
+                );
+                self.post_reap_cleanup_error = Some(message.clone());
+                bail!("{message}")
+            }
+        }
+    }
+}
+
+impl Drop for OwnedProcessGroup {
+    fn drop(&mut self) {
+        if !self.finalized {
+            let _ = self.finalize("dropped VAT-owned child");
+        }
+    }
+}
+
 /// One spawned (not yet reaped) runner child plus its bookkeeping.
 struct RunnerProc {
     runner: RunnerConfig,
-    child: Child,
+    child: OwnedProcessGroup,
+    cleanup_error: Option<String>,
     started: Instant,
     deadline: Option<Instant>,
     stdout_log: String,
@@ -1341,31 +1897,56 @@ fn spawn_runner_process(
         deadline: runner.timeout_s.map(|s| started + Duration::from_secs(s)),
         started,
         child,
+        cleanup_error: None,
         stdout_log: stdout.to_string_lossy().into_owned(),
         stderr_log: stderr.to_string_lossy().into_owned(),
     })
 }
 
+fn wait_owned_process(
+    child: &mut OwnedProcessGroup,
+    label: &str,
+    cancellation: &RunCancellation,
+) -> Result<ExitStatus> {
+    loop {
+        if let Some(signal) = cancellation.received() {
+            child.finalize(label).with_context(|| {
+                format!("confirm {label} cleanup after {}", signal_name(signal))
+            })?;
+            return Err(RunInterrupted::new(signal).into());
+        }
+        if let Some(status) = child.finished_status(label)? {
+            return Ok(status);
+        }
+        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
+    }
+}
+
 /// Poll every child to completion, enforcing each runner's own timeout
 /// (an elapsed budget kills that child; the others keep running).
 fn wait_runner_processes(
-    mut procs: Vec<RunnerProc>,
+    procs: &mut [RunnerProc],
     stop_request_path: &Path,
+    cancellation: &RunCancellation,
 ) -> Result<Vec<RunnerRunRecord>> {
     let mut records: Vec<Option<RunnerRunRecord>> = procs.iter().map(|_| None).collect();
     loop {
+        cancellation.check()?;
         if take_detached_compose_stop_request(stop_request_path) {
             // The parent is the sole authority allowed to kill this runner
             // tree. Compose merely writes the request and waits for the
             // resulting terminal VAT state before releasing its registry.
-            kill_runner_processes(&mut procs);
+            finalize_runner_processes(procs)?;
         }
         let mut all_done = true;
         for (i, proc) in procs.iter_mut().enumerate() {
             if records[i].is_some() {
                 continue;
             }
-            if let Some(status) = proc.child.try_wait()? {
+            if let Some(status) = proc
+                .child
+                .finished_status(&format!("runner `{}`", proc.runner.id))?
+            {
                 records[i] = Some(RunnerRunRecord {
                     id: proc.runner.id.clone(),
                     command: proc.runner.cmd.clone(),
@@ -1373,6 +1954,7 @@ fn wait_runner_processes(
                     exit_code: Some(status.code().unwrap_or(-1)),
                     duration_ms: Some(proc.started.elapsed().as_millis() as u64),
                     pid: None,
+                    cleanup_error: None,
                     stdout_log: proc.stdout_log.clone(),
                     stderr_log: proc.stderr_log.clone(),
                 });
@@ -1380,15 +1962,17 @@ fn wait_runner_processes(
             }
             if let Some(deadline) = proc.deadline {
                 if Instant::now() >= deadline {
-                    kill_child(&mut proc.child);
-                    let _ = proc.child.wait();
+                    let _ = proc
+                        .child
+                        .finalize(&format!("timed-out runner `{}`", proc.runner.id))?;
                     records[i] = Some(RunnerRunRecord {
                         id: proc.runner.id.clone(),
                         command: proc.runner.cmd.clone(),
-                        status: ProcessStatus::Exited,
+                        status: ProcessStatus::Timeout,
                         exit_code: Some(-1),
                         duration_ms: Some(proc.started.elapsed().as_millis() as u64),
                         pid: None,
+                        cleanup_error: None,
                         stdout_log: proc.stdout_log.clone(),
                         stderr_log: proc.stderr_log.clone(),
                     });
@@ -1415,13 +1999,14 @@ fn run_setup_step(
     env: &BTreeMap<String, String>,
     backend: &dyn sandbox::Sandbox,
     rootfs: &Path,
+    cancellation: &RunCancellation,
 ) -> Result<()> {
     let stdout = logs_dir.join(format!("setup-{}.stdout.log", step.id));
     let stderr = logs_dir.join(format!("setup-{}.stderr.log", step.id));
     let cmd = sandbox_wrap(backend, rootfs, &step.cmd);
-    let status = command_with_logs(&cmd, cwd, env, &stdout, &stderr)?
-        .wait()
-        .with_context(|| format!("wait setup `{}`", step.id))?;
+    cancellation.check()?;
+    let mut child = command_with_logs(&cmd, cwd, env, &stdout, &stderr)?;
+    let status = wait_owned_process(&mut child, &format!("setup `{}`", step.id), cancellation)?;
     if !status.success() {
         bail!("setup `{}` failed with {:?}", step.id, status.code());
     }
@@ -1429,7 +2014,7 @@ fn run_setup_step(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ServicePlan {
     id: String,
     command: Vec<String>,
@@ -1459,6 +2044,21 @@ struct ServicePlan {
     /// False when the service is provided by CI/local infrastructure and vat is
     /// attaching to it instead of starting/stopping a process.
     owned_by_vat: bool,
+    /// True only for native command-backed services whose spawned child is the
+    /// service itself and must remain live through endpoint readiness. Docker,
+    /// cluster, external, and other launcher-style runtimes preserve their own
+    /// readiness/lifecycle semantics instead of inheriting this contract.
+    requires_live_child: bool,
+    /// Literal 127.0.0.1 endpoints held exclusively from planning until the
+    /// instant the owned child is spawned. External/attach services never
+    /// reserve ports.
+    endpoint_reservations: Vec<EndpointReservation>,
+}
+
+#[derive(Debug)]
+struct EndpointReservation {
+    endpoint: SocketAddr,
+    listener: TcpListener,
 }
 
 #[derive(Debug, Clone)]
@@ -1493,9 +2093,15 @@ enum EndpointReadiness {
 
 struct ServiceHandle {
     record: ServiceRunRecord,
-    child: Option<Child>,
+    child: Option<OwnedProcessGroup>,
     timeout_s: u64,
     ready_probe: ReadyProbe,
+    /// Endpoints VAT proved unavailable immediately before spawning this
+    /// owned child. Readiness requires each one to become reachable afterward.
+    owned_endpoints: Vec<SocketAddr>,
+    /// Whether this handle owns a native service child that must remain live
+    /// until its endpoint completes readiness.
+    requires_live_child: bool,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
     /// `container --name` when the service runs via Apple's `container` CLI
@@ -1562,7 +2168,8 @@ fn prepare_service(
             }
         }
     } else {
-        let port = command_service_port(service)?;
+        let reservation = command_service_port(service)?;
+        let port = reservation.as_ref().map(EndpointReservation::port);
         let command = substitute_service_port(&service.cmd, port);
         let ready_http = service
             .ready_http
@@ -1573,12 +2180,16 @@ fn prepare_service(
         service_for_probe.ready_http = ready_http.clone();
         service_for_probe.ready_cmd = ready_cmd;
         let env = export_command_service_env(&service_for_probe, port);
+        let default_probe = port.map(|port| ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port,
+        });
         ServicePlan {
             id: service.id.clone(),
             command,
             host: Some("127.0.0.1".to_string()).filter(|_| port.is_some()),
             ready_http,
-            ready_probe: resolve_ready_probe(&service_for_probe, None),
+            ready_probe: resolve_ready_probe(&service_for_probe, default_probe),
             timeout_s: service.timeout_s,
             preset: None,
             port,
@@ -1592,6 +2203,8 @@ fn prepare_service(
             image: None,
             cluster: None,
             owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: reservation.into_iter().collect(),
         }
     };
     let mut plan = plan;
@@ -1754,6 +2367,8 @@ fn prepare_cluster_service(
         image: None,
         cluster: Some(record),
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -1779,7 +2394,7 @@ fn service_sandbox_backend(
 
 fn start_service(
     vat: &mut store::Vat,
-    plan: &ServicePlan,
+    plan: &mut ServicePlan,
     cwd: &Path,
     logs_dir: &Path,
     env: &BTreeMap<String, String>,
@@ -1790,6 +2405,11 @@ fn start_service(
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
     let command = if plan.owned_by_vat {
         service_start_command(plan, service_sandbox, rootfs)
+    } else {
+        Vec::new()
+    };
+    let owned_endpoints = if plan.owned_by_vat {
+        release_endpoint_reservations_at_spawn(plan)?
     } else {
         Vec::new()
     };
@@ -1814,7 +2434,7 @@ fn start_service(
         prepare_duration_ms: Some(plan.prepare_duration_ms),
         ready_duration_ms: None,
         exported_env: plan.exported_env.clone(),
-        pid: child.as_ref().map(Child::id),
+        pid: child.as_ref().map(OwnedProcessGroup::id),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
         docker_name: plan.docker_name.clone(),
@@ -1838,6 +2458,8 @@ fn start_service(
         child,
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
+        owned_endpoints,
+        requires_live_child: plan.requires_live_child,
         docker_name: plan.docker_name.clone(),
         microvm_name: plan.microvm_name.clone(),
         cluster: plan.cluster.clone(),
@@ -1901,6 +2523,8 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
         image: None,
         cluster: None,
         owned_by_vat: false,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -1912,20 +2536,48 @@ fn prepare_preset_service(
     preset: ServicePreset,
 ) -> Result<ServicePlan> {
     if preset == ServicePreset::Lumen {
-        let port = resolve_service_port(&service.port)?;
+        let reservation = reserve_native_service_port(&service.id, &service.port)?;
+        let port = reservation.port();
         let lumen = lumen_release::resolve(service.version.as_deref())?;
         let env = preset_exports(service, preset, port);
-        let command = vec![lumen.executable.to_string_lossy().into_owned(), "serve".into(), "--host".into(), "127.0.0.1".into(), "--port".into(), port.to_string()];
-        let ready_probe = resolve_ready_probe(service, Some(ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz"))));
+        let command = vec![
+            lumen.executable.to_string_lossy().into_owned(),
+            "serve".into(),
+            "--host".into(),
+            "127.0.0.1".into(),
+            "--port".into(),
+            port.to_string(),
+        ];
+        let ready_probe = resolve_ready_probe(
+            service,
+            Some(ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz"))),
+        );
         return Ok(ServicePlan {
-            id: service.id.clone(), command, host: Some("127.0.0.1".into()), ready_http: service.ready_http.clone(), ready_probe,
-            timeout_s: service.timeout_s, preset: Some(preset), port: Some(port), prepare_mode: "lumen_native_cache".into(),
-            cache_key: Some(lumen.tag), prepare_duration_ms: 0, exported_env: sorted_keys(&env), env,
-            docker_name: None, microvm_name: None, image: None, cluster: None, owned_by_vat: true,
+            id: service.id.clone(),
+            command,
+            host: Some("127.0.0.1".into()),
+            ready_http: service.ready_http.clone(),
+            ready_probe,
+            timeout_s: service.timeout_s,
+            preset: Some(preset),
+            port: Some(port),
+            prepare_mode: "lumen_native_cache".into(),
+            cache_key: Some(lumen.tag),
+            prepare_duration_ms: 0,
+            exported_env: sorted_keys(&env),
+            env,
+            docker_name: None,
+            microvm_name: None,
+            image: None,
+            cluster: None,
+            owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: vec![reservation],
         });
     }
     ensure_preset_binaries(service, preset)?;
-    let port = resolve_service_port(&service.port)?;
+    let reservation = reserve_native_service_port(&service.id, &service.port)?;
+    let port = reservation.port();
     let cache_key = service_cache_key(cfg, service, preset)?;
     let cache_dir = crate::paths::root()?
         .join("cache")
@@ -2003,6 +2655,8 @@ fn prepare_preset_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations: vec![reservation],
     })
 }
 // </HANDWRITE>
@@ -2027,10 +2681,16 @@ fn resolve_preset_runtime(
     preset: ServicePreset,
 ) -> Result<ResolvedRuntime> {
     if preset == ServicePreset::Lumen {
-        if matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+        if matches!(
+            service.runtime,
+            ServiceRuntime::Auto | ServiceRuntime::Native
+        ) {
             return Ok(ResolvedRuntime::Native);
         }
-        bail!("service `{}` preset `lumen` is native-only; Docker and MicroVM are unsupported", service.id);
+        bail!(
+            "service `{}` preset `lumen` is native-only; Docker and MicroVM are unsupported",
+            service.id
+        );
     }
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
@@ -2196,6 +2856,8 @@ fn prepare_preset_docker_service(
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2255,6 +2917,8 @@ fn prepare_preset_microvm_service(
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2302,9 +2966,13 @@ fn prepare_firebase_service(
     let mut env = BTreeMap::new();
     let mut hub_port = 4400u16;
     let mut first_port: Option<u16> = None;
+    let mut configured_ports = BTreeSet::new();
     if let Some(emulators) = parsed.get("emulators").and_then(|e| e.as_object()) {
         for (emulator, conf) in emulators {
             let port = conf.get("port").and_then(|p| p.as_u64()).map(|p| p as u16);
+            if let Some(port) = port {
+                configured_ports.insert(port);
+            }
             if emulator == "hub" {
                 if let Some(p) = port {
                     hub_port = p;
@@ -2324,6 +2992,11 @@ fn prepare_firebase_service(
     add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", hub_port);
 
     let ready_port = first_port.unwrap_or(hub_port);
+    configured_ports.insert(hub_port);
+    let endpoint_reservations = configured_ports
+        .into_iter()
+        .map(|port| reserve_native_service_endpoint(&service.id, port))
+        .collect::<Result<Vec<_>>>()?;
     Ok(ServicePlan {
         id: service.id.clone(),
         command: vec![
@@ -2351,6 +3024,8 @@ fn prepare_firebase_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations,
     })
 }
 
@@ -2473,7 +3148,8 @@ fn prepare_builtin_service(
     network_routes: &[(String, String)],
     hermetic: bool,
 ) -> Result<ServicePlan> {
-    let port = resolve_service_port(&service.port)?;
+    let reservation = reserve_native_service_port(&service.id, &service.port)?;
+    let port = reservation.port();
     let exe =
         std::env::current_exe().context("resolve the vat executable for the built-in emulator")?;
     let (kind, default_var) = builtin_emulator_info(preset);
@@ -2560,6 +3236,8 @@ fn prepare_builtin_service(
         image: None,
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: true,
+        endpoint_reservations: vec![reservation],
     })
 }
 
@@ -2631,6 +3309,8 @@ fn prepare_image_service(
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -2684,6 +3364,8 @@ fn prepare_microvm_service(
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
+        requires_live_child: false,
+        endpoint_reservations: Vec::new(),
     })
 }
 
@@ -3499,6 +4181,88 @@ fn free_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+impl EndpointReservation {
+    fn port(&self) -> u16 {
+        self.endpoint.port()
+    }
+}
+
+/// Reserve one native service endpoint for the whole preparation phase. The
+/// listener is released only at the child-spawn boundary; this makes an auto
+/// port unique across concurrent VAT runs and makes a fixed conflict terminal
+/// before VAT starts any owned process.
+fn reserve_native_service_port(service_id: &str, port: &PortSpec) -> Result<EndpointReservation> {
+    let requested_port = match port {
+        PortSpec::Fixed(port) => *port,
+        PortSpec::Auto(_) => 0,
+    };
+    reserve_native_service_endpoint(service_id, requested_port)
+}
+
+fn reserve_native_service_endpoint(
+    service_id: &str,
+    requested_port: u16,
+) -> Result<EndpointReservation> {
+    let requested_endpoint = SocketAddr::from(([127, 0, 0, 1], requested_port));
+    let listener = match TcpListener::bind(requested_endpoint) {
+        Ok(listener) => listener,
+        Err(err) => {
+            let endpoint = format!("127.0.0.1:{requested_port}");
+            emit_owned_endpoint_conflict(service_id, &endpoint, "prepare", &err.to_string());
+            bail!(
+                "native_service_endpoint_conflict: service `{service_id}` cannot own endpoint `{endpoint}`: {err}; declare `external = {{ host = \"127.0.0.1\", port = {requested_port} }}` only when intentional attachment is required"
+            );
+        }
+    };
+    let endpoint = listener
+        .local_addr()
+        .context("read reserved native service endpoint")?;
+    Ok(EndpointReservation { endpoint, listener })
+}
+
+fn emit_owned_endpoint_conflict(service_id: &str, endpoint: &str, phase: &str, reason: &str) {
+    let _ = emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "native_service_endpoint_conflict",
+        "service": service_id,
+        "endpoint": endpoint,
+        "phase": phase,
+        "reason": reason,
+        "owned_by_vat": true,
+        "external_attach_required_for_reuse": true,
+    }));
+}
+
+/// Release reservations immediately before spawning the command and prove the
+/// endpoint is still unavailable at that boundary. A process that races into
+/// the tiny release-to-spawn window is still caught by owned-child liveness;
+/// arbitrary commands cannot inherit an already-bound socket without a new
+/// public descriptor-passing contract.
+fn release_endpoint_reservations_at_spawn(plan: &mut ServicePlan) -> Result<Vec<SocketAddr>> {
+    let reservations = std::mem::take(&mut plan.endpoint_reservations);
+    let mut endpoints = Vec::with_capacity(reservations.len());
+    for EndpointReservation { endpoint, listener } in reservations {
+        endpoints.push(endpoint);
+        drop(listener);
+    }
+    for endpoint in &endpoints {
+        if TcpStream::connect_timeout(endpoint, Duration::from_millis(50)).is_ok() {
+            let endpoint = endpoint.to_string();
+            emit_owned_endpoint_conflict(
+                &plan.id,
+                &endpoint,
+                "spawn_boundary",
+                "endpoint became reachable before the owned child was spawned",
+            );
+            bail!(
+                "native_service_endpoint_conflict: service `{}` endpoint `{endpoint}` became reachable before spawn; VAT did not start the service",
+                plan.id
+            );
+        }
+    }
+    Ok(endpoints)
+}
+
 fn service_cache_key(
     cfg: &VatConfig,
     service: &ServiceConfig,
@@ -3740,7 +4504,35 @@ fn preset_exports(
     env
 }
 
-fn command_service_port(service: &ServiceConfig) -> Result<Option<u16>> {
+fn command_service_port(service: &ServiceConfig) -> Result<Option<EndpointReservation>> {
+    let ready_http_port = command_ready_http_ipv4_port(service)?;
+    if let Some(ready_http_port) = ready_http_port {
+        if let PortSpec::Fixed(configured_port) = &service.port {
+            if *configured_port != ready_http_port {
+                let configured_endpoint = format!("127.0.0.1:{configured_port}");
+                let ready_endpoint = format!("127.0.0.1:{ready_http_port}");
+                let _ = emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "native_service_endpoint_mismatch",
+                    "service": service.id.as_str(),
+                    "configured_endpoint": configured_endpoint,
+                    "ready_http_endpoint": ready_endpoint,
+                    "owned_by_vat": true,
+                }));
+                bail!(
+                    "native_service_endpoint_mismatch: service `{}` configures port {} but ready_http names 127.0.0.1:{}",
+                    service.id,
+                    configured_port,
+                    ready_http_port
+                );
+            }
+        }
+        return Ok(Some(reserve_native_service_endpoint(
+            &service.id,
+            ready_http_port,
+        )?));
+    }
+
     let needs_port = service.cmd.iter().any(|value| value.contains("{port}"))
         || service
             .ready_http
@@ -3754,12 +4546,82 @@ fn command_service_port(service: &ServiceConfig) -> Result<Option<u16>> {
         || service
             .export
             .values()
-            .any(|value| value.contains("{port}") || value.contains("{host}"));
+            .any(|value| value.contains("{port}") || value.contains("{host}"))
+        || matches!(service.port, PortSpec::Fixed(_));
     if needs_port {
-        Ok(Some(resolve_service_port(&service.port)?))
+        Ok(Some(reserve_native_service_port(
+            &service.id,
+            &service.port,
+        )?))
     } else {
         Ok(None)
     }
+}
+
+/// Return the fixed port named by an owned command service's literal IPv4
+/// readiness endpoint. `{host}` resolves to the same supported 127.0.0.1
+/// address; `{port}` remains run-allocated. Other loopback spellings are
+/// rejected deliberately because reserving only an IPv4 socket would not prove
+/// ownership of `localhost`'s resolver choice or an IPv6 listener.
+fn command_ready_http_ipv4_port(service: &ServiceConfig) -> Result<Option<u16>> {
+    let Some(raw_url) = service.ready_http.as_deref() else {
+        return Ok(None);
+    };
+    let has_port_placeholder = raw_url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .map(|authority| authority.contains("{port}"))
+        .unwrap_or(false);
+    let parseable_url = raw_url
+        .replace("{host}", "127.0.0.1")
+        .replace("{port}", "1");
+    let url = url::Url::parse(&parseable_url)
+        .with_context(|| format!("parse ready_http for service `{}`", service.id))?;
+    let Some(host) = url.host() else {
+        return Ok(None);
+    };
+    match host {
+        url::Host::Ipv4(address) if address == std::net::Ipv4Addr::LOCALHOST => {
+            if has_port_placeholder {
+                Ok(None)
+            } else {
+                Ok(Some(
+                    url.port_or_known_default()
+                        .context("127.0.0.1 ready_http missing port")?,
+                ))
+            }
+        }
+        url::Host::Domain(domain) if domain.eq_ignore_ascii_case("localhost") => {
+            reject_unsupported_native_loopback(service, raw_url, domain)
+        }
+        url::Host::Ipv4(address) if address.is_loopback() => {
+            reject_unsupported_native_loopback(service, raw_url, &address.to_string())
+        }
+        url::Host::Ipv6(address) if address.is_loopback() => {
+            reject_unsupported_native_loopback(service, raw_url, &address.to_string())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn reject_unsupported_native_loopback(
+    service: &ServiceConfig,
+    ready_http: &str,
+    host: &str,
+) -> Result<Option<u16>> {
+    let _ = emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "native_service_loopback_unsupported",
+        "service": service.id.as_str(),
+        "ready_http": ready_http,
+        "host": host,
+        "supported_host": "127.0.0.1",
+        "owned_by_vat": true,
+    }));
+    bail!(
+        "native_service_loopback_unsupported: service `{}` ready_http host `{host}` cannot be reserved exactly; use literal `127.0.0.1` or `{{host}}`",
+        service.id
+    )
 }
 
 fn substitute_service_port(values: &[String], port: Option<u16>) -> Vec<String> {
@@ -4216,13 +5078,24 @@ fn report_microvm_endpoint_failure(
     )
 }
 
-fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Result<()> {
+fn wait_for_services(
+    vat: &mut store::Vat,
+    services: &mut [ServiceHandle],
+    cancellation: &RunCancellation,
+) -> Result<()> {
     for service in services {
+        cancellation.check()?;
         let started = Instant::now();
         let ready_probe = service.ready_probe.clone();
         let microvm_probe = is_microvm_probe(&ready_probe);
+        let enforce_live_child = service.requires_live_child || microvm_probe;
         let mut last_microvm_readiness_error = None;
-        if matches!(ready_probe, ReadyProbe::None) {
+        if matches!(ready_probe, ReadyProbe::None) && service.owned_endpoints.is_empty() {
+            if enforce_live_child {
+                if let Some(status) = service_child_exit_status(service)? {
+                    return report_owned_service_child_exit(vat, service, status, false, None);
+                }
+            }
             service.record.status = ProcessStatus::Ready;
             service.record.ready_duration_ms = Some(started.elapsed().as_millis() as u64);
             emit_jsonl(serde_json::json!({
@@ -4234,20 +5107,26 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         }
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
-            // A published host port can already be occupied by an unrelated
-            // listener. Check the MicroVM launch before probing it so that an
-            // exited `container run` cannot borrow that listener's readiness.
-            if microvm_probe {
+            cancellation.check()?;
+            // Probe success is never sufficient for a native command-backed
+            // service: a stale listener may answer after the child has failed.
+            // MicroVM probes retain their existing equivalent child check;
+            // launcher-style Docker/cluster services do not inherit it.
+            if enforce_live_child {
                 if let Some(status) = service_child_exit_status(service)? {
-                    return report_microvm_child_exit(
+                    return report_owned_service_child_exit(
                         vat,
                         service,
                         status,
+                        microvm_probe,
                         last_microvm_readiness_error.as_deref(),
                     );
                 }
             }
-            let readiness = if microvm_probe {
+            let endpoint_transition_ready = owned_service_endpoints_ready(service);
+            let readiness = if !endpoint_transition_ready {
+                Ok(false)
+            } else if microvm_probe {
                 match microvm_readiness(&ready_probe) {
                     Ok(EndpointReadiness::Ready) => Ok(true),
                     Ok(EndpointReadiness::Pending(reason)) => {
@@ -4261,16 +5140,13 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             };
             match readiness {
                 Ok(true) => {
-                    // A TCP usability probe can take up to its bounded read
-                    // timeout. Recheck the launch after that probe as well:
-                    // otherwise a MicroVM that dies during the probe can be
-                    // recorded Ready because a stale host listener answered.
-                    if microvm_probe {
+                    if enforce_live_child {
                         if let Some(status) = service_child_exit_status(service)? {
-                            return report_microvm_child_exit(
+                            return report_owned_service_child_exit(
                                 vat,
                                 service,
                                 status,
+                                microvm_probe,
                                 last_microvm_readiness_error.as_deref(),
                             );
                         }
@@ -4292,12 +5168,23 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
                 }
                 Err(_) => {}
             }
-            if !microvm_probe {
+            if enforce_live_child {
                 if let Some(status) = service_child_exit_status(service)? {
-                    service.record.status = ProcessStatus::Failed;
-                    service.record.exit_code = status.code();
-                    bail!("service `{}` exited before readiness", service.record.id);
+                    return report_owned_service_child_exit(
+                        vat,
+                        service,
+                        status,
+                        microvm_probe,
+                        last_microvm_readiness_error.as_deref(),
+                    );
                 }
+            } else if let Some(status) = service_child_exit_status(service)? {
+                // Preserve the pre-existing foreground launcher behavior after
+                // a failed probe without treating successful readiness as a
+                // native long-lived-child contract.
+                service.record.status = ProcessStatus::Failed;
+                service.record.exit_code = status.code();
+                bail!("service `{}` exited before readiness", service.record.id);
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
@@ -4330,15 +5217,67 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     Ok(())
 }
 
+fn owned_service_endpoints_ready(service: &ServiceHandle) -> bool {
+    service
+        .owned_endpoints
+        .iter()
+        .all(|endpoint| TcpStream::connect_timeout(endpoint, Duration::from_millis(300)).is_ok())
+}
+
 /// Observe an owned service process without consuming its handle. MicroVM
 /// readiness uses this both before and after its host-endpoint probe.
 fn service_child_exit_status(
     service: &mut ServiceHandle,
 ) -> Result<Option<std::process::ExitStatus>> {
     match service.child.as_mut() {
-        Some(child) => child.try_wait().context("observe service process"),
+        Some(child) => child.finished_status(&format!("service `{}`", service.record.id)),
         None => Ok(None),
     }
+}
+
+fn report_owned_service_child_exit(
+    vat: &mut store::Vat,
+    service: &mut ServiceHandle,
+    status: std::process::ExitStatus,
+    microvm_probe: bool,
+    last_readiness_observation: Option<&str>,
+) -> Result<()> {
+    if microvm_probe {
+        return report_microvm_child_exit(vat, service, status, last_readiness_observation);
+    }
+
+    service.record.status = ProcessStatus::Failed;
+    service.record.exit_code = status.code();
+    let endpoint = service
+        .record
+        .host
+        .as_deref()
+        .zip(service.record.port)
+        .map(|(host, port)| format!("{host}:{port}"))
+        .unwrap_or_else(|| "no-network-endpoint".to_string());
+    let reason = format!(
+        "owned service process exited {:?} before endpoint {endpoint} completed readiness",
+        status.code()
+    );
+    service.record.readiness_error = Some(reason.clone());
+    let state_command = format!("vat state {}", vat.meta.id);
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "owned_service_exited_before_readiness",
+        "service": service.record.id.as_str(),
+        "endpoint": endpoint.as_str(),
+        "exit_code": status.code(),
+        "reason": reason.as_str(),
+        "owned_by_vat": true,
+        "state": state_command.as_str(),
+        "next": state_command.as_str(),
+    }))?;
+    bail!(
+        "owned_service_exited_before_readiness: service `{}` endpoint `{}` exited {:?} before readiness",
+        service.record.id,
+        endpoint,
+        status.code()
+    )
 }
 
 /// Turn an exited MicroVM launcher into the same terminal, structured
@@ -4388,6 +5327,98 @@ fn service_log_hints(service_id: &str, logs: &str) -> Vec<serde_json::Value> {
     hints
 }
 
+fn emit_run_interrupted(vat: &store::Vat, interruption: &RunInterrupted) -> Result<()> {
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "run_interrupted",
+        "id": vat.meta.id.as_str(),
+        "signal": interruption.signal,
+        "signal_name": signal_name(interruption.signal),
+        "reason": interruption.reason.as_str(),
+        "exit_code": interruption.exit_code(),
+        "state": format!("vat state {}", vat.meta.id),
+        "next": format!("vat state {}", vat.meta.id),
+    }))
+}
+
+fn interrupted_runner_records(
+    procs: &[RunnerProc],
+    interruption: &RunInterrupted,
+) -> Vec<RunnerRunRecord> {
+    procs
+        .iter()
+        .map(|proc| RunnerRunRecord {
+            id: proc.runner.id.clone(),
+            command: proc.runner.cmd.clone(),
+            status: ProcessStatus::Interrupted,
+            exit_code: Some(interruption.exit_code()),
+            duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+            pid: None,
+            cleanup_error: None,
+            stdout_log: proc.stdout_log.clone(),
+            stderr_log: proc.stderr_log.clone(),
+        })
+        .collect()
+}
+
+fn record_runner_interruption(
+    vat: &mut store::Vat,
+    runners: &[RunnerConfig],
+    logs_dir: &Path,
+    interruption: &RunInterrupted,
+) -> Result<()> {
+    let Some(test_run) = vat.meta.test_run.as_mut() else {
+        return Ok(());
+    };
+    if test_run.runners.is_empty() {
+        let single = runners.len() == 1;
+        test_run.runners = runners
+            .iter()
+            .map(|runner| RunnerRunRecord {
+                id: runner.id.clone(),
+                command: runner.cmd.clone(),
+                status: ProcessStatus::Interrupted,
+                exit_code: Some(interruption.exit_code()),
+                duration_ms: None,
+                pid: None,
+                cleanup_error: None,
+                stdout_log: if single {
+                    logs_dir.join("runner.stdout.log")
+                } else {
+                    logs_dir.join(format!("runner-{}.stdout.log", runner.id))
+                }
+                .to_string_lossy()
+                .into_owned(),
+                stderr_log: if single {
+                    logs_dir.join("runner.stderr.log")
+                } else {
+                    logs_dir.join(format!("runner-{}.stderr.log", runner.id))
+                }
+                .to_string_lossy()
+                .into_owned(),
+            })
+            .collect();
+    } else {
+        for runner in &mut test_run.runners {
+            runner.status = ProcessStatus::Interrupted;
+            runner.exit_code = Some(interruption.exit_code());
+            runner.pid = None;
+        }
+    }
+    test_run.runner = test_run.runners.first().cloned();
+    Ok(())
+}
+
+fn mark_services_interrupted(services: &mut [ServiceHandle], interruption: &RunInterrupted) {
+    for service in services {
+        if service.record.owned_by_vat == Some(true) && service.child.is_some() {
+            service.record.status = ProcessStatus::Interrupted;
+            service.record.exit_code = Some(interruption.exit_code());
+            service.record.pid = None;
+        }
+    }
+}
+
 fn record_runner_failure(
     vat: &mut store::Vat,
     runner: &RunnerConfig,
@@ -4398,21 +5429,45 @@ fn record_runner_failure(
     let mut file = OpenOptions::new().create(true).append(true).open(&stderr)?;
     writeln!(file, "{message}")?;
     if let Some(test_run) = vat.meta.test_run.as_mut() {
-        test_run.runner = Some(RunnerRunRecord {
-            id: runner.id.clone(),
-            command: runner.cmd.clone(),
-            status: ProcessStatus::Failed,
-            exit_code: Some(-1),
-            duration_ms: None,
-            pid: None,
-            stdout_log: logs_dir
-                .join("runner.stdout.log")
-                .to_string_lossy()
-                .into_owned(),
-            stderr_log: stderr.to_string_lossy().into_owned(),
-        });
+        if test_run.runners.is_empty() {
+            test_run.runners.push(RunnerRunRecord {
+                id: runner.id.clone(),
+                command: runner.cmd.clone(),
+                status: ProcessStatus::Failed,
+                exit_code: Some(-1),
+                duration_ms: None,
+                pid: None,
+                cleanup_error: None,
+                stdout_log: logs_dir
+                    .join("runner.stdout.log")
+                    .to_string_lossy()
+                    .into_owned(),
+                stderr_log: stderr.to_string_lossy().into_owned(),
+            });
+        } else {
+            let mut marked = false;
+            for record in &mut test_run.runners {
+                if record.status == ProcessStatus::Running {
+                    record.status = ProcessStatus::Failed;
+                    record.exit_code = Some(-1);
+                    record.pid = None;
+                    marked = true;
+                }
+            }
+            if !marked {
+                if let Some(record) = test_run
+                    .runners
+                    .iter_mut()
+                    .find(|record| record.cleanup_error.is_none())
+                {
+                    record.status = ProcessStatus::Failed;
+                    record.exit_code = Some(-1);
+                    record.pid = None;
+                }
+            }
+        }
+        test_run.runner = test_run.runners.first().cloned();
     }
-    vat.save()?;
     Ok(())
 }
 
@@ -4428,21 +5483,32 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 /// runtime name and retry path while this remains nonempty.
 fn unconfirmed_runtime_cleanup_message(vat: &store::Vat) -> Option<String> {
     let test_run = vat.meta.test_run.as_ref()?;
-    let failures: Vec<_> = test_run
-        .services
+    let mut failures: Vec<_> = test_run
+        .runners
         .iter()
-        .filter_map(|service| {
-            service
+        .filter_map(|runner| {
+            runner
                 .cleanup_error
                 .as_deref()
-                .map(|error| format!("service `{}`: {error}", service.id))
+                .map(|error| format!("runner `{}`: {error}", runner.id))
         })
         .collect();
+    failures.extend(test_run.services.iter().filter_map(|service| {
+        service
+            .cleanup_error
+            .as_deref()
+            .map(|error| format!("service `{}`: {error}", service.id))
+    }));
     (!failures.is_empty()).then(|| failures.join("; "))
 }
 
-fn should_remove_vat(retention: &RetentionPolicy, code: i32, cleanup_unconfirmed: bool) -> bool {
-    if cleanup_unconfirmed {
+fn should_remove_vat(
+    retention: &RetentionPolicy,
+    code: i32,
+    cleanup_unconfirmed: bool,
+    interrupted: bool,
+) -> bool {
+    if cleanup_unconfirmed || interrupted {
         return false;
     }
     match retention {
@@ -4730,19 +5796,33 @@ pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<
 
 // </HANDWRITE>
 
-fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
+fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) -> Result<()> {
+    let mut owned_group_failures = Vec::new();
     for service in services.iter_mut().rev() {
+        let mut group_cleanup_failed = false;
         let child_exit = match service.child.as_mut() {
-            Some(child) => match child.try_wait() {
-                Ok(Some(status)) => Some(status),
-                Ok(None) | Err(_) => {
-                    kill_child(child);
-                    child.wait().ok()
+            Some(child) => match child.finalize(&format!("service `{}`", service.record.id)) {
+                Ok(status) => Some(status),
+                Err(error) => {
+                    group_cleanup_failed = true;
+                    let detail = format!(
+                        "owned process-group cleanup unconfirmed for service `{}`: {error:#}",
+                        service.record.id
+                    );
+                    service.record.cleanup_error =
+                        Some(match service.record.cleanup_error.take() {
+                            Some(existing) => format!("{existing}; {detail}"),
+                            None => detail.clone(),
+                        });
+                    service.record.status = ProcessStatus::Failed;
+                    service.record.pid = (!child.leader_reaped()).then_some(child.id());
+                    owned_group_failures.push(detail);
+                    None
                 }
             },
             None => None,
         };
-        if service.child.is_some() {
+        if service.child.is_some() && !group_cleanup_failed {
             service.record.pid = None;
             if let Some(status) = child_exit {
                 service.record.exit_code = status.code();
@@ -4797,6 +5877,71 @@ fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
                 }
             }
         }
+    }
+    if owned_group_failures.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "VAT-owned service cleanup unconfirmed: {}",
+            owned_group_failures.join("; ")
+        )
+    }
+}
+
+fn finalize_services_and_persist(
+    vat: &mut store::Vat,
+    services: &mut [ServiceHandle],
+    delete_clusters: bool,
+    interruption: Option<&RunInterrupted>,
+) -> Result<()> {
+    let cleanup = stop_services(services, delete_clusters);
+    if cleanup.is_ok() {
+        if let Some(interruption) = interruption {
+            mark_services_interrupted(services, interruption);
+        }
+    }
+    let persistence = persist_services(vat, services);
+    match (cleanup, persistence) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(cleanup), Ok(())) => Err(cleanup),
+        (Ok(()), Err(persistence)) => Err(persistence),
+        (Err(cleanup), Err(persistence)) => Err(persistence).context(format!(
+            "persist service cleanup evidence after cleanup failure: {cleanup:#}"
+        )),
+    }
+}
+
+/// The configured-run teardown owner. It always attempts runner groups first,
+/// then services in reverse start order, and persists both outcome sets before
+/// returning either failure. No caller may short-circuit between those phases.
+fn finalize_configured_children(
+    vat: &mut store::Vat,
+    procs: &mut [RunnerProc],
+    services: &mut [ServiceHandle],
+    delete_clusters: bool,
+    interruption: Option<&RunInterrupted>,
+) -> Result<()> {
+    let runner_cleanup = finalize_runner_processes(procs);
+    match (&runner_cleanup, interruption) {
+        (Ok(()), Some(interruption)) => {
+            let records = interrupted_runner_records(procs, interruption);
+            if let Some(test_run) = vat.meta.test_run.as_mut() {
+                test_run.runner = records.first().cloned();
+                test_run.runners = records;
+            }
+        }
+        (Err(_), _) => record_runner_cleanup_outcomes(vat, procs),
+        (Ok(()), None) => {}
+    }
+    let service_cleanup =
+        finalize_services_and_persist(vat, services, delete_clusters, interruption);
+    match (runner_cleanup, service_cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(runners), Ok(())) => Err(runners),
+        (Ok(()), Err(services)) => Err(services),
+        (Err(runners), Err(services)) => Err(services).context(format!(
+            "service cleanup also followed runner cleanup failure: {runners:#}"
+        )),
     }
 }
 
@@ -4927,7 +6072,7 @@ mod tests {
         ];
 
         std::thread::sleep(Duration::from_millis(100));
-        stop_services(&mut services, false);
+        stop_services(&mut services, false).expect("stop services");
 
         let order = std::fs::read_to_string(&order_path).expect("stop order");
         assert_eq!(
@@ -4937,6 +6082,71 @@ mod tests {
         assert!(services
             .iter()
             .all(|service| service.record.status == ProcessStatus::Exited));
+
+        // R4: the one process-group finalizer is idempotent. A repeated
+        // lifecycle cleanup must neither signal a recycled PGID nor replay the
+        // service's TERM handler.
+        stop_services(&mut services, false).expect("repeat stop is a no-op");
+        let repeated = std::fs::read_to_string(&order_path).expect("repeat stop order");
+        assert_eq!(
+            repeated.lines().collect::<Vec<_>>(),
+            vec!["frontend", "backend", "postgres"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn post_reap_cleanup_failure_never_resignals_a_numeric_pgid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let marker = temp.path().join("unexpected-term.txt");
+        let command = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "trap 'printf term > \"$VAT_TERM_MARKER\"; exit 0' TERM; while :; do sleep 1; done"
+                .to_string(),
+        ];
+        let env = BTreeMap::from([(
+            "VAT_TERM_MARKER".to_string(),
+            marker.to_string_lossy().into_owned(),
+        )]);
+        let mut unrelated = command_with_logs(
+            &command,
+            temp.path(),
+            &env,
+            &temp.path().join("unrelated.stdout"),
+            &temp.path().join("unrelated.stderr"),
+        )
+        .expect("spawn unrelated process group");
+        std::thread::sleep(Duration::from_millis(100));
+
+        let mut exited_command = Command::new("/usr/bin/true");
+        set_process_group(&mut exited_command);
+        let mut reaped_child = exited_command.spawn().expect("spawn reaped leader");
+        let status = reaped_child.wait().expect("reap leader");
+        let mut stale = OwnedProcessGroup {
+            child: reaped_child,
+            // Model the numeric-reuse hazard explicitly: if repeated cleanup
+            // signalled after reap, it would touch this unrelated live group.
+            pgid: unrelated.id(),
+            final_status: Some(status),
+            finalized: false,
+            post_reap_cleanup_error: Some("synthetic post-reap PGID-absence failure".to_string()),
+        };
+
+        assert!(stale.finalize("synthetic reaped group").is_err());
+        assert!(stale.finalize("synthetic reaped group").is_err());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !marker.exists(),
+            "repeated finalization signalled reused PGID"
+        );
+        assert!(unrelated
+            .finished_status("unrelated process group")
+            .expect("observe unrelated process")
+            .is_none());
+        unrelated
+            .finalize("unrelated process group")
+            .expect("cleanup unrelated fixture");
     }
 
     #[test]
@@ -5042,7 +6252,7 @@ mod tests {
 
     #[test]
     fn direct_start_service_command_uses_supplied_sandbox_only_for_direct_services() {
-        let plan = ServicePlan {
+        let mut plan = ServicePlan {
             id: "api".to_string(),
             command: vec!["python3".to_string(), "-m".to_string(), "app".to_string()],
             host: None,
@@ -5061,6 +6271,8 @@ mod tests {
             image: None,
             cluster: None,
             owned_by_vat: true,
+            requires_live_child: true,
+            endpoint_reservations: Vec::new(),
         };
 
         let wrapped = service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root"));
@@ -5070,12 +6282,58 @@ mod tests {
             vec!["sandboxed", "/vat/root", "python3", "-m", "app"]
         );
 
-        let mut preset_plan = plan.clone();
-        preset_plan.prepare_mode = "builtin_emulator".to_string();
+        plan.prepare_mode = "builtin_emulator".to_string();
         assert_eq!(
-            service_start_command(&preset_plan, Some(&TestSandbox), Path::new("/vat/root")),
-            preset_plan.command
+            service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root")),
+            plan.command
         );
+    }
+
+    #[test]
+    fn native_auto_endpoint_reservations_are_unique_and_release_deterministically() {
+        let first = reserve_native_service_port("first", &PortSpec::default())
+            .expect("reserve first native endpoint");
+        let second = reserve_native_service_port("second", &PortSpec::default())
+            .expect("reserve second native endpoint");
+        let first_endpoint = first.endpoint;
+        let second_endpoint = second.endpoint;
+
+        assert_ne!(first_endpoint, second_endpoint);
+        assert!(TcpListener::bind(first_endpoint).is_err());
+        assert!(TcpListener::bind(second_endpoint).is_err());
+
+        drop(first);
+        let rebound = TcpListener::bind(first_endpoint)
+            .expect("dropping a failed/finished plan must release its reservation");
+        drop(rebound);
+        assert!(TcpListener::bind(second_endpoint).is_err());
+    }
+
+    #[test]
+    fn native_fixed_endpoint_rejects_an_existing_listener_without_touching_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind unrelated listener");
+        let endpoint = listener.local_addr().expect("unrelated endpoint");
+
+        let err = reserve_native_service_port("api", &PortSpec::Fixed(endpoint.port()))
+            .expect_err("owned native service must not attach to an occupied endpoint");
+
+        assert!(err.to_string().contains("native_service_endpoint_conflict"));
+        assert!(err.to_string().contains(&endpoint.to_string()));
+        assert!(TcpStream::connect(endpoint).is_ok());
+    }
+
+    #[test]
+    fn native_command_rejects_non_literal_loopback_readiness_hosts() {
+        let mut service = test_service("api", &["server", "--port", "{port}"]);
+        service.ready_http = Some("http://localhost:{port}/ready".to_string());
+
+        let err = command_service_port(&service)
+            .expect_err("localhost cannot be reserved as one exact IPv4 endpoint");
+
+        assert!(err
+            .to_string()
+            .contains("native_service_loopback_unsupported"));
+        assert!(err.to_string().contains("localhost"));
     }
 
     /// UT3 (#1301 R2/AC2): the real (non-hermetic-proxy) service call path
@@ -6014,6 +7272,8 @@ mod tests {
             child: Some(child),
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
+            owned_endpoints: Vec::new(),
+            requires_live_child: true,
             docker_name: None,
             microvm_name: None,
             cluster: None,
@@ -6027,7 +7287,7 @@ fn command_with_logs(
     env: &std::collections::BTreeMap<String, String>,
     stdout: &Path,
     stderr: &Path,
-) -> Result<Child> {
+) -> Result<OwnedProcessGroup> {
     if cmd.is_empty() {
         bail!("empty command");
     }
@@ -6048,6 +7308,7 @@ fn command_with_logs(
     set_process_group(&mut command);
     command
         .spawn()
+        .map(OwnedProcessGroup::new)
         .with_context(|| format!("spawn `{}`", cmd[0]))
 }
 
@@ -6061,22 +7322,157 @@ fn set_process_group(command: &mut Command) {
 fn set_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
-fn kill_child(child: &mut Child) {
-    let pgid = -(child.id() as i32);
-    unsafe {
-        libc::kill(pgid, libc::SIGTERM);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProcessGroupSignalOutcome {
+    DeliveredOrGone,
+    PermissionPartial,
+}
+
+#[cfg(unix)]
+fn terminate_and_reap_owned_process_group(
+    child: &mut Child,
+    pgid: u32,
+    label: &str,
+    term_grace: Duration,
+    stop_timeout: Duration,
+) -> Result<ExitStatus> {
+    let term = signal_owned_process_group(pgid, libc::SIGTERM, label)?;
+    let grace_deadline = Instant::now() + term_grace;
+    while Instant::now() < grace_deadline {
+        if !process_group_exists(pgid)? {
+            break;
+        }
+        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
     }
-    std::thread::sleep(Duration::from_millis(200));
-    if child.try_wait().ok().flatten().is_none() {
-        unsafe {
-            libc::kill(pgid, libc::SIGKILL);
+
+    let kill = if process_group_exists(pgid)? {
+        signal_owned_process_group(pgid, libc::SIGKILL, label)?
+    } else {
+        ProcessGroupSignalOutcome::DeliveredOrGone
+    };
+    let permission_partial = matches!(term, ProcessGroupSignalOutcome::PermissionPartial)
+        || matches!(kill, ProcessGroupSignalOutcome::PermissionPartial);
+    if permission_partial && !child_has_exited_without_reap(child)? {
+        match child.kill() {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("send direct KILL to {label}"));
+            }
+        }
+    }
+
+    let reap_deadline = Instant::now() + stop_timeout;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("reap {label} process-group leader {pgid}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= reap_deadline {
+            bail!("{label} process-group leader {pgid} did not exit after TERM/KILL");
+        }
+        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
+    };
+
+    Ok(status)
+}
+
+#[cfg(not(unix))]
+fn terminate_and_reap_owned_process_group(
+    child: &mut Child,
+    _pgid: u32,
+    label: &str,
+    _term_grace: Duration,
+    _stop_timeout: Duration,
+) -> Result<ExitStatus> {
+    match child.try_wait()? {
+        Some(status) => Ok(status),
+        None => {
+            child
+                .kill()
+                .with_context(|| format!("stop {label} child"))?;
+            child.wait().with_context(|| format!("reap {label} child"))
         }
     }
 }
 
+#[cfg(unix)]
+fn confirm_owned_process_group_absent(pgid: u32, label: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    while process_group_exists(pgid)? && Instant::now() < deadline {
+        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
+    }
+    if process_group_exists(pgid)? {
+        bail!("{label} process group {pgid} remains after TERM/KILL and leader reap");
+    }
+    Ok(())
+}
+
 #[cfg(not(unix))]
-fn kill_child(child: &mut Child) {
-    let _ = child.kill();
+fn confirm_owned_process_group_absent(_pgid: u32, _label: &str, _timeout: Duration) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn child_has_exited_without_reap(child: &Child) -> Result<bool> {
+    let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("observe VAT-owned process-group leader without reaping");
+    }
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+#[cfg(not(unix))]
+fn child_has_exited_without_reap(child: &Child) -> Result<bool> {
+    // Non-Unix platforms do not expose wait-without-reap here. VAT's native
+    // process-group contract is Unix-only; this conservative fallback avoids
+    // consuming the handle before the common finalizer.
+    let _ = child;
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn process_group_exists(pgid: u32) -> Result<bool> {
+    let result = unsafe { libc::kill(-(pgid as libc::pid_t), 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(error).with_context(|| format!("inspect VAT-owned process group {pgid}")),
+    }
+}
+
+#[cfg(unix)]
+fn signal_owned_process_group(
+    pgid: u32,
+    signal: i32,
+    label: &str,
+) -> Result<ProcessGroupSignalOutcome> {
+    let result = unsafe { libc::kill(-(pgid as libc::pid_t), signal) };
+    if result == 0 {
+        return Ok(ProcessGroupSignalOutcome::DeliveredOrGone);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(ProcessGroupSignalOutcome::DeliveredOrGone),
+        Some(libc::EPERM) => Ok(ProcessGroupSignalOutcome::PermissionPartial),
+        _ => Err(error)
+            .with_context(|| format!("send signal {signal} to {label} process group {pgid}")),
+    }
 }
 
 fn http_readiness(raw_url: &str) -> Result<EndpointReadiness> {

@@ -32,6 +32,7 @@ fn spec(replicas: u32) -> TapeSpec {
         log_level: None,
         auth: "off".into(),
         tokens_secret: None,
+        tokens_secret_provider_class: None,
         bootstrap_seed_uri: None,
     }
 }
@@ -85,6 +86,7 @@ fn crd_flattens_cluster_spec() {
         "logLevel",
         "auth",
         "tokensSecret",
+        "tokensSecretProviderClass",
         "bootstrapSeedUri",
     ] {
         assert!(props.get(field).is_some(), "missing tape knob `{field}`");
@@ -114,6 +116,7 @@ fn crd_flattens_cluster_spec() {
     );
 }
 
+// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="#1805" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
 /// R5 — the rendered StatefulSet carries exactly the downward-API env tape's
 /// serve reads, the right replica count (single group), tape's runtime env +
 /// disk tier, the probe contract, and the sibling child objects.
@@ -131,7 +134,7 @@ fn render_emits_expected_child_objects() {
     let env = env_of(sts);
     let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
     // The exact contract serve reads: raft_runtime::cluster (quartet) +
-    // --peer-service (TAPE_PEER_SERVICE) + bind/data-dir/grace.
+    // --peer-service (TAPE_PEER_SERVICE) + public/raft binds + data-dir/grace.
     for k in [
         "POD_NAME",
         "SHARD_COUNT",
@@ -139,6 +142,7 @@ fn render_emits_expected_child_objects() {
         "VOTER_COUNT",
         "TAPE_PEER_SERVICE",
         "TAPE_BIND",
+        "TAPE_RAFT_PORT",
         "TAPE_DATA_DIR",
         "TAPE_GRACE_SECS",
     ] {
@@ -154,22 +158,37 @@ fn render_emits_expected_child_objects() {
     assert_eq!(get("VOTER_COUNT")["value"], "3");
     assert_eq!(get("TAPE_PEER_SERVICE")["value"], "tape-headless");
     assert_eq!(get("TAPE_BIND")["value"], "0.0.0.0:7137");
+    assert_eq!(get("TAPE_RAFT_PORT")["value"], "7138");
     assert_eq!(get("TAPE_DATA_DIR")["value"], "/data");
 
     // Probe contract on the serve port: /readyz readiness, /healthz liveness
     // + startup — what service-http's standard probe routes answer.
     let container = &sts["spec"]["template"]["spec"]["containers"][0];
+    let pod = &sts["spec"]["template"]["spec"];
     assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
     assert_eq!(container["livenessProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["ports"][0]["containerPort"], 7137);
+    assert_eq!(container["ports"][1]["name"], "raft");
+    assert_eq!(container["ports"][1]["containerPort"], 7138);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
     assert!(container["resources"].get("limits").is_none());
+    assert_eq!(sts["spec"]["revisionHistoryLimit"], 5);
+    assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert_eq!(
-        sts["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"]
-            ["requiredDuringSchedulingIgnoredDuringExecution"][0]["topologyKey"],
+        sts["spec"]["template"]["metadata"]["annotations"]["prometheus.io/path"],
+        "/metrics"
+    );
+    assert_eq!(pod["securityContext"]["runAsNonRoot"], true);
+    assert_eq!(
+        pod["securityContext"]["seccompProfile"]["type"],
+        "RuntimeDefault"
+    );
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["topologyKey"],
         "kubernetes.io/hostname"
     );
 
@@ -178,7 +197,17 @@ fn render_emits_expected_child_objects() {
         sts["spec"]["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"],
         "10Gi"
     );
-    assert_eq!(container["volumeMounts"][0]["mountPath"], "/data");
+    let mounts = container["volumeMounts"].as_array().unwrap();
+    let data_mount = mounts
+        .iter()
+        .find(|mount| mount["name"] == "data")
+        .expect("data PVC mount");
+    assert_eq!(data_mount["mountPath"], "/data");
+    assert!(pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|volume| volume["name"] == "tmp" && volume["emptyDir"] == serde_json::json!({})));
 
     // The rest of the child set is present.
     assert_eq!(of_kind(&objs, "ServiceAccount")["metadata"]["name"], "tape");
@@ -187,16 +216,21 @@ fn render_emits_expected_child_objects() {
         .find(|o| o["kind"] == "Service" && o["spec"]["clusterIP"] == "None")
         .expect("headless service");
     assert_eq!(headless["metadata"]["name"], "tape-headless");
+    assert_eq!(headless["spec"]["ports"][0]["port"], 7137);
+    assert_eq!(headless["spec"]["ports"][1]["name"], "raft");
+    assert_eq!(headless["spec"]["ports"][1]["port"], 7138);
     let client = objs
         .iter()
         .find(|o| o["kind"] == "Service" && o["spec"]["type"] == "ClusterIP")
         .expect("client service");
     assert_eq!(client["spec"]["ports"][0]["port"], 7137);
+    assert_eq!(client["spec"]["ports"].as_array().unwrap().len(), 1);
     assert_eq!(
         of_kind(&objs, "PodDisruptionBudget")["spec"]["maxUnavailable"],
         1
     );
 }
+// </HANDWRITE>
 
 /// R6 — TAPE_AUTH / TAPE_TOKEN_REGISTRY_FILE + the Secret volume render only
 /// when the CR sets `auth: required` AND names a `tokensSecret` (off by
@@ -260,6 +294,50 @@ fn token_registry_secret_wiring_is_opt_in() {
         .expect("token-registry mount");
     assert_eq!(mount["mountPath"], "/var/run/secrets/tape");
     assert_eq!(mount["readOnly"], true);
+
+    // auth: required + CSI provider class: same process contract, but no
+    // Kubernetes Secret object; the shared projection helper emits the CSI
+    // volume exactly once.
+    let mut csi = spec(3);
+    csi.auth = "required".into();
+    csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
+    let objs = render(&Tape::new("tape", csi));
+    let sts = of_kind(&objs, "StatefulSet");
+    let env = env_of(sts);
+    let get = |k: &str| env.iter().find(|(n, _)| *n == k).unwrap().1;
+    assert_eq!(get("TAPE_AUTH")["value"], "required");
+    assert_eq!(
+        get("TAPE_TOKEN_REGISTRY_FILE")["value"],
+        "/var/run/secrets/tape/token-registry.json"
+    );
+    let vol = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "tape-token-registry")
+        .expect("CSI token-registry volume");
+    assert_eq!(vol["csi"]["driver"], "secrets-store.csi.k8s.io");
+    assert_eq!(
+        vol["csi"]["volumeAttributes"]["secretProviderClass"],
+        "tape-registry-csi"
+    );
+
+    // Explicit Secret retains precedence over CSI, matching Lumen's
+    // backwards-compatible deployment contract.
+    let mut both = spec(3);
+    both.auth = "required".into();
+    both.tokens_secret = Some("tape-registry-secret".into());
+    both.tokens_secret_provider_class = Some("tape-registry-csi".into());
+    let objs = render(&Tape::new("tape", both));
+    let sts = of_kind(&objs, "StatefulSet");
+    let vol = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "tape-token-registry")
+        .expect("token-registry volume");
+    assert_eq!(vol["secret"]["secretName"], "tape-registry-secret");
+    assert!(vol.get("csi").is_none());
 }
 
 /// The optional cold-recovery seed stays absent by default and projects to the

@@ -11,8 +11,9 @@
 // AW-EC-END
 
 // Contract: Tape validates ordered append, offset replay, timestamp replay, and durable consumer checkpoints through the local journal core.
-// Contract: Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams are classified as replay-log baselines for feature parity.
-// Contract: RabbitMQ topic exchange is included as a topic-routing/fanout comparison row, but is not treated as Tape's offset/time replay baseline.
+// Contract: The test consumes a versioned fixture whose every competitor row resolves to pinned official upstream provenance.
+// Contract: That external oracle classifies Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams as replay-log baselines for feature parity.
+// Contract: The same oracle classifies RabbitMQ topic exchange as topic-routing/fanout only, not Tape's offset/time replay baseline.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_feature_parity_topic_exchange_functional() {

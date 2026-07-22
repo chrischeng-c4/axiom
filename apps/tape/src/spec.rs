@@ -28,12 +28,14 @@ pub fn routes_json() -> String {
             {"method": "GET", "path": "/metrics", "purpose": "Prometheus metrics"},
             {"method": "GET", "path": "/openapi.json", "purpose": "machine OpenAPI"},
             {"method": "GET", "path": "/docs", "purpose": "Swagger UI"},
+            {"method": "GET", "path": "/admin/backup", "purpose": "admin-gated whole-journal snapshot"},
             {"method": "POST", "path": "/topics/{topic}/append", "purpose": "append event envelopes"},
             {"method": "GET", "path": "/topics/{topic}/replay", "purpose": "replay by offset or timestamp"},
-            {"method": "POST", "path": "/topics/{topic}/subscriptions", "purpose": "create a topic delivery resource"},
-            {"method": "GET", "path": "/topics/{topic}/subscriptions", "purpose": "list topic delivery resources"},
-            {"method": "GET", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "inspect one topic delivery resource"},
-            {"method": "DELETE", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "delete topic delivery resource metadata"},
+            {"method": "GET", "path": "/topics/{topic}/replay/stream", "purpose": "compact read-only h2c bulk replay"},
+            {"method": "POST", "path": "/topics/{topic}/subscriptions", "purpose": "create a named pull cursor"},
+            {"method": "GET", "path": "/topics/{topic}/subscriptions", "purpose": "list named pull cursors"},
+            {"method": "GET", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "inspect one named pull cursor"},
+            {"method": "DELETE", "path": "/topics/{topic}/subscriptions/{subscription}", "purpose": "delete named pull cursor metadata"},
             {"method": "POST", "path": "/topics/{topic}/subscriptions/{subscription}/pull", "purpose": "read a bounded pull subscription window"},
             {"method": "POST", "path": "/topics/{topic}/subscriptions/{subscription}/ack", "purpose": "advance a pull subscription cursor"},
             {"method": "PUT", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "advance a durable consumer cursor"},
@@ -57,11 +59,13 @@ Start with:
 tape append orders --payload '{"id":"o1"}'
 tape replay orders --from-offset 0
 tape checkpoint put orders worker-a --offset 1
-tape subscription create orders worker-a --pull
+tape subscription create orders worker-a
 ```
 
-The current implementation is the first local, file-backed service slice. Raft,
-k8s operator, and external benchmark gates are still separate work roots.
+Subscription creation is intrinsically caller-driven pull; Tape has no push,
+lease, consumer-group, or bidirectional consume mode. Serving supports durable
+Raft replication, operator-managed Kubernetes deployment, and external replay
+benchmark gates through their dedicated commands and evidence.
 "#
 }
 
@@ -72,12 +76,14 @@ The initial service contract is intentionally compact:
 
 - `POST /topics/{topic}/append` appends an event envelope and returns its offset.
 - `GET /topics/{topic}/replay?from_offset=N&from_timestamp_ms=T&limit=L` replays history.
+- `GET /topics/{topic}/replay/stream?from_offset=N&from_timestamp_ms=T&limit=L` downloads the same read-only history as compact validated frames over h2c.
 - `POST`/`GET /topics/{topic}/subscriptions` declare topic delivery resources.
 - `GET`/`DELETE /topics/{topic}/subscriptions/{subscription}` declare one resource.
 - `POST /topics/{topic}/subscriptions/{subscription}/pull` declares bounded pull reads.
 - `POST /topics/{topic}/subscriptions/{subscription}/ack` declares explicit cursor advance.
 - `PUT /topics/{topic}/consumers/{consumer}/checkpoint` advances a replay cursor.
 - `GET /topics/{topic}/consumers/{consumer}/checkpoint` reads the replay cursor.
+- `GET /admin/backup` returns an admin-gated whole-journal snapshot.
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` are the standard service endpoints.
 
 Use `tape spec --format routes` for the route inventory and `tape spec --format
@@ -109,6 +115,21 @@ fn openapi() -> Value {
             "/metrics": {"get": {"summary": "Prometheus metrics", "responses": ok_text()}},
             "/openapi.json": {"get": {"summary": "OpenAPI document", "responses": ok_json()}},
             "/docs": {"get": {"summary": "Swagger UI", "responses": ok_text()}},
+            "/admin/backup": {
+                "get": {
+                    "summary": "Download an admin-gated whole-journal snapshot",
+                    "responses": {
+                        "200": {
+                            "description": "JournalSnapshot JSON containing the journal at the applied Raft index",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type": "object"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "/topics/{topic}/append": {
                 "post": {
                     "summary": "Append an event envelope to a topic journal",
@@ -127,6 +148,27 @@ fn openapi() -> Value {
                         query_param("limit", "integer")
                     ],
                     "responses": ok_schema("ReplayResponse")
+                }
+            },
+            "/topics/{topic}/replay/stream": {
+                "get": {
+                    "summary": "Download compact read-only topic replay frames",
+                    "parameters": [
+                        topic_param(),
+                        query_param("from_offset", "integer"),
+                        query_param("from_timestamp_ms", "integer"),
+                        query_param("limit", "integer")
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Length-framed Tape replay stream",
+                            "content": {
+                                "application/vnd.tape.replay.v1": {
+                                    "schema": {"type": "string", "contentEncoding": "binary"}
+                                }
+                            }
+                        }
+                    }
                 }
             },
             "/topics/{topic}/subscriptions": {
@@ -227,38 +269,20 @@ fn schemas() -> Value {
                 "events": {"type": "array", "items": {"$ref": "#/components/schemas/TapeEvent"}}
             }
         },
-        "DeliveryConfig": {
-            "oneOf": [
-                {
-                    "type": "object",
-                    "required": ["mode"],
-                    "properties": {"mode": {"type": "string", "const": "pull"}}
-                },
-                {
-                    "type": "object",
-                    "required": ["mode", "endpoint"],
-                    "properties": {
-                        "mode": {"type": "string", "const": "push"},
-                        "endpoint": {"type": "string", "format": "uri"}
-                    }
-                }
-            ]
-        },
         "SubscriptionCreateRequest": {
             "type": "object",
-            "required": ["name", "delivery"],
+            "additionalProperties": false,
+            "required": ["name"],
             "properties": {
-                "name": {"type": "string"},
-                "delivery": {"$ref": "#/components/schemas/DeliveryConfig"}
+                "name": {"type": "string"}
             }
         },
         "Subscription": {
             "type": "object",
-            "required": ["topic", "name", "delivery"],
+            "required": ["topic", "name"],
             "properties": {
                 "topic": {"type": "string"},
-                "name": {"type": "string"},
-                "delivery": {"$ref": "#/components/schemas/DeliveryConfig"}
+                "name": {"type": "string"}
             }
         },
         "SubscriptionListResponse": {

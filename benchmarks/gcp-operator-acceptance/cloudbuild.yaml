@@ -1,0 +1,29 @@
+steps:
+  - id: lumen
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
+      - --target=lumen
+      - --tag=${_REGISTRY}/lumen:${_TAG}
+      - .
+
+  - id: sift
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["lumen"]
+    args:
+      - build
+      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
+      - --target=sift
+      - --tag=${_REGISTRY}/sift:${_TAG}
+      - .
+
+images:
+  - ${_REGISTRY}/lumen:${_TAG}
+  - ${_REGISTRY}/sift:${_TAG}
+
+timeout: 2700s
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY

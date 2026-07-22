@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/axiom/gcp-operator-acceptance/v1",
+  "title": "Axiom GCP operator acceptance evidence",
+  "type": "object",
+  "required": [
+    "schema",
+    "project_id",
+    "region",
+    "run_id",
+    "backup_bucket",
+    "acceptance"
+  ],
+  "properties": {
+    "schema": {
+      "const": "axiom.gcp.operator.acceptance.v1"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 6
+    },
+    "region": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gke_zone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,17}$"
+    },
+    "backup_bucket": {
+      "type": "string",
+      "minLength": 1
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["lumen", "sift"],
+      "properties": {
+        "lumen": {
+          "type": "object",
+          "required": [
+            "operator_reconcile_1x1",
+            "gcs_backup_before_split",
+            "auto_split_delta",
+            "cpu_memory_actuator",
+            "live_replica_membership"
+          ]
+        },
+        "sift": {
+          "type": "object",
+          "required": [
+            "operator_reconcile_1x1",
+            "scheduled_backup",
+            "gcs_backup",
+            "topology_beyond_1x1"
+          ]
+        }
+      }
+    }
+  }
+}

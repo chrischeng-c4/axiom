@@ -15,36 +15,43 @@ id = "build-aw-tools"
 cmd = ["cargo", "build", "-p", "meter-cli", "-p", "guard-cli"]
 
 [[setup]]
-id = "build-relay-ec-tests"
+id = "build-relay-security-ec-tests"
 cmd = [
   "cargo",
   "test",
   "-p",
   "relay",
   "--test",
-  "perf_gate",
+  "auth",
   "--test",
-  "work_queue_throughput",
+  "service_admission",
   "--test",
-  "relay_core",
+  "raft_peer_mtls",
+  "--test",
+  "direct_k8s_assets",
+  "--no-run",
+]
+
+[[setup]]
+id = "build-service-auth-security-ec-tests"
+cmd = ["cargo", "test", "-p", "service-auth", "--lib", "--no-run"]
+
+[[setup]]
+id = "build-relay-measured-performance-gate"
+cmd = [
+  "cargo",
+  "test",
+  "--release",
+  "-p",
+  "relay",
+  "--test",
+  "measured_performance",
   "--no-run",
 ]
 
 [[runners]]
 id = "meter-perf"
-cmd = [
-  "../../target/debug/meter",
-  "test",
-  "--",
-  "-p",
-  "relay",
-  "--test",
-  "perf_gate",
-  "--test",
-  "work_queue_throughput",
-  "--",
-  "--nocapture",
-]
+cmd = ["bash", "scripts/ec-evidence.sh", "performance-efficiency"]
 timeout_s = 600
 
 [[runners]]
@@ -58,6 +65,6 @@ cmd = [
   "--compact",
   "--no-persist",
   "--meter-command",
-  "../../target/debug/meter test -- -p relay --test relay_core -- --nocapture",
+  "bash scripts/ec-evidence.sh security-guard",
 ]
 timeout_s = 600

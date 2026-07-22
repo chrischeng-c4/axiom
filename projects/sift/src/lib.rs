@@ -859,6 +859,7 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/replay", get(replay_events))
         .route("/v1/replays", post(start_replay))
         .route("/v1/replays/{id}", get(get_replay))
+        .route("/admin/backup", get(admin_backup))
         .with_state(state)
 }
 
@@ -870,6 +871,41 @@ pub fn protected_router(state: Arc<ServiceState>, verifier: Arc<auth::SiftVerifi
         verifier,
         auth::auth_middleware,
     ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/backup",
+    responses(
+        (status = 200, description = "exact durable-journal snapshot bytes"),
+        (status = 403, description = "wildcard admin role required", body = ErrorEnvelope),
+        (status = 500, description = "snapshot serialization failed", body = ErrorEnvelope)
+    )
+)]
+async fn admin_backup(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+) -> Result<Response, ApiError> {
+    authorize_global_admin(principal.as_ref().map(|principal| &principal.0))?;
+    let snapshot = state
+        .journal()
+        .snapshot_bytes()
+        .map_err(|error| ApiError::internal(format!("create durable journal snapshot: {error}")))?;
+    tracing::info!(
+        event = "backup_started",
+        subject = principal
+            .as_ref()
+            .and_then(|principal| principal.0.subject())
+            .unwrap_or("open-auth"),
+        bytes = snapshot.len(),
+        "durable journal snapshot exported"
+    );
+    let mut response = Response::new(Body::from(snapshot));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    Ok(response)
 }
 
 #[utoipa::path(
@@ -1164,6 +1200,18 @@ fn authorize_project_read(
     project: &str,
 ) -> Result<(), ApiError> {
     authorize_project_role(principal, project, Role::Read)
+}
+
+fn authorize_global_admin(principal: Option<&RoleMapPrincipal>) -> Result<(), ApiError> {
+    match principal {
+        None | Some(RoleMapPrincipal::Open) => Ok(()),
+        Some(principal) => principal.ensure("*", Role::Admin).map_err(|denied| {
+            ApiError::forbidden(format!(
+                "subject `{}` lacks wildcard admin access required for journal backup",
+                denied.subject
+            ))
+        }),
+    }
 }
 
 fn authorize_project_role(
@@ -2043,7 +2091,8 @@ async fn get_replay(
         query_events,
         replay_events,
         start_replay,
-        get_replay
+        get_replay,
+        admin_backup
     ),
     components(schemas(
         OperationalEventV2,

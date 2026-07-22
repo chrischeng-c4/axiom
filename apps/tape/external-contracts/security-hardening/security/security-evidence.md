@@ -1,6 +1,6 @@
 ---
 id: tape-security-hardening-ec
-summary: Tape's security gate is the guard report, vat-isolated, with meter evidence attached for the bearer-auth request-boundary smoke.
+summary: Tape's security gate is the guard report, vat-isolated, with meter evidence attached to the real bearer-auth request-boundary journey.
 fill_sections: [e2e-test, tool-contract]
 ---
 
@@ -8,7 +8,7 @@ fill_sections: [e2e-test, tool-contract]
 
 Tape's security gate is the guard report over `apps/tape`: static
 Docker/Kubernetes/API findings must be clean, and guard attaches meter
-evidence from tape's `cli_contract` auth-boundary smoke so security
+evidence from Tape's `service_auth` integration journey so security
 regressions cannot be marked ready without runtime evidence. The gate runs
 inside vat so generated reports and transient files never mutate the host
 checkout.
@@ -28,7 +28,7 @@ e2e_tests:
     required_for_production: false
     assertions:
       - "guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings."
-      - "guard attaches meter evidence for tape's bearer-auth request-boundary smoke (cli_contract auth-relevant cases)."
+      - "guard attaches non-zero meter evidence for Tape's service_auth bearer-token, topic-RBAC, and credential-rotation journey."
       - "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout."
 ```
 

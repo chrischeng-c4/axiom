@@ -249,7 +249,10 @@ extern "C" fn type_params_type_var_tuple_test_typevartuple_01(_self_v: MbValue) 
 
 extern "C" fn type_params_type_var_param_spec_test_paramspec_01(_self_v: MbValue) -> MbValue {
     const CASES: &[(&str, &str)] = &[
-        ("def func1[**A: str](): pass", "cannot use bound with ParamSpec"),
+        (
+            "def func1[**A: str](): pass",
+            "cannot use bound with ParamSpec",
+        ),
         (
             "def func1[**A: (int, str)](): pass",
             "cannot use constraints with ParamSpec",
@@ -389,9 +392,7 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     let mut typevartuple_methods: HashMap<String, MbValue> = HashMap::new();
     typevartuple_methods.insert(
         "test_typevartuple_01".to_string(),
-        MbValue::from_func(
-            type_params_type_var_tuple_test_typevartuple_01 as *const () as usize,
-        ),
+        MbValue::from_func(type_params_type_var_tuple_test_typevartuple_01 as *const () as usize),
     );
     super::super::class::mb_class_register(
         "TypeParamsTypeVarTupleTest",
@@ -401,9 +402,7 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     let mut paramspec_methods: HashMap<String, MbValue> = HashMap::new();
     paramspec_methods.insert(
         "test_paramspec_01".to_string(),
-        MbValue::from_func(
-            type_params_type_var_param_spec_test_paramspec_01 as *const () as usize,
-        ),
+        MbValue::from_func(type_params_type_var_param_spec_test_paramspec_01 as *const () as usize),
     );
     super::super::class::mb_class_register(
         "TypeParamsTypeVarParamSpecTest",
@@ -413,21 +412,15 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     let mut nonlocal_methods: HashMap<String, MbValue> = HashMap::new();
     nonlocal_methods.insert(
         "test_nonlocal_disallowed_01".to_string(),
-        MbValue::from_func(
-            type_params_nonlocal_test_nonlocal_disallowed_01 as *const () as usize,
-        ),
+        MbValue::from_func(type_params_nonlocal_test_nonlocal_disallowed_01 as *const () as usize),
     );
     nonlocal_methods.insert(
         "test_nonlocal_disallowed_02".to_string(),
-        MbValue::from_func(
-            type_params_nonlocal_test_nonlocal_disallowed_02 as *const () as usize,
-        ),
+        MbValue::from_func(type_params_nonlocal_test_nonlocal_disallowed_02 as *const () as usize),
     );
     nonlocal_methods.insert(
         "test_nonlocal_disallowed_03".to_string(),
-        MbValue::from_func(
-            type_params_nonlocal_test_nonlocal_disallowed_03 as *const () as usize,
-        ),
+        MbValue::from_func(type_params_nonlocal_test_nonlocal_disallowed_03 as *const () as usize),
     );
     super::super::class::mb_class_register(
         "TypeParamsNonlocalTest",
@@ -459,9 +452,7 @@ fn register_type_params_wrapper_submodule(type_params_make_base: usize) {
     );
     attrs.insert(
         "TypeParamsTypeVarTupleTest".to_string(),
-        MbValue::from_ptr(MbObject::new_str(
-            "TypeParamsTypeVarTupleTest".to_string(),
-        )),
+        MbValue::from_ptr(MbObject::new_str("TypeParamsTypeVarTupleTest".to_string())),
     );
     attrs.insert(
         "TypeParamsTypeVarParamSpecTest".to_string(),
@@ -1311,7 +1302,11 @@ fn register_support_submodules() {
             HashMap::new(),
         );
         set_class_attr(FOO_CLASS, "__module__", str_value(MODULE_NAME));
-        set_class_attr(FOO_CLASS, "__annotations__", annotation_dict(&[("a", int_type)]));
+        set_class_attr(
+            FOO_CLASS,
+            "__annotations__",
+            annotation_dict(&[("a", int_type)]),
+        );
 
         super::super::class::mb_class_register(
             FOO_GENERIC_CLASS,
@@ -1652,7 +1647,10 @@ fn register_support_submodules() {
             ("mod_generics_cache", noop),
         ]),
     );
-    super::register_module("test.typinganndata.ann_module", make_attrs(&[("dec", identity)]));
+    super::register_module(
+        "test.typinganndata.ann_module",
+        make_attrs(&[("dec", identity)]),
+    );
     super::register_module("test.typinganndata.ann_module2", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module3", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module4", make_attrs(&[]));

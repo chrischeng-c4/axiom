@@ -127,6 +127,33 @@ pub fn dedicated_node_affinity(selector: Value) -> Value {
     })
 }
 
+/// Pod-level Kubernetes restricted-profile baseline for long-running service
+/// workloads. The matching container-level restrictions come from
+/// [`restricted_container_security_context`].
+pub fn restricted_pod_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "fsGroup": 65532,
+        "seccompProfile": { "type": "RuntimeDefault" },
+    })
+}
+
+/// Container-level Kubernetes restricted-profile baseline for a service
+/// workload. Services still add explicit writable `emptyDir` mounts for paths
+/// such as `/tmp` when their process needs them.
+pub fn restricted_container_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "allowPrivilegeEscalation": false,
+        "readOnlyRootFilesystem": true,
+        "capabilities": { "drop": ["ALL"] },
+    })
+}
+
 /// A rendered PVC template plus the container mount path it should back.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct WorkloadVolumeClaim<'a> {
@@ -134,6 +161,53 @@ pub struct WorkloadVolumeClaim<'a> {
     pub template: Value,
     pub mount_path: &'a str,
     pub read_only: bool,
+}
+
+/// Source for a bearer-token registry projection. A service can use a normal
+/// Kubernetes Secret or delegate material delivery to the Secrets Store CSI
+/// driver without re-implementing the volume shape in every operator.
+pub enum TokenRegistrySource<'a> {
+    Secret { name: &'a str, key: &'a str },
+    Csi { provider_class: &'a str },
+}
+
+/// One read-only token-registry volume and its corresponding container mount.
+/// Services retain their external env names and mount paths; this helper owns
+/// the common Kubernetes projection contract.
+pub struct TokenRegistryProjection<'a> {
+    pub volume_name: &'a str,
+    pub mount_path: &'a str,
+    pub source: TokenRegistrySource<'a>,
+}
+
+/// Render the read-only container mount for a token registry projection.
+pub fn token_registry_mount(projection: &TokenRegistryProjection<'_>) -> Value {
+    json!({
+        "name": projection.volume_name,
+        "mountPath": projection.mount_path,
+        "readOnly": true,
+    })
+}
+
+/// Render the Kubernetes volume backing a token registry projection.
+pub fn token_registry_volume(projection: &TokenRegistryProjection<'_>) -> Value {
+    let mut volume = json!({ "name": projection.volume_name });
+    match &projection.source {
+        TokenRegistrySource::Secret { name, key } => {
+            volume["secret"] = json!({
+                "secretName": name,
+                "items": [{ "key": key, "path": key }],
+            });
+        }
+        TokenRegistrySource::Csi { provider_class } => {
+            volume["csi"] = json!({
+                "driver": "secrets-store.csi.k8s.io",
+                "readOnly": true,
+                "volumeAttributes": { "secretProviderClass": provider_class },
+            });
+        }
+    }
+    volume
 }
 
 /// A ServiceAccount for the workload pods.
@@ -611,7 +685,7 @@ pub struct ShardedStatefulSet<'a> {
 /// The downward-API StatefulSet: `replicas = shard_count * replicas_per_shard`,
 /// `podManagementPolicy: Parallel`, and the env quartet
 /// (`POD_NAME`/`POD_NAMESPACE`/`SHARD_COUNT`/`REPLICAS_PER_SHARD`/`VOTER_COUNT`)
-/// + `<headless_env_key>` that `raft_runtime::cluster::ClusterTopology::from_env`
+/// together with `<headless_env_key>`, which `raft_runtime::cluster::ClusterTopology::from_env`
 /// reads to derive node id / membership / peers.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
@@ -715,6 +789,45 @@ mod tests {
         assert_eq!(
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
+        );
+        assert_eq!(restricted_pod_security_context()["runAsNonRoot"], true);
+        assert_eq!(
+            restricted_pod_security_context()["seccompProfile"]["type"],
+            "RuntimeDefault"
+        );
+        assert_eq!(
+            restricted_container_security_context()["readOnlyRootFilesystem"],
+            true
+        );
+        assert_eq!(
+            restricted_container_security_context()["capabilities"]["drop"][0],
+            "ALL"
+        );
+
+        let secret = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Secret {
+                name: "svc-registry",
+                key: "token-registry.json",
+            },
+        };
+        assert_eq!(token_registry_mount(&secret)["readOnly"], true);
+        assert_eq!(
+            token_registry_volume(&secret)["secret"]["secretName"],
+            "svc-registry"
+        );
+
+        let csi = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Csi {
+                provider_class: "svc-registry",
+            },
+        };
+        assert_eq!(
+            token_registry_volume(&csi)["csi"]["volumeAttributes"]["secretProviderClass"],
+            "svc-registry"
         );
     }
 

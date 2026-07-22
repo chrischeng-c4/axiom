@@ -2,8 +2,8 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:defer-rate-limits" tracker="#766" reason="Focused tests for queue dispatch budget, max-in-flight, and lease expiry reclaim."
 use chrono::{Duration, Utc};
 use defer::{
-    CreateTask, DeferScheduler, QueueControlState, QueuePolicy, SchedulerError, Target,
-    DEFAULT_PRIORITY,
+    AttemptSettlement, CreateTask, DeferScheduler, QueueControlState, QueuePolicy, SchedulerError,
+    SettlementOutcome, Target, TaskStatus, DEFAULT_PRIORITY,
 };
 
 fn target() -> Target {
@@ -197,6 +197,70 @@ fn updating_one_queue_policy_does_not_change_other_queues() {
             .policy
             .max_dispatch_per_tick,
         QueuePolicy::default().max_dispatch_per_tick
+    );
+}
+
+#[test]
+fn batch_create_rejects_duplicates_without_partial_insertion() {
+    let mut scheduler = DeferScheduler::new();
+    scheduler.configure_queue("q", QueuePolicy::default());
+    scheduler.create_task("q", due_task("existing")).unwrap();
+    let before = scheduler.queue_snapshot("q").unwrap().task_count;
+    let error = scheduler
+        .create_tasks(
+            "q",
+            vec![due_task("new"), due_task("existing"), due_task("later")],
+        )
+        .unwrap_err();
+    assert_eq!(error, SchedulerError::TaskExists("existing".into()));
+    assert_eq!(scheduler.queue_snapshot("q").unwrap().task_count, before);
+    assert_eq!(scheduler.status("q", "new").unwrap(), None);
+    assert_eq!(scheduler.status("q", "later").unwrap(), None);
+}
+
+#[test]
+fn batch_settlement_rejects_wrong_executor_and_stale_epoch() {
+    let now = Utc::now();
+    let mut scheduler = DeferScheduler::new();
+    scheduler.configure_queue("q", QueuePolicy::default());
+    let mut task = due_task("one");
+    task.schedule_at = now;
+    scheduler.create_task("q", task).unwrap();
+    let lease = scheduler
+        .lease_due_on_node("q", 7, now, 1)
+        .unwrap()
+        .remove(0);
+    let settlement = |epoch| AttemptSettlement {
+        attempt_id: lease.attempt_id.clone(),
+        epoch,
+        completed_at: now,
+        success: true,
+    };
+    assert_eq!(
+        scheduler
+            .settle_batch("q", 8, vec![settlement(lease.epoch)])
+            .unwrap(),
+        vec![SettlementOutcome::Acked(false)]
+    );
+    assert_eq!(
+        scheduler
+            .settle_batch("q", 7, vec![settlement(lease.epoch + 1)])
+            .unwrap(),
+        vec![SettlementOutcome::Acked(false)]
+    );
+    assert!(matches!(
+        scheduler.status("q", "one").unwrap(),
+        Some(TaskStatus::Leased { .. })
+    ));
+    assert_eq!(
+        scheduler
+            .settle_batch("q", 7, vec![settlement(lease.epoch)])
+            .unwrap(),
+        vec![SettlementOutcome::Acked(true)]
+    );
+    assert_eq!(
+        scheduler.status("q", "one").unwrap(),
+        Some(TaskStatus::Succeeded)
     );
 }
 // HANDWRITE-END

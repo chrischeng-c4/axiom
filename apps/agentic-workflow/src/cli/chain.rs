@@ -383,6 +383,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                command `wi_run_command` builds elsewhere; a blocked/HITL candidate is \
                parked (never emitted) and the drain moves to the next one",
     },
+    EmitSite {
+        source: "issues.rs:capability_plan_review_command",
+        sample: "aw wi plan-review --evidence-file /tmp/aw/capability-plan-review.json",
+        note: "#2187: capability planning stops at a digest-bound independent review payload; \
+               the emitted command consumes reviewer evidence before any bounded tracker WI is \
+               published",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -626,6 +633,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "wi.plan",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.plan-review",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {

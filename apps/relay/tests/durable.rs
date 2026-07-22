@@ -20,9 +20,10 @@ fn item(id: &str) -> (String, serde_json::Value, BTreeMap<String, String>, u8) {
 }
 
 fn disk_config(dir: &std::path::Path) -> RelayCoreConfig {
-    let mut cfg = RelayCoreConfig::default();
-    cfg.data_dir = dir.to_string_lossy().into_owned();
-    cfg
+    RelayCoreConfig {
+        data_dir: dir.to_string_lossy().into_owned(),
+        ..RelayCoreConfig::default()
+    }
 }
 
 fn segmented_config(dir: &std::path::Path, segment_bytes: u64) -> RelayCoreConfig {

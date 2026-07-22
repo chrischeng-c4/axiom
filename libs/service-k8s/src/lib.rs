@@ -15,6 +15,7 @@
 //! `service-backup` + `cli-std` + this).
 
 pub mod controller;
+pub mod crd;
 pub mod lease;
 pub mod llm;
 pub mod render;
@@ -26,7 +27,9 @@ pub use controller::{run, Error};
 pub use lease::Election;
 pub use service::{ClusterSpec, ManagedService, ReadinessTarget, ReadyFacts, ResourceSpec};
 pub use stateful::{
-    plan_replica_layer, ObservedUtilization, ReplicaLayerError, ReplicaLayerPlan,
-    ReplicaLayerPolicy, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
+    plan_replica_layer, plan_shard_split, ObservedShardUsage, ObservedUtilization,
+    ReplicaLayerError, ReplicaLayerPlan, ReplicaLayerPolicy, ShardSplitError, ShardSplitPlan,
+    ShardSplitPolicy, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
+    DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES,
 };
 // CODEGEN-END

@@ -1,16 +1,13 @@
 // SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:f910ee9b" tracker="pending-tracker" reason="Restart-recovery tests over TapeRaft: a single-node group restarted from its data dir rejoins with its applied index intact (recovered from the fsynced marker) and accepts new proposes with no double-apply; a checkpoint-put proposed before a simulated restart is not re-applied on cold replay thanks to the persisted floor."
-//! Restart-recovery tests (#1327): the fsynced `applied-<node>.idx` marker is
-//! the durable floor a fresh `TapeRaft` recovers at construction, so a
-//! restarted single-node group neither re-applies already-committed entries
-//! nor loses its applied index.
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:f910ee9b" tracker="pending-tracker" reason="Restart-recovery tests over TapeRaft prove the shared persisted commit watermark/log restore journal state before new proposals without duplicate apply."
+//! Restart-recovery tests (#1327): shared Raft hard state persists the commit
+//! watermark and resident log/snapshot, so a fresh `TapeRaft` restores every
+//! committed journal mutation before it accepts new proposals.
 //!
 //! These exercise the SAME on-disk raft dir across two `TapeRaft::spawn`
-//! calls (simulating a process restart) rather than restarting `raft-runtime`'s
-//! internal log replay directly -- the marker recovery + apply-time floor
-//! check in [`tape::raft::TapeStateMachine`] is what's under test here (the
-//! finer-grained unit coverage for the marker itself lives in
-//! `src/raft.rs`'s own `#[cfg(test)]` module).
+//! calls (simulating a process restart). Legacy marker migration remains unit
+//! covered inside `src/raft.rs`; this integration gate exercises the current
+//! shared persistence path.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -166,16 +163,8 @@ async fn checkpoint_put_before_restart_is_not_reapplied_on_cold_replay() {
         }
     }
 
-    // Restart: the journal snapshot persisted alongside the marker recovers
-    // BOTH the append and the checkpoint. If the persisted floor did NOT
-    // skip re-applying the checkpoint-put entry from the raft log's own
-    // cold-replay, `apply` would re-run `put_checkpoint_at` here -- for this
-    // exact scenario it would still happen to succeed (offset 1 == existing
-    // offset 1 is not `<`), so the real proof is that no re-apply is
-    // attempted at all: the recovered checkpoint's `updated_at_ms` still
-    // matches what was committed before restart (a re-run would keep it
-    // fixed too since the value is unchanged, so this test also cross-checks
-    // via the state machine's own applied index below).
+    // Restart: the shared persisted commit range rebuilds both the append and
+    // checkpoint before the node accepts another proposal.
     let journal = Arc::new(Mutex::new(TapeJournal::default()));
     let raft = TapeRaft::spawn(
         journal,

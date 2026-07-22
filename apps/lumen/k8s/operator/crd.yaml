@@ -196,7 +196,7 @@ spec:
                         nullable: true
                         type: string
                       destination:
-                        description: 'Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only `gs://bucket/prefix` (parsed, but the runner supports `file://` and `s3://` sinks today).'
+                        description: 'Destination URI: `file:///path`, `s3://bucket/prefix`, or live `gs://bucket/prefix`; GCS uses an explicit access token or GCE/GKE Workload Identity.'
                         type: string
                       retentionSecs:
                         description: Drop backup objects older than this many seconds after a successful put. Absent keeps everything.

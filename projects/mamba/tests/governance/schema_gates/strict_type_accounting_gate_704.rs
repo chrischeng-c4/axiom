@@ -2058,7 +2058,14 @@ assert [row["func"] for row in rows] == ["visible"]
 
     let root = mamba_root();
     let curses = root.join("tests/cpython/type/std-libs/_curses");
-    for method in ["clearok", "idlok", "keypad", "leaveok", "nodelay", "notimeout"] {
+    for method in [
+        "clearok",
+        "idlok",
+        "keypad",
+        "leaveok",
+        "nodelay",
+        "notimeout",
+    ] {
         assert!(
             curses
                 .join(format!("window__{method}__flag_as_bool_wrong.py"))
@@ -2067,11 +2074,9 @@ assert [row["func"] for row in rows] == ["visible"]
         );
     }
 
-    let copy = fs::read_to_string(
-        root.join(
-            "tests/cpython/type/std-libs/multiprocessing_sharedctypes/copy__obj_as__CT_wrong.py",
-        ),
-    )
+    let copy = fs::read_to_string(root.join(
+        "tests/cpython/type/std-libs/multiprocessing_sharedctypes/copy__obj_as__CT_wrong.py",
+    ))
     .expect("read sharedctypes.copy strict fixture");
     assert!(copy.contains("# mamba-strict-type: TypeError"));
     assert!(!copy.contains("TypeVar param must stay unwalled"));

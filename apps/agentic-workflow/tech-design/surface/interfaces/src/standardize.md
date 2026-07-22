@@ -21,11 +21,10 @@ capability_refs:
     coverage: full
     rationale: "Standardize and health project scopes protect project-local source, TD, and generated artifact boundaries during takeover scans."
 command_refs:
-  # #920 (epic #914 slice F): `managed`/`semantic`/`traceability` and their
-  # `next`/`report`/`run` stage subcommands are retired -- only `aw
-  # standardize` (dispatching solely to `audit`, claimed by
-  # aw-standardize-audit-first-quality.md) remains live.
-  - command: aw standardize
+  # #1278 retired the public `aw standardize` namespace. Its remaining
+  # readiness readers live under health and its artifact producers under TD.
+  - command: aw health
+  - command: aw td
 ---
 
 # Standardized apps/agentic-workflow/src/cli/standardize.rs
@@ -5158,7 +5157,7 @@ fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Resu
                 ));
             } else if content != expected {
                 blockers.push(format!(
-                    "project root artifact `{rel}` is stale; run `aw standardize managed run --project {} --non-interactive --max-ticks 1`",
+                    "project root artifact `{rel}` is stale; run `aw td gen --force-regen --project {}`",
                     shell_quote(&project)
                 ));
             }
@@ -7745,7 +7744,16 @@ test_cmd = "true"
         generated.push_str("\n");
         write(tmp.path(), "projects/tool/llms.txt", &generated);
         let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
-        assert!(blockers.iter().any(|blocker| blocker.contains("is stale")));
+        assert_eq!(
+            blockers,
+            vec![
+                "project root artifact `projects/tool/llms.txt` is stale; run `aw td gen --force-regen --project tool`"
+                    .to_string()
+            ]
+        );
+        assert!(blockers
+            .iter()
+            .all(|blocker| !blocker.contains("aw standardize")));
 
         let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
         write(tmp.path(), "projects/tool/llms.txt", &generated);

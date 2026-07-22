@@ -25,8 +25,7 @@ fn line_count(output: &str, expected: &str) -> usize {
 
 #[test]
 fn dynamic_routes_reject_before_body_and_keep_bound_kw_default() {
-    let (result, output) = run(
-        r#"
+    let (result, output) = run(r#"
 from typing import Any
 
 def reject_raw(value: int) -> int:
@@ -149,10 +148,15 @@ except TypeError:
 
 bound_default_fn: Any = holder.keep_default
 bound_default_fn()
-"#,
+"#);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
     );
-    assert!(result.is_ok(), "unexpected session error: {result:?}\n{output}");
-    assert!(!output.contains("BAD_"), "rejected body executed:\n{output}");
+    assert!(
+        !output.contains("BAD_"),
+        "rejected body executed:\n{output}"
+    );
     assert_eq!(
         line_count(
             &output,
@@ -174,8 +178,7 @@ bound_default_fn()
 
 #[test]
 fn scalar_contracts_aliases_and_fail_open_annotations() {
-    let (result, output) = run(
-        r#"
+    let (result, output) = run(r#"
 from typing import Any
 
 type Count = int
@@ -285,10 +288,15 @@ try:
     variadic_fn("wrong", named="wrong")
 except TypeError:
     print("BAD_REJECT_VARIADIC")
-"#,
+"#);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
     );
-    assert!(result.is_ok(), "unexpected session error: {result:?}\n{output}");
-    assert!(!output.contains("BAD_REJECT"), "fail-open annotation rejected:\n{output}");
+    assert!(
+        !output.contains("BAD_REJECT"),
+        "fail-open annotation rejected:\n{output}"
+    );
     assert_eq!(line_count(&output, "BODY_COUNT 1"), 1, "{output}");
     assert_eq!(line_count(&output, "BODY_BOOL True"), 1, "{output}");
     assert_eq!(line_count(&output, "BODY_FLOAT 1.0"), 2, "{output}");
@@ -311,8 +319,7 @@ except TypeError:
 
 #[test]
 fn dynamic_variadic_elements_reject_before_body_and_preserve_packed_values() {
-    let (result, output) = run(
-        r#"
+    let (result, output) = run(r#"
 from typing import Any
 
 type Count = int
@@ -437,10 +444,15 @@ generic_fn: Any = generic_values
 loose_fn("wrong", named="wrong")
 any_fn("wrong", named="wrong")
 generic_fn("wrong", named="wrong")
-"#,
+"#);
+    assert!(
+        result.is_ok(),
+        "unexpected session error: {result:?}\n{output}"
     );
-    assert!(result.is_ok(), "unexpected session error: {result:?}\n{output}");
-    assert!(!output.contains("BAD_"), "rejected body executed:\n{output}");
+    assert!(
+        !output.contains("BAD_"),
+        "rejected body executed:\n{output}"
+    );
     assert_eq!(line_count(&output, "INTS 2 True 2"), 1, "{output}");
     assert_eq!(line_count(&output, "INTS 2 3 4"), 1, "{output}");
     assert_eq!(line_count(&output, "BOOLS 1 True"), 1, "{output}");

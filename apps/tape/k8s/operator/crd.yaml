@@ -77,14 +77,18 @@ spec:
                 minimum: 0.0
               storage:
                 default: 10Gi
-                description: Per-pod journal (+ raft hard state + applied-index marker) PVC size. Defaults to `10Gi`.
+                description: Per-pod journal plus shared Raft hard-state/log/snapshot PVC size. Defaults to `10Gi`.
                 type: string
               storageClass:
                 description: PVC StorageClass for the journal disk. Unset means the cluster default.
                 nullable: true
                 type: string
               tokensSecret:
-                description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern; off unless the CR asks).'
+                description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern; off unless the CR asks). Tape watches a changed projection and atomically applies only a valid replacement without a pod restart.'
+                nullable: true
+                type: string
+              tokensSecretProviderClass:
+                description: 'Name of a Secrets Store CSI `SecretProviderClass` that projects the same `token-registry.json` file as [`Self::tokens_secret`]. When the CSI driver refreshes that file, Tape''s watcher applies valid rotations without a pod restart. It is used only with `auth: required`; when both sources are set, `tokensSecret` wins for backward compatibility.'
                 nullable: true
                 type: string
               voterCount:

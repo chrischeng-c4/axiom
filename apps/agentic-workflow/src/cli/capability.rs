@@ -988,6 +988,7 @@ pub enum CapabilityActionKind {
     StaleProjectConfig,
     DefineVerificationContract,
     LinkClaimVerification,
+    ReviewCapabilityPlan,
     AssignCapabilityType,
     None,
 }
@@ -1620,6 +1621,7 @@ fn capability_check_blocks_on_next_action(
             | CapabilityActionKind::StaleProjectConfig
             | CapabilityActionKind::DefineVerificationContract
             | CapabilityActionKind::LinkClaimVerification
+            | CapabilityActionKind::ReviewCapabilityPlan
             | CapabilityActionKind::AssignCapabilityType
     ) || (verify && kind == CapabilityActionKind::RunVerify)
 }
@@ -4208,6 +4210,7 @@ fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
         CapabilityActionKind::StaleProjectConfig => "stale_project_config",
         CapabilityActionKind::DefineVerificationContract => "define_verification_contract",
         CapabilityActionKind::LinkClaimVerification => "link_claim_verification",
+        CapabilityActionKind::ReviewCapabilityPlan => "review_capability_plan",
         CapabilityActionKind::AssignCapabilityType => "assign_capability_type",
         CapabilityActionKind::None => "none",
     }
@@ -5493,6 +5496,7 @@ pub(crate) async fn run_capability_tick(project: &str, args: CapabilityRunArgs) 
                 }
             }
             CapabilityActionKind::None => break,
+            CapabilityActionKind::ReviewCapabilityPlan => break,
             _ if action.requires_hitl => {
                 run_results.push(CapabilityRunResult {
                     tick,
@@ -6682,6 +6686,11 @@ fn wi_derived_capability_evidence(
     for gap in &capability.gaps {
         candidate_ids.insert(gap.id.clone());
     }
+    if let Some(contract) = capability.verification_contract.as_ref() {
+        for claim in &contract.claims {
+            candidate_ids.insert(claim.id.clone());
+        }
+    }
     let mut evidence = Vec::new();
     for issue in issues {
         let reference = issue_ref(issue);
@@ -6697,6 +6706,15 @@ fn wi_derived_capability_evidence(
             .iter()
             .find(|gap| declared.contains(&gap.id))
             .map(|gap| gap.id.clone())
+            .or_else(|| {
+                capability
+                    .verification_contract
+                    .as_ref()?
+                    .claims
+                    .iter()
+                    .find(|claim| declared.contains(&claim.id))
+                    .map(|claim| claim.id.clone())
+            })
             .unwrap_or_else(|| capability.id.clone());
         let projection = workflow_guard::parse_projection(&issue.body);
         evidence.push(CapabilityWiEvidence {
@@ -6723,7 +6741,7 @@ fn wi_derived_capability_evidence(
 /// slugified for comparison against capability/gap ids. Used only to
 /// resolve read-only WI-side provenance (#1847 R2) — never to gate
 /// readiness.
-fn wi_body_capability_alignment_ids(body: &str) -> BTreeSet<String> {
+pub(crate) fn wi_body_capability_alignment_ids(body: &str) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     let Some(section_start) = body.find("## Capability Alignment") else {
         return ids;
@@ -7086,6 +7104,51 @@ fn choose_next_action(
                 td.role == CapabilityRefRole::Primary && td.claim.as_deref() == Some(&claim.id)
             });
             if !has_primary_td {
+                if let Ok(project_root) = crate::find_project_root() {
+                    if let Some(pending) = crate::cli::issues::pending_capability_plan_review(
+                        &project_root,
+                        &report.project,
+                    ) {
+                        return CapabilityAction {
+                            kind: CapabilityActionKind::ReviewCapabilityPlan,
+                            capability_id: Some(item.id.clone()),
+                            gap_id: None,
+                            claim_id: Some(claim.id.clone()),
+                            target: item.title.clone(),
+                            command: pending.command,
+                            reason: "independent digest-bound capability-plan review is pending"
+                                .to_string(),
+                            requires_hitl: pending.requires_hitl,
+                            hitl_question: None,
+                        };
+                    }
+                }
+                if let Some(active_issue) = item
+                    .wi_evidence
+                    .iter()
+                    .find(|evidence| evidence.gap_id == claim.id && evidence.state == "open")
+                {
+                    let (kind, command, reason) = lifecycle_action_for_work_item(
+                        report,
+                        active_issue.reference.trim_start_matches('#'),
+                        Some(active_issue),
+                        None,
+                        None,
+                        include_issue_inventory,
+                        "bounded WI exists for the required capability claim; continue its EC-first lifecycle",
+                    );
+                    return CapabilityAction {
+                        kind,
+                        capability_id: Some(item.id.clone()),
+                        gap_id: None,
+                        claim_id: Some(claim.id.clone()),
+                        target: item.title.clone(),
+                        command,
+                        reason,
+                        requires_hitl: false,
+                        hitl_question: None,
+                    };
+                }
                 return CapabilityAction {
                     kind: CapabilityActionKind::LinkClaimVerification,
                     capability_id: Some(item.id.clone()),
@@ -8684,6 +8747,16 @@ fn markdown_cell(value: &str) -> String {
 }
 
 fn root_wi_for_capability(capability: &CapabilitySection) -> String {
+    if let Some(root_wi) = capability
+        .current_state
+        .strip_prefix("Root WI:")
+        .and_then(|rest| rest.split(';').next())
+        .map(str::trim)
+        .filter(|wi| !is_empty_table_value(wi))
+    {
+        return root_wi.to_string();
+    }
+
     capability
         .gaps
         .iter()
@@ -12345,6 +12418,38 @@ fn capability_summary(report: &CapabilityReport, include_run_results: bool) -> s
         "profile": capability_profile_summary(report),
         "next_action": &report.next_action,
     });
+    if report.next_action.kind == CapabilityActionKind::ReviewCapabilityPlan {
+        if let Ok(project_root) = crate::find_project_root() {
+            if let Some(pending) =
+                crate::cli::issues::pending_capability_plan_review(&project_root, &report.project)
+            {
+                summary
+                    .as_object_mut()
+                    .expect("capability summary is an object")
+                    .insert(
+                        "agent_review_prompt".to_string(),
+                        serde_json::Value::String(pending.prompt),
+                    );
+                if let Some(next) = summary
+                    .get_mut("next")
+                    .and_then(|value| value.as_object_mut())
+                {
+                    next.insert(
+                        "payload_path".to_string(),
+                        serde_json::Value::String(pending.payload_path.display().to_string()),
+                    );
+                    next.insert(
+                        "kind".to_string(),
+                        serde_json::Value::String(if pending.requires_hitl {
+                            "hitl".to_string()
+                        } else {
+                            "agent_review".to_string()
+                        }),
+                    );
+                }
+            }
+        }
+    }
     if include_run_results && !report.run_results.is_empty() {
         summary
             .as_object_mut()
@@ -12622,6 +12727,7 @@ fn print_next_action(action: &CapabilityAction) {
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityWiPlanRow {
+    pub capability_id: String,
     pub capability: String,
     pub capability_type: String,
     pub surfaces: String,
@@ -12671,6 +12777,7 @@ pub fn capability_rows_for_wi_plan(
                         && td.claim.as_deref() == Some(&claim.id)
                 });
                 rows.push(CapabilityWiPlanRow {
+                    capability_id: capability.id.clone(),
                     capability: capability.title.clone(),
                     capability_type: capability_wi_plan_type(capability, report_item),
                     surfaces: capability_wi_plan_surfaces(capability, report_item),
@@ -12681,7 +12788,7 @@ pub fn capability_rows_for_wi_plan(
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
-                    root_wi: active_wi_for_capability(capability),
+                    root_wi: root_wi_for_capability(capability),
                     active_wi: active_wi_for_claim(capability, work_root),
                     evidence: claim_wi_plan_evidence(claim),
                     claim_id: Some(claim.id.clone()),
@@ -12711,6 +12818,7 @@ pub fn capability_rows_for_wi_plan(
                 .join(", ");
             let evidence = summarize_evidence(&capability.evidence);
             CapabilityWiPlanRow {
+                capability_id: capability.id.clone(),
                 capability: capability.title.clone(),
                 capability_type: capability_wi_plan_type(capability, report_item),
                 surfaces: capability_wi_plan_surfaces(capability, report_item),
@@ -12721,7 +12829,7 @@ pub fn capability_rows_for_wi_plan(
                 } else {
                     gap_summary
                 },
-                root_wi: active_wi_for_capability(capability),
+                root_wi: root_wi_for_capability(capability),
                 active_wi: if active_wi.is_empty() {
                     "none".to_string()
                 } else {
@@ -15068,8 +15176,16 @@ Gate Inventory:
                 reconciliation_count: 3,
                 resolved_wi_ref_count: 0,
                 warnings: vec!["issue inventory unavailable: gh auth missing".to_string()],
-                requires_hitl: true,
-                hitl_status: "pending",
+                status: "pending_agent_review".to_string(),
+                requires_hitl: false,
+                hitl_status: "pending_agent_review".to_string(),
+                review_backing: "either".to_string(),
+                source_digest: "abc123".to_string(),
+                review_path: PathBuf::from("/tmp/plan.review.json"),
+                payload_path: Some(PathBuf::from("/tmp/review.json")),
+                next: Some("aw wi plan-review --evidence-file '/tmp/review.json'".to_string()),
+                agent_review_prompt: Some("review independently".to_string()),
+                published_issue_count: 0,
                 plan_command: "aw wi plan --project lumen".to_string(),
             }]);
 
@@ -15297,8 +15413,16 @@ Gate Inventory:
             reconciliation_count: 3,
             resolved_wi_ref_count: 0,
             warnings: Vec::new(),
-            requires_hitl: true,
-            hitl_status: "pending",
+            status: "pending_agent_review".to_string(),
+            requires_hitl: false,
+            hitl_status: "pending_agent_review".to_string(),
+            review_backing: "either".to_string(),
+            source_digest: "abc123".to_string(),
+            review_path: PathBuf::from("/tmp/plan.review.json"),
+            payload_path: Some(PathBuf::from("/tmp/review.json")),
+            next: Some("aw wi plan-review --evidence-file '/tmp/review.json'".to_string()),
+            agent_review_prompt: Some("review independently".to_string()),
+            published_issue_count: 0,
             plan_command: "aw wi plan --project lumen".to_string(),
         }];
         sweep.wi_plan_index_path = Some(PathBuf::from(
@@ -16437,7 +16561,7 @@ Required Verification: smoke, conformance
 ## Search
 
 ID: search
-Root WI: #4141
+Root WI: #4100
 Status: auditing
 Type: Service
 Surfaces:
@@ -16497,6 +16621,7 @@ Cube: apps/lumen/tests/perf-cube.json
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
             .unwrap();
         assert!(query_planner.gaps.contains("claim query-planner"));
+        assert_eq!(query_planner.root_wi, "#4100");
         assert_eq!(query_planner.active_wi, "#4141");
         assert_eq!(query_planner.capability_type, "Service");
         assert!(query_planner

@@ -19,7 +19,9 @@ pub fn mb_class_bind_classcell(class_name: MbValue, symbol_id: MbValue) {
         required.borrow_mut().insert(name.clone());
     });
     CLASSCELL_SYMBOL_IDS.with(|symbols| {
-        symbols.borrow_mut().insert(name, symbol_id.to_bits() as i64);
+        symbols
+            .borrow_mut()
+            .insert(name, symbol_id.to_bits() as i64);
     });
 }
 

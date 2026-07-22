@@ -3050,6 +3050,22 @@ impl Engine {
         self.draining.load(Ordering::SeqCst)
     }
 
+    /// Publish the current engine-wide indexed footprint while the caller
+    /// still holds the state lock that protected the mutation. The operator
+    /// makes reshard decisions from this gauge, so waiting for an unrelated
+    /// `/stats` request after a write or local restore can leave capacity
+    /// control looking at zero (or stale) bytes.
+    fn publish_storage_bytes(&self, state: &EngineState) {
+        let total_bytes: u64 = state
+            .collections
+            .values()
+            .filter(|c| c.deleted_at.is_none())
+            .flat_map(|c| c.fields.values())
+            .map(|fi| fi.bytes())
+            .sum();
+        self.metrics.set_storage_bytes(total_bytes);
+    }
+
     // -- DDL ----------------------------------------------------------------
 
     /// Create-or-merge a collection schema.
@@ -3143,6 +3159,7 @@ impl Engine {
         };
         if force {
             state.collections.remove(collection_id);
+            self.publish_storage_bytes(&state);
             return Ok(DropOutcome::Physical);
         }
         if coll.deleted_at.is_some() {
@@ -3150,6 +3167,7 @@ impl Engine {
         }
         coll.clear_search_cache();
         coll.deleted_at = Some(Instant::now());
+        self.publish_storage_bytes(&state);
         Ok(DropOutcome::Marked)
     }
 
@@ -3181,6 +3199,7 @@ impl Engine {
         coll.eid_fields.retain(|_, fs| !fs.is_empty());
         coll.version += 1;
         let new_version = coll.version;
+        self.publish_storage_bytes(&state);
         Ok(new_version)
     }
 
@@ -3204,6 +3223,9 @@ impl Engine {
         let n = to_remove.len();
         for id in &to_remove {
             state.collections.remove(id);
+        }
+        if n > 0 {
+            self.publish_storage_bytes(&state);
         }
         Ok(n)
     }
@@ -3252,11 +3274,18 @@ impl Engine {
 
     pub fn index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> {
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
-        let coll = state
-            .collections
-            .get_mut(collection_id)
-            .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-        Self::index_collection(&self.metrics, collection_id, coll, req)
+        let outcome = {
+            let coll = state
+                .collections
+                .get_mut(collection_id)
+                .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+            Self::index_collection(&self.metrics, collection_id, coll, req)
+        };
+        // Keep the live gauge correct even when a malformed batch partially
+        // applied before returning its error: it must describe the real local
+        // index, not merely successfully acknowledged writes.
+        self.publish_storage_bytes(&state);
+        outcome
     }
 
     fn index_collection(
@@ -3486,6 +3515,7 @@ impl Engine {
                 coll.eid_fields.remove(&id);
             }
         }
+        self.publish_storage_bytes(&state);
         Ok(())
     }
 
@@ -3506,11 +3536,15 @@ impl Engine {
         req: ReplaceDocsRequest,
     ) -> Result<ReplaceDocsResponse> {
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
-        let coll = state
-            .collections
-            .get_mut(collection_id)
-            .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
-        Self::replace_docs_collection(&self.metrics, collection_id, coll, req)
+        let outcome = {
+            let coll = state
+                .collections
+                .get_mut(collection_id)
+                .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
+            Self::replace_docs_collection(&self.metrics, collection_id, coll, req)
+        };
+        self.publish_storage_bytes(&state);
+        outcome
     }
 
     fn replace_docs_collection(
@@ -4545,6 +4579,7 @@ impl Engine {
             .collect::<Result<_>>()?;
         let mut state = self.state.write().map_err(|_| anyhow!("state poisoned"))?;
         state.collections = collections;
+        self.publish_storage_bytes(&state);
         Ok(())
     }
 
@@ -4672,14 +4707,7 @@ impl Engine {
                 }
                 documents_pruned = documents_pruned.saturating_add(to_prune.len() as u32);
             }
-            let total_bytes: u64 = state
-                .collections
-                .values()
-                .filter(|c| c.deleted_at.is_none())
-                .flat_map(|c| c.fields.values())
-                .map(|fi| fi.bytes())
-                .sum();
-            self.metrics.set_storage_bytes(total_bytes);
+            self.publish_storage_bytes(&state);
         }
 
         Ok(ReshardApplyOutcome {
@@ -4889,14 +4917,7 @@ impl Engine {
         // gauge, and a per-collection last-writer-wins value under-reports
         // any engine holding more than one collection. Computed once, after
         // the loop, over the same live-collection view `stats()` uses.
-        let total_bytes: u64 = state
-            .collections
-            .values()
-            .filter(|c| c.deleted_at.is_none())
-            .flat_map(|c| c.fields.values())
-            .map(|fi| fi.bytes())
-            .sum();
-        self.metrics.set_storage_bytes(total_bytes);
+        self.publish_storage_bytes(&state);
         Ok(ReshardEvictOutcome {
             collections_touched,
             documents_evicted,
@@ -4931,14 +4952,7 @@ impl Engine {
         // same last-writer-wins defect `evict_not_owned` had (whichever
         // collection was `/stats`-ed last "wins" the gauge), and the reshard
         // trigger reads this gauge expecting an engine-wide figure.
-        let engine_total_bytes: u64 = state
-            .collections
-            .values()
-            .filter(|c| c.deleted_at.is_none())
-            .flat_map(|c| c.fields.values())
-            .map(|fi| fi.bytes())
-            .sum();
-        self.metrics.set_storage_bytes(engine_total_bytes);
+        self.publish_storage_bytes(&state);
 
         let last_indexed_at = coll.last_indexed_at.map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -17191,6 +17205,69 @@ mod tests {
             .sum()
     }
 
+    /// Capacity control scrapes the engine metric directly; it must not need
+    /// a separate `/stats` request after a normal write, a segment/snapshot
+    /// restore, or a full-document replacement. The same `index` method is
+    /// used for AOF replay, so this also protects the post-restart path.
+    #[test]
+    fn mutations_and_restore_publish_storage_bytes_without_stats() {
+        let e = Engine::new();
+        e.create_collection("a", kw_only_schema()).unwrap();
+        index_kw(&e, "a", "before-restart");
+        let before_restart_bytes = collection_live_bytes(&e, "a");
+        assert!(before_restart_bytes > 0);
+        assert_eq!(e.metrics().storage_bytes.get(), before_restart_bytes);
+
+        let snapshot = e.snapshot().unwrap();
+        let restored = Engine::new();
+        restored.restore(snapshot).unwrap();
+        assert_eq!(
+            restored.metrics().storage_bytes.get(),
+            collection_live_bytes(&restored, "a"),
+            "restore must publish the rebuilt segment footprint before any stats request"
+        );
+
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "email".to_string(),
+            FieldValue::String("after-restart@example.com".to_string()),
+        );
+        restored
+            .replace_docs(
+                "a",
+                ReplaceDocsRequest {
+                    docs: vec![ReplaceDocItem {
+                        external_id: "before-restart".to_string(),
+                        version: None,
+                        fields,
+                    }],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            restored.metrics().storage_bytes.get(),
+            collection_live_bytes(&restored, "a"),
+            "full replacement must refresh the capacity gauge"
+        );
+
+        restored.delete("a", "before-restart", None).unwrap();
+        assert_eq!(
+            restored.metrics().storage_bytes.get(),
+            collection_live_bytes(&restored, "a"),
+            "delete must refresh the capacity gauge for scale-down decisions"
+        );
+
+        assert_eq!(
+            restored.drop_collection("a", false).unwrap(),
+            DropOutcome::Marked
+        );
+        assert_eq!(
+            restored.metrics().storage_bytes.get(),
+            0,
+            "soft-deleted collections must stop contributing to live capacity"
+        );
+    }
+
     /// #1397 R2 / AC2: `evict_not_owned` must publish the ENGINE-WIDE byte
     /// total (summed across every live collection) after eviction, not just
     /// whichever collection the loop happened to touch last. Two
@@ -18663,7 +18740,10 @@ mod offset_sort_guard_tests {
         let resp = e.search("c", r).expect("native sorted offset succeeds");
         assert_eq!(ids(&resp), ["d2", "d3"]);
         assert_eq!(resp.total, 5);
-        assert!(resp.cursor.is_none(), "an offset jump does not emit a cursor");
+        assert!(
+            resp.cursor.is_none(),
+            "an offset jump does not emit a cursor"
+        );
     }
 
     #[test]

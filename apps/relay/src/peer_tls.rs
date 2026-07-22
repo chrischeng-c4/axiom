@@ -15,20 +15,9 @@
 //! is the thin adapter that pins relay's `RELAY_PEER_TLS_*` /
 //! `RELAY_PEER_MTLS` env names (lumen's `src/tls.rs` pattern).
 //!
-//! ## Wiring depth (deliberate; the filed seam gap)
-//!
-//! The serve path loads + validates this config in replica/HA mode BEFORE the
-//! raft group spawns — partial config or a mis-pointed path is a startup
-//! error, never a silent fallback — and proves the rustls builders
-//! constructible. **mTLS termination on the raft peer port is NOT yet
-//! applied**: raft-runtime's peer transport is h2c prior-knowledge (the peer
-//! router rides the cleartext serve port; peers are dialed over `http://`)
-//! with no TLS acceptor/connector seam. Wiring real termination needs
-//! raft-runtime to accept a rustls `ServerConfig`/`ClientConfig` pair — a
-//! `libs/raft-runtime` change benefiting keep/lumen/relay alike. This module
-//! deliberately does not hack a parallel TLS stack into h2c; the env
-//! contract + startup validation land now so deployments can mount and
-//! verify material before the seam exists.
+//! The serve path hands this material to `raft-runtime::PeerTransport`: peer
+//! dialing uses HTTPS and Raft routes are served only on a dedicated
+//! client-certificate-required listener.
 
 use std::path::PathBuf;
 
@@ -89,6 +78,10 @@ impl PeerTlsConfig {
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
         peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
+
+    pub fn peer_transport(&self) -> Result<raft_runtime::PeerTransport> {
+        raft_runtime::PeerTransport::from_config(&peer_tls::PeerTlsConfig::from(self.clone()))
+    }
 }
 
 #[cfg(test)]
@@ -147,17 +140,56 @@ LkjT2UdpFBDZGWHwqDRhXX8k
 -----END PRIVATE KEY-----
 "#;
 
-    // env vars are process-global, so the scenarios share a mutex to keep
-    // them from racing under `cargo test`'s default parallel runner.
-    use std::sync::Mutex;
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const ENV_KEYS: [&str; 4] = [
+        "RELAY_PEER_TLS_CERT",
+        "RELAY_PEER_TLS_KEY",
+        "RELAY_PEER_TLS_CA",
+        "RELAY_PEER_MTLS",
+    ];
 
-    fn clear_env() {
-        unsafe {
-            std::env::remove_var("RELAY_PEER_TLS_CERT");
-            std::env::remove_var("RELAY_PEER_TLS_KEY");
-            std::env::remove_var("RELAY_PEER_TLS_CA");
-            std::env::remove_var("RELAY_PEER_MTLS");
+    /// Exercise the real process-env loader in an isolated child test process.
+    /// This keeps the parallel parent test process free from global env mutation.
+    fn run_env_case(scenario: &str, vars: Vec<(&'static str, std::ffi::OsString)>) {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("--exact")
+            .arg("peer_tls::tests::env_probe_helper")
+            .arg("--ignored")
+            .env("RELAY_PEER_TLS_TEST_SCENARIO", scenario);
+        for key in ENV_KEYS {
+            command.env_remove(key);
+        }
+        command.envs(vars);
+        let output = command.output().expect("spawn isolated env probe");
+        assert!(
+            output.status.success(),
+            "isolated env probe {scenario} failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "helper runs only as an isolated child of the peer TLS env tests"]
+    fn env_probe_helper() {
+        let Ok(scenario) = std::env::var("RELAY_PEER_TLS_TEST_SCENARIO") else {
+            return;
+        };
+        match scenario.as_str() {
+            "none" => assert!(PeerTlsConfig::from_env().unwrap().is_none()),
+            "all" => assert!(PeerTlsConfig::from_env().unwrap().unwrap().required),
+            "partial" => assert!(PeerTlsConfig::from_env()
+                .unwrap_err()
+                .to_string()
+                .contains("must all be set together")),
+            "missing" => {
+                let expected = std::env::var("RELAY_PEER_TLS_EXPECTED_PATH").unwrap();
+                assert!(PeerTlsConfig::from_env()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&expected));
+            }
+            other => panic!("unknown peer TLS env scenario {other}"),
         }
     }
 
@@ -179,73 +211,62 @@ LkjT2UdpFBDZGWHwqDRhXX8k
     /// R3: nothing set => `Ok(None)` (plain h2c peers, today's default).
     #[test]
     fn from_env_returns_none_when_nothing_set() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        clear_env();
-        let cfg = PeerTlsConfig::from_env().unwrap();
-        assert!(cfg.is_none());
+        run_env_case("none", Vec::new());
     }
 
     /// R3 / AC3: all three paths + `RELAY_PEER_MTLS=on` load with
     /// `required = true`.
     #[test]
     fn from_env_loads_when_all_set() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        clear_env();
         let dir = std::env::temp_dir().join(format!("relay-peer-tls-env-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["cert.pem", "key.pem", "ca.pem"] {
             std::fs::write(dir.join(name), b"DUMMY").unwrap();
         }
-        unsafe {
-            std::env::set_var("RELAY_PEER_TLS_CERT", dir.join("cert.pem"));
-            std::env::set_var("RELAY_PEER_TLS_KEY", dir.join("key.pem"));
-            std::env::set_var("RELAY_PEER_TLS_CA", dir.join("ca.pem"));
-            std::env::set_var("RELAY_PEER_MTLS", "on");
-        }
-        let cfg = PeerTlsConfig::from_env().unwrap().expect("Some");
-        assert!(cfg.required);
+        run_env_case(
+            "all",
+            vec![
+                ("RELAY_PEER_TLS_CERT", dir.join("cert.pem").into_os_string()),
+                ("RELAY_PEER_TLS_KEY", dir.join("key.pem").into_os_string()),
+                ("RELAY_PEER_TLS_CA", dir.join("ca.pem").into_os_string()),
+                ("RELAY_PEER_MTLS", "on".into()),
+            ],
+        );
         std::fs::remove_dir_all(&dir).ok();
-        clear_env();
     }
 
     /// R3: partial config is a startup error naming the var family — never a
     /// silent fallback to plaintext.
     #[test]
     fn from_env_errors_on_partial_config() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        clear_env();
-        unsafe {
-            std::env::set_var("RELAY_PEER_TLS_CERT", "/tmp/dummy-cert");
-        }
-        let err = PeerTlsConfig::from_env().unwrap_err();
-        assert!(err.to_string().contains("must all be set together"));
-        clear_env();
+        run_env_case(
+            "partial",
+            vec![("RELAY_PEER_TLS_CERT", "/tmp/dummy-cert".into())],
+        );
     }
 
     /// R3 / AC3: a mis-pointed cert path fails fast with an error naming the
     /// missing path.
     #[test]
     fn mis_pointed_cert_path_fails_fast_naming_the_path() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        clear_env();
         let dir = std::env::temp_dir().join(format!("relay-peer-tls-miss-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("key.pem"), b"DUMMY").unwrap();
         std::fs::write(dir.join("ca.pem"), b"DUMMY").unwrap();
-        unsafe {
-            std::env::set_var("RELAY_PEER_TLS_CERT", dir.join("missing-cert.pem"));
-            std::env::set_var("RELAY_PEER_TLS_KEY", dir.join("key.pem"));
-            std::env::set_var("RELAY_PEER_TLS_CA", dir.join("ca.pem"));
-            std::env::set_var("RELAY_PEER_MTLS", "on");
-        }
-        let err = PeerTlsConfig::from_env().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("missing-cert.pem"),
-            "error must name the mis-pointed path, got: {msg}"
+        run_env_case(
+            "missing",
+            vec![
+                (
+                    "RELAY_PEER_TLS_CERT",
+                    dir.join("missing-cert.pem").into_os_string(),
+                ),
+                ("RELAY_PEER_TLS_KEY", dir.join("key.pem").into_os_string()),
+                ("RELAY_PEER_TLS_CA", dir.join("ca.pem").into_os_string()),
+                ("RELAY_PEER_MTLS", "on".into()),
+                ("RELAY_PEER_TLS_EXPECTED_PATH", "missing-cert.pem".into()),
+            ],
         );
         std::fs::remove_dir_all(&dir).ok();
-        clear_env();
     }
 
     /// R3 / AC3: the PEM fixture builds both rustls configs through the

@@ -229,6 +229,12 @@ struct ApplyDiagnosticsQuietGuard {
     previous: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApplyEntrySelection {
+    All,
+    CodegenOnly,
+}
+
 /// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
 impl ApplyDiagnosticsQuietGuard {
     fn enter(quiet: bool) -> Self {
@@ -325,6 +331,7 @@ pub fn run_apply(
         None,
         false,
         false,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -349,6 +356,7 @@ pub fn run_apply_scoped(
         None,
         false,
         false,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -371,6 +379,7 @@ pub fn run_apply_scoped_sections(
         None,
         false,
         false,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -390,6 +399,7 @@ pub fn run_apply_scoped_targets(
         None,
         false,
         false,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -413,6 +423,53 @@ pub fn run_apply_scoped_targets_quiet(
         None,
         true,
         false,
+        ApplyEntrySelection::All,
+    )
+}
+
+/// Run force regeneration for CODEGEN entries only.
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_scoped_codegen_targets(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    allowed_target_roots: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(allowed_target_roots),
+        None,
+        None,
+        false,
+        false,
+        ApplyEntrySelection::CodegenOnly,
+    )
+}
+
+/// Run cold reconstruction for CODEGEN entries only.
+///
+/// A cold root intentionally contains TDs but no hand-written source. Filtering
+/// those entries before anchor preflight keeps normal apply strict while letting
+/// cold verification rebuild exactly the targets it claims to verify.
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_scoped_codegen_targets_quiet(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    allowed_target_roots: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(allowed_target_roots),
+        None,
+        None,
+        true,
+        false,
+        ApplyEntrySelection::CodegenOnly,
     )
 }
 
@@ -443,6 +500,7 @@ pub fn run_apply_terminal_targets(
         None,
         false,
         true,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -471,6 +529,7 @@ pub fn run_apply_exact_source_target(
         Some(exact_target),
         false,
         true,
+        ApplyEntrySelection::All,
     )
 }
 
@@ -561,7 +620,17 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None, None, false, false)
+    run_apply_inner(
+        spec_path,
+        worktree,
+        false,
+        None,
+        None,
+        None,
+        false,
+        false,
+        ApplyEntrySelection::All,
+    )
 }
 
 fn run_apply_inner(
@@ -573,6 +642,7 @@ fn run_apply_inner(
     exact_target: Option<&Path>,
     quiet: bool,
     suppress_global_postpasses: bool,
+    entry_selection: ApplyEntrySelection,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
     use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
@@ -644,6 +714,15 @@ fn run_apply_inner(
     if let Some(partitioned) = partitioned_source.as_ref() {
         validate_partitioned_source_targets(partitioned, &change_entries)
             .map_err(crate::generate::GenerateError::InvalidValue)?;
+    }
+    if entry_selection == ApplyEntrySelection::CodegenOnly {
+        change_entries.retain(|entry| entry.impl_mode != ImplMode::HandWritten);
+        if change_entries.is_empty() {
+            return Ok(ApplyReport {
+                files: Vec::new(),
+                wrote_files: false,
+            });
+        }
     }
     let validated_exact_source = if let Some(exact_target) = exact_target {
         Some(
@@ -748,6 +827,9 @@ fn run_apply_inner(
         root,
         &all_entries,
         source_from_target_replays_whole_file,
+        allowed_target_roots,
+        allowed_sections,
+        exact_target,
     )?;
 
     for entry in change_entries {
@@ -852,10 +934,11 @@ fn run_apply_inner(
 
         // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
         // owns the writable skeleton: a new file gets a whole-file HANDWRITE
-        // marker, while an existing target must name an `anchor:` so generation
-        // can scaffold a bounded marker pair. A markerless existing target is
-        // not a valid lifecycle result: it would let TD generation advance
-        // without an implementation payload for `td fill` to own.
+        // marker, while an existing Rust target must name an `anchor:` so
+        // generation can scaffold a bounded marker pair. Existing non-Rust
+        // targets remain tracked hand-written artifacts: the Rust marker
+        // scaffold cannot safely position a marker in them, so their evidence
+        // is the declared target plus the implementation diff.
         //
         // Regenerable promotion is the exception: a semantic TD may still
         // record the original source as hand-written, but an explicit
@@ -864,6 +947,21 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
+            if target_path.exists() && !is_rust_source(&target_path) {
+                apply_diagnostic!(
+                    "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
+                    entry.path,
+                );
+                files.push(FileApplyResult {
+                    path: PathBuf::from(&entry.path),
+                    created: false,
+                    updated: false,
+                    blocks_updated: 0,
+                    dry_run,
+                    processed: true,
+                });
+                continue;
+            }
             // Bug 1 fix: `action: create` + `impl_mode: hand-written` previously
             // produced no file. Now scaffold an empty placeholder with a single
             // HANDWRITE-marked region so authors have a starting point and
@@ -2859,12 +2957,27 @@ fn validate_handwrite_anchors_before_write(
     root: &Path,
     entries: &[ChangeEntry],
     source_from_target_replays_whole_file: bool,
+    allowed_target_roots: Option<&[PathBuf]>,
+    allowed_sections: Option<&[&str]>,
+    exact_target: Option<&Path>,
 ) -> crate::generate::Result<()> {
     for entry in entries {
         if entry.impl_mode != ImplMode::HandWritten {
             continue;
         }
         let target_path = root.join(&entry.path);
+        if exact_target.is_some_and(|exact| target_path != exact)
+            || allowed_target_roots.is_some_and(|roots| {
+                !roots
+                    .iter()
+                    .any(|allowed_root| target_path.starts_with(allowed_root))
+            })
+            || allowed_sections.is_some_and(|sections| {
+                !sections.contains(&entry.section_id.as_deref().unwrap_or_default())
+            })
+        {
+            continue;
+        }
 
         // Regenerable promotion: an explicit `replaces:` tracker on an
         // existing whole-file HANDWRITE artifact proves the promotion; no
@@ -2886,7 +2999,7 @@ fn validate_handwrite_anchors_before_write(
 
         // Tracked existing non-Rust target: no Rust marker scaffold, so no
         // anchor to validate.
-        if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+        if target_path.exists() && !is_rust_source(&target_path) {
             continue;
         }
 
@@ -7065,6 +7178,31 @@ changes:
         );
     }
 
+    #[test]
+    fn scoped_apply_skips_out_of_scope_handwrite_before_anchor_preflight() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let source_root = root.join("apps/fixture/src");
+        std::fs::create_dir_all(&source_root).unwrap();
+        let spec_path = root.join("apps/fixture/tech-design/mixed.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/fixture/src/generated.rs\n    action: create\n    section: schema\n    impl_mode: codegen\n  - path: Cargo.toml\n    action: modify\n    section: config\n    impl_mode: hand-written\n```\n",
+                schema_section()
+            ),
+        )
+        .unwrap();
+
+        let report =
+            run_apply_scoped_targets(&spec_path, root, false, &[source_root]).unwrap();
+
+        assert!(root.join("apps/fixture/src/generated.rs").is_file());
+        assert!(!root.join("Cargo.toml").exists());
+        assert_eq!(report.total_blocks_updated(), 1);
+    }
+
     /// #1807 regression: a spec with one clean codegen target and one
     /// hand-written target whose `anchor:` cannot be found in the existing
     /// file must fail without leaving ANY partial write behind — including
@@ -7149,6 +7287,64 @@ flowchart TD
             "codegen target should be created on the clean rerun"
         );
         assert!(report.files_created() >= 1);
+    }
+
+    #[test]
+    fn hand_written_existing_non_rust_create_targets_skip_rust_anchor_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let config_target = root.join("config/.gitignore");
+        let icon_target = root.join("icons/icon.png");
+        std::fs::create_dir_all(config_target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(icon_target.parent().unwrap()).unwrap();
+        let config_before = b"/gen/schemas\n".to_vec();
+        let icon_before = b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        std::fs::write(&config_target, &config_before).unwrap();
+        std::fs::write(&icon_target, &icon_before).unwrap();
+
+        let spec_path = root.join("tech-design/logic/create-assets.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: create-assets
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: config/.gitignore
+    action: create
+    impl_mode: hand-written
+    section: logic
+  - path: icons/icon.png
+    action: create
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        for target in ["config/.gitignore", "icons/icon.png"] {
+            assert!(report.files.iter().any(|file| {
+                file.path == PathBuf::from(target) && file.processed && !file.updated
+            }));
+        }
+        assert_eq!(std::fs::read(&config_target).unwrap(), config_before);
+        assert_eq!(std::fs::read(&icon_target).unwrap(), icon_before);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.

@@ -11,7 +11,9 @@
 
 use std::net::SocketAddr;
 
+use axum::http::{header, HeaderMap};
 use serde_json::json;
+use service_auth::{Role, Verifier};
 
 use relay::auth::AuthConfig;
 use relay::server::{router, AppState};
@@ -31,6 +33,29 @@ fn required_auth() -> AuthConfig {
     let path = dir.path().join("token-registry.json");
     std::fs::write(&path, REGISTRY).unwrap();
     AuthConfig::resolve("required", Some(path.to_str().unwrap()), None).unwrap()
+}
+
+#[test]
+fn relay_auth_adapter_rotates_the_shared_registry_without_restart() {
+    let verifier = required_auth().verifier();
+    let mut before = HeaderMap::new();
+    before.insert(
+        header::AUTHORIZATION,
+        "Bearer writer-token".parse().unwrap(),
+    );
+    let principal = verifier.authenticate(&before).unwrap();
+    assert!(principal.ensure("jobs", Role::Write).is_ok());
+
+    verifier
+        .reload_json(r#"{"rotated":{"subject":"next","roles":{"jobs":"admin"}}}"#)
+        .unwrap();
+    assert!(verifier.authenticate(&before).is_err());
+
+    let mut after = HeaderMap::new();
+    after.insert(header::AUTHORIZATION, "Bearer rotated".parse().unwrap());
+    let principal = verifier.authenticate(&after).unwrap();
+    assert_eq!(principal.subject(), Some("next"));
+    assert!(principal.ensure("jobs", Role::Admin).is_ok());
 }
 
 async fn start_server(auth: Option<AuthConfig>) -> SocketAddr {

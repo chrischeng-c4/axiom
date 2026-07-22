@@ -65,9 +65,7 @@ fn parameter_error_count(errors: &[String], parameter: &str) -> usize {
 fn bare_instance_parameter_error_count(errors: &[String]) -> usize {
     errors
         .iter()
-        .filter(|error| {
-            error.contains("got `_W`") || error.contains("does not satisfy parameter")
-        })
+        .filter(|error| error.contains("got `_W`") || error.contains("does not satisfy parameter"))
         .count()
 }
 
@@ -137,19 +135,27 @@ fn external_builtin_annotations_preserve_nominal_identity() {
          view: memoryview = b\"bad\"\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("expected `bytes`, got `bytearray`")),
+        errors
+            .iter()
+            .any(|error| error.contains("expected `bytes`, got `bytearray`")),
         "bytes and bytearray must stay nominally distinct: {errors:?}"
     );
     assert!(
-        errors.iter().any(|error| error.contains("expected `bytearray`, got `bytes`")),
+        errors
+            .iter()
+            .any(|error| error.contains("expected `bytearray`, got `bytes`")),
         "bytearray and bytes must stay nominally distinct: {errors:?}"
     );
     assert!(
-        errors.iter().any(|error| error.contains("expected `complex`, got `str`")),
+        errors
+            .iter()
+            .any(|error| error.contains("expected `complex`, got `str`")),
         "complex annotations must reject strings: {errors:?}"
     );
     assert!(
-        errors.iter().any(|error| error.contains("expected `memoryview`, got `bytes`")),
+        errors
+            .iter()
+            .any(|error| error.contains("expected `memoryview`, got `bytes`")),
         "memoryview annotations must reject raw bytes: {errors:?}"
     );
 }
@@ -332,9 +338,7 @@ fn textwrap_contract_is_universal() {
         "textwrap.indent must reject a non-str text argument: {errors:?}"
     );
 
-    let errors = check(
-        "from textwrap import indent\nresult: int = indent(\"value\", \"  \")\n",
-    );
+    let errors = check("from textwrap import indent\nresult: int = indent(\"value\", \"  \")\n");
     assert!(
         errors
             .iter()
@@ -3413,7 +3417,9 @@ fn recursive_calls_see_the_reasserted_function_declaration() {
          \x20   return recursive(\"bad\")\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "recursive calls must see the stable def signature: {errors:?}"
     );
 }
@@ -4464,7 +4470,9 @@ fn test_stdlib_module_fn_wrong_scalar_rejected() {
 fn test_stdlib_from_import_alias_uses_original_member_contract() {
     let errors = check("from os import strerror as err\nerr(\"x\")\n");
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "a function import alias must retain the imported member: {errors:?}"
     );
 
@@ -4475,7 +4483,9 @@ fn test_stdlib_from_import_alias_uses_original_member_contract() {
          Input(_W())\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "a constructor import alias must retain the imported member: {errors:?}"
     );
 }
@@ -4574,7 +4584,9 @@ fn test_stdlib_module_and_nested_callable_aliases_retain_contract() {
          alias(\"x\")\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "an attribute-derived callable alias must retain its contract: {errors:?}"
     );
 
@@ -4810,9 +4822,7 @@ fn test_stdlib_inherited_generic_members_project_receiver_type_arguments() {
          invalid: PriorityQueue[_W] = PriorityQueue()\n",
     );
     assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("bound violation")),
+        errors.iter().any(|error| error.contains("bound violation")),
         "a clearly incompatible external generic bound must still be rejected: {errors:?}"
     );
 }
@@ -4970,14 +4980,8 @@ fn generated_builtin_binder_owns_positional_only_calls() {
             "setattr(obj=object(), name=\"value\", value=1)\n",
         ),
         ("format", "format(value=1, format_spec=\"\")\n"),
-        (
-            "isinstance",
-            "isinstance(obj=1, class_or_tuple=int)\n",
-        ),
-        (
-            "issubclass",
-            "issubclass(cls=int, class_or_tuple=object)\n",
-        ),
+        ("isinstance", "isinstance(obj=1, class_or_tuple=int)\n"),
+        ("issubclass", "issubclass(cls=int, class_or_tuple=object)\n"),
     ] {
         let errors = check(source);
         assert_eq!(
@@ -5031,7 +5035,10 @@ fn test_stdlib_set_operator_bare_instance_rejected() {
     );
 
     let errors = check("obj = set()\nobj.__and__(set())\nobj.__ior__(frozenset())\n");
-    assert!(errors.is_empty(), "real set operands must remain valid: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "real set operands must remain valid: {errors:?}"
+    );
 
     let errors = check("class _W: pass\nobj = set()\nobj.__ior__(_W())\n");
     assert!(
@@ -5106,9 +5113,7 @@ fn test_stdlib_bytes_bytearray_wall_rejects_impossible_scalars() {
 fn test_stdlib_bytes_bytearray_constructor_overload_walls() {
     let errors = check("from builtins import bytes\nclass _W:\n    pass\nbytes(_W())\n");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("argument type mismatch")),
+        errors.iter().any(|e| e.contains("argument type mismatch")),
         "bytes(_W()) should reject a bare source instance, got: {errors:?}"
     );
 
@@ -5623,7 +5628,9 @@ fn test_stdlib_instance_origin_survives_constructor_rebinding() {
          obj.handle_entityref(12345)\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "an existing instance must retain its immutable class origin: {errors:?}"
     );
 }
@@ -5636,7 +5643,9 @@ fn test_stdlib_provenance_propagates_through_value_aliases() {
          alias(\"x\")\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "a function value alias must retain import provenance: {errors:?}"
     );
 
@@ -5647,7 +5656,9 @@ fn test_stdlib_provenance_propagates_through_value_aliases() {
          obj.handle_entityref(12345)\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "a constructor value alias must retain import provenance: {errors:?}"
     );
 
@@ -5658,7 +5669,9 @@ fn test_stdlib_provenance_propagates_through_value_aliases() {
          alias.handle_entityref(12345)\n",
     );
     assert!(
-        errors.iter().any(|error| error.contains("argument type mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("argument type mismatch")),
         "an instance value alias must retain immutable instance provenance: {errors:?}"
     );
 }
@@ -6284,7 +6297,10 @@ fn typeshed_callable_paramspec_identity_materializes_without_widening() {
     };
     assert!(params.is_empty());
     assert!(!variadic);
-    assert_eq!(checker.tcx.get_type_var(*param_spec).kind, TypeVarKind::ParamSpec);
+    assert_eq!(
+        checker.tcx.get_type_var(*param_spec).kind,
+        TypeVarKind::ParamSpec
+    );
     assert!(checker.tcx.contains_type_var(callable_ty));
 
     let wrapper = spec::overloads("curses", "", "wrapper")
@@ -6308,7 +6324,10 @@ fn typeshed_callable_paramspec_identity_materializes_without_widening() {
     };
     assert_eq!(params.len(), 1);
     assert!(!variadic);
-    assert_eq!(checker.tcx.get_type_var(*param_spec).kind, TypeVarKind::ParamSpec);
+    assert_eq!(
+        checker.tcx.get_type_var(*param_spec).kind,
+        TypeVarKind::ParamSpec
+    );
     let Ty::Class {
         external: Some(prefix),
         ..
@@ -6316,7 +6335,10 @@ fn typeshed_callable_paramspec_identity_materializes_without_widening() {
     else {
         panic!("Concatenate prefix must retain curses.window nominal identity")
     };
-    assert_eq!((prefix.module.as_str(), prefix.name.as_str()), ("_curses", "window"));
+    assert_eq!(
+        (prefix.module.as_str(), prefix.name.as_str()),
+        ("_curses", "window")
+    );
 }
 
 #[test]
@@ -6380,7 +6402,10 @@ fn typeshed_productive_recursive_aliases_enforce_representative_calls() {
          marshaller.dumps((1, 'nested'))\n\
          xmlrpc_dumps((1, 'nested'))\n",
     );
-    assert!(valid.is_empty(), "valid recursive contracts must pass: {valid:?}");
+    assert!(
+        valid.is_empty(),
+        "valid recursive contracts must pass: {valid:?}"
+    );
 
     let invalid = check(
         "import marshal\n\
@@ -6438,8 +6463,7 @@ fn typeshed_unbound_paramspec_rejects_only_definite_noncallables() {
 
 #[test]
 fn context_run_binds_paramspec_args_and_kwargs_to_callback_signature() {
-    let prelude =
-        "from _contextvars import Context\n\
+    let prelude = "from _contextvars import Context\n\
          context = Context()\n\
          def callback(x: int, /, y: str = \"d\", *, flag: bool = False) -> int:\n\
          \x20   return x\n";
@@ -6455,9 +6479,15 @@ fn context_run_binds_paramspec_args_and_kwargs_to_callback_signature() {
     }
 
     for (call, message) in [
-        ("context.run(callback)\n", "missing required callback parameter `x`"),
+        (
+            "context.run(callback)\n",
+            "missing required callback parameter `x`",
+        ),
         ("context.run(callback, \"bad\")\n", "parameter `x`"),
-        ("context.run(callback, 1, flag=\"bad\")\n", "parameter `flag`"),
+        (
+            "context.run(callback, 1, flag=\"bad\")\n",
+            "parameter `flag`",
+        ),
         (
             "context.run(callback, x=1)\n",
             "argument that the callback does not accept",
@@ -6663,7 +6693,10 @@ fn typeshed_structured_projects_builtin_containers_to_abc_contracts() {
 #[test]
 fn typeshed_structured_binder_enforces_required_extra_and_duplicate_arguments() {
     for (source, needle) in [
-        ("from copy import copy\ncopy()\n", "missing required parameter `x`"),
+        (
+            "from copy import copy\ncopy()\n",
+            "missing required parameter `x`",
+        ),
         (
             "from copy import copy\ncopy(1, 2)\n",
             "argument that no parameter accepts",
@@ -7005,9 +7038,9 @@ fn type_var_tuple_correlates_callable_unpack_with_tuple_unpack() {
          _thread.start_new_thread(_W(), arguments)\n",
     );
     assert!(
-        invalid.iter().any(|error| {
-            error.contains("got `_W`") && error.contains("parameter `function`")
-        }),
+        invalid
+            .iter()
+            .any(|error| { error.contains("got `_W`") && error.contains("parameter `function`") }),
         "missing pack evidence must not hide a definite non-callable argument: {invalid:?}"
     );
 
@@ -7077,8 +7110,7 @@ fn type_var_tuple_correlates_callable_unpack_with_varargs_unpack() {
         let invalid = check(source);
         assert!(
             invalid.iter().any(|error| {
-                error.contains("type mismatch")
-                    || error.contains("conflicting ordered type packs")
+                error.contains("type mismatch") || error.contains("conflicting ordered type packs")
             }),
             "{message} must reject the correlated callable pack: {invalid:?}"
         );

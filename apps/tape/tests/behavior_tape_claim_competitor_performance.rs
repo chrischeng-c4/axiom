@@ -10,9 +10,9 @@
 // @command cargo test -p tape --test tape_perf_gate -- --nocapture
 // AW-EC-END
 
-// Contract: Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.
-// Contract: RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.
+// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
+// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
+// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_performance_local_regression_and_calibration_ledger() {

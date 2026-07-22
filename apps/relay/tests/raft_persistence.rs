@@ -29,6 +29,7 @@ fn cmd(id: &str) -> PubCommand {
         headers: Default::default(),
         priority: relay::DEFAULT_PRIORITY,
         not_before: None,
+        appended_at: Utc::now(),
     }
 }
 

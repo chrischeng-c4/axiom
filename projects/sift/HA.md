@@ -14,28 +14,47 @@ endpoints stay on the serving port.
 
 ## Replica mode
 
-Set `replicasPerShard` and `voterCount` above one in the Sift custom resource.
-The operator injects `POD_NAME`, `SHARD_COUNT`, `REPLICAS_PER_SHARD`, and
-`VOTER_COUNT`; Sift then uses `raft-host` topology and the same h2c serving
-port for peer Raft RPCs. A write is acknowledged only after the Raft state
-machine applies its ordered event to the shared CRC-framed journal.
+The current operator and checked-in CRD intentionally admit only one shard with
+one replica. Safe multi-replica membership changes remain separate domain work;
+do not raise `replicasPerShard` or `voterCount` until that lifecycle is proven.
 
 ## Backup and restore
 
-Use an off-node destination in production:
+Use the protected live snapshot boundary with a real GCS destination in
+production:
 
 ```sh
-sift backup --data-dir /var/lib/sift --dest s3://example/sift --retention-secs 604800
+sift backup \
+  --url http://sift.sift.svc.cluster.local:7380 \
+  --token "$SIFT_BACKUP_TOKEN" \
+  --dest gs://example-sift-backups/sift \
+  --retention-secs 604800
+```
+
+The operator's scheduled CronJob uses the same `GET /admin/backup` endpoint,
+runs under the dedicated `<instance>-backup` ServiceAccount, and can load its
+admin bearer token from `spec.backup.adminTokenSecret` key `token`. The token is
+optional only when Sift auth is off. The runner never mounts the live PVC.
+
+`--data-dir` is a legacy offline-only backup mode. Stop Sift first; never open
+the journal from a second process while the service is writing:
+
+```sh
+sift backup \
+  --data-dir /var/lib/sift \
+  --dest file:///recovery/sift \
+  --retention-secs 604800
 ```
 
 `file://` is suitable only for local development and tests. Restore an exact
-object before restarting a replacement node:
+object while the replacement service is stopped, before restarting it:
 
 ```sh
 sift restore --data-dir /var/lib/sift --source file:///recovery/sift-backup.json
 ```
 
-The restore replaces the local snapshot atomically; replica nodes then recover
-their Raft state and catch up from the committed log.
+The restore replaces the local snapshot atomically. Multi-replica bootstrap and
+catch-up remain unproven domain work and must not be inferred from this 1x1
+procedure.
 
 <!-- HANDWRITE-END -->

@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
-use lumen::auth::AuthConfig;
+use lumen::auth::{AuthConfig, TOKEN_REGISTRY_FILE_ENV};
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
@@ -95,8 +95,9 @@ enum Command {
     // @spec apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
     /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
-    /// and ship it to a destination (`file://`, `s3://`, or schema-only
-    /// `gs://`) via `libs/service-backup`. No new snapshot mechanism — this only
+    /// and ship it to a destination (`file://`, `s3://`, or `gs://`) via
+    /// `libs/service-backup`. GCS uses an explicit access token or GKE Workload
+    /// Identity. No new snapshot mechanism — this only
     /// schedules and transports the existing admin API. Typically invoked by
     /// the operator's optional backup CronJob (`spec.serving.backup`, see
     /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
@@ -206,6 +207,11 @@ struct K8sOperatorRenderArgs {
     /// Namespace that owns the operator control plane.
     #[arg(long, default_value = "lumen-system")]
     namespace: String,
+    /// Operator container image. Supply an immutable registry digest for
+    /// reproducible cluster deployment; the default preserves the checked-in
+    /// local-development manifest.
+    #[arg(long, default_value = "lumen:latest")]
+    image: String,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -388,8 +394,8 @@ struct BackupArgs {
     #[arg(long)]
     url: String,
     /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
-    /// schema-only `gs://bucket/prefix` (parsed, but the runner supports
-    /// `file://` and `s3://` sinks today).
+    /// `gs://bucket/prefix`. GCS uses an explicit access token or the
+    /// GCE/GKE metadata-server Workload Identity token.
     #[arg(long)]
     dest: String,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
@@ -1111,7 +1117,7 @@ fn dockerfile_next_command(
     match variant {
         DockerfileVariant::Source => format!("docker build -f {} -t lumen:dev .", target.display()),
         DockerfileVariant::Release => {
-            let tag = normalize_lumen_tag(version);
+            let tag = cli_std::artifact::release_tag("lumen", version, env!("CARGO_PKG_VERSION"));
             let ver = tag.trim_start_matches("lumen@");
             format!(
                 "docker build -f {} -t lumen:{ver} --build-arg LUMEN_VERSION={tag} .",
@@ -1138,7 +1144,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
         K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(args) => {
-                let yaml = render_operator_yaml(&args.namespace);
+                let yaml = render_operator_yaml(&args.namespace, &args.image)?;
                 write_or_print(
                     args.out.as_deref(),
                     "operator.yaml",
@@ -1211,7 +1217,7 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
@@ -1695,13 +1701,14 @@ async fn dispatch_query(_args: QueryArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_lumen_tag(version);
+    let tag = cli_std::artifact::release_tag("lumen", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("lumen@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/lumen/Dockerfile.release -t lumen:") {
@@ -1720,39 +1727,39 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn normalize_lumen_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("lumen@") {
-        raw.to_string()
-    } else {
-        format!("lumen@{raw}")
+fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
+    if image.is_empty()
+        || image.starts_with('-')
+        || image
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        anyhow::bail!(
+            "operator image must be a non-empty, whitespace-free OCI image reference that does not start with '-'"
+        );
     }
-}
-
-fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
-        &strip_ownership_markers(include_str!("../../k8s/operator/rbac.yaml")),
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/rbac.yaml"
+        )),
+        "lumen-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
-        &strip_ownership_markers(include_str!("../../k8s/operator/deployment.yaml")),
+    let deployment = cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/deployment.yaml"
+        )),
+        "lumen-system",
         namespace,
-    ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: lumen-system", &format!("name: {namespace}"))
-        .replace(
-            "namespace: lumen-system",
-            &format!("namespace: {namespace}"),
-        )
+    );
+    let checked_in_image = "          image: lumen:latest";
+    if !deployment.contains(checked_in_image) {
+        anyhow::bail!("checked-in operator manifest is missing its canonical image field");
+    }
+    out.push_str(&deployment.replacen(checked_in_image, &format!("          image: {image}"), 1));
+    Ok(cli_std::artifact::ensure_trailing_newline(&out))
 }
 
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
@@ -1804,7 +1811,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -1812,22 +1819,6 @@ enum InstanceBody {
     Staging,
     Prod,
     Template,
-}
-
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
 }
 
 /// Write `body` to `--out` (or stream it to stdout when `out` is `None`).
@@ -1841,20 +1832,8 @@ fn write_or_print(
     body: &str,
     next: impl FnOnce(&Path) -> String,
 ) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
+    if let Some(target) = cli_std::artifact::write_or_print(out, default_file, body)? {
         println!("next: {}", next(&target));
-    } else {
-        print!("{body}");
     }
     Ok(())
 }
@@ -1863,14 +1842,6 @@ fn write_or_print(
 /// only sensible follow-up is applying it.
 fn kubectl_apply_next(target: &Path) -> String {
     format!("kubectl apply -f {}", target.display())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 /// Real [`lumen::api::CheckpointSink`] wiring for segment-persistence mode
@@ -2228,8 +2199,29 @@ async fn serve(args: ServeArgs) -> Result<()> {
     } else {
         tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
     }
+    let admission = service_http::AdmissionConfig::from_env("LUMEN")?.controller(
+        "lumen.read",
+        "lumen.write",
+        "lumen.admin",
+    );
+    if admission.is_some() {
+        tracing::info!("request admission enabled (LUMEN_ADMISSION_*; probes stay exempt)");
+    }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    if let Some(path) = std::env::var_os(TOKEN_REGISTRY_FILE_ENV) {
+        let path = PathBuf::from(path);
+        // `AppState` owns the exact verifier its router uses, so a
+        // Secret/CSI replacement becomes visible to live requests without a
+        // Lumen restart. Invalid replacements remain on the shared
+        // last-known-good snapshot and emit redacted auth audit events.
+        let _ =
+            service_auth::spawn_registry_file_watcher(state.verifier().registry_verifier(), &path);
+        tracing::info!(
+            path = %path.display(),
+            "watching bearer token registry for credential rotation"
+        );
+    }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
     // its own snapshot mechanism and is out of the reshard driver's scope
@@ -2335,7 +2327,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         state = state.with_routed(Arc::new(router));
     }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
-    let mut app = lumen::api::router(state);
+    let mut app = lumen::api::router_with_admission(state, admission);
     // Plain local/backward-compatible Raft RPCs share the public h2c port.
     // Configured mTLS peers are served only by the dedicated listener below.
     #[cfg(feature = "raft-wal")]
@@ -2479,13 +2471,33 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     let grace = Duration::from_secs(args.grace_secs);
+    let shutdown_engine = engine.clone();
+    let shutdown_aof = aof_writer.clone();
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
     // with the standard SIGTERM drain sequence flipping `/readyz` to 503
-    // before the listener closes.
+    // before the listener closes. The single-replica segment AOF is synced at
+    // the *start* of termination, not after the full drain window: the pod's
+    // termination grace can equal that window, so a post-drain sync may lose
+    // the race with Kubernetes' SIGKILL.
     service_http::serve(
         listener,
         app,
-        service_http::shutdown_with_drain(move || engine.start_drain(), grace),
+        service_http::shutdown_with_drain(
+            move || {
+                shutdown_engine.start_drain();
+                if let Some(aof) = shutdown_aof {
+                    match aof.lock() {
+                        Ok(mut writer) => {
+                            if let Err(e) = writer.sync() {
+                                tracing::warn!(error = %e, "sync local AOF during shutdown failed");
+                            }
+                        }
+                        Err(_) => tracing::warn!("local AOF writer poisoned during shutdown"),
+                    }
+                }
+            },
+            grace,
+        ),
     )
     .await;
     #[cfg(feature = "raft-wal")]

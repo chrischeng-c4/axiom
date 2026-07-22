@@ -76,10 +76,16 @@ pub fn default_baseline() -> CompetitiveBaseline {
             checkpoint_p95_us: 5_000,
         },
         peers: vec![
-            uncalibrated_peer("Kafka topic log"),
+            separate_gate_peer(
+                "Kafka topic log",
+                "Calibrated by the release real-service tape_vs_kafka gate; the local-only report never imports or claims that result.",
+            ),
             uncalibrated_peer("Redpanda topic log"),
             uncalibrated_peer("Pulsar topic"),
-            uncalibrated_peer("NATS JetStream stream"),
+            separate_gate_peer(
+                "NATS JetStream stream",
+                "Calibrated by the release real-service tape_vs_nats_jetstream gate; the local-only report never imports or claims that result.",
+            ),
             uncalibrated_peer("RabbitMQ Streams"),
             PeerCalibration {
                 peer: "RabbitMQ topic exchange",
@@ -151,7 +157,7 @@ pub fn run_benchmark(events: usize, payload_bytes: usize) -> BenchReport {
         local_regression_passed,
         external_peer_win_claim,
         verdict: if local_regression_passed && !external_peer_win_claim {
-            "local_regression_passed_external_broker_wins_not_calibrated"
+            "local_regression_passed_external_wins_require_separate_gates"
         } else {
             "failed_or_overclaimed"
         },
@@ -238,6 +244,16 @@ fn uncalibrated_peer(peer: &'static str) -> PeerCalibration {
         status: "not_calibrated",
         win_claim: false,
         reason: "No real-service external benchmark has been run in this checkout; Tape reports local regression only.",
+    }
+}
+
+fn separate_gate_peer(peer: &'static str, reason: &'static str) -> PeerCalibration {
+    PeerCalibration {
+        peer,
+        replay_baseline: true,
+        status: "calibrated_separate_gate",
+        win_claim: false,
+        reason,
     }
 }
 

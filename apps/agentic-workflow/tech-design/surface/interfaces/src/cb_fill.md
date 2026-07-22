@@ -51,6 +51,11 @@ root crates tree exists, so the post-generation decision cannot report zero
 markers prematurely. Active-TD fill then enumerates the exact app/lib Changes
 paths and advances only after both queues are exhausted.
 
+The editable payload's generated `<!-- marker: ... -->` footer is transport
+metadata and is stripped before source insertion. A successful fill binds the
+`pending-tracker` sentinel on either XML or comment-style HANDWRITE markers to
+the owning WI, so generated Rust stays parseable and passes standardization.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -335,6 +340,22 @@ fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
         "(fill)\n\n<!-- marker: {} path: {} reason: {} -->\n",
         marker.id, marker.source_path, marker.reason
     )
+}
+
+/// Payload files include an AW-owned HTML footer so humans can identify the
+/// target while editing them. The footer is transport metadata, not authored
+/// source, and must never be copied into the HANDWRITE body.
+fn strip_marker_payload_footer(payload: &str) -> &str {
+    let trimmed = payload.trim_end();
+    let Some((body, last_line)) = trimmed.rsplit_once('\n') else {
+        return trimmed;
+    };
+    let footer = last_line.trim();
+    if footer.starts_with("<!-- marker: ") && footer.ends_with("-->") {
+        body.trim_end()
+    } else {
+        trimmed
+    }
 }
 
 fn initialize_marker_payload(
@@ -1179,16 +1200,15 @@ fn replace_block_body_for_path(
     replace_block_and_markers(src, start_line, end_line, payload)
 }
 
-/// XML-form markers scaffolded around existing source carry the pending
-/// sentinel until their first fill. Promote that sentinel to the work-item
-/// reference after a successful body replacement so the marker leaves the
-/// pending queue and becomes valid managed-source ownership.
-fn mark_pending_xml_marker_filled(src: &str, start_line: usize, slug: &str) -> String {
+/// Generated XML and comment-style markers carry the pending sentinel until
+/// their first fill. Promote it to the work-item reference after a successful
+/// body replacement so the marker becomes valid managed-source ownership.
+fn mark_pending_marker_filled(src: &str, start_line: usize, slug: &str) -> String {
     let mut lines: Vec<String> = src.lines().map(str::to_string).collect();
     let Some(line) = lines.get_mut(start_line.saturating_sub(1)) else {
         return src.to_string();
     };
-    if line.contains("<HANDWRITE")
+    if (line.contains("<HANDWRITE") || line.contains("HANDWRITE-BEGIN"))
         && line.contains(&format!(
             "tracker=\"{}\"",
             crate::generate::handwrite_scaffold::PENDING_TRACKER
@@ -1229,6 +1249,7 @@ fn apply_marker_payload(
     payload: &str,
     slug: &str,
 ) -> Result<String> {
+    let payload = strip_marker_payload_footer(payload);
     if payload.trim() == ADOPT_EXISTING_PAYLOAD {
         if !pending_xml_marker_has_existing_body(original, target.start_line, target.end_line) {
             anyhow::bail!(
@@ -1236,7 +1257,7 @@ fn apply_marker_payload(
                 ADOPT_EXISTING_PAYLOAD
             );
         }
-        return Ok(mark_pending_xml_marker_filled(
+        return Ok(mark_pending_marker_filled(
             original,
             target.start_line,
             slug,
@@ -1257,7 +1278,7 @@ fn apply_marker_payload(
             target.source_path
         )
     })?;
-    Ok(mark_pending_xml_marker_filled(
+    Ok(mark_pending_marker_filled(
         &replaced,
         target.start_line,
         slug,
@@ -1768,7 +1789,7 @@ pub fn existing() {}\n\
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, "missing-generator:logic");
 
-        let filled = mark_pending_xml_marker_filled(source, 1, "1882");
+        let filled = mark_pending_marker_filled(source, 1, "1882");
         std::fs::write(&source_path, filled).unwrap();
         assert!(enumerate_worktree_markers(tmp.path()).is_empty());
     }
@@ -2046,12 +2067,40 @@ pub fn existing() { 42; }\n\
 pub fn before() {}\n\
 // </HANDWRITE>\n";
         let replaced = replace_block_body(src, 1, 3, "pub fn after() {}").unwrap();
-        let filled = mark_pending_xml_marker_filled(&replaced, 1, "1882");
+        let filled = mark_pending_marker_filled(&replaced, 1, "1882");
         assert!(filled.contains("<HANDWRITE"));
         assert!(filled.contains("</HANDWRITE>"));
         assert!(filled.contains("tracker=\"#1882\""));
         assert!(filled.contains("pub fn after() {}"));
         assert!(!filled.contains("pub fn before() {}"));
+    }
+
+    #[test]
+    fn comment_style_fill_strips_payload_footer_and_binds_tracker() {
+        let src = format!(
+            "{}\n// TODO: hand-write content for `src/demo.rs`.\n{}\n",
+            handwrite_begin(
+                "gap=\"missing-generator:unit-test:fixture\" tracker=\"pending-tracker\" reason=\"fixture\""
+            ),
+            handwrite_end(),
+        );
+        let target = HandwriteMarkerEntry {
+            id: "missing-generator:unit-test:fixture".to_string(),
+            source_path: "src/demo.rs".to_string(),
+            start_line: 1,
+            end_line: 3,
+            reason: "fixture".to_string(),
+            spec_ref: None,
+            adopt_existing: false,
+        };
+        let payload = "pub fn filled() {}\n\n<!-- marker: missing-generator:unit-test:fixture path: src/demo.rs reason: fixture -->\n";
+
+        let filled = apply_marker_payload(&src, &target, payload, "2384").unwrap();
+
+        assert!(filled.contains("tracker=\"#2384\""));
+        assert!(filled.contains("pub fn filled() {}"));
+        assert!(!filled.contains("<!-- marker:"));
+        assert!(!filled.contains("pending-tracker"));
     }
 
     #[test]

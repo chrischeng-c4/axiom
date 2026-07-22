@@ -485,12 +485,8 @@ mod tests {
             "def make():\n    class Outer:\n        class Inner:\n            pass\n    return Outer.Inner\n",
         )
         .unwrap();
-        repl.eval_raw("First = make()\nSecond = make()\n")
-            .unwrap();
-        assert_eq!(
-            repl.eval_raw("1 if First is Second else 0\n").unwrap().0,
-            0
-        );
+        repl.eval_raw("First = make()\nSecond = make()\n").unwrap();
+        assert_eq!(repl.eval_raw("1 if First is Second else 0\n").unwrap().0, 0);
         assert_eq!(
             repl.eval_raw("1 if First.__name__ == 'Inner' else 0\n")
                 .unwrap()
@@ -553,9 +549,7 @@ mod tests {
             .lookup("keep")
             .expect("valid binding must exist before the failed iteration");
 
-        let failed = repl.eval_raw(
-            "def ghost_function(value: int) -> int:\n    return 'wrong'\n",
-        );
+        let failed = repl.eval_raw("def ghost_function(value: int) -> int:\n    return 'wrong'\n");
         assert!(failed.is_err(), "invalid function definition must fail");
         assert!(
             repl.checker.symbols.lookup("ghost_function").is_none(),
@@ -579,9 +573,8 @@ mod tests {
             .lookup("keep")
             .expect("valid binding must exist before the failed iteration");
 
-        let failed = repl.eval_raw(
-            "class GhostClass:\n    def broken(self) -> int:\n        return 'wrong'\n",
-        );
+        let failed = repl
+            .eval_raw("class GhostClass:\n    def broken(self) -> int:\n        return 'wrong'\n");
         assert!(failed.is_err(), "invalid class definition must fail");
         assert!(
             repl.checker.symbols.lookup("GhostClass").is_none(),

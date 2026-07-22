@@ -1160,16 +1160,16 @@ spec:
   serving:
     backup:
       schedule: "0 * * * *"        # CronJob.spec.schedule
-      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// ; gs:// parses but is not yet a sink
+      destination: "gs://my-bucket/lumen-backups"  # file:// | s3:// | gs://
       retentionSecs: 604800        # optional; drop objects older than this
       adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
 ```
 
-Use `s3://` for production object-storage snapshots today. `file://` remains a
-local-dev, migration, or break-glass sink and does not satisfy the production
-service archetype. `gs://` stays in the schema so CRDs and CLI input can
-validate/round-trip, but `lumen backup` still fails loudly until
-`libs/service-backup` ships a real GCS adapter.
+Use `s3://` or `gs://` for production object-storage snapshots. GCS accepts an
+explicit `GOOGLE_OAUTH_ACCESS_TOKEN`/`GCS_ACCESS_TOKEN` and otherwise resolves
+the GCE/GKE metadata-server token used by Workload Identity. `file://` remains
+a local-dev, migration, or break-glass sink and does not satisfy the production
+service archetype.
 
 Omitting `spec.serving.backup` renders no CronJob. That is acceptable for local
 development or manual recovery exercises, but a production Lumen instance is not

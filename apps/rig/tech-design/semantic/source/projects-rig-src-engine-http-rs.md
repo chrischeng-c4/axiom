@@ -20,10 +20,10 @@ Public API manifest for `apps/rig/src/engine/http.rs` generated from AST during 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `HttpOutcome` | apps/rig/src/engine/http.rs | struct | pub | 20 |  |
-| `capture_value` | apps/rig/src/engine/http.rs | function | pub | 120 | capture_value(outcome: &HttpOutcome, key: &str) -> Option<Value> |
-| `execute` | apps/rig/src/engine/http.rs | function | pub | 32 | execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, String> |
-| `json_path` | apps/rig/src/engine/http.rs | function | pub | 131 | json_path(root: &Value, path: &str) -> Option<Value> |
+| `HttpOutcome` | apps/rig/src/engine/http.rs | struct | pub | 19 |  |
+| `capture_value` | apps/rig/src/engine/http.rs | function | pub | 131 | capture_value(outcome: &HttpOutcome, key: &str) -> Option<Value> |
+| `execute` | apps/rig/src/engine/http.rs | function | pub | 30 | execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, String> |
+| `json_path` | apps/rig/src/engine/http.rs | function | pub | 141 | json_path(root: &Value, path: &str) -> Option<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -56,17 +56,33 @@ pub struct HttpOutcome {
 /// failures (connect refused, timeout) come back as a violation with
 /// status 0 — chaos scenarios assert on exactly these.
 pub fn execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, String> {
+    let agent = agent_for(request);
+    execute_with_agent(&agent, request, vars)
+}
+
+/// Build the timeout-configured client used for one request shape. Ordinary
+/// scenario steps call [`execute`] and keep one-shot behavior; load workers
+/// retain this agent across operations so ureq can reuse its connection pool.
+pub(super) fn agent_for(request: &HttpRequest) -> ureq::Agent {
+    let timeout = Duration::from_millis(request.expect.timeout_ms);
+    ureq::AgentBuilder::new()
+        .timeout_connect(timeout)
+        .timeout(timeout)
+        .build()
+}
+
+/// Execute through an existing client. The caller owns the agent lifetime;
+/// [`execute`] uses a fresh one while the load transport keeps one per worker.
+pub(super) fn execute_with_agent(
+    agent: &ureq::Agent,
+    request: &HttpRequest,
+    vars: &VarStore,
+) -> Result<HttpOutcome, String> {
     let url = vars.interpolate(&request.url)?;
     let body = match &request.body {
         Some(b) => Some(vars.interpolate(b)?),
         None => None,
     };
-    let timeout = Duration::from_millis(request.expect.timeout_ms);
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout(timeout)
-        .build();
 
     let method = request.method.to_uppercase();
     let started = Instant::now();

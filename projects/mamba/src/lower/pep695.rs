@@ -463,12 +463,7 @@ fn collect_runtime_type_param_uses_in_type_params(
         }
         if let Some(constraints) = &param.constraints {
             for constraint in constraints {
-                collect_runtime_type_param_uses_expr(
-                    constraint,
-                    type_param_names,
-                    out,
-                    shadowed,
-                );
+                collect_runtime_type_param_uses_expr(constraint, type_param_names, out, shadowed);
             }
         }
         if let Some(default) = &param.default {
@@ -797,9 +792,7 @@ fn rewrite_current_type_param_bindings_expr(
                     if let Some(format) = format {
                         for part in format {
                             if let crate::parser::ast::FStringPart::Expr(value, _) = part {
-                                rewrite_current_type_param_bindings_expr(
-                                    value, bindings, shadowed,
-                                );
+                                rewrite_current_type_param_bindings_expr(value, bindings, shadowed);
                             }
                         }
                     }
@@ -1686,7 +1679,12 @@ fn desugar_block(
                     out.extend(tv_assigns);
                     out.push(st);
                     for (attr, binding_names) in &attrs {
-                        out.push(attr_tuple_assign(&[name.clone()], attr, binding_names, span));
+                        out.push(attr_tuple_assign(
+                            &[name.clone()],
+                            attr,
+                            binding_names,
+                            span,
+                        ));
                     }
                     for binding in &alias_saved_bindings {
                         out.extend(restore_or_delete_binding(binding, span));

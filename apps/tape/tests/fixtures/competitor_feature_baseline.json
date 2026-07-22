@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-07-20",
+  "sources": [
+    {
+      "id": "kafka-consumer-4.2",
+      "product": "Apache Kafka",
+      "version_scope": "4.2 consumer API",
+      "url": "https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html"
+    },
+    {
+      "id": "kafka-topic-config-3.9",
+      "product": "Apache Kafka",
+      "version_scope": "3.9 topic configuration",
+      "url": "https://kafka.apache.org/39/configuration/topic-level-configs/"
+    },
+    {
+      "id": "redpanda-current-consume",
+      "product": "Redpanda",
+      "version_scope": "current",
+      "url": "https://docs.redpanda.com/streaming/current/develop/consume-data/"
+    },
+    {
+      "id": "redpanda-current-offset-time",
+      "product": "Redpanda",
+      "version_scope": "current",
+      "url": "https://docs.redpanda.com/streaming/current/reference/rpk/rpk-topic/rpk-topic-consume/"
+    },
+    {
+      "id": "pulsar-messaging-4.1",
+      "product": "Apache Pulsar",
+      "version_scope": "4.1.x",
+      "url": "https://pulsar.apache.org/docs/4.1.x/concepts-messaging/"
+    },
+    {
+      "id": "pulsar-retention-4.1",
+      "product": "Apache Pulsar",
+      "version_scope": "4.1.x",
+      "url": "https://pulsar.apache.org/docs/4.1.x/cookbooks-retention-expiry/"
+    },
+    {
+      "id": "nats-jetstream-current",
+      "product": "NATS JetStream",
+      "version_scope": "current",
+      "url": "https://docs.nats.io/nats-concepts/jetstream"
+    },
+    {
+      "id": "nats-consumers-current",
+      "product": "NATS JetStream",
+      "version_scope": "current",
+      "url": "https://docs.nats.io/nats-concepts/jetstream/consumers"
+    },
+    {
+      "id": "rabbitmq-streams-4.1",
+      "product": "RabbitMQ Streams",
+      "version_scope": "4.1",
+      "url": "https://www.rabbitmq.com/docs/4.1/streams"
+    },
+    {
+      "id": "rabbitmq-exchanges-current",
+      "product": "RabbitMQ topic exchange",
+      "version_scope": "current",
+      "url": "https://www.rabbitmq.com/docs/exchanges"
+    }
+  ],
+  "rows": [
+    {
+      "name": "Kafka topic log",
+      "kind": "replay_log",
+      "topic_routing": true,
+      "ordered_append": true,
+      "offset_replay": true,
+      "time_replay": true,
+      "consumer_checkpoint": true,
+      "retention": true,
+      "backfill": true,
+      "replay_baseline": true,
+      "source_ids": ["kafka-consumer-4.2", "kafka-topic-config-3.9"]
+    },
+    {
+      "name": "Redpanda topic log",
+      "kind": "replay_log",
+      "topic_routing": true,
+      "ordered_append": true,
+      "offset_replay": true,
+      "time_replay": true,
+      "consumer_checkpoint": true,
+      "retention": true,
+      "backfill": true,
+      "replay_baseline": true,
+      "source_ids": ["redpanda-current-consume", "redpanda-current-offset-time"]
+    },
+    {
+      "name": "Pulsar topic",
+      "kind": "replay_log",
+      "topic_routing": true,
+      "ordered_append": true,
+      "offset_replay": true,
+      "time_replay": true,
+      "consumer_checkpoint": true,
+      "retention": true,
+      "backfill": true,
+      "replay_baseline": true,
+      "source_ids": ["pulsar-messaging-4.1", "pulsar-retention-4.1"]
+    },
+    {
+      "name": "NATS JetStream stream",
+      "kind": "replay_log",
+      "topic_routing": true,
+      "ordered_append": true,
+      "offset_replay": true,
+      "time_replay": true,
+      "consumer_checkpoint": true,
+      "retention": true,
+      "backfill": true,
+      "replay_baseline": true,
+      "source_ids": ["nats-jetstream-current", "nats-consumers-current"]
+    },
+    {
+      "name": "RabbitMQ Streams",
+      "kind": "replay_log",
+      "topic_routing": true,
+      "ordered_append": true,
+      "offset_replay": true,
+      "time_replay": true,
+      "consumer_checkpoint": true,
+      "retention": true,
+      "backfill": true,
+      "replay_baseline": true,
+      "source_ids": ["rabbitmq-streams-4.1"]
+    },
+    {
+      "name": "RabbitMQ topic exchange",
+      "kind": "routing_only",
+      "topic_routing": true,
+      "ordered_append": false,
+      "offset_replay": false,
+      "time_replay": false,
+      "consumer_checkpoint": false,
+      "retention": false,
+      "backfill": false,
+      "replay_baseline": false,
+      "source_ids": ["rabbitmq-exchanges-current"]
+    }
+  ]
+}

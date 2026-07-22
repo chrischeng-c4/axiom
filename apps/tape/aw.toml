@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "tape"
-generated_from_td_digest = "sha256:c8276274f519c94d90fae5f23c45534f1b2c9181d79b59c5673aa26f6866a000"
+generated_from_td_digest = "sha256:3d1ee7bdcbf4635e73760a26d2b8b126d19ac5aa92e1a1bbb37631b4eaad7ef4"
 
 [[aw.ec.generated.cases]]
 id = "tape-chainable-output-conformance"
@@ -30,6 +30,52 @@ test_path = "apps/tape/tests/behavior_tape_claim_chainable_output.rs"
 command = "cargo test -p tape --test cli_contract append_replay_checkpoint_roundtrip -- --exact --nocapture"
 required_for_production = true
 assertions = ["Append, replay, and checkpoint commands emit parseable JSON payloads with next-step markers for agent chaining."]
+
+[[aw.ec.generated.cases]]
+id = "tape-cli-interface-generated-clients"
+capability_id = "http2-api-list"
+claim_id = "tape-openapi-generated-client-contract"
+contract_id = "tape-spec-gen-public-api-journey"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-generated-clients"
+test_path = "apps/tape/tests/behavior_tape_cli_interface_generated_clients.rs"
+command = "cargo test -p tape --test spec_generated_clients -- --nocapture"
+required_for_production = true
+assertions = [
+    "The non-zero integration test executes tape spec gen and emits typed TypeScript, Python, and Rust client artifacts from Tape's offline OpenAPI document.",
+    "Every generated language is inspected for Tape's topic append, replay, checkpoint, and administrative backup route scope.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-cli-interface-offline-cli"
+capability_id = "cli-interface"
+claim_id = "tape-cli-replay-admin-contract"
+contract_id = "tape-offline-cli-agent-onboarding"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-offline-cli"
+test_path = "apps/tape/tests/behavior_tape_cli_interface_offline_cli.rs"
+command = "cargo test -p tape --test cli_contract --test behavior_tape_claim_cli_interface -- --nocapture"
+required_for_production = true
+assertions = [
+    "tape append, replay, checkpoint, spec, llm, upgrade, and issue parse through the real Tape binary.",
+    "tape spec emits deterministic route, OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.",
+    "tape llm publishes deterministic, offline guidance for topic replay and checkpoint workflows.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-cli-interface-protocol-transport"
+capability_id = "http2-api-list"
+claim_id = "tape-http1-h2c-listener-contract"
+contract_id = "tape-service-listener-http1-and-h2c"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-protocol-transport"
+test_path = "apps/tape/tests/behavior_tape_cli_interface_protocol_transport.rs"
+command = "cargo test -p tape --test http_transport -- --nocapture"
+required_for_production = true
+assertions = [
+    "Tape serves HTTP/1.1 and h2c prior-knowledge HTTP/2 on the same listener.",
+    "Both protocols reach the same Tape topic replay API and standard operational endpoints.",
+]
 
 [[aw.ec.generated.cases]]
 id = "tape-cli-interface-replay-verbs"
@@ -70,8 +116,9 @@ command = "cargo test -p tape --test competitor_feature_parity -- --nocapture"
 required_for_production = true
 assertions = [
     "Tape validates ordered append, offset replay, timestamp replay, and durable consumer checkpoints through the local journal core.",
-    "Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams are classified as replay-log baselines for feature parity.",
-    "RabbitMQ topic exchange is included as a topic-routing/fanout comparison row, but is not treated as Tape's offset/time replay baseline.",
+    "The test consumes a versioned fixture whose every competitor row resolves to pinned official upstream provenance.",
+    "That external oracle classifies Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams as replay-log baselines for feature parity.",
+    "The same oracle classifies RabbitMQ topic exchange as topic-routing/fanout only, not Tape's offset/time replay baseline.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -82,12 +129,12 @@ contract_id = "topic-replay-performance-local-and-nats-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-competitor-performance-claim-closure"
 test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_closure.rs"
-command = "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+command = "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
 required_for_production = true
 assertions = [
     "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.",
     "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
-    "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
+    "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -98,12 +145,12 @@ contract_id = "topic-replay-kafka-local-backlog-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
 test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
-command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
+command = "cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture"
 required_for_production = true
 assertions = [
-    "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.",
-    "Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.",
-    "Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).",
+    "The release-only production gate must start apache/kafka:3.9.0 in single-node KRaft mode and fail closed if Docker, the pinned image, or a usable broker port is unavailable.",
+    "Tape and Kafka replay the same 20,000-event, 128-byte-payload durable backlog from the beginning through real h2c and rskafka clients.",
+    "The EC test independently computes kafka_replay_us / max(tape_replay_us, 1) and requires the ratio to be >= 1.5 without trusting Tape's external_replay_win or verify_external_replay_win helpers.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -117,9 +164,9 @@ test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance.rs"
 command = "cargo test -p tape --test tape_perf_gate -- --nocapture"
 required_for_production = true
 assertions = [
-    "Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.",
-    "Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
-    "RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.",
+    "The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.",
+    "The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.",
+    "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -130,12 +177,13 @@ contract_id = "topic-replay-nats-jetstream-local-backlog-win"
 category = "efficiency"
 td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-nats-jetstream-replay-win"
 test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs"
-command = "cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+command = "cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
 required_for_production = true
 assertions = [
-    "The test starts a real local nats-server with JetStream enabled.",
-    "Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning.",
-    "Tape's zero-copy full-replay latency is at least 1.5x faster than NATS JetStream for the local backlog replay workload.",
+    "The release-only gate must start a real local nats-server with JetStream enabled and fail closed when that prerequisite cannot be started.",
+    "Tape and JetStream replay five samples of the same 20,000-event, 128-byte-payload durable backlog from the beginning.",
+    "The EC test independently computes nats_p50_us / max(tape_p50_us, 1) and requires the ratio to be >= 1.5 without trusting Tape's external_replay_win or verify_external_replay_win helpers.",
+    "The report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -167,6 +215,99 @@ required_for_production = true
 assertions = [
     "The offline route inventory includes topic append, replay, and checkpoint routes.",
     "The offline route inventory includes the OpenAPI route.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-admission"
+capability_id = "long-running-stability"
+claim_id = "tape-write-admission-boundary"
+contract_id = "tape-replay-stability-admission"
+category = "stability"
+td_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-admission"
+test_path = "apps/tape/tests/stability_tape_long_running_stability_admission.rs"
+command = "cargo test -p tape --test service_admission -- --nocapture"
+required_for_production = true
+assertions = ["Append requests are classified as write admission while the default router remains explicitly unbounded until a configured shared admission policy is supplied."]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-bounded-replay-soak"
+capability_id = "long-running-stability"
+claim_id = "tape-bounded-replay-rss-plateau"
+contract_id = "tape-replay-stability-bounded-soak"
+category = "stability"
+td_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-bounded-replay-soak"
+test_path = "apps/tape/tests/stability_tape_long_running_stability_bounded_replay_soak.rs"
+command = "TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh"
+required_for_production = true
+assertions = [
+    "A fixed event window is seeded before measurement, then replay/checkpoint/health traffic succeeds across two steady windows.",
+    "The Tape process RSS drift stays within the configured steady-window budget without treating append-only journal growth as a leak.",
+    "No packet-loss, FD-leak, retention/compaction, or multi-hour production-soak threshold is claimed by this baseline contract.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-meta-api"
+capability_id = "standard-operational-endpoints"
+claim_id = "tape-meta-api-health-ready-metrics-openapi"
+contract_id = "tape-ops-meta-api-surface"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/long-running-stability/behavior/meta-api.md#tape-long-running-stability-meta-api"
+test_path = "apps/tape/tests/behavior_tape_long_running_stability_meta_api.rs"
+command = "cargo test -p tape --test http_transport --test behavior_tape_claim_standard_operational_endpoints -- --nocapture"
+required_for_production = true
+assertions = [
+    "GET /healthz stays live and auth-exempt; GET /readyz is drain-aware and auth-exempt.",
+    "GET /metrics emits Prometheus text for Tape operations and stays available to the scrape path under required auth.",
+    "GET /openapi.json and GET /docs expose the same Tape API described by tape spec offline output.",
+    "The operator's liveness and readiness probes use /healthz and /readyz respectively.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-operator-render"
+capability_id = "kubernetes-native-deployment"
+claim_id = "tape-crd-reconcile-loop-kube-rs-operator"
+contract_id = "tape-devops-operator-render-golden"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/long-running-stability/behavior/devops-render.md#tape-long-running-stability-operator-render"
+test_path = "apps/tape/tests/behavior_tape_long_running_stability_operator_render.rs"
+command = "cargo test -p tape --features operator --test operator -- --nocapture"
+required_for_production = true
+assertions = [
+    "render(Tape) emits the managed StatefulSet, client and headless Services, PDB, and Tape CRD-owned labels/selectors.",
+    "The rendered workload uses the shared StatefulSet topology projection and carries Tape's journal storage, raft topology, and standard probe configuration.",
+    "Optional token-registry and bootstrap-seed inputs alter only their explicit Tape wiring and do not create a second service topology.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-raft-survival"
+capability_id = "long-running-stability"
+claim_id = "tape-raft-leader-loss-replay-survival"
+contract_id = "tape-raft-failover-and-snapshot-survival"
+category = "stability"
+td_ref = "apps/tape/external-contracts/long-running-stability/stability/resilience-survival.md#tape-long-running-stability-raft-survival"
+test_path = "apps/tape/tests/stability_tape_long_running_stability_raft_survival.rs"
+command = "cargo test -p tape --test raft_cluster --test raft_failover -- --test-threads=1"
+required_for_production = true
+assertions = [
+    "A three-node Tape group elects a leader, replicates ordered journal events, forwards follower writes, and continues after leader loss.",
+    "A new Tape node catches up through snapshot installation without losing committed replay history.",
+    "SIGKILL of the elected leader leaves surviving Tape nodes able to reelect with no committed-event loss.",
+    "This contract proves replay survival; it does not claim search latency, packet-loss p99, or a completed live multi-shard soak.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-long-running-stability-replay-restart"
+capability_id = "long-running-stability"
+claim_id = "tape-append-checkpoint-restart-recovery"
+contract_id = "tape-replay-stability-restart-recovery"
+category = "stability"
+td_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-replay-restart"
+test_path = "apps/tape/tests/stability_tape_long_running_stability_replay_restart.rs"
+command = "cargo test -p tape --test long_running_stability --test raft_persistence -- --nocapture"
+required_for_production = true
+assertions = [
+    "Repeated Raft restart preserves committed append history and consumer checkpoint progress.",
+    "A restarted node recovers its applied floor and accepts new proposals without replaying an already persisted checkpoint.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -202,6 +343,41 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "tape-security-hardening-access-control"
+capability_id = "security-hardening"
+claim_id = "tape-topic-subscription-authz-boundary"
+contract_id = "tape-topic-security-rbac-and-admission"
+category = "security"
+td_ref = "apps/tape/external-contracts/security-hardening/security/access-control.md#tape-security-hardening-access-control"
+test_path = "apps/tape/tests/security_tape_security_hardening_access_control.rs"
+command = "cargo test -p service-auth -- --nocapture && cargo test -p tape --test service_auth --test service_admission -- --nocapture"
+required_for_production = false
+assertions = [
+    "Appending to a topic requires that topic's write grant.",
+    "Replay and checkpoint operations require that topic's read grant and never expose data from an unauthorized topic.",
+    "Authentication failures retain the shared service-auth error shape while operational probes remain tokenless.",
+    "Append is classified as write admission and a configured shared policy returns bounded 429 responses without limiting probes.",
+    "The projected token registry rotates atomically without restarting Tape, while the shared service-auth suite independently verifies credential-free authorization audit events.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-security-hardening-auth-bearer-rbac"
+capability_id = "security-hardening"
+claim_id = "tape-bearer-topic-role-auth"
+contract_id = "tape-bearer-token-topic-rbac"
+category = "security"
+td_ref = "apps/tape/external-contracts/security-hardening/security/auth-bearer-rbac.md#tape-security-hardening-auth-bearer-rbac"
+test_path = "apps/tape/tests/security_tape_security_hardening_auth_bearer_rbac.rs"
+command = "cargo test -p tape --test service_auth -- --nocapture"
+required_for_production = false
+assertions = [
+    "When TAPE_AUTH=required, missing and unknown bearer tokens are rejected; a reader cannot append to a topic.",
+    "Topic-scoped write grants authorize append, topic-scoped read grants authorize replay and checkpoint operations, and wildcard administrator grants cover every topic.",
+    "The required-mode registry fails fast for missing, malformed, empty, or unknown auth configuration; TAPE_AUTH=off remains the explicit local tokenless mode.",
+    "Auth rejection uses the shared unauthenticated/forbidden envelope and the standard probe, metrics, OpenAPI, and docs routes remain tokenless.",
+]
+
+[[aw.ec.generated.cases]]
 id = "tape-security-hardening-guard-scan"
 capability_id = "security-hardening"
 claim_id = "guard-static-runtime-evidence"
@@ -213,7 +389,7 @@ command = "cd apps/tape && ../../target/debug/vat run guard-security"
 required_for_production = false
 assertions = [
     "guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings.",
-    "guard attaches meter evidence for tape's bearer-auth request-boundary smoke (cli_contract auth-relevant cases).",
+    "guard attaches non-zero meter evidence for Tape's service_auth bearer-token, topic-RBAC, and credential-rotation journey.",
     "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
 ]
 
@@ -242,6 +418,36 @@ required_for_production = true
 assertions = [
     "Tape assigns ordered offsets per topic.",
     "Tape replays by offset and by timestamp.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-topology-existing-backup-seed"
+capability_id = "primary-replicas"
+claim_id = "tape-external-backup-disaster-recovery-seed"
+contract_id = "tape-topology-existing-backup-seed"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/topology/behavior/shard-topology.md#tape-topology-existing-backup-seed"
+test_path = "apps/tape/tests/behavior_tape_topology_existing_backup_seed.rs"
+command = "cargo test -p tape --test bootstrap -- --nocapture"
+required_for_production = true
+assertions = [
+    "Tape's empty-PVC bootstrap seed restores a consistent journal snapshot before normal Raft catch-up.",
+    "The backup seed is cold recovery evidence and does not replace live Raft replication.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-topology-existing-raft-replica-sync"
+capability_id = "primary-replicas"
+claim_id = "tape-raft-log-replica-sync-existing-pvc"
+contract_id = "tape-topology-existing-raft-replica-sync"
+category = "stability"
+td_ref = "apps/tape/external-contracts/topology/behavior/shard-topology.md#tape-topology-existing-raft-replica-sync"
+test_path = "apps/tape/tests/stability_tape_topology_existing_raft_replica_sync.rs"
+command = "cargo test -p tape --test raft_cluster --test raft_failover --test raft_persistence -- --test-threads=1"
+required_for_production = true
+assertions = [
+    "A Tape Raft group elects, replicates committed journal appends, forwards follower appends to its leader, and retains the durable applied floor across restart.",
+    "A fresh Tape node catches up by InstallSnapshot and a killed leader is replaced by a surviving elected group without committed-event loss.",
 ]
 
 [[aw.ec.generated.tool_manifests]]

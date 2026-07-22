@@ -8,10 +8,10 @@ summary: >
   single-node Kafka broker in KRaft mode via `docker run
   apache/kafka:3.9.0`, publishes the same 20,000-event / 128-byte-payload
   backlog, replays it from the beginning with a real Kafka consumer
-  (pure-Rust rskafka client), and compares against Tape's zero-copy
-  replay_refs path via the existing tape::bench::external_replay_win /
-  verify_external_replay_win helpers. Domain logic
-  (append/replay/checkpoint/retention semantics) is untouched.
+  (pure-Rust rskafka client), and compares against a real release Tape h2c
+  replay-stream service via tape::bench::external_replay_win /
+  verify_external_replay_win. The corrected symmetric calibration requires
+  1.5x and measured 2.87x on the latest 2026-07-17 run.
 fill_sections: [logic, changes]
 ---
 
@@ -37,7 +37,7 @@ nodes:
     label: "replay the full backlog from the beginning with a real rskafka consumer, measuring wall-clock replay latency"
   replay_tape:
     kind: process
-    label: "TapeJournal::replay_refs replays the same backlog locally, measuring wall-clock replay latency (zero-copy path)"
+    label: "release Tape h2c service streams and the client validates the same durable backlog across the network boundary"
   compare:
     kind: process
     label: "tape::bench::external_replay_win / verify_external_replay_win compares tape_replay_us vs kafka_replay_us against a calibrated required_ratio picked from a real measured run"
@@ -46,7 +46,7 @@ nodes:
     label: "bench.rs default_baseline() local peer list is NOT changed: Kafka stays uncalibrated_peer there by design, same as NATS JetStream today"
   done:
     kind: terminal
-    label: "cargo test -p tape --test tape_vs_kafka passes with an honestly measured win ratio; cargo build/test -p tape stay green"
+    label: "cargo test --release -p tape --test tape_vs_kafka passes with the symmetric 1.5x floor"
 edges:
   - { from: route, to: spawn_kafka }
   - { from: spawn_kafka, to: publish_backlog }
@@ -61,7 +61,7 @@ flowchart TD
     route[apps/tape gains a calibrated Kafka peer] --> spawn_kafka[docker run apache/kafka:3.9.0 KRaft single-node]
     spawn_kafka --> publish_backlog[publish 20000-event/128B backlog via rskafka producer]
     publish_backlog --> replay_kafka[replay backlog via rskafka consumer, measure latency]
-    route --> replay_tape[TapeJournal::replay_refs replays same backlog, measure latency]
+    route --> replay_tape[release Tape h2c service streams same backlog, measure latency]
     replay_kafka --> compare[external_replay_win compares ratio vs calibrated threshold]
     replay_tape --> compare
     compare --> no_baseline_change[bench.rs default_baseline unchanged: Kafka stays uncalibrated_peer]
@@ -77,7 +77,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New dedicated external test (mirrors apps/tape/tests/tape_vs_nats_jetstream.rs): spawns a real single-node Kafka broker in KRaft mode via `docker run apache/kafka:3.9.0` (no ZooKeeper), skips gracefully if Docker is unavailable, publishes a 20,000-event / 128-byte-payload backlog with a real pure-Rust rskafka producer, replays it from the beginning with a real rskafka consumer, and compares against Tape's TapeJournal::replay_refs zero-copy replay via tape::bench::external_replay_win / verify_external_replay_win with a required_ratio calibrated from an actual measured run."
+    description: "Starts real release Tape h2c and Kafka KRaft services, downloads and validates the same 20,000-event / 128-byte-payload durable backlog through both clients, and enforces the corrected 1.5x floor."
   - path: apps/tape/Cargo.toml
     action: modify
     section: logic
@@ -92,5 +92,5 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add a tape-competitor-performance-kafka-replay-win e2e_tests entry (mirrors the existing nats-jetstream-replay-win entry) pointing at `cargo test -p tape --test tape_vs_kafka -- --nocapture`, and update the EC summary/promise text to reflect Kafka as calibrated."
+    description: "Add a tape-competitor-performance-kafka-replay-win e2e_tests entry pointing at `cargo test --release -p tape --test tape_vs_kafka -- --nocapture`, and record the symmetric real-service calibration."
 ```

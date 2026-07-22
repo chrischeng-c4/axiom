@@ -73,7 +73,7 @@ changes:
     impl_mode: hand-written
     gap: sift-shared-operator-controller
     tracker: "1606"
-    description: Define the Sift custom-resource type and compose the shared leader-elected operator reconcile loop.
+    description: Define the Sift custom-resource type and compose the shared leader-elected operator reconcile loop, including a service-link-free data pod so Kubernetes Service environment variables cannot override Sift CLI configuration.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     section: logic
@@ -101,7 +101,7 @@ changes:
     impl_mode: hand-written
     gap: sift-crd-artifact
     tracker: "1606"
-    description: Define the cluster-scoped Sift custom resource API.
+    description: Define the cluster-scoped Sift custom resource API with YAML-quoted string enum values so `off` remains an auth-mode string at Kubernetes validation time.
   - path: projects/sift/k8s/operator/operator.yaml
     action: create
     section: changes
@@ -115,7 +115,7 @@ changes:
     impl_mode: hand-written
     gap: sift-instance-artifact
     tracker: "1606"
-    description: Define the development Sift custom resource with standard probes and single-node topology.
+    description: Define the development Sift custom resource with standard probes, single-node topology, and a YAML-quoted `auth: "off"` string.
   - path: projects/sift/HA.md
     action: create
     section: changes
@@ -129,5 +129,5 @@ changes:
     impl_mode: hand-written
     gap: sift-deployment-cli-tests
     tracker: "1606"
-    description: Verify all Dockerfile and layered Kubernetes artifact commands render expected contracts.
+    description: Verify all Dockerfile and layered Kubernetes artifact commands render expected contracts, including the Sift auth enum as a string rather than YAML boolean coercion.
 ```

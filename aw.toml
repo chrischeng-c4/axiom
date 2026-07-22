@@ -431,7 +431,7 @@ verify_cold = true
 name = "relay"
 path = "apps/relay"
 td_path = "apps/relay/tech-design"
-cap_path = "apps/relay/README.md"
+cap_path = "apps/relay/CAPABILITIES.md"
 label = "app:relay"
 # Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
 # owns security evidence. Legacy arena comparison remains advisory dogfood until
@@ -743,6 +743,17 @@ test_cmd = "cargo test -p cclab-wal"
 verify_cold = false
 
 [[projects]]
+name = "beam"
+path = "projects/beam"
+
+[[projects.workspaces]]
+name = "beam"
+paths = ["projects/beam/**"]
+target = "schemas"
+test_cmd = "true"
+verify_cold = false
+
+[[projects]]
 name = "jet"
 path = "projects/jet"
 
@@ -764,14 +775,13 @@ test_cmd = "cargo test -p mamba"
 verify_cold = false
 
 [[projects]]
-name = "meter"
-path = "projects/meter"
+name = "sift"
+path = "projects/sift"
 
 [[projects.workspaces]]
-name = "meter"
-paths = ["projects/meter/**"]
-target = "schemas"
-test_cmd = "true"
+paths = ["projects/sift/**"]
+target = "rust"
+test_cmd = "cargo test -p sift"
 verify_cold = false
 
 [[projects]]
@@ -912,6 +922,16 @@ path = "libs/service-backup"
 paths = ["libs/service-backup/**"]
 target = "rust"
 test_cmd = "cargo test -p service-backup"
+verify_cold = false
+
+[[projects]]
+name = "service-executor"
+path = "libs/service-executor"
+
+[[projects.workspaces]]
+paths = ["libs/service-executor/**"]
+target = "rust"
+test_cmd = "cargo test -p service-executor"
 verify_cold = false
 
 [[projects]]

@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "lumen",
-  "source_digest": "sha256:c02e15c61c839c74092c8080444057f3129a4e15fefeca251b58168c7249310a",
+  "source_digest": "sha256:f297767e0ed16d63869024d4bcf5d5fdcbd57d1ce636b1c4e82f974c4dfdd860",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer",
-  "reviewed_at": "2026-07-18T18:16:53.353466+00:00",
-  "summary": "Re-adjudication at digest sha256:c02e15c6 after the single-line revision to lumen-claim-dynamic-cross-pod-routing (capability dynamic-shard-topology, WI #1988). The gate command gained --features operator: cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture. routed_shard_e2e.rs is #![cfg(feature = \"operator\")], so previously the binary compiled empty and --exact matched zero tests (false-green). With --features operator the named test now compiles and executes (verified 1 passed, 12 filtered out), and its oracle is the real two-Engine + RoutedRouter h2c cross-pod forwarding e2e, independent of aw ec. False-green axis is the material change and is now satisfied; oracle_independent, loopholes_checked, assertions_specific (unchanged text: reads/writes follow the delivered ownership map to the owning shard), capability_claim_coverage, and required_dimensions all hold. Everything else is unchanged from the previously-accepted digest sha256:27eb580d. All six axes pass; findings empty. Verdict: accepted. Agent-backed evidence under ec_review_backing (#1829); reviewer_kind stays agent and a post-completion human batch audit may still reopen it.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/lumen_ec_second_review",
+  "reviewed_at": "2026-07-21T10:11:22.248141+00:00",
+  "summary": "Digest-bound independent semantic review of Lumen EC source sha256:f297767e0ed16d63869024d4bcf5d5fdcbd57d1ce636b1c4e82f974c4dfdd860. The revised stability contracts close the prior false-green defects: Rig now drives real toxiproxy packet-loss and partition phases with baseline/fault/recovery measurements; endurance scenarios resolve the unique live Lumen listener and independently sample RSS, FD, socket, and thread counts around bounded-keyspace work; the overload case declares a real 600-QPS, 16-worker, 30-second open-loop workload with measured error-rate/p99 pins and a 95% achieved-QPS honesty gate; and latency drift is measured across three non-empty 500-search windows. The authored assertions pin concrete sample counts, failure constraints, recovery budgets, and numerical thresholds. Their oracles are outside Lumen (Rig scheduling/assertion evaluation, toxiproxy, ps/proc/lsof helpers, and retained benchmark baselines), and explicit positive-baseline, nonzero-fault, zero-failure, resource-bound, pin-presence, and load-honesty checks prevent empty or zero-sample success. The currently RED 600-QPS execution is not treated as passing runtime evidence: it remains a shared Rig HTTP transport/harness blocker to resolve before EC verification can pass, while the EC contract itself is specific, non-vacuous, and independently verifiable. All six semantic axes pass; findings are empty.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

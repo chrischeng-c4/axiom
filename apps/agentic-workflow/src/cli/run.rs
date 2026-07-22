@@ -1848,6 +1848,9 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::ReconcileWiRefs => {
             ("reconcile_wi_refs", agent_command(&action.command))
         }
+        CapabilityActionKind::ReviewCapabilityPlan => {
+            ("agent_review", agent_command(&action.command))
+        }
         CapabilityActionKind::AtomizeWi => {
             ("atomize", format!("aw wi atomize --project {project}"))
         }

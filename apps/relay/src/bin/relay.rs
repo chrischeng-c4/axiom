@@ -8,13 +8,13 @@
 //! `cli-std` lib) — sit alongside it per the CONTRIBUTING.md CLI convention.
 //! Agents start at `relay llm`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use relay::server::{router, AppState};
+use relay::server::AppState;
 use relay::server_config::RelayServerConfig;
 use relay::spawn_reconciler;
 
@@ -318,6 +318,14 @@ struct ServeArgs {
     /// closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "RELAY_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// Log output format. Kubernetes uses `json` for the shared
+    /// `axiom.service.log.v1` collector contract; local development defaults
+    /// to the human-readable formatter.
+    #[arg(long, env = "RELAY_LOG_FORMAT", value_enum, default_value_t = LogFormat::Pretty)]
+    log_format: LogFormat,
+    /// OTLP/gRPC trace collector endpoint. Requires a build with `--features otel`.
+    #[arg(long, env = "RELAY_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
     /// Request-auth mode for the /v1 data plane: `off` (tokenless dev,
     /// the default) or `required` (bearer tokens from the registry file).
     /// Probes stay tokenless either way.
@@ -333,6 +341,15 @@ struct ServeArgs {
     /// standard downward-API env says `REPLICAS_PER_SHARD > 1`.
     #[arg(long, env = "RELAY_PEER_SERVICE", default_value = "relay")]
     peer_service: String,
+    /// Dedicated authenticated Raft listener when RELAY_PEER_MTLS=on.
+    #[arg(long, env = "RELAY_RAFT_PORT", default_value_t = 7001)]
+    raft_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogFormat {
+    Pretty,
+    Json,
 }
 
 /// `relay llm` flags.
@@ -515,6 +532,7 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    println!("next: done");
     Ok(())
 }
 
@@ -532,6 +550,7 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
     let result =
         relay::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
+    println!("next: done");
     Ok(())
 }
 
@@ -591,32 +610,25 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// Render the operator control-plane manifests (RBAC + Deployment) with the
 /// namespace substituted, from the checked-in fixtures.
 fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
+        "relay-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/deployment.yaml"),
+        "relay-system",
         namespace,
     ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: relay-system", &format!("name: {namespace}"))
-        .replace(
-            "namespace: relay-system",
-            &format!("namespace: {namespace}"),
-        )
+    cli_std::artifact::ensure_trailing_newline(&out)
 }
 
 /// Render a `kind: Relay` custom resource for the selected profile.
@@ -677,7 +689,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             );
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -707,13 +719,14 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_relay_tag(version);
+    let tag = cli_std::artifact::release_tag("relay", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("relay@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/relay/Dockerfile.release -t relay:") {
@@ -732,64 +745,14 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-/// Normalize a version input into a `relay@<version>` release tag, defaulting
-/// to the compiled crate version.
-fn normalize_relay_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("relay@") {
-        raw.to_string()
-    } else {
-        format!("relay@{raw}")
-    }
-}
-
-/// Strip AW source-ownership markers so the rendered Dockerfile is the one
-/// users build (a no-op for relay's marker-free fixtures; kept for parity).
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Write `body` to `out` (a file, or `default_file` inside a directory) or
 /// print it to stdout.
-fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
-    } else {
-        print!("{body}");
+fn write_or_print(out: Option<&std::path::Path>, default_file: &str, body: &str) -> Result<()> {
+    let written = cli_std::artifact::write_or_print(out, default_file, body)?;
+    if written.is_some() {
+        println!("next: done");
     }
     Ok(())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 /// `relay issue <verb>` — dispatch search/view/create to cli-std. `create`
@@ -843,11 +806,21 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
 /// the app through the shared service shell (#1205): HTTP/1.1 + h2c on one
 /// port with a SIGTERM-aware graceful drain (`--grace-secs`).
 async fn serve_main(args: ServeArgs) -> Result<()> {
-    // RUST_LOG wins; otherwise default to info (keep's pattern — relay's
-    // single `--bind` string doesn't map onto service_http::HttpConfig).
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let log_format = match args.log_format {
+        LogFormat::Pretty => service_http::LogFormat::Pretty,
+        LogFormat::Json => service_http::LogFormat::Json,
+    };
+    let tracing_config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        "info",
+        log_format,
+        args.grace_secs,
+        0,
+        args.otlp_endpoint.clone(),
+    );
+    let tracing_identity = service_http::ServiceIdentity::new("relay", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&tracing_config, &tracing_identity)?;
 
     // Resolve the bearer-auth contract (#1206) BEFORE anything serves: with
     // --auth required a missing/unparseable/empty registry file is a startup
@@ -863,19 +836,36 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         required = auth.required,
         "request auth resolved (RELAY_AUTH; probes stay tokenless)"
     );
-
-    let mut config = RelayServerConfig::default();
-    config.bind = args.bind;
-    if let Some(data_dir) = args.data_dir {
-        config.core.data_dir = data_dir;
+    let admission = service_http::AdmissionConfig::from_env("RELAY")?.controller(
+        "relay.read",
+        "relay.write",
+        "relay.admin",
+    );
+    if admission.is_some() {
+        tracing::info!(
+            "request admission enabled (RELAY_ADMISSION_*; probes and peer routes stay exempt)"
+        );
     }
+
+    let mut core = relay::RelayCoreConfig::default();
+    if let Some(data_dir) = args.data_dir {
+        core.data_dir = data_dir;
+    }
+    let config = RelayServerConfig {
+        bind: args.bind,
+        core,
+        ..RelayServerConfig::default()
+    };
     let bind = config.bind.clone();
     let reconcile_interval = Duration::from_millis(config.reconcile_interval_ms);
 
     let mut state = AppState::with_auth(config, auth);
-    // Held for the process lifetime; aborts on drop (i.e. never, since serve runs forever).
-    let _reconciler = spawn_reconciler(state.relay_handle(), reconcile_interval);
-
+    if let Some(path) = args.token_registry_file.as_deref() {
+        std::mem::drop(service_auth::spawn_registry_file_watcher(
+            state.verifier(),
+            path,
+        ));
+    }
     // Auto-mode HA (#544): the standard downward-API quartet flips replica
     // mode (REPLICAS_PER_SHARD > 1) — no relay-specific flags. Topology comes
     // from raft-runtime (never re-derive the ordinal math locally); the raft
@@ -883,81 +873,107 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // router rides the serve port OUTSIDE the bearer-auth data plane (cluster
     // traffic, tokenless like probes; mTLS is a later slice). Held for the
     // process lifetime — dropping it would abort the tick/pump tasks.
+    let mut peer_transport = None;
     let raft = if raft_runtime::cluster::replica_mode() {
-        // Peer-mTLS material (#1209): load + validate BEFORE the raft group
-        // spawns, so a misconfigured deployment (partial RELAY_PEER_TLS_* set,
-        // mis-pointed path, unusable PEM) exits nonzero at startup instead of
-        // failing at dial time. Termination on the peer port is NOT yet
-        // applied — raft-runtime's h2c transport has no TLS seam (the filed gap
-        // in the TD); this proves the mounted material is usable today.
-        match relay::peer_tls::PeerTlsConfig::from_env()? {
-            Some(tls) => {
-                tls.rustls_server_config()?;
-                tls.rustls_client_config()?;
-                if tls.required {
-                    tracing::warn!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated; RELAY_PEER_MTLS=on requested but mTLS \
-                         termination on the raft peer port is not yet applied (raft-runtime/h2c \
-                         TLS seam gap) — peer RPCs stay h2c"
-                    );
-                } else {
-                    tracing::info!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated (not required); peer RPCs stay h2c until \
-                         the raft-runtime TLS seam lands"
-                    );
-                }
-            }
-            None => tracing::info!(
-                "no peer TLS material configured (RELAY_PEER_TLS_*); peer RPCs are plain h2c"
+        let transport = relay::peer_tls::PeerTlsConfig::from_env()?
+            .map(|config| config.peer_transport())
+            .transpose()?;
+        let (peer_port, peer_scheme) = match transport.as_ref() {
+            Some(_) => (args.raft_port, "https"),
+            None => (
+                bind.rsplit(':')
+                    .next()
+                    .and_then(|port| port.parse::<u16>().ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("cannot derive the raft peer port from --bind {bind}")
+                    })?,
+                "http",
             ),
-        }
-        let peer_port = bind
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.parse::<u16>().ok())
-            .ok_or_else(|| {
-                anyhow::anyhow!("cannot derive the raft peer port from --bind {bind}")
-            })?;
-        let topo = raft_runtime::ClusterTopology::from_env(
+        };
+        let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
             "relay",
             &args.peer_service,
             peer_port,
             "RELAY_PEERS",
+            peer_scheme,
         )?;
         let data_dir = state.config().core.data_dir.clone();
         anyhow::ensure!(
             !data_dir.is_empty(),
             "replica/HA mode requires a durable --data-dir (RELAY_DATA_DIR)"
         );
-        let raft = std::sync::Arc::new(relay::RelayRaft::from_topology(
-            state.relay_handle(),
-            std::path::Path::new(&data_dir),
-            &topo,
-            relay::RelayRaft::host_config(relay::raft::SNAPSHOT_EVERY),
-        )?);
+        let raft = std::sync::Arc::new(match transport.clone() {
+            Some(transport) => relay::RelayRaft::from_topology_with_peer_transport(
+                state.relay_handle(),
+                std::path::Path::new(&data_dir),
+                &topo,
+                relay::RelayRaft::host_config(relay::raft::SNAPSHOT_EVERY),
+                transport,
+            )?,
+            None => relay::RelayRaft::from_topology(
+                state.relay_handle(),
+                std::path::Path::new(&data_dir),
+                &topo,
+                relay::RelayRaft::host_config(relay::raft::SNAPSHOT_EVERY),
+            )?,
+        });
         state.set_raft(std::sync::Arc::clone(&raft));
+        peer_transport = transport;
         tracing::info!(
             node_id = topo.node_id,
             replicas = topo.replicas_per_shard,
             voters = topo.membership.voters.len(),
-            "raft: replica/HA mode — publishes replicate; peer RPCs on the serve port"
+            peer_scheme,
+            peer_port,
+            "raft: replica/HA mode — all queue mutations replicate"
         );
         Some(raft)
     } else {
         None
     };
 
-    let mut app = router(state.clone());
-    if let Some(raft) = &raft {
-        app = app.merge(raft.router());
+    // Held for the process lifetime. In replica mode expiry/reclaim is itself
+    // a committed mutation; single-node mode retains the direct engine sweep.
+    let _reconciler = match &raft {
+        Some(raft) => {
+            relay::spawn_replicated_reconciler(std::sync::Arc::clone(raft), reconcile_interval)
+        }
+        None => spawn_reconciler(state.relay_handle(), reconcile_interval),
+    };
+
+    let mut app = relay::server::router_with_admission(state.clone(), admission);
+    if peer_transport.is_none() {
+        if let Some(raft) = &raft {
+            app = app.merge(raft.router());
+        }
     }
+    let peer_router = match (&raft, &peer_transport) {
+        (Some(raft), Some(_)) => Some(raft.router()),
+        _ => None,
+    };
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(
         addr = %listener.local_addr()?,
         "relay listening (HTTP/1.1 + HTTP/2 cleartext)"
     );
+
+    let peer_server = match (peer_transport, peer_router) {
+        (Some(transport), Some(router)) => {
+            let peer_bind = peer_bind_address(&bind, args.raft_port)?;
+            let peer_listener = tokio::net::TcpListener::bind(&peer_bind).await?;
+            let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+            let serve = tokio::spawn(async move {
+                transport
+                    .serve(peer_listener, router, async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+            });
+            Some((shutdown, serve))
+        }
+        (None, None) => None,
+        _ => unreachable!("peer transport and router are configured together"),
+    };
 
     // Serve HTTP/1.1 + h2c on one port and drain on SIGTERM through the shared
     // service shell: `start_drain` flips `/readyz` to 503 for the grace window
@@ -969,7 +985,19 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         service_http::shutdown_with_drain(move || state.start_drain(), grace),
     )
     .await;
+    if let Some((shutdown, serve)) = peer_server {
+        let _ = shutdown.send(());
+        serve.await.context("relay peer listener task")??;
+    }
     Ok(())
+}
+
+fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
+    let (host, _) = bind
+        .rsplit_once(':')
+        .with_context(|| format!("cannot derive peer bind address from {bind}"))?;
+    anyhow::ensure!(!host.is_empty(), "--bind must include a host");
+    Ok(format!("{host}:{raft_port}"))
 }
 
 #[cfg(test)]
@@ -1124,10 +1152,16 @@ mod tests {
             other => panic!("expected dockerfile render, got {other:?}"),
         }
         // Version tag normalization: bare and prefixed forms converge.
-        assert_eq!(normalize_relay_tag(Some("1.2.3")), "relay@1.2.3");
-        assert_eq!(normalize_relay_tag(Some("relay@1.2.3")), "relay@1.2.3");
         assert_eq!(
-            normalize_relay_tag(None),
+            cli_std::artifact::release_tag("relay", Some("1.2.3"), env!("CARGO_PKG_VERSION")),
+            "relay@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("relay", Some("relay@1.2.3"), env!("CARGO_PKG_VERSION")),
+            "relay@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("relay", None, env!("CARGO_PKG_VERSION")),
             format!("relay@{}", env!("CARGO_PKG_VERSION"))
         );
     }

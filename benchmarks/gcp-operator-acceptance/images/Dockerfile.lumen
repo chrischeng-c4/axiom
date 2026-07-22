@@ -1,0 +1,13 @@
+# Source candidate only.  Published Lumen releases use apps/lumen/Dockerfile.release.
+FROM rust:1.96-bookworm AS builder
+WORKDIR /workspace
+COPY . .
+RUN cargo build --locked --release -p lumen --bin lumen \
+      --features "otel operator raft-wal jieba" \
+ && install -D -m 0755 target/release/lumen /out/lumen
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=builder /out/lumen /usr/local/bin/lumen
+EXPOSE 7373
+ENTRYPOINT ["/usr/local/bin/lumen"]
+CMD ["serve"]

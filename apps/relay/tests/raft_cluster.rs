@@ -6,7 +6,8 @@
 //! [`raft_runtime::RaftHost`] (relay supplies only [`relay::RelayStateMachine`]),
 //! publishes are multi-subject [`PubCommand`]s, a follower publish is
 //! *forwarded* to the leader by the host (the old driver only redirected), and
-//! the snapshot/compaction path is real — a fresh node catches up via
+//! a recovered node catches up before a second leader loss, and the
+//! snapshot/compaction path is real — a fresh node catches up via
 //! InstallSnapshot instead of full log replay.
 
 use std::collections::HashMap;
@@ -16,6 +17,8 @@ use std::time::{Duration, Instant};
 use raft_runtime::Membership;
 use relay::{PubCommand, Relay, RelayCoreConfig, RelayRaft};
 
+static CLUSTER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn cmd(id: &str) -> PubCommand {
     PubCommand {
         subject: "s".to_string(),
@@ -24,12 +27,14 @@ fn cmd(id: &str) -> PubCommand {
         headers: Default::default(),
         priority: relay::DEFAULT_PRIORITY,
         not_before: None,
+        appended_at: chrono::Utc::now(),
     }
 }
 
 struct Node {
     raft: Arc<RelayRaft>,
     serve: tokio::task::JoinHandle<()>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 /// An in-process group: every node's listener + URL is bound up-front so peer
@@ -70,10 +75,17 @@ impl Cluster {
         }
     }
 
-    /// Spawn node `id` (RAM engine, its own raft dir) and serve its peer
-    /// router on the pre-bound listener.
+    /// Spawn node `id` (durable engine + raft state in its node directory) and
+    /// serve its peer router on the pre-bound listener.
     fn start_node(&mut self, id: usize, snapshot_every: u64) {
-        let engine = Arc::new(Relay::new(RelayCoreConfig::in_memory()));
+        let engine = Arc::new(Relay::new(RelayCoreConfig {
+            data_dir: self._dirs[id]
+                .path()
+                .join("relay")
+                .to_string_lossy()
+                .into_owned(),
+            ..RelayCoreConfig::default()
+        }));
         let peers: HashMap<u64, String> = self
             .urls
             .iter()
@@ -92,11 +104,32 @@ impl Cluster {
             .unwrap(),
         );
         let app = raft.router();
-        let listener = self.listeners[id].take().expect("listener unused");
+        let listener = match self.listeners[id].take() {
+            Some(listener) => listener,
+            None => {
+                let address = self.urls[&(id as u64)]
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .parse::<std::net::SocketAddr>()
+                    .unwrap();
+                let listener = std::net::TcpListener::bind(address).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                tokio::net::TcpListener::from_std(listener).unwrap()
+            }
+        };
+        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let serve = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
         });
-        self.nodes[id] = Some(Node { raft, serve });
+        self.nodes[id] = Some(Node {
+            raft,
+            serve,
+            shutdown: Some(shutdown),
+        });
     }
 
     fn start_all(&mut self, snapshot_every: u64) {
@@ -105,15 +138,38 @@ impl Cluster {
         }
     }
 
+    fn leave_listener_unbound_until_start(&mut self, id: usize) {
+        drop(self.listeners[id].take());
+    }
+
     fn raft(&self, id: usize) -> &Arc<RelayRaft> {
         &self.nodes[id].as_ref().expect("node running").raft
     }
 
     /// Abort the node's serve loop and drop its host (tick/pump abort on drop).
-    fn kill(&mut self, id: usize) {
-        if let Some(n) = self.nodes[id].take() {
+    async fn kill(&mut self, id: usize) {
+        if let Some(mut n) = self.nodes[id].take() {
+            n.shutdown.take();
             n.serve.abort();
+            let _ = n.serve.await;
+            n.raft.shutdown().await.unwrap();
         }
+    }
+
+    async fn shutdown(mut self) {
+        for node in self.nodes.iter().flatten() {
+            node.raft.shutdown().await.unwrap();
+        }
+        for node in &mut self.nodes {
+            if let Some(mut node) = node.take() {
+                if let Some(shutdown) = node.shutdown.take() {
+                    let _ = shutdown.send(());
+                }
+                let _ = node.serve.await;
+            }
+        }
+        drop(self.client);
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     fn live(&self) -> impl Iterator<Item = (usize, &Node)> {
@@ -177,6 +233,7 @@ impl Cluster {
 /// loss and the group keeps accepting publishes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn three_node_group_elects_replicates_forwards_and_fails_over() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
     let mut c = Cluster::prepare(3).await;
     c.start_all(1024);
 
@@ -220,19 +277,108 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
     assert_eq!(body["error"], "not-leader");
 
     // Kill the leader -> survivors re-elect and keep the committed entries.
-    c.kill(leader);
+    c.kill(leader).await;
     let new_leader = c.wait_leader().await;
     assert_ne!(new_leader, leader);
     let (_, out) = c.raft(new_leader).publish(&cmd("c")).await.unwrap();
     assert!(!out.expect("outcome").deduped);
     c.wait_converged(3).await;
 
+    // Recover the first leader from its durable raft directory, prove that it
+    // catches up, then remove the current leader and commit through the next
+    // elected primary.
+    c.start_node(leader, 1024);
+    c.wait_converged(3).await;
+    for want in ["a", "b", "c"] {
+        assert!(
+            c.message_ids(leader).contains(&want.to_string()),
+            "recovered node holds '{want}'"
+        );
+    }
+    let second_leader = c.wait_leader().await;
+    c.kill(second_leader).await;
+    let third_leader = c.wait_leader().await;
+    assert_ne!(third_leader, second_leader);
+    let (_, out) = c.raft(third_leader).publish(&cmd("d")).await.unwrap();
+    assert!(!out.expect("outcome").deduped);
+    c.wait_converged(4).await;
+
     for (i, _) in c.live() {
         let got = c.message_ids(i);
-        for want in ["a", "b", "c"] {
+        for want in ["a", "b", "c", "d"] {
             assert!(got.contains(&want.to_string()), "node {i} holds '{want}'");
         }
     }
+    c.shutdown().await;
+}
+
+/// Relay's effectful delivery lifecycle is authoritative Raft state: a lease
+/// granted through one follower is visible everywhere, cannot be leased again,
+/// and can only be completed by the executor replica holding its fencing token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lease_and_ack_are_committed_and_executor_fenced() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
+    let mut c = Cluster::prepare(3).await;
+    c.start_all(1024);
+    let leader = c.wait_leader().await;
+    let executor = c.live().map(|(i, _)| i).find(|i| *i != leader).unwrap();
+    let other = c.live().map(|(i, _)| i).find(|i| *i != executor).unwrap();
+
+    c.raft(leader).publish(&cmd("owned")).await.unwrap();
+    c.wait_converged(1).await;
+    let lease = c
+        .raft(executor)
+        .lease("s".into(), "worker-a".into(), chrono::Utc::now())
+        .await
+        .unwrap()
+        .expect("committed lease");
+    assert_eq!(lease.executor_node, executor as u64);
+
+    // The next committed lease command observes the first one on every state
+    // machine, so no second replica can assign the same work.
+    let conflicting = c
+        .raft(other)
+        .lease("s".into(), "worker-b".into(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(conflicting.is_none(), "no cross-replica dual lease");
+
+    // Correct epoch but wrong executor is fenced by committed owner identity.
+    let (accepted, _) = c
+        .raft(other)
+        .ack(
+            "s".into(),
+            lease.lease_id.clone(),
+            lease.epoch,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    assert!(!accepted, "non-owner executor cannot acknowledge");
+
+    let (accepted, committed) = c
+        .raft(executor)
+        .ack("s".into(), lease.lease_id, lease.epoch, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(accepted);
+    assert_eq!(committed.expect("watermark").committed_seq, 0);
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if c.live().all(|(_, n)| {
+            n.raft
+                .relay()
+                .committed_offset("s")
+                .unwrap()
+                .is_some_and(|offset| offset.committed_seq == 0)
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "committed ack did not converge");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    c.shutdown().await;
 }
 
 /// AC4: with a small SnapshotPolicy threshold the leader compacts its raft
@@ -241,8 +387,10 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
 /// live un-acked engine dump) and then tails the remaining entries.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fresh_node_catches_up_via_install_snapshot() {
+    let _guard = CLUSTER_TEST_LOCK.lock().await;
     let mut c = Cluster::prepare(3).await;
     // Node 2 stays down; 2 of 3 voters still form a quorum.
+    c.leave_listener_unbound_until_start(2);
     c.start_node(0, 8);
     c.start_node(1, 8);
     let leader = c.wait_leader().await;
@@ -280,5 +428,6 @@ async fn fresh_node_catches_up_via_install_snapshot() {
     for i in 0..20 {
         assert!(got.contains(&format!("m{i}")), "fresh node holds m{i}");
     }
+    c.shutdown().await;
 }
 // HANDWRITE-END

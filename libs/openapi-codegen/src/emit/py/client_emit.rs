@@ -35,12 +35,8 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("        self._base_url = base_url.rstrip(\"/\")\n");
     out.push_str("        self._client = client or H2CClient()\n");
     out.push_str("        self._default_headers: dict[str, Any] = dict(default_headers or {})\n");
-    out.push_str(
-        "        # Epic #1296 POST-twin fallback: route QUERY operations through their\n",
-    );
-    out.push_str(
-        "        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n",
-    );
+    out.push_str("        # Epic #1296 POST-twin fallback: route QUERY operations through their\n");
+    out.push_str("        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n");
     out.push_str("        self._use_post_fallback = use_post_fallback\n");
     out.push_str("        if auth_token is not None:\n");
     out.push_str(
@@ -70,12 +66,8 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("        self._base_url = base_url.rstrip(\"/\")\n");
     out.push_str("        self._client = client or AsyncH2CClient()\n");
     out.push_str("        self._default_headers: dict[str, Any] = dict(default_headers or {})\n");
-    out.push_str(
-        "        # Epic #1296 POST-twin fallback: route QUERY operations through their\n",
-    );
-    out.push_str(
-        "        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n",
-    );
+    out.push_str("        # Epic #1296 POST-twin fallback: route QUERY operations through their\n");
+    out.push_str("        # documented POST twin instead of the HTTP QUERY method (RFC 10008).\n");
     out.push_str("        self._use_post_fallback = use_post_fallback\n");
     out.push_str("        if auth_token is not None:\n");
     out.push_str(

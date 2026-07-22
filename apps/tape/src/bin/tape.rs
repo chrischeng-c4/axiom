@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
-use tape::{spec, SubscriptionDelivery, TapeJournal};
+use tape::{spec, TapeJournal};
 
 #[derive(Parser)]
 #[command(name = "tape", version, about = "tape - topic replay journal service")]
@@ -24,7 +24,7 @@ enum Command {
     Replay(ReplayArgs),
     /// Manage durable consumer replay checkpoints.
     Checkpoint(CheckpointArgs),
-    /// Manage named topic delivery resources (pull checkpoints or push endpoint metadata).
+    /// Manage named caller-driven topic pull cursors.
     Subscription(SubscriptionArgs),
     /// Serve the topic journal over HTTP (h2c + HTTP/1.1 on one port).
     Serve(ServeArgs),
@@ -128,7 +128,7 @@ struct SubscriptionArgs {
 
 #[derive(Subcommand)]
 enum SubscriptionCommand {
-    /// Create a topic delivery resource with pull or push configuration.
+    /// Create a caller-driven pull subscription.
     Create(SubscriptionCreateArgs),
     /// List the delivery resources for one topic.
     List(SubscriptionListArgs),
@@ -146,14 +146,8 @@ enum SubscriptionCommand {
 struct SubscriptionCreateArgs {
     /// Topic that owns the subscription.
     topic: String,
-    /// Subscription name. Pull subscriptions use this as their checkpoint consumer name.
+    /// Subscription name, also used as the durable checkpoint consumer name.
     name: String,
-    /// Use the existing durable checkpoint API as the pull cursor.
-    #[arg(long, conflicts_with = "push")]
-    pull: bool,
-    /// Persist a push callback endpoint without starting a delivery worker.
-    #[arg(long, value_name = "ENDPOINT", required_unless_present = "pull")]
-    push: Option<String>,
     /// Journal file. Defaults to `.tape/journal.json`.
     #[arg(long, default_value = ".tape/journal.json")]
     store: PathBuf,
@@ -217,6 +211,11 @@ struct ServeArgs {
     /// listener closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "TAPE_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// Log output format. Kubernetes uses `json` for the shared
+    /// `axiom.service.log.v1` collector contract; local development defaults
+    /// to the human-readable formatter.
+    #[arg(long, env = "TAPE_LOG_FORMAT", value_enum, default_value_t = LogFormat::Pretty)]
+    log_format: LogFormat,
     /// OTLP gRPC endpoint for opt-in shared trace export. Unset preserves
     /// logging-only startup; requires the `otel` build feature to export.
     #[arg(long, env = "TAPE_OTLP_ENDPOINT")]
@@ -231,8 +230,8 @@ struct ServeArgs {
     /// startup) when `--auth required`.
     #[arg(long, env = "TAPE_TOKEN_REGISTRY_FILE")]
     token_registry_file: Option<PathBuf>,
-    /// Durable directory for raft hard state + the applied-index marker
-    /// (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
+    /// Durable directory for shared Raft hard state, committed log, and
+    /// snapshots (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
     /// in single-node mode it selects `journal.json` unless `--store` is
     /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
@@ -246,6 +245,16 @@ struct ServeArgs {
     /// (`ClusterTopology::from_env`).
     #[arg(long, env = "TAPE_PEER_SERVICE", default_value = "tape")]
     peer_service: String,
+    /// Dedicated port for authenticated Raft peer RPCs when
+    /// `TAPE_PEER_MTLS=on`. The public h2c port remains unchanged.
+    #[arg(long, env = "TAPE_RAFT_PORT", default_value_t = 7138)]
+    raft_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogFormat {
+    Pretty,
+    Json,
 }
 
 /// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
@@ -703,17 +712,8 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
 fn subscription(args: SubscriptionArgs) -> Result<()> {
     match args.command {
         SubscriptionCommand::Create(args) => {
-            let delivery = if args.pull {
-                SubscriptionDelivery::Pull
-            } else {
-                SubscriptionDelivery::Push {
-                    endpoint: args
-                        .push
-                        .expect("clap requires --push when --pull is absent"),
-                }
-            };
             let mut journal = load_journal(&args.store)?;
-            let subscription = journal.create_subscription(args.topic, args.name, delivery)?;
+            let subscription = journal.create_subscription(args.topic, args.name)?;
             save_journal(&args.store, &journal)?;
             println!(
                 "{}",
@@ -748,9 +748,7 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
                         args.name, args.topic
                     )
                 })?;
-            let checkpoint = matches!(&subscription.delivery, SubscriptionDelivery::Pull)
-                .then(|| journal.checkpoint(&subscription.topic, &subscription.name))
-                .flatten();
+            let checkpoint = journal.checkpoint(&subscription.topic, &subscription.name);
             println!(
                 "{}",
                 serde_json::to_string_pretty(
@@ -814,11 +812,15 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
 /// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
 /// SIGTERM-aware graceful drain (`--grace-secs`).
 async fn serve_main(args: ServeArgs) -> Result<()> {
+    let log_format = match args.log_format {
+        LogFormat::Pretty => service_http::LogFormat::Pretty,
+        LogFormat::Json => service_http::LogFormat::Json,
+    };
     let tracing_config = service_http::HttpConfig::new(
         "127.0.0.1",
         0,
         "info",
-        service_http::LogFormat::Pretty,
+        log_format,
         args.grace_secs,
         0,
         args.otlp_endpoint.clone(),
@@ -841,6 +843,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         required = auth.required,
         "request auth resolved (TAPE_AUTH; probes stay tokenless)"
     );
+    let admission = service_http::AdmissionConfig::from_env("TAPE")?.controller(
+        "tape.read",
+        "tape.write",
+        "tape.admin",
+    );
+    if admission.is_some() {
+        tracing::info!(
+            "request admission enabled (TAPE_ADMISSION_*; probes and peer routes stay exempt)"
+        );
+    }
 
     // The operator mounts `/data` for every StatefulSet member. In its
     // single-node topology there is no Raft state machine to own durability,
@@ -854,16 +866,28 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         None => TapeJournal::default(),
     };
     let mut state = tape::server::AppState::with_auth(journal, store, auth);
+    if let Some(path) = args.token_registry_file.as_deref() {
+        // `AppState` owns this exact verifier instance, so a Secret/CSI file
+        // replacement becomes visible to the live data-plane middleware
+        // without restarting the Tape pod. Invalid replacements remain on the
+        // shared last-known-good snapshot and emit redacted audit events.
+        std::mem::drop(service_auth::spawn_registry_file_watcher(
+            state.verifier(),
+            path,
+        ));
+        tracing::info!(
+            path = %path.display(),
+            "watching bearer token registry for credential rotation"
+        );
+    }
 
     // Auto-mode HA (#1327): the standard downward-API quartet flips replica
-    // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
-    // from raft-runtime (never re-derive the ordinal math locally); the raft
-    // group replicates append/checkpoint-put into this process's journal and
-    // its peer router rides the serve port OUTSIDE the bearer-auth data plane
-    // (cluster traffic, tokenless like probes; mTLS termination is a later
-    // slice — raft-runtime's h2c transport has no TLS seam yet). Held for the
-    // process lifetime via `state` — dropping it would abort the tick/pump
-    // tasks.
+    // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. With no peer TLS
+    // material the established public-port h2c topology is unchanged. A
+    // complete required mTLS configuration instead makes Raft use https URLs
+    // and the dedicated peer listener below.
+    let mut peer_transport = None;
+    let mut peer_router = None;
     if args.bootstrap_seed_uri.is_some() {
         anyhow::ensure!(
             replica_mode,
@@ -875,48 +899,32 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         );
     }
     if replica_mode {
-        // Peer-mTLS material (#1327): load + validate BEFORE the raft group
-        // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
-        // mis-pointed path, unusable PEM) exits nonzero at startup instead of
-        // failing at dial time. Termination on the peer port is NOT yet
-        // applied — raft-runtime's h2c transport has no TLS seam (the filed gap
-        // in the TD); this proves the mounted material is usable today.
-        match tape::peer_tls::from_env()? {
-            Some(tls) => {
-                tls.rustls_server_config()?;
-                tls.rustls_client_config()?;
-                if tls.required {
-                    tracing::warn!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
-                         termination on the raft peer port is not yet applied (raft-runtime/h2c \
-                         TLS seam gap) — peer RPCs stay h2c"
-                    );
-                } else {
-                    tracing::info!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated (not required); peer RPCs stay h2c until \
-                         the raft-runtime TLS seam lands"
-                    );
-                }
-            }
-            None => tracing::info!(
-                "no peer TLS material configured (TAPE_PEER_TLS_*); peer RPCs are plain h2c"
+        let transport = tape::peer_tls::from_env()?
+            .map(|config| tape::peer_tls::peer_transport(&config))
+            .transpose()
+            .context("raft: build shared required-mTLS peer transport")?;
+        let (peer_port, peer_scheme) = match transport.as_ref() {
+            Some(_) => (args.raft_port, "https"),
+            None => (
+                args.bind
+                    .rsplit(':')
+                    .next()
+                    .and_then(|port| port.parse::<u16>().ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "cannot derive the h2c raft peer port from --bind {}",
+                            args.bind
+                        )
+                    })?,
+                "http",
             ),
-        }
-        let peer_port = args
-            .bind
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.parse::<u16>().ok())
-            .ok_or_else(|| {
-                anyhow::anyhow!("cannot derive the raft peer port from --bind {}", args.bind)
-            })?;
-        let topo = raft_runtime::ClusterTopology::from_env(
+        };
+        let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
             "tape",
             &args.peer_service,
             peer_port,
             "TAPE_PEERS",
+            peer_scheme,
         )?;
         let data_dir = args.data_dir.clone().ok_or_else(|| {
             anyhow::anyhow!("replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)")
@@ -935,22 +943,41 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
                 "bootstrap seed prepared before raft catch-up"
             );
         }
-        let raft = std::sync::Arc::new(tape::raft::TapeRaft::from_topology(
-            state.journal_handle(),
-            &data_dir,
-            &topo,
-            tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
-        )?);
+        let raft = std::sync::Arc::new(match transport.clone() {
+            Some(transport) => tape::raft::TapeRaft::from_topology_with_peer_transport(
+                state.journal_handle(),
+                &data_dir,
+                &topo,
+                tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
+                transport,
+            )?,
+            None => tape::raft::TapeRaft::from_topology(
+                state.journal_handle(),
+                &data_dir,
+                &topo,
+                tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
+            )?,
+        });
         tracing::info!(
             node_id = topo.node_id,
             replicas = topo.replicas_per_shard,
             voters = topo.membership.voters.len(),
-            "raft: replica/HA mode — append/checkpoint-put replicate; peer RPCs on the serve port"
+            peer_scheme,
+            peer_port,
+            "raft: replica/HA mode — append/checkpoint-put replicate"
         );
+        if let Some(transport) = transport {
+            peer_router = Some(raft.router());
+            peer_transport = Some(transport);
+        }
         state.set_raft(raft);
     }
 
-    let app = tape::server::router(state.clone());
+    let app = if peer_transport.is_some() {
+        tape::server::router_without_raft_routes_with_admission(state.clone(), admission)
+    } else {
+        tape::server::router_with_admission(state.clone(), admission)
+    };
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     tracing::info!(
@@ -958,16 +985,47 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         "tape listening (HTTP/1.1 + HTTP/2 cleartext)"
     );
 
+    let peer_server = match (peer_transport, peer_router) {
+        (Some(transport), Some(router)) => {
+            let peer_bind = peer_bind_address(&args.bind, args.raft_port)?;
+            let peer_listener = tokio::net::TcpListener::bind(&peer_bind)
+                .await
+                .with_context(|| format!("bind authenticated raft peer listener {peer_bind}"))?;
+            let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+            tracing::info!(
+                addr = %peer_bind,
+                tls_generation = transport.generation(),
+                "tape raft peer mTLS listening"
+            );
+            let serve = tokio::spawn(async move {
+                transport
+                    .serve(peer_listener, router, async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+            });
+            Some((shutdown, serve))
+        }
+        (None, None) => None,
+        _ => unreachable!("peer transport and router are configured together"),
+    };
+
     let grace = Duration::from_secs(args.grace_secs);
+    let drain_state = state.clone();
     service_http::serve(
         listener,
         app,
-        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+        service_http::shutdown_with_drain(move || drain_state.start_drain(), grace),
     )
     .await;
+    if let Some((shutdown, serve)) = peer_server {
+        let _ = shutdown.send(());
+        serve.await.context("raft peer listener task panicked")??;
+    }
     Ok(())
 }
 
+// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
 /// Resolve the local journal path for a serving process. Replica mode owns
 /// durability through Raft; only a single-node process derives a store from
 /// its mounted data directory.
@@ -984,6 +1042,21 @@ fn resolve_journal_store(
         }
     })
 }
+
+/// Reuse the public listener's host portion for the dedicated peer port.
+/// This preserves `0.0.0.0`, hostname, and bracketed IPv6 bindings without
+/// allowing a Raft port to silently replace the public data-plane port.
+fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
+    let (host, _) = bind.rsplit_once(':').ok_or_else(|| {
+        anyhow::anyhow!("cannot derive authenticated raft bind address from --bind {bind}")
+    })?;
+    anyhow::ensure!(
+        !host.is_empty(),
+        "--bind must include a host before its port"
+    );
+    Ok(format!("{host}:{raft_port}"))
+}
+// </HANDWRITE>
 
 fn spec(args: SpecArgs) -> Result<()> {
     // `spec gen` writes a typed client; everything else prints to stdout.
@@ -1200,29 +1273,25 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// Render the operator control-plane manifests (RBAC + Deployment) with the
 /// namespace substituted, from the checked-in fixtures.
 fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
+        "tape-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/deployment.yaml"),
+        "tape-system",
         namespace,
     ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: tape-system", &format!("name: {namespace}"))
-        .replace("namespace: tape-system", &format!("namespace: {namespace}"))
+    cli_std::artifact::ensure_trailing_newline(&out)
 }
 
 /// Render a `kind: Tape` custom resource for the selected profile.
@@ -1283,7 +1352,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             );
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -1313,13 +1382,14 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_tape_tag(version);
+    let tag = cli_std::artifact::release_tag("tape", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("tape@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/tape/Dockerfile.release -t tape:") {
@@ -1338,64 +1408,11 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-/// Normalize a version input into a `tape@<version>` release tag, defaulting
-/// to the compiled crate version.
-fn normalize_tape_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("tape@") {
-        raw.to_string()
-    } else {
-        format!("tape@{raw}")
-    }
-}
-
-/// Strip AW source-ownership markers so the rendered Dockerfile is the one
-/// users build (a no-op for tape's marker-free fixtures; kept for parity).
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Write `body` to `out` (a file, or `default_file` inside a directory) or
 /// print it to stdout.
 fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
-    } else {
-        print!("{body}");
-    }
+    cli_std::artifact::write_or_print(out, default_file, body)?;
     Ok(())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 #[cfg(test)]
@@ -1593,7 +1610,7 @@ mod tests {
     }
 
     /// #1328: `tape dockerfile render` parses with variant/version/out flags,
-    /// and `normalize_tape_tag` converges bare/prefixed tags.
+    /// and the shared tag helper converges bare/prefixed tags.
     #[test]
     fn dockerfile_verbs_parse() {
         let cli = Cli::try_parse_from([
@@ -1615,10 +1632,16 @@ mod tests {
             }
             _ => panic!("expected dockerfile render"),
         }
-        assert_eq!(normalize_tape_tag(Some("1.2.3")), "tape@1.2.3");
-        assert_eq!(normalize_tape_tag(Some("tape@1.2.3")), "tape@1.2.3");
         assert_eq!(
-            normalize_tape_tag(None),
+            cli_std::artifact::release_tag("tape", Some("1.2.3"), env!("CARGO_PKG_VERSION")),
+            "tape@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("tape", Some("tape@1.2.3"), env!("CARGO_PKG_VERSION")),
+            "tape@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("tape", None, env!("CARGO_PKG_VERSION")),
             format!("tape@{}", env!("CARGO_PKG_VERSION"))
         );
     }

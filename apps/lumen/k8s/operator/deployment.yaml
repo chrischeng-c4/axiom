@@ -35,6 +35,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
+          # Local-development default. For a real cluster, render this manifest
+          # with `lumen k8s operator render --image <registry-ref-or-digest>`.
           image: lumen:latest
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]

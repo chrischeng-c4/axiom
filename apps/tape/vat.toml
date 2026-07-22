@@ -28,6 +28,7 @@ id = "build-tape-ec-tests"
 cmd = [
   "cargo",
   "test",
+  "--release",
   "-p",
   "tape",
   "--test",
@@ -35,7 +36,7 @@ cmd = [
   "--test",
   "tape_vs_nats_jetstream",
   "--test",
-  "cli_contract",
+  "service_auth",
   "--no-run",
 ]
 
@@ -45,6 +46,7 @@ cmd = [
   "../../target/debug/meter",
   "test",
   "--",
+  "--release",
   "-p",
   "tape",
   "--test",
@@ -52,6 +54,7 @@ cmd = [
   "--test",
   "tape_vs_nats_jetstream",
   "--",
+  "--include-ignored",
   "--nocapture",
 ]
 timeout_s = 600
@@ -67,6 +70,6 @@ cmd = [
   "--compact",
   "--no-persist",
   "--meter-command",
-  "../../target/debug/meter test -- -p tape --test cli_contract -- --nocapture",
+  "../../target/debug/meter test -- -p tape --test service_auth -- --nocapture",
 ]
 timeout_s = 600

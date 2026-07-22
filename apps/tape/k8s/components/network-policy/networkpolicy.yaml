@@ -1,4 +1,4 @@
-# HANDWRITE-BEGIN gap="missing-generator:manifest:18492c18" tracker="#1593" reason="Default-deny ingress to only Tape server pods, with explicit labeled client and monitoring namespace peers restricted to TCP 7137. generator gap: missing-generator:kubernetes-network-policy."
+# HANDWRITE-BEGIN gap="missing-generator:manifest:18492c18" tracker="#1593" reason="Default-deny ingress to Tape server pods, preserving in-cluster Raft peer traffic while explicitly admitting labeled clients and monitoring peers. generator gap: missing-generator:kubernetes-network-policy."
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -14,6 +14,19 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    # A Tape raft group must always reach its own peer routes. In plaintext HA
+    # those routes share HTTP 7137; with required peer mTLS they use the
+    # dedicated 7138 listener. This selector admits only sibling Tape pods.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tape
+              role: server
+      ports:
+        - protocol: TCP
+          port: 7137
+        - protocol: TCP
+          port: 7138
     # Client namespaces must opt in explicitly. The policy intentionally has
     # no empty peer and no podSelector-only peer, so it cannot accidentally
     # open Tape to every namespace.

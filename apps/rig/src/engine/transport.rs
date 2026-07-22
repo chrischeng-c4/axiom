@@ -20,7 +20,6 @@ use super::http;
 /// Per-worker operation handle: built once per worker thread, then driven once
 /// per scheduled tick. `execute` returns `Ok` on success, `Err(reason)` on a
 /// failure that counts toward `error_rate`.
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub trait OpWorker: Send {
     fn execute(&mut self) -> Result<(), String>;
 }
@@ -29,7 +28,6 @@ pub trait OpWorker: Send {
 /// builds one [`OpWorker`] per worker thread (a pg connection + prepared
 /// statement, or a stateless HTTP sender), so per-worker state is never shared
 /// across threads.
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub trait Transport: Send + Sync {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String>;
 }
@@ -38,16 +36,15 @@ pub trait Transport: Send + Sync {
 // HTTP (built in) — thin ureq client, the existing load path.
 // ---------------------------------------------------------------------------
 
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub struct HttpTransport {
     pub request: HttpRequest,
     pub vars: VarStore,
 }
 
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl Transport for HttpTransport {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String> {
         Ok(Box::new(HttpWorker {
+            agent: http::agent_for(&self.request),
             request: self.request.clone(),
             vars: self.vars.clone(),
         }))
@@ -55,14 +52,14 @@ impl Transport for HttpTransport {
 }
 
 struct HttpWorker {
+    agent: ureq::Agent,
     request: HttpRequest,
     vars: VarStore,
 }
 
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl OpWorker for HttpWorker {
     fn execute(&mut self) -> Result<(), String> {
-        match http::execute(&self.request, &self.vars) {
+        match http::execute_with_agent(&self.agent, &self.request, &self.vars) {
             Ok(o) if o.violation.is_none() => Ok(()),
             Ok(o) => Err(o
                 .violation
@@ -72,13 +69,77 @@ impl OpWorker for HttpWorker {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scenario::step::HttpExpect;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    fn read_request(stream: &mut TcpStream) -> std::io::Result<bool> {
+        let mut request = Vec::new();
+        let mut buf = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut buf)?;
+            if read == 0 {
+                return Ok(false);
+            }
+            request.extend_from_slice(&buf[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return Ok(true);
+            }
+        }
+    }
+
+    #[test]
+    fn http_worker_reuses_one_keep_alive_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut connections = 0_u32;
+            let mut requests = 0_u32;
+            while requests < 2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                connections += 1;
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                while requests < 2 && read_request(&mut stream).unwrap_or(false) {
+                    requests += 1;
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: keep-alive\r\n\r\n{}",
+                        )
+                        .unwrap();
+                }
+            }
+            connections
+        });
+
+        let transport = HttpTransport {
+            request: HttpRequest {
+                method: "GET".into(),
+                url: format!("http://{addr}/healthz"),
+                body: None,
+                expect: HttpExpect::default(),
+            },
+            vars: VarStore::new(),
+        };
+        let mut worker = transport.connect().unwrap();
+        worker.execute().unwrap();
+        worker.execute().unwrap();
+
+        assert_eq!(server.join().unwrap(), 1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Postgres (feature = "postgres") — sync `postgres` client, prepared once per
 // worker. Keeps loadgen's no-async-runtime thread model.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "postgres")]
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub struct PostgresTransport {
     /// libpq-style DSN, e.g. `postgresql://user@127.0.0.1/db`.
     pub dsn: String,
@@ -88,7 +149,6 @@ pub struct PostgresTransport {
 }
 
 #[cfg(feature = "postgres")]
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl Transport for PostgresTransport {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String> {
         let mut client = postgres::Client::connect(&self.dsn, postgres::NoTls)
@@ -107,7 +167,6 @@ struct PgWorker {
 }
 
 #[cfg(feature = "postgres")]
-/// @spec apps/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl OpWorker for PgWorker {
     fn execute(&mut self) -> Result<(), String> {
         self.client

@@ -1,0 +1,17 @@
+steps:
+  - id: lumen
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.lumen
+      - --tag=${_REGISTRY}/lumen:${_TAG}
+      - .
+
+images:
+  - ${_REGISTRY}/lumen:${_TAG}
+
+timeout: 2700s
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY

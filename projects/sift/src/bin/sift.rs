@@ -44,7 +44,7 @@ enum Command {
     Snapshot(SnapshotArgs),
     /// Restore a journal snapshot from a shared backup object URI.
     Restore(RestoreArgs),
-    /// Ship a consistent journal snapshot through the shared backup contract.
+    /// Ship a live or explicitly offline journal snapshot through the shared backup contract.
     Backup(BackupArgs),
     /// Render source or release image Dockerfiles independently of Kubernetes.
     Dockerfile(DockerfileArgs),
@@ -217,8 +217,20 @@ struct RestoreArgs {
 
 #[derive(Args)]
 struct BackupArgs {
-    #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
-    data_dir: PathBuf,
+    /// Running Sift base URL. Fetches the protected /admin/backup snapshot.
+    #[arg(
+        long,
+        env = "SIFT_BACKUP_URL",
+        conflicts_with = "data_dir",
+        required_unless_present = "data_dir"
+    )]
+    url: Option<String>,
+    /// Legacy offline mode: open this stopped journal directly.
+    #[arg(long, conflicts_with = "url", required_unless_present = "url")]
+    data_dir: Option<PathBuf>,
+    /// Admin bearer token for live mode. Invalid with offline --data-dir.
+    #[arg(long, env = "SIFT_BACKUP_TOKEN", requires = "url")]
+    token: Option<String>,
     /// Shared backup destination URI: file://, s3://, or gs://.
     #[arg(long)]
     dest: String,
@@ -323,6 +335,8 @@ enum K8sOperatorCommand {
 struct K8sOperatorRenderArgs {
     #[arg(long, default_value = "sift-system")]
     namespace: String,
+    #[arg(long, default_value = sift::deploy::DEFAULT_OPERATOR_IMAGE)]
+    image: String,
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -542,12 +556,16 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "operations",
         summary: "h2c serving, probe routes, query, replay, and local CLI use",
-        body: "# Sift operations\n\nRun `sift serve --data-dir ./sift-data`. The process serves HTTP/1.1 and h2c on one port plus `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs`. Use `sift event write|import`, `sift query`, and `sift replay` for local durable-journal inspection.",
+        body: "# Sift operations\n\nRun `sift serve --data-dir ./sift-data`. The process serves HTTP/1.1 and h2c on one port plus `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs`. Use `sift event write|import`, `sift query`, and `sift replay` for local durable-journal inspection. Scheduled backups use `sift backup --url <service> --dest <uri>` and may supply `--token`/`SIFT_BACKUP_TOKEN`; legacy `--data-dir` backup is an explicit offline-only mode for a stopped journal and cannot be combined with `--url`.",
     },
 ];
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The operator and online CLI pull both ring and aws-lc-rs through the
+    // shared transport stack. Pick the ecosystem-wide provider before any
+    // TLS client (notably kube) initializes it.
+    peer_tls::install_default_crypto_provider();
     match Cli::parse().command {
         Command::Serve(args) => serve(args).await,
         Command::Collect(args) => collect(args).await,
@@ -556,7 +574,7 @@ async fn main() -> Result<()> {
         Command::Replay(args) => replay(args),
         Command::Snapshot(args) => snapshot(args),
         Command::Restore(args) => restore(args),
-        Command::Backup(args) => backup(args),
+        Command::Backup(args) => backup(args).await,
         Command::Dockerfile(args) => dockerfile(args),
         Command::K8s(args) => k8s(args).await,
         Command::Connect(args) => connect(args).await,
@@ -598,6 +616,15 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn installs_rustls_provider_before_kubernetes_cli_initializes_tls() {
+        peer_tls::install_default_crypto_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 }
 
@@ -807,9 +834,25 @@ fn restore(args: RestoreArgs) -> Result<()> {
     }))
 }
 
-fn backup(args: BackupArgs) -> Result<()> {
-    let journal = DurableJournal::open(&args.data_dir)?;
-    let result = sift::backup::backup_journal(&journal, &args.dest, args.retention_secs)?;
+async fn backup(args: BackupArgs) -> Result<()> {
+    let result = match (args.url.as_deref(), args.data_dir.as_deref()) {
+        (Some(url), None) => {
+            sift::backup::backup_live_journal(
+                url,
+                args.token.as_deref(),
+                &args.dest,
+                args.retention_secs,
+            )
+            .await?
+        }
+        (None, Some(data_dir)) => {
+            let journal = DurableJournal::open(data_dir)?;
+            sift::backup::backup_journal(&journal, &args.dest, args.retention_secs)?
+        }
+        _ => anyhow::bail!(
+            "choose exactly one backup source: live --url or legacy offline --data-dir"
+        ),
+    };
     print_json_terminal(result)
 }
 
@@ -849,7 +892,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
             K8sOperatorCommand::Render(args) => write_artifact(
                 args.out.as_deref(),
                 "sift-operator.yaml",
-                &sift::deploy::operator_yaml(&args.namespace)?,
+                &sift::deploy::operator_yaml_with_image(&args.namespace, &args.image)?,
                 "kubectl apply -f -",
             ),
             K8sOperatorCommand::Run => operator_run().await,

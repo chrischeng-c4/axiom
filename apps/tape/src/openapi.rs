@@ -1,3 +1,5 @@
+// SPEC-MANAGED: apps/tape/tech-design/logic/eliminate-production-ec-false-green-paths.md#logic
+// HANDWRITE-BEGIN gap="missing-generator:logic:tape-openapi-route-inventory" tracker="#2159" reason="Tape-specific utoipa path/schema inventory consumed by offline generated-client verification."
 //! utoipa OpenAPI document for tape's HTTP transport.
 //!
 //! The path operations are declared by `#[utoipa::path]` on the
@@ -18,8 +20,18 @@ use utoipa::OpenApi;
     paths(
         crate::server::append,
         crate::server::replay,
+        crate::server::replay_stream,
         crate::server::checkpoint_get,
         crate::server::checkpoint_put,
+        crate::server::subscription_create,
+        crate::server::subscription_list,
+        crate::server::subscription_get,
+        crate::server::subscription_delete,
+        crate::server::subscription_pull,
+        crate::server::subscription_ack,
+        crate::server::retention_get,
+        crate::server::retention_put,
+        crate::server::admin_backup,
     ),
     components(schemas(
         crate::TapeEvent,
@@ -28,6 +40,15 @@ use utoipa::OpenApi;
         crate::server::ReplayResponse,
         crate::server::CheckpointResponse,
         crate::server::CheckpointPutRequest,
+        crate::Subscription,
+        crate::PullSubscriptionBatch,
+        crate::server::SubscriptionCreateRequest,
+        crate::server::SubscriptionListResponse,
+        crate::server::SubscriptionPullRequest,
+        crate::server::SubscriptionAckRequest,
+        crate::RetentionPolicy,
+        crate::RetentionOutcome,
+        crate::server::RetentionGetResponse,
     ))
 )]
 pub struct ApiDoc;
@@ -49,9 +70,17 @@ mod tests {
         for path in [
             "/topics/{topic}/append",
             "/topics/{topic}/replay",
+            "/topics/{topic}/replay/stream",
             "/topics/{topic}/consumers/{consumer}/checkpoint",
+            "/topics/{topic}/subscriptions",
+            "/topics/{topic}/subscriptions/{name}",
+            "/topics/{topic}/subscriptions/{name}/pull",
+            "/topics/{topic}/subscriptions/{name}/ack",
+            "/topics/{topic}/retention",
+            "/admin/backup",
         ] {
             assert!(doc.contains(path), "OpenAPI doc must list {path}");
         }
     }
 }
+// HANDWRITE-END

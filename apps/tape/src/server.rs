@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{header, Method, StatusCode};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -33,7 +33,10 @@ use utoipa::ToSchema;
 
 use crate::metrics::TapeMetrics;
 use crate::raft::{TapeOutcome, TapeRaft};
-use crate::{ConsumerCheckpoint, TapeError, TapeEvent, TapeJournal};
+use crate::{
+    ConsumerCheckpoint, PullSubscriptionBatch, RetentionPolicy, Subscription, SubscriptionAckError,
+    SubscriptionError, TapeError, TapeEvent, TapeJournal,
+};
 
 /// Shared application state: the journal (behind a `std::sync::Mutex` — an
 /// in-memory `BTreeMap` core with no async internal awaits), the per-op
@@ -152,11 +155,41 @@ impl service_http::MetricsProvider for AppState {
     }
 }
 
+// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="#1805" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
 }
+
+/// Build the public router for a deployment whose Raft peer routes are owned
+/// by the dedicated mTLS listener. The underlying application composition is
+/// deliberately unchanged so data, probes, auth, admission, and metrics stay
+/// identical; a first middleware rejects the two peer route families before
+/// route dispatch can expose them on the public h2c listener.
+pub fn router_without_raft_routes(state: AppState) -> Router {
+    router_without_raft_routes_with_admission(state, None)
+}
+
+/// Build the secure-peer public router with optional shared request admission.
+/// Peer route isolation stays outermost, so the public listener rejects Raft
+/// routes before admission can account for them.
+pub fn router_without_raft_routes_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
+    router_with_admission(state, admission).layer(from_fn(reject_public_raft_routes))
+}
+
+async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) -> Response {
+    let path = request.uri().path();
+    if path == "/raftz" || path.starts_with("/raft/") {
+        StatusCode::NOT_FOUND.into_response()
+    } else {
+        next.run(request).await
+    }
+}
+// </HANDWRITE>
 
 /// Build Tape with optional shared request admission. Tape owns the
 /// read/write/admin route classes; `service-http` owns opaque-key retention,
@@ -171,9 +204,30 @@ pub fn router_with_admission(
     let data_plane = Router::new()
         .route("/topics/{topic}/append", axum::routing::post(append))
         .route("/topics/{topic}/replay", get(replay))
+        .route("/topics/{topic}/replay/stream", get(replay_stream))
         .route(
             "/topics/{topic}/consumers/{consumer}/checkpoint",
             get(checkpoint_get).put(checkpoint_put),
+        )
+        .route(
+            "/topics/{topic}/subscriptions",
+            get(subscription_list).post(subscription_create),
+        )
+        .route(
+            "/topics/{topic}/subscriptions/{name}",
+            get(subscription_get).delete(subscription_delete),
+        )
+        .route(
+            "/topics/{topic}/subscriptions/{name}/pull",
+            axum::routing::post(subscription_pull),
+        )
+        .route(
+            "/topics/{topic}/subscriptions/{name}/ack",
+            axum::routing::post(subscription_ack),
+        )
+        .route(
+            "/topics/{topic}/retention",
+            get(retention_get).put(retention_put),
         )
         // Cluster-wide admin op (#1329): a consistent snapshot of the journal
         // for backup runners. Inside the auth layer (unlike probes) — needs
@@ -282,6 +336,33 @@ pub struct CheckpointPutRequest {
     pub offset: u64,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubscriptionCreateRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SubscriptionListResponse {
+    pub subscriptions: Vec<Subscription>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SubscriptionPullRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SubscriptionAckRequest {
+    pub offset: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetentionGetResponse {
+    pub policy: Option<RetentionPolicy>,
+}
+
 /// `POST /topics/{topic}/append` — append one event envelope to the topic
 /// journal.
 #[utoipa::path(
@@ -324,7 +405,7 @@ pub async fn append(
             Ok((_, Some(TapeOutcome::Appended(event)))) => {
                 (StatusCode::OK, Json(event)).into_response()
             }
-            Ok((_, Some(TapeOutcome::Checkpoint(_)))) => ApiErr::new(
+            Ok((_, Some(_))) => ApiErr::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "raft outcome kind mismatch for append",
@@ -379,6 +460,52 @@ pub async fn replay(
     let journal = st.journal.lock().expect("journal mutex poisoned");
     let events = journal.replay(&topic, q.from_offset, q.from_timestamp_ms, q.limit);
     (StatusCode::OK, Json(ReplayResponse { events })).into_response()
+}
+
+/// `GET /topics/{topic}/replay/stream` — compact read-only h2c bulk replay.
+/// The topic is carried by the path once; each frame retains offset, event
+/// time, optional key, and opaque JSON payload bytes.
+#[utoipa::path(
+    get,
+    path = "/topics/{topic}/replay/stream",
+    params(
+        ("topic" = String, Path, description = "Topic name"),
+        ("from_offset" = Option<u64>, Query, description = "First offset to include"),
+        ("from_timestamp_ms" = Option<u64>, Query, description = "First event timestamp to include"),
+        ("limit" = Option<usize>, Query, description = "Maximum number of events to return"),
+    ),
+    responses((status = 200, description = "Length-framed Tape replay stream", content_type = "application/vnd.tape.replay.v1", body = Vec<u8>))
+)]
+pub async fn replay_stream(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path(topic): Path<String>,
+    Query(q): Query<ReplayQuery>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    let encoded = {
+        let journal = st.journal.lock().expect("journal mutex poisoned");
+        let events = journal.replay_refs(&topic, q.from_offset, q.from_timestamp_ms, q.limit);
+        crate::replay_wire::encode(&events)
+    };
+    match encoded {
+        Ok(body) => (
+            [
+                (header::CONTENT_TYPE, crate::replay_wire::CONTENT_TYPE),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            body,
+        )
+            .into_response(),
+        Err(error) => ApiErr::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error.to_string(),
+        )
+        .into_response(),
+    }
 }
 
 /// `GET /topics/{topic}/consumers/{consumer}/checkpoint` — read a consumer
@@ -453,7 +580,7 @@ pub async fn checkpoint_put(
                 _,
                 Some(TapeOutcome::Checkpoint(Err(e @ TapeError::CheckpointBeyondEnd { .. }))),
             )) => ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response(),
-            Ok((_, Some(TapeOutcome::Appended(_)))) => ApiErr::new(
+            Ok((_, Some(_))) => ApiErr::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "raft outcome kind mismatch for checkpoint_put",
@@ -492,6 +619,376 @@ pub async fn checkpoint_put(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/topics/{topic}/subscriptions",
+    params(("topic" = String, Path, description = "Topic name")),
+    request_body = SubscriptionCreateRequest,
+    responses((status = 201, description = "Created subscription", body = Subscription))
+)]
+pub async fn subscription_create(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path(topic): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
+        return deny.into_response();
+    }
+    let req: SubscriptionCreateRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", error.to_string())
+                .into_response()
+        }
+    };
+    if let Some(raft) = st.raft() {
+        return match raft.propose_subscription_create(topic, req.name).await {
+            Ok((_, Some(TapeOutcome::SubscriptionCreated(Ok(subscription))))) => {
+                (StatusCode::CREATED, Json(subscription)).into_response()
+            }
+            Ok((_, Some(TapeOutcome::SubscriptionCreated(Err(error))))) => {
+                subscription_error(error)
+            }
+            Ok((_, Some(_))) => outcome_mismatch("subscription_create"),
+            Ok((_, None)) => missing_outcome("subscription_create"),
+            Err(error) => raft_unavailable(error),
+        };
+    }
+    let mut journal = st.journal.lock().expect("journal mutex poisoned");
+    match journal.create_subscription(topic, req.name) {
+        Ok(subscription) => {
+            if let Err(error) = st.persist(&journal) {
+                return ApiErr::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    error.to_string(),
+                )
+                .into_response();
+            }
+            (StatusCode::CREATED, Json(subscription)).into_response()
+        }
+        Err(error) => subscription_error(error),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/topics/{topic}/subscriptions",
+    params(("topic" = String, Path, description = "Topic name")),
+    responses((status = 200, description = "Topic subscriptions", body = SubscriptionListResponse))
+)]
+pub async fn subscription_list(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path(topic): Path<String>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    let subscriptions = st
+        .journal
+        .lock()
+        .expect("journal mutex poisoned")
+        .subscriptions(&topic);
+    (
+        StatusCode::OK,
+        Json(SubscriptionListResponse { subscriptions }),
+    )
+        .into_response()
+}
+
+#[utoipa::path(
+    get,
+    path = "/topics/{topic}/subscriptions/{name}",
+    params(
+        ("topic" = String, Path, description = "Topic name"),
+        ("name" = String, Path, description = "Subscription name")
+    ),
+    responses((status = 200, description = "Subscription", body = Subscription))
+)]
+pub async fn subscription_get(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path((topic, name)): Path<(String, String)>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    match st
+        .journal
+        .lock()
+        .expect("journal mutex poisoned")
+        .subscription(&topic, &name)
+        .cloned()
+    {
+        Some(subscription) => (StatusCode::OK, Json(subscription)).into_response(),
+        None => subscription_error(SubscriptionError::NotFound { topic, name }),
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/topics/{topic}/subscriptions/{name}",
+    params(
+        ("topic" = String, Path, description = "Topic name"),
+        ("name" = String, Path, description = "Subscription name")
+    ),
+    responses((status = 200, description = "Deleted subscription", body = Subscription))
+)]
+pub async fn subscription_delete(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path((topic, name)): Path<(String, String)>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
+        return deny.into_response();
+    }
+    if let Some(raft) = st.raft() {
+        return match raft.propose_subscription_delete(topic, name).await {
+            Ok((_, Some(TapeOutcome::SubscriptionDeleted(Ok(subscription))))) => {
+                (StatusCode::OK, Json(subscription)).into_response()
+            }
+            Ok((_, Some(TapeOutcome::SubscriptionDeleted(Err(error))))) => {
+                subscription_error(error)
+            }
+            Ok((_, Some(_))) => outcome_mismatch("subscription_delete"),
+            Ok((_, None)) => missing_outcome("subscription_delete"),
+            Err(error) => raft_unavailable(error),
+        };
+    }
+    let mut journal = st.journal.lock().expect("journal mutex poisoned");
+    match journal.delete_subscription(&topic, &name) {
+        Ok(subscription) => {
+            if let Err(error) = st.persist(&journal) {
+                return ApiErr::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    error.to_string(),
+                )
+                .into_response();
+            }
+            (StatusCode::OK, Json(subscription)).into_response()
+        }
+        Err(error) => subscription_error(error),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/topics/{topic}/subscriptions/{name}/pull",
+    params(
+        ("topic" = String, Path, description = "Topic name"),
+        ("name" = String, Path, description = "Subscription name")
+    ),
+    request_body = Option<SubscriptionPullRequest>,
+    responses((status = 200, description = "Side-effect-free bounded replay window", body = PullSubscriptionBatch))
+)]
+pub async fn subscription_pull(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path((topic, name)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    let req: SubscriptionPullRequest = if body.is_empty() {
+        SubscriptionPullRequest { limit: None }
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(error) => {
+                return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", error.to_string())
+                    .into_response()
+            }
+        }
+    };
+    match st
+        .journal
+        .lock()
+        .expect("journal mutex poisoned")
+        .pull_subscription(&topic, &name, req.limit)
+    {
+        Ok(batch) => (StatusCode::OK, Json::<PullSubscriptionBatch>(batch)).into_response(),
+        Err(error) => subscription_error(error),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/topics/{topic}/subscriptions/{name}/ack",
+    params(
+        ("topic" = String, Path, description = "Topic name"),
+        ("name" = String, Path, description = "Subscription name")
+    ),
+    request_body = SubscriptionAckRequest,
+    responses((status = 200, description = "Explicitly advanced checkpoint", body = ConsumerCheckpoint))
+)]
+pub async fn subscription_ack(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path((topic, name)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    let req: SubscriptionAckRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", error.to_string())
+                .into_response()
+        }
+    };
+    if let Some(raft) = st.raft() {
+        return match raft
+            .propose_subscription_ack(topic, name, req.offset, crate::now_ms())
+            .await
+        {
+            Ok((_, Some(TapeOutcome::SubscriptionAcked(Ok(checkpoint))))) => {
+                (StatusCode::OK, Json(checkpoint)).into_response()
+            }
+            Ok((_, Some(TapeOutcome::SubscriptionAcked(Err(error))))) => {
+                subscription_ack_error(error)
+            }
+            Ok((_, Some(_))) => outcome_mismatch("subscription_ack"),
+            Ok((_, None)) => missing_outcome("subscription_ack"),
+            Err(error) => raft_unavailable(error),
+        };
+    }
+    let mut journal = st.journal.lock().expect("journal mutex poisoned");
+    match journal.ack_subscription(&topic, &name, req.offset) {
+        Ok(checkpoint) => {
+            if let Err(error) = st.persist(&journal) {
+                return ApiErr::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    error.to_string(),
+                )
+                .into_response();
+            }
+            (StatusCode::OK, Json(checkpoint)).into_response()
+        }
+        Err(error) => subscription_ack_error(error),
+    }
+}
+
+fn subscription_error(error: SubscriptionError) -> Response {
+    let status = match error {
+        SubscriptionError::NotFound { .. } => StatusCode::NOT_FOUND,
+        SubscriptionError::AlreadyExists { .. } => StatusCode::CONFLICT,
+        SubscriptionError::PullBatchTooLarge { .. } => StatusCode::BAD_REQUEST,
+    };
+    ApiErr::new(status, "subscription_error", error.to_string()).into_response()
+}
+
+fn subscription_ack_error(error: SubscriptionAckError) -> Response {
+    match error {
+        SubscriptionAckError::Subscription(error) => subscription_error(error),
+        SubscriptionAckError::Checkpoint(error) => {
+            ApiErr::new(StatusCode::CONFLICT, "conflict", error.to_string()).into_response()
+        }
+    }
+}
+
+fn raft_unavailable(error: anyhow::Error) -> Response {
+    ApiErr::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "raft_unavailable",
+        error.to_string(),
+    )
+    .into_response()
+}
+
+fn missing_outcome(operation: &str) -> Response {
+    ApiErr::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "raft_unavailable",
+        format!("{operation} outcome unavailable after commit"),
+    )
+    .into_response()
+}
+
+fn outcome_mismatch(operation: &str) -> Response {
+    ApiErr::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal",
+        format!("raft outcome kind mismatch for {operation}"),
+    )
+    .into_response()
+}
+
+#[utoipa::path(
+    get,
+    path = "/topics/{topic}/retention",
+    params(("topic" = String, Path, description = "Topic name")),
+    responses((status = 200, description = "Topic retention policy", body = RetentionGetResponse))
+)]
+pub async fn retention_get(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path(topic): Path<String>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
+        return deny.into_response();
+    }
+    let policy = st
+        .journal
+        .lock()
+        .expect("journal mutex poisoned")
+        .retention(&topic)
+        .cloned();
+    (StatusCode::OK, Json(RetentionGetResponse { policy })).into_response()
+}
+
+#[utoipa::path(
+    put,
+    path = "/topics/{topic}/retention",
+    params(("topic" = String, Path, description = "Topic name")),
+    request_body = RetentionPolicy,
+    responses((status = 200, description = "Applied policy and compaction result", body = RetentionOutcome))
+)]
+pub async fn retention_put(
+    State(st): State<AppState>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
+    Path(topic): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
+        return deny.into_response();
+    }
+    let policy: RetentionPolicy = match serde_json::from_slice(&body) {
+        Ok(policy) => policy,
+        Err(error) => {
+            return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", error.to_string())
+                .into_response()
+        }
+    };
+    let now_ms = crate::now_ms();
+    if let Some(raft) = st.raft() {
+        return match raft.propose_retention(topic, policy, now_ms).await {
+            Ok((_, Some(TapeOutcome::RetentionUpdated(outcome)))) => {
+                (StatusCode::OK, Json(outcome)).into_response()
+            }
+            Ok((_, Some(_))) => outcome_mismatch("retention_put"),
+            Ok((_, None)) => missing_outcome("retention_put"),
+            Err(error) => raft_unavailable(error),
+        };
+    }
+    let mut journal = st.journal.lock().expect("journal mutex poisoned");
+    let outcome = journal.put_retention(topic, policy, now_ms);
+    if let Err(error) = st.persist(&journal) {
+        return ApiErr::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error.to_string(),
+        )
+        .into_response();
+    }
+    (StatusCode::OK, Json(outcome)).into_response()
+}
+
 /// `GET /admin/backup` — a consistent snapshot of the whole journal for
 /// backup runners (#1329): the EXACT bytes [`crate::raft::TapeStateMachine`]'s
 /// raft snapshot produces ([`crate::raft::snapshot_bytes`] — the whole
@@ -511,17 +1008,33 @@ pub async fn admin_backup(
     if let Err(deny) = crate::auth::authorize(&principal, "*", Role::Admin) {
         return deny.into_response();
     }
-    let applied = match st.raft() {
-        Some(raft) => raft.applied_index(),
-        None => 0,
+    let raft = st.raft();
+    let applied = raft.as_ref().map(|raft| raft.applied_index()).unwrap_or(0);
+    let snapshot = match raft {
+        Some(raft) => raft.snapshot_bytes(),
+        None => crate::raft::snapshot_bytes(&st.journal, applied),
     };
-    match crate::raft::snapshot_bytes(&st.journal, applied) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/json")],
-            bytes,
-        )
-            .into_response(),
+    match snapshot {
+        Ok(bytes) => {
+            // Audit only the low-frequency management operation. Append and
+            // consumer checkpoint traffic is deliberately not duplicated into
+            // logs: its durable, payload-free audit trail is the Tape journal
+            // itself, while credentials/denials are already emitted through
+            // the shared service-auth redacted audit sink.
+            tracing::info!(
+                target: "tape.audit",
+                event = "backup_snapshot_served",
+                subject = principal.subject().unwrap_or("anonymous"),
+                applied_index = applied,
+                bytes = bytes.len(),
+            );
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                bytes,
+            )
+                .into_response()
+        }
         Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
             .into_response(),
     }
@@ -562,6 +1075,85 @@ mod tests {
         assert_eq!(resp.0, StatusCode::OK);
         let body: serde_json::Value = serde_json::from_str(&resp.1).unwrap();
         assert_eq!(body["checkpoint"]["offset"], 1);
+    }
+
+    #[tokio::test]
+    async fn pull_subscription_is_bounded_side_effect_free_and_explicitly_acked() {
+        let app = router(AppState::new(TapeJournal::default(), None));
+        for n in 0..2 {
+            let response = post_json(
+                app.clone(),
+                "/topics/orders/append",
+                &serde_json::json!({ "payload": { "n": n } }),
+            )
+            .await;
+            assert_eq!(response.0, StatusCode::OK);
+        }
+        let created = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions",
+            &serde_json::json!({ "name": "audit" }),
+        )
+        .await;
+        assert_eq!(created.0, StatusCode::CREATED);
+
+        let push = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions",
+            &serde_json::json!({
+                "name": "webhook",
+                "delivery": { "mode": "push", "endpoint": "https://example.invalid" }
+            }),
+        )
+        .await;
+        assert_eq!(push.0, StatusCode::BAD_REQUEST, "push is not a Tape mode");
+
+        let first = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions/audit/pull",
+            &serde_json::json!({ "limit": 2 }),
+        )
+        .await;
+        assert_eq!(first.0, StatusCode::OK);
+        let first_body: serde_json::Value = serde_json::from_str(&first.1).unwrap();
+        assert_eq!(first_body["cursor"], 0);
+        assert_eq!(first_body["next_offset"], 2);
+        assert_eq!(first_body["events"].as_array().unwrap().len(), 2);
+
+        let repeated = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions/audit/pull",
+            &serde_json::json!({ "limit": 2 }),
+        )
+        .await;
+        let repeated_body: serde_json::Value = serde_json::from_str(&repeated.1).unwrap();
+        assert_eq!(repeated_body["cursor"], 0, "pull must not implicitly ack");
+
+        let acked = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions/audit/ack",
+            &serde_json::json!({ "offset": 2 }),
+        )
+        .await;
+        assert_eq!(acked.0, StatusCode::OK);
+
+        let drained = post_json(
+            app.clone(),
+            "/topics/orders/subscriptions/audit/pull",
+            &serde_json::json!({ "limit": 2 }),
+        )
+        .await;
+        let drained_body: serde_json::Value = serde_json::from_str(&drained.1).unwrap();
+        assert_eq!(drained_body["cursor"], 2);
+        assert!(drained_body["events"].as_array().unwrap().is_empty());
+
+        let stale = post_json(
+            app,
+            "/topics/orders/subscriptions/audit/ack",
+            &serde_json::json!({ "offset": 1 }),
+        )
+        .await;
+        assert_eq!(stale.0, StatusCode::CONFLICT);
     }
 
     /// R1: `GET /admin/backup` denies a non-admin principal (403) and
@@ -613,6 +1205,41 @@ mod tests {
             .to_bytes();
         let expected = crate::raft::snapshot_bytes(&handle, 0).unwrap();
         assert_eq!(&bytes[..], &expected[..]);
+    }
+
+    #[tokio::test]
+    async fn secure_peer_mode_does_not_expose_raft_routes_on_public_router() {
+        use tower::ServiceExt;
+
+        let journal = Arc::new(Mutex::new(TapeJournal::default()));
+        let dir = tempfile::tempdir().unwrap();
+        let raft = Arc::new(
+            TapeRaft::spawn(
+                Arc::clone(&journal),
+                dir.path(),
+                0,
+                raft_runtime::Membership {
+                    voters: vec![0],
+                    learners: vec![],
+                },
+                std::collections::HashMap::new(),
+                TapeRaft::host_config(1024),
+            )
+            .unwrap(),
+        );
+        let mut state = AppState::new(TapeJournal::default(), None);
+        state.set_raft(raft);
+
+        let response = router_without_raft_routes(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/raftz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     // Small oneshot helpers so both this module's tests and

@@ -2,16 +2,28 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:55:13.553646+00:00"
-digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
-source_digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
-ir_digest = "sha256:adc9850acc8957d54fc8d3cc4bb9152d9df2dd45ba0b9e3bd1a6cd7aa4399351"
+generated_at = "2026-07-20T06:44:43.834359+00:00"
+digest = "sha256:9bd8bc3d3cff04e235956246bfbbc161abf41d6cd1c4be76382f6a6136226d99"
+source_digest = "sha256:9bd8bc3d3cff04e235956246bfbbc161abf41d6cd1c4be76382f6a6136226d99"
+ir_digest = "sha256:8a778fe0a5f45dfc24accd657e5b1a8903a31b5261472377501a3bde5be9d0ef"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "config/enable-shared-request-admission-configuration.md"
+digest = "sha256:9c22d8f09d1d8ca3737e5ac15bf12bfa63198ac30c917b0aef5cea209ec207a5"
+ir_digest = "sha256:bc05897915a817e988c12dac1191dabaf9424d177890365c911ebeba84da24b7"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/align-external-contract-inventory-with-lumen-service-baseline.md"
+digest = "sha256:b206ee28de86d6aa0247c1e0d92e9379a505bfa7cbb9d2a347ed02b50ac5352e"
+ir_digest = "sha256:43bb25e460d02df9a906835b080cac55f7769afa5c5d8413339bb8295e45d63a"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/service-http-shell-h2c-serve-standard-endpoints.md"
@@ -23,6 +35,12 @@ section_count = 3
 path = "interfaces/rest/tape-service-auth.md"
 digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
 ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/wire-shared-peer-mtls-transport-into-the-raft-host.md"
+digest = "sha256:fdb37cfef4d59b20198630147823f22525d0cebda70a94eb597a06b08aa9dbc5"
+ir_digest = "sha256:e1f065299f3d05d40bd9824eb3f758eb9c7940b4872ab4e943970a2cab0e1155"
 section_count = 3
 
 [[files]]
@@ -38,15 +56,33 @@ ir_digest = "sha256:c781cd0dc875cede456724ccc224c41599571d23684f9f7e2eb6d92e8b9d
 section_count = 3
 
 [[files]]
+path = "logic/compose-shared-statefulset-workload-projection.md"
+digest = "sha256:4ee8f444cad0f1d36994785987d98ec3ac2877f18372b9d257191e08b51a38b0"
+ir_digest = "sha256:f0ee10f452632ab6a9e66ffead7841d738035f54d356d87b1c61a9526c39f2ac"
+section_count = 3
+
+[[files]]
+path = "logic/delegate-raft-snapshot-persistence-to-storage-durable.md"
+digest = "sha256:049fa8a47a3d5ce241cfed9e67965257c7ee185409a6ae7c999c9a82f62150d6"
+ir_digest = "sha256:f32a5fe9f08ab8dd677b7ecc16c4f95d721059b27449b6196e15d976b281b01b"
+section_count = 3
+
+[[files]]
+path = "logic/eliminate-production-ec-false-green-paths.md"
+digest = "sha256:d4a5ff8b9a7a3d05e7c5cbb88ea1ff4adad43c08d7099d1d791c124dbe9bb772"
+ir_digest = "sha256:6960451290e7e4acfecb7b5492e052e50ab470e054464e8e477dfd900e767844"
+section_count = 3
+
+[[files]]
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
-digest = "sha256:3b21917a9022ea8cd1410f913e1a0382057b62162b50d086fe1c99bc8a55e984"
-ir_digest = "sha256:09aacd5ec58eaab92a149135287d13b492e0cf980a000ec3290e2e322a46ca99"
+digest = "sha256:7880e94c351a9d02bdc458716dcfc21057d7bd8ded8bb04d8fda2fa61eb63107"
+ir_digest = "sha256:739f44aeb6f4b7f279dfb9a75c0f21d01625e20d54143a9d49245a278574b11b"
 section_count = 3
 
 [[files]]
 path = "logic/normalize-replay-checkpoints-into-pull-subscriptions.md"
-digest = "sha256:1f61ae73eb41d5ef90d5aa04670eef210064f4246d2821ce70de0ce7a3ea63db"
-ir_digest = "sha256:aca744a06a27f4f86ab56d5eead6f8561c915e3693257dd924223af272b9abd3"
+digest = "sha256:b2b71aec863c297f0943933fbabaac55223f9afa09e3051ac4f9059bf5647444"
+ir_digest = "sha256:fbf2a7e1ed74a6f28c08415f42d5ef608eea8d37f63eabef3c3d219740b5b5a7"
 section_count = 3
 
 [[files]]
@@ -93,8 +129,8 @@ section_count = 3
 
 [[files]]
 path = "logic/tape-docs-scripts-traits-polish.md"
-digest = "sha256:a3cf0e945223478def36454aef2e501b2ca4444c2e17e1cb662a0fdfd3af76d9"
-ir_digest = "sha256:25ddb6a60f24d0a6aa6dd121d1bb0e94a326be34f3bb9718ebd797de01babf83"
+digest = "sha256:854af2c7bce4213a65bb468b56a7ac2056782be4e946bec42f008401c5a31da9"
+ir_digest = "sha256:4d962e1e4aa808b18a703156911400714abfcd181191e7e77961e715d1fdba10"
 section_count = 3
 
 [[files]]
@@ -113,6 +149,12 @@ section_count = 3
 path = "logic/tape-vat-meter-guard-ec-gates-observability.md"
 digest = "sha256:1dcb1e1cb85c7fe023ea14bd1ffc770c3ecdbdd3a45a22d28b9cbeed51b46340"
 ir_digest = "sha256:26a59b2b75f242f36cc17154403f618e673bd4f8174da7a103c7993af2050136"
+section_count = 3
+
+[[files]]
+path = "semantic/backfill-primary-td-linkage-for-completed-capability-claims.md"
+digest = "sha256:7e2057e50f02c944feddbc6655ad8ec6e0d94037865f052ccd759407e953f2a2"
+ir_digest = "sha256:ae01b56fdf5eabd8fddc8a1edcb2952a776e743ea9a020fee7691b7faea3ff5c"
 section_count = 3
 
 [[files]]
@@ -135,26 +177,26 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-src-bin-tape-rs.md"
-digest = "sha256:1f0d7aa2b3332c3c3bd54ae761b80324bb3a981d310691efda48a1f8e622f1ef"
-ir_digest = "sha256:8e20412ceab144a0e02b4091c1691dc4af06f5995142aa30003348c81ac8c6c8"
+digest = "sha256:b8a9537013c31f6d330dd6710280142287f948cb99a52f72fbb1e77845a29a36"
+ir_digest = "sha256:5f53073c9c9b8a6048b3432d6821e38f4d3fd056c153e35ecb77416fec7e8a97"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-lib-rs.md"
-digest = "sha256:8d5731ec1b63ea4bd3fc01d534a4c4d30d5def4317e5a7d74723c0a56e7a63bc"
-ir_digest = "sha256:3ccc03e8c8d9da31458fe64226a0ab1f1488390a1983c01f1c2c960aec41c854"
+digest = "sha256:6475a545181f5cf8ad764712c6dc6b8ec71be24c60973b9f6b87fb96119379b4"
+ir_digest = "sha256:d3c7116423b024fbaf2749bdff71230cb97bfcd3382065070333b7a29df70aee"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-spec-rs.md"
-digest = "sha256:0b5053134cd7563862837e70ae6db567b9873c05669787b8b795e56ecb9c179e"
-ir_digest = "sha256:789c8d75c9ef0941e4848fa96e56f97cfa857ac1c777e97f98c4b2320100030b"
+digest = "sha256:2b1c5eafaece1678202a0aee60f6a0a891d4d3191f55ce11869e8263fc9511db"
+ir_digest = "sha256:de576a9b049b32fc587548fc48375de2fe76563143dc8edff92e27ce18817604"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-tests-cli-contract-rs.md"
-digest = "sha256:670df7c15a86ea61110b2ac48597b2304ab353b9e96e8fa57246d63a6da3ba17"
-ir_digest = "sha256:de9777b31ba62848326d842fe97e1d199c412cdcbb8feb90effbc94416fe7ed2"
+digest = "sha256:e74a6bde02001793e95e1b9911d67cb978537436d35675930e6bf734d7330391"
+ir_digest = "sha256:87c5814549a4c34a500a99b707e9a3050a20be670938644ccd1f317d7fae1049"
 section_count = 3
 
 [[files]]
@@ -165,14 +207,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-tests-tape-perf-gate-rs.md"
-digest = "sha256:bbd875aed61931a73ad173fc4e88ccc2034c26c9d9fc49584da048bc7f2c7e5f"
-ir_digest = "sha256:75151a703480b510f577b56672b44b53daeee63e7791f3d590604eae3a672957"
+digest = "sha256:03249d779712dfe15ab1898e2f8d6e3dc8ccc7ee50a829b2a74a261726ded94d"
+ir_digest = "sha256:cd0cb8b1501646352a3f89206aaf95af3adae75e392854b91a79794a0beac62f"
 section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-tests-tape-vs-nats-jetstream-rs.md"
-digest = "sha256:e0dcc6de559ff2ca322937c70599f62c58ff88147558486293ba4d6767a7c50a"
-ir_digest = "sha256:0538bce15ce5e0a38954ad32e5bb90aba440d33c5cade672abb2b12103b7ebd0"
+digest = "sha256:b07953a9ea56bf7fc2ab244dbf9295d33c130f7305d7fccdd58192ff19837c5b"
+ir_digest = "sha256:7b57679f418b018084895eae77d7907b694dfb31b43838da3f8c1483f19b3c7e"
 section_count = 3
 
 [[files]]
@@ -201,6 +243,6 @@ section_count = 2
 
 [[files]]
 path = "validate/real-kafka-calibrated-performance-benchmark-kraft-docker-mirrors.md"
-digest = "sha256:5cbd399c655a6268efd81a030fc65e9d26bca9a6c1a34eb18f94c15e1ffb97ed"
-ir_digest = "sha256:82fe411d765f87ee80e7d637be7dfa7a4366ce19cb6e238ca1caad8884b35bd0"
+digest = "sha256:d627eff0b802fb2ef752728a83f9f97835ef0848eba5c5c1c77666f87b1473f0"
+ir_digest = "sha256:0720952245e6adb29c596f9062773f445dab85fc9e194c4915fdd4253b05bcca"
 section_count = 2

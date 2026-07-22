@@ -58,6 +58,11 @@ fn status_label(s: &Status) -> String {
     match s {
         Status::Created => "created".into(),
         Status::Running => "running".into(),
+        Status::Interrupted { signal, .. } => match *signal {
+            libc::SIGINT => "interrupted:SIGINT".into(),
+            libc::SIGTERM => "interrupted:SIGTERM".into(),
+            signal => format!("interrupted:{signal}"),
+        },
         Status::Exited { code } => format!("exited:{code}"),
         Status::Snapshot => "snapshot".into(),
     }

@@ -80,6 +80,13 @@ pub enum Status {
     Created,
     /// A command is currently executing.
     Running,
+    /// The last command was interrupted after VAT completed owned cleanup.
+    Interrupted {
+        /// POSIX signal number received by VAT (SIGINT=2, SIGTERM=15).
+        signal: i32,
+        /// Stable human-readable signal/reason retained for state and GC.
+        reason: String,
+    },
     /// Last command finished with this exit code.
     Exited { code: i32 },
     /// A frozen, read-only label (produced by `vat snapshot`).
@@ -255,6 +262,7 @@ pub enum ProcessStatus {
     Created,
     Running,
     Ready,
+    Interrupted,
     Exited,
     Failed,
     Timeout,

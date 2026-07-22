@@ -87,25 +87,25 @@ e2e_tests:
     claim_id: aw-ec-generated-inventory-and-dispatch
     contract_id: ec-generated-inventory-dispatch
     category: behavior
-    command: "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience"
+    command: "cargo test -p lumen --test ec_claim_closure_consistency generated_inventory_matches_claim_commands_and_test_dispatch -- --exact --nocapture"
     assertions:
-      - "The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence."
+      - "The generated AW EC inventory matches the authored claim commands, wrapper metadata, production requirement, and source references without recursively executing generated wrappers."
   - id: lumen-claim-ec-vat-managed-runners
     capability_id: ec-gates-configured
     claim_id: vat-managed-meter-and-rig-runners
     contract_id: ec-vat-managed-runners
     category: behavior
-    command: "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter"
+    command: "cargo test -p lumen --test ec_claim_closure_consistency vat_managed_runner_bindings_resolve_to_declared_runners -- --exact --nocapture"
     assertions:
-      - "The vat-managed meter runner remains executable for Lumen efficiency EC dispatch."
+      - "Every vat runner referenced by the generated production EC inventory resolves to a declared lumen vat.toml runner, while the independent efficiency and resilience cases retain the heavy runner executions."
   - id: lumen-claim-ec-claim-closure-evidence
     capability_id: ec-gates-configured
     claim_id: external-contract-claim-closure-evidence
     contract_id: ec-claim-closure-evidence
     category: behavior
-    command: "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture"
+    command: "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture"
     assertions:
-      - "The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands."
+      - "The production claim-closure document maps every authored case to an existing README capability and work-root claim without recursively dispatching generated claim suites."
 
   - id: lumen-claim-competitor-feature-search-breadth
     capability_id: competitor-feature-parity

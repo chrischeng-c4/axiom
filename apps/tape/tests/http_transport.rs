@@ -112,6 +112,50 @@ async fn h2c_and_http11_share_the_serve_port() {
     assert_eq!(resp.version(), reqwest::Version::HTTP_11);
 }
 
+/// The bulk replay surface stays a read-only replay operation while carrying
+/// the same offsets and payloads over compact frames on the real h2c server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_stream_is_validated_h2c_and_counted_as_replay() {
+    let (addr, _state) = start_server().await;
+    let client = transport_h2c::h2c_client().unwrap();
+    for n in 0..3 {
+        append(&client, addr, "bulk", n).await;
+    }
+
+    let response = client
+        .get(url(
+            addr,
+            "/topics/bulk/replay/stream?from_offset=1&limit=2",
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.version(), reqwest::Version::HTTP_2);
+    assert_eq!(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some(tape::replay_wire::CONTENT_TYPE)
+    );
+    let stats = tape::replay_wire::inspect(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(stats.events, 2);
+    assert_eq!(stats.first_offset, Some(1));
+    assert_eq!(stats.next_offset, Some(3));
+    assert!(stats.payload_bytes > 0);
+
+    let metrics = client
+        .get(url(addr, "/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(metrics.contains("tape_replay_requests_total 1"));
+}
+
 /// R5: `/metrics` reports tape's per-op request counters (Prometheus text)
 /// after traffic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

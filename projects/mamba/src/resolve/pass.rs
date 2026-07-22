@@ -368,15 +368,10 @@ impl Resolver {
                                 self.symbols.define(name.clone(), SymbolKind::Variable)
                             })
                     } else {
-                        let module_id = self
-                            .symbols
-                            .lookup_in_scope(0, name)
-                            .unwrap_or_else(|| {
-                                self.symbols.define_in_scope(
-                                    0,
-                                    name.clone(),
-                                    SymbolKind::Variable,
-                                )
+                        let module_id =
+                            self.symbols.lookup_in_scope(0, name).unwrap_or_else(|| {
+                                self.symbols
+                                    .define_in_scope(0, name.clone(), SymbolKind::Variable)
                             });
                         self.symbols
                             .bind_symbol_in_scope(current, name.clone(), module_id);

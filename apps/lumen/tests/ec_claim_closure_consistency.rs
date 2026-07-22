@@ -7,6 +7,20 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 const CLAIM_DOCUMENT: &str = "apps/lumen/external-contracts/claim-closure/production-claims.md";
+const META_CASE_COMMANDS: [(&str, &str); 3] = [
+    (
+        "lumen-claim-ec-generated-inventory-dispatch",
+        "cargo test -p lumen --test ec_claim_closure_consistency generated_inventory_matches_claim_commands_and_test_dispatch -- --exact --nocapture",
+    ),
+    (
+        "lumen-claim-ec-vat-managed-runners",
+        "cargo test -p lumen --test ec_claim_closure_consistency vat_managed_runner_bindings_resolve_to_declared_runners -- --exact --nocapture",
+    ),
+    (
+        "lumen-claim-ec-claim-closure-evidence",
+        "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture",
+    ),
+];
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 struct ClaimCase {
@@ -35,6 +49,7 @@ struct GeneratedCase {
 #[test]
 fn generated_inventory_matches_claim_commands_and_test_dispatch() {
     let root = workspace_root();
+    assert_meta_ec_cases_are_focused(&root);
     let authored = authored_cases(&root);
     let generated = generated_cases(&root);
 
@@ -122,6 +137,101 @@ fn claim_closure_document_maps_to_readme_capability_claims() {
     }
 }
 
+#[test]
+fn vat_managed_runner_bindings_resolve_to_declared_runners() {
+    let root = workspace_root();
+    let vat_path = root.join("apps/lumen/vat.toml");
+    let vat: toml::Value = fs::read_to_string(&vat_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", vat_path.display()))
+        .parse()
+        .expect("parse lumen vat.toml");
+    let declared = vat
+        .get("runners")
+        .and_then(toml::Value::as_array)
+        .expect("lumen vat.toml must declare [[runners]]")
+        .iter()
+        .map(|runner| {
+            runner
+                .get("id")
+                .and_then(toml::Value::as_str)
+                .expect("vat runner must declare a string id")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+
+    let mut referenced = BTreeSet::new();
+    for (case_id, command) in generated_case_commands(&root) {
+        for runner_id in vat_runner_ids(&command) {
+            assert!(
+                declared.contains(&runner_id),
+                "generated EC case {case_id} references missing vat runner {runner_id}"
+            );
+            referenced.insert(runner_id);
+        }
+    }
+
+    for required in ["ec-efficiency-meter", "rig-resilience"] {
+        assert!(
+            referenced.contains(required),
+            "production EC inventory must retain the independent heavy vat runner {required}"
+        );
+    }
+}
+
+#[test]
+fn meta_ec_cases_do_not_dispatch_generated_ec_wrappers() {
+    let root = workspace_root();
+    assert_meta_ec_cases_are_focused(&root);
+}
+
+fn assert_meta_ec_cases_are_focused(root: &Path) {
+    let authored = authored_cases(root);
+    let generated_wrapper_names = generated_cases(root)
+        .into_values()
+        .map(|case| {
+            Path::new(&case.test_path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .expect("generated EC test path must have a UTF-8 file stem")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let meta_ids = authored
+        .values()
+        .filter(|case| case.capability_id == "ec-gates-configured")
+        .map(|case| case.id.clone())
+        .collect::<BTreeSet<_>>();
+    let expected_ids = META_CASE_COMMANDS
+        .iter()
+        .map(|(id, _)| (*id).to_owned())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        meta_ids, expected_ids,
+        "the EC meta-gate inventory changed without defining a focused structural command"
+    );
+
+    for (id, expected_command) in META_CASE_COMMANDS {
+        let case = authored
+            .get(id)
+            .unwrap_or_else(|| panic!("missing EC meta case {id}"));
+        assert_eq!(
+            case.command, expected_command,
+            "EC meta case {id} must stay a focused structural test"
+        );
+        assert!(
+            !case.command.contains("vat run"),
+            "EC meta case {id} must not duplicate independent heavy vat gates"
+        );
+        for wrapper in &generated_wrapper_names {
+            assert!(
+                !case.command.contains(&format!("--test {wrapper}")),
+                "EC meta case {id} recursively dispatches generated wrapper {wrapper}"
+            );
+        }
+    }
+}
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -156,34 +266,20 @@ fn authored_cases(root: &Path) -> BTreeMap<String, ClaimCase> {
 }
 
 fn generated_cases(root: &Path) -> BTreeMap<String, GeneratedCase> {
-    let path = root.join("apps/lumen/aw.toml");
-    let value: toml::Value = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
-        .parse()
-        .expect("parse lumen aw.toml");
-    let cases = value
-        .get("aw")
-        .and_then(|value| value.get("ec"))
-        .and_then(|value| value.get("generated"))
-        .and_then(|value| value.get("cases"))
-        .and_then(toml::Value::as_array)
-        .expect("aw.ec.generated.cases array");
-
     let mut generated = BTreeMap::new();
     let mut test_paths = BTreeSet::new();
-    for value in cases {
-        let table = value.as_table().expect("generated EC case table");
-        let td_ref = table_string(table, "td_ref");
+    for table in generated_case_tables(root) {
+        let td_ref = table_string(&table, "td_ref");
         if !td_ref.starts_with(&format!("{CLAIM_DOCUMENT}#")) {
             continue;
         }
         let claim = ClaimCase {
-            id: table_string(table, "id"),
-            capability_id: table_string(table, "capability_id"),
-            claim_id: table_string(table, "claim_id"),
-            contract_id: table_string(table, "contract_id"),
-            category: table_string(table, "category"),
-            command: table_string(table, "command"),
+            id: table_string(&table, "id"),
+            capability_id: table_string(&table, "capability_id"),
+            claim_id: table_string(&table, "claim_id"),
+            contract_id: table_string(&table, "contract_id"),
+            category: table_string(&table, "category"),
+            command: table_string(&table, "command"),
             assertions: table
                 .get("assertions")
                 .and_then(toml::Value::as_array)
@@ -196,7 +292,7 @@ fn generated_cases(root: &Path) -> BTreeMap<String, GeneratedCase> {
         let generated_case = GeneratedCase {
             claim,
             td_ref,
-            test_path: table_string(table, "test_path"),
+            test_path: table_string(&table, "test_path"),
             required_for_production: table
                 .get("required_for_production")
                 .and_then(toml::Value::as_bool)
@@ -213,6 +309,45 @@ fn generated_cases(root: &Path) -> BTreeMap<String, GeneratedCase> {
         );
     }
     generated
+}
+
+fn generated_case_commands(root: &Path) -> BTreeMap<String, String> {
+    generated_case_tables(root)
+        .into_iter()
+        .map(|table| (table_string(&table, "id"), table_string(&table, "command")))
+        .collect()
+}
+
+fn generated_case_tables(root: &Path) -> Vec<toml::Table> {
+    let path = root.join("apps/lumen/aw.toml");
+    let value: toml::Value = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+        .parse()
+        .expect("parse lumen aw.toml");
+    value
+        .get("aw")
+        .and_then(|value| value.get("ec"))
+        .and_then(|value| value.get("generated"))
+        .and_then(|value| value.get("cases"))
+        .and_then(toml::Value::as_array)
+        .expect("aw.ec.generated.cases array")
+        .iter()
+        .map(|value| value.as_table().expect("generated EC case table").clone())
+        .collect()
+}
+
+fn vat_runner_ids(command: &str) -> Vec<String> {
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    words
+        .windows(3)
+        .filter_map(|window| {
+            ((window[0] == "vat" || window[0].ends_with("/vat")) && window[1] == "run").then(|| {
+                window[2]
+                    .trim_matches(|ch: char| ch == '\"' || ch == '\'')
+                    .to_owned()
+            })
+        })
+        .collect()
 }
 
 fn table_string(table: &toml::Table, key: &str) -> String {

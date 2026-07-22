@@ -111,9 +111,9 @@ e2e_tests:
     contract_id: topic-replay-performance-local-and-nats-win
     category: efficiency
     test_path: tests/behavior_tape_claim_competitor_performance_claim_closure.rs
-    command: "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+    command: "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
     assertions:
       - "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations."
       - "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate."
-      - "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist."
+      - "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed until calibrated real-service benchmark runs exist."
 ```

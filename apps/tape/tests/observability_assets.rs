@@ -9,7 +9,9 @@ fn yaml(path: &str) -> Value {
 
 #[test]
 fn servicemonitor_scrapes_metrics_and_preserves_service_labels() {
-    let doc = yaml(include_str!("../k8s/components/observability/servicemonitor.yaml"));
+    let doc = yaml(include_str!(
+        "../k8s/components/observability/servicemonitor.yaml"
+    ));
     assert_eq!(doc["kind"], "ServiceMonitor");
     assert_eq!(doc["spec"]["endpoints"][0]["path"], "/metrics");
     assert_eq!(doc["spec"]["targetLabels"][0], "app");
@@ -21,7 +23,12 @@ fn alert_rules_only_reference_existing_tape_latency_series() {
     let rule = include_str!("../k8s/components/observability/prometheusrule.yaml");
     let doc = yaml(rule);
     assert_eq!(doc["kind"], "PrometheusRule");
-    for metric in ["tape_append_latency_ms_sum", "tape_append_latency_ms_count", "tape_replay_latency_ms_sum", "tape_replay_latency_ms_count"] {
+    for metric in [
+        "tape_append_latency_ms_sum",
+        "tape_append_latency_ms_count",
+        "tape_replay_latency_ms_sum",
+        "tape_replay_latency_ms_count",
+    ] {
         assert!(rule.contains(metric), "missing real Tape metric {metric}");
     }
 }

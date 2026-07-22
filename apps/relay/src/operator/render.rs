@@ -2,10 +2,10 @@
 //! Pure rendering: a [`Relay`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
-//! + owner reference), and `spec`. This is the operator's source of truth and
+//! and owner reference), and `spec`. This is the operator's source of truth and
 //! its primary test surface.
 //!
-//! relay is always a durable StatefulSet (per-pod durable-log + raft-state
+//! relay is always a durable StatefulSet (per-pod durable-log and raft-state
 //! PVC), so there is no Deployment branch — single-node is just
 //! `replicasPerShard: 1` (no raft env consumed: `replica_mode()` flips HA only
 //! when `REPLICAS_PER_SHARD > 1`). The shared [`service_k8s::render`] toolkit
@@ -26,6 +26,7 @@ const API_VERSION: &str = "relay.dev/v1alpha1";
 const KIND: &str = "Relay";
 /// The one serve port: HTTP/1.1 + h2c, data plane + probes + raft peer RPCs.
 const CLIENT_PORT: i32 = 7000;
+const RAFT_PORT: i32 = 7001;
 const COMPONENT: &str = "server";
 const BACKUP_COMPONENT: &str = "backup";
 const TOKEN_REGISTRY_VOLUME: &str = "relay-token-registry";
@@ -94,7 +95,15 @@ pub fn render(relay: &Relay) -> Vec<Value> {
     let mut out = vec![
         render::service_account(&cx, COMPONENT),
         statefulset(relay, &cx, &headless),
-        render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
+        render::headless_service_with_ports(
+            &cx,
+            &headless,
+            COMPONENT,
+            vec![
+                json!({"name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP"}),
+                json!({"name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP"}),
+            ],
+        ),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
         // Keep a raft quorum during voluntary disruptions: at most one broker
         // pod may be unavailable at a time (mirrors the old k8s/pdb.yaml).
@@ -197,8 +206,10 @@ fn statefulset(relay: &Relay, cx: &RenderCtx, headless: &str) -> Value {
     // /data disk tier, and the drain window. RELAY_AUTH wiring is opt-in.
     let mut extra_env = vec![
         json!({ "name": "RELAY_BIND", "value": format!("0.0.0.0:{CLIENT_PORT}") }),
+        json!({ "name": "RELAY_RAFT_PORT", "value": RAFT_PORT.to_string() }),
         json!({ "name": "RELAY_DATA_DIR", "value": "/data" }),
         json!({ "name": "RELAY_GRACE_SECS", "value": s.grace_secs.to_string() }),
+        json!({ "name": "RELAY_LOG_FORMAT", "value": "json" }),
     ];
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));
@@ -220,7 +231,7 @@ fn statefulset(relay: &Relay, cx: &RenderCtx, headless: &str) -> Value {
             .as_deref()
             .unwrap_or("IfNotPresent"),
         command: vec!["relay".into()],
-        ports: vec![("http", CLIENT_PORT)],
+        ports: vec![("http", CLIENT_PORT), ("raft", RAFT_PORT)],
         headless_service: headless,
         // relay is a single raft group: shardCount is part of the shared CRD
         // shape but the render pins it to 1 (replicasPerShard is the scale
@@ -268,6 +279,30 @@ fn harden(relay: &Relay, sts: &mut Value) {
             "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
             "readOnly": true,
         }));
+    }
+    if let Some(secret) = relay.spec.peer_tls_secret.as_deref() {
+        volumes.push(json!({
+            "name": "relay-peer-tls",
+            "secret": {"secretName": secret, "items": [
+                {"key": "tls.crt", "path": "tls.crt"},
+                {"key": "tls.key", "path": "tls.key"},
+                {"key": "ca.crt", "path": "ca.crt"}
+            ]}
+        }));
+        mounts.push(json!({
+            "name": "relay-peer-tls",
+            "mountPath": "/var/run/secrets/relay-peer",
+            "readOnly": true
+        }));
+        let env = sts["spec"]["template"]["spec"]["containers"][0]["env"]
+            .as_array_mut()
+            .expect("relay container env array");
+        env.extend([
+            json!({"name": "RELAY_PEER_MTLS", "value": "on"}),
+            json!({"name": "RELAY_PEER_TLS_CERT", "value": "/var/run/secrets/relay-peer/tls.crt"}),
+            json!({"name": "RELAY_PEER_TLS_KEY", "value": "/var/run/secrets/relay-peer/tls.key"}),
+            json!({"name": "RELAY_PEER_TLS_CA", "value": "/var/run/secrets/relay-peer/ca.crt"}),
+        ]);
     }
     if let Some(pod) = sts["spec"]["template"]["spec"].as_object_mut() {
         pod.insert(

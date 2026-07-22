@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:a37990fc" tracker="pending-tracker" reason="Feature-gated (operator) module root: crd/render/reconcile submodules, re-exports (Tape, TapeSpec, TapeStatus, run), crd_yaml() = serde_json(Tape::crd()) -> normalize_kubernetes_schema_formats -> serde_yaml string (relay's pattern verbatim)."
+// HANDWRITE-BEGIN gap="missing-generator:logic:a37990fc" tracker="pending-tracker" reason="Feature-gated (operator) module root: crd/render/reconcile submodules, re-exports (Tape, TapeSpec, TapeStatus, run), and crd_yaml() uses the shared Kubernetes schema normalizer before YAML serialization."
 //! K8s operator for tape: a `Tape` custom resource ([`crd`]) plus a
 //! reconcile loop ([`reconcile`]) that renders ([`render`]) tape's single
 //! raft-group topology — ServiceAccount, headless + client Services,
@@ -28,58 +28,9 @@ pub use reconcile::run;
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Tape::crd()).expect("CRD serializes to JSON");
-    normalize_kubernetes_schema_formats(&mut crd);
+    service_k8s::crd::normalize_unsigned_integer_formats(&mut crd);
     let yaml = serde_yaml::to_string(&crd).expect("CRD serializes");
-    quote_kubernetes_yaml_string_defaults(&yaml)
+    service_k8s::crd::quote_yaml_1_1_boolean_like_strings(&yaml)
 }
 
-/// Kubernetes still accepts YAML 1.1 input, where bare `off` is a boolean.
-/// `serde_yaml` emits that Rust string as a plain scalar, so quote every
-/// schema default with that spelling before the manifest reaches the API
-/// server. The JSON CRD remains string-typed; this is serialization hygiene.
-fn quote_kubernetes_yaml_string_defaults(yaml: &str) -> String {
-    let trailing_newline = yaml.ends_with('\n');
-    let mut normalized = yaml
-        .lines()
-        .map(|line| {
-            if line.trim() == "default: off" {
-                let indent = &line[..line.len() - line.trim_start().len()];
-                format!(r#"{indent}default: "off""#)
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if trailing_newline {
-        normalized.push('\n');
-    }
-    normalized
-}
-
-/// Recursively rewrite unsigned-int formats (`uint32`/`uint64`) — which are not
-/// in the Kubernetes structural-schema format vocabulary — to a plain integer
-/// with a `minimum: 0` floor, so the generated CRD applies cleanly.
-fn normalize_kubernetes_schema_formats(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            if matches!(
-                map.get("format").and_then(|v| v.as_str()),
-                Some("uint32" | "uint64")
-            ) {
-                map.remove("format");
-                map.entry("minimum").or_insert_with(|| serde_json::json!(0));
-            }
-            for child in map.values_mut() {
-                normalize_kubernetes_schema_formats(child);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for child in items {
-                normalize_kubernetes_schema_formats(child);
-            }
-        }
-        _ => {}
-    }
-}
 // HANDWRITE-END

@@ -5053,7 +5053,7 @@ fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Resu
                 ));
             } else if content != expected {
                 blockers.push(format!(
-                    "project root artifact `{rel}` is stale; run `aw standardize managed run --project {} --non-interactive --max-ticks 1`",
+                    "project root artifact `{rel}` is stale; run `aw td gen --force-regen --project {}`",
                     shell_quote(&project)
                 ));
             }
@@ -7640,7 +7640,16 @@ test_cmd = "true"
         generated.push_str("\n");
         write(tmp.path(), "projects/tool/llms.txt", &generated);
         let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
-        assert!(blockers.iter().any(|blocker| blocker.contains("is stale")));
+        assert_eq!(
+            blockers,
+            vec![
+                "project root artifact `projects/tool/llms.txt` is stale; run `aw td gen --force-regen --project tool`"
+                    .to_string()
+            ]
+        );
+        assert!(blockers
+            .iter()
+            .all(|blocker| !blocker.contains("aw standardize")));
 
         let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
         write(tmp.path(), "projects/tool/llms.txt", &generated);

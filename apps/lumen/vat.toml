@@ -3,8 +3,8 @@
 # re-invokes rig inside the clone, and the outer `rig run --vat` lifts the
 # inner report back out.
 #
-# Prereqs on the host: `apps/rig/build.sh debug` (installs ~/.cargo/bin/rig),
-# `cargo build --release -p lumen --bin lumen`, `brew install toxiproxy`.
+# Prereqs on the host: `brew install toxiproxy`. The VAT topology builds the
+# exact Lumen and Rig binaries it executes into the shared target directory.
 version = 1
 name = "lumen-rig"
 default_runner = "rig-resilience"
@@ -62,19 +62,19 @@ timeout_s = 120
 [[runners]]
 id = "rig-resilience"
 requires = ["lumen", "toxiproxy"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/resilience"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/resilience"]
 timeout_s = 600
 
 [[runners]]
 id = "rig-endurance"
 requires = ["lumen"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/endurance"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/endurance"]
 timeout_s = 900
 
 [[runners]]
 id = "rig-load"
 requires = ["lumen"]
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/load --pins tests/rig/config/pins"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo build -p rig-cli --bin rig && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/load --pins tests/rig/config/pins"]
 timeout_s = 300
 
 # Legacy competitive comparison runners: vat owns the serving lumen process;

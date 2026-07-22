@@ -4574,4 +4574,55 @@ changes:
       closed-issue exclusion so the loop never re-emits an unexecutable
       command for a WI that is actually closed.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/issues.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2187: `aw wi plan` now emits a digest-bound independent review
+      payload and `aw wi plan-review` validates policy, author/reviewer
+      separation, checklist, findings, and exact plan/manifest digest before
+      idempotently publishing bounded claim WIs. Default/either policy is
+      agent-first; explicit human-only policy remains blocking and
+      `needs_revision` publishes nothing. Closed or missing doc-stored WI refs
+      remain advisory reconciliation evidence and do not suppress a bounded
+      replacement candidate for an otherwise unverified claim. Repeated claim
+      ids collapse to one candidate while retaining every capability
+      alignment; capability Root WI and claim WI remain distinct, and only an
+      explicit claim WI ref or exact claim id in an open non-epic WI suppresses
+      duplicate drafts. Each remaining candidate retains all same-project test
+      targets, carries a runnable verification command with a claim-specific
+      observable result, and requires implementation plus a passing gate;
+      linkage, prose, downgrade, or deferral alone cannot close it.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2187: capability roots surface pending plan evidence as an agent
+      review action rather than unconditional HITL, and published claim WIs
+      route through the EC-first TD/codegen lifecycle until claim evidence
+      closes.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2187: capability-plan review maps to the workflow envelope's
+      `agent_review` action.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/chain.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2187: classify `wi.plan-review` as a mutating core lifecycle leaf
+      and register its emitted evidence-consumer command for chain validation.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/llm.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2187: the WI orientation documents agent-first capability-plan
+      review, explicit human-only opt-in, and accepted versus needs_revision
+      publication behavior.
+    impl_mode: hand-written
 ```

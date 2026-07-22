@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-15T07:37:30.566409+00:00"
-digest = "sha256:852377a6c23d2670716e55d9ecfedc5a4bd942a841ea5fc337a6b6cc6db985f4"
-source_digest = "sha256:852377a6c23d2670716e55d9ecfedc5a4bd942a841ea5fc337a6b6cc6db985f4"
-ir_digest = "sha256:aba635cc2feac2404918a6a147f09663cca621d131777eeab8fea6ab7b62b821"
+generated_at = "2026-07-20T13:27:52.909397+00:00"
+digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
+source_digest = "sha256:47142e50c7e2879241c2439f447ab3f1e39f9a3a8a559bd72e878b0e573ce5a3"
+ir_digest = "sha256:37b722c3f4e97bb624fb2b7a1cbce0fc7f096249d29e917c03dc9ced3067e9d7"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -104,10 +104,28 @@ ir_digest = "sha256:3a3357e936710e429e1ed7af776a4e0a5b68d9fb48789343f35cf17ad8ab
 section_count = 3
 
 [[files]]
+path = "logic/project-the-stateful-service-workload-baseline.md"
+digest = "sha256:cdb3f426e3f6c824e7311d417e199ffa3a37b03563bdbd8cd83ddad5a0cfd3a1"
+ir_digest = "sha256:4a51a49a025850714e21e331f921c03740bb9db0582067228f685c68f02c8351"
+section_count = 3
+
+[[files]]
 path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
 digest = "sha256:767b74003637cec03551a76d678afd684e1e68588e002b33bb7a9045f543ebe6"
 ir_digest = "sha256:ead43a27c9b20a4ffbad633f8b5abad0867c84aeb5666862604c488dd634f037"
 section_count = 4
+
+[[files]]
+path = "logic/replace-static-only-security-ec-with-negative-evidence.md"
+digest = "sha256:a08355f3b421db09be9ae63754186e0db5dbda6e3328e23b740796e8db040766"
+ir_digest = "sha256:ce94814403bf9dcf3858c284b6f65d899e37ac1bd2eb4c3a0a8e37e65d861fa2"
+section_count = 3
+
+[[files]]
+path = "logic/replace-synthetic-performance-ec-with-a-measured-gate.md"
+digest = "sha256:81b762da83509ba5a1eea59fa12344e01c902ae2efaf3f5efc26f751441e9311"
+ir_digest = "sha256:9a4b281a57693872d306921b19d486e23cacd267d4185d786d0fff028abfaeca"
+section_count = 3
 
 [[files]]
 path = "logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md"
