@@ -9,47 +9,46 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: keep-sift-operational-telemetry-applicability
-entry: start
+id: keep-sift-operational-telemetry-contract
+entry: parse
 nodes:
-  start:
+  parse:
     kind: start
-    label: Keep process starts with service-owned logging options
-  resolve:
+    label: Parse Keep server options and environment
+  config:
     kind: process
-    label: Resolve log level, log format, and optional OTLP endpoint from Keep configuration
-  shared:
+    label: Map pretty or json log format and optional OTLP endpoint into shared HttpConfig
+  identity:
     kind: process
-    label: Compose libs/service-observability with identity keep and the package version
-  stdout:
+    label: Initialize shared tracing once with service identity keep and package version before startup logs
+  request:
     kind: process
-    label: JSON mode emits axiom.service.log.v1 lines to stdout with W3C-compatible request correlation
-  collector:
+    label: Existing service-http trace layer records canonical W3C correlation on HTTP request spans
+  jsonl:
     kind: process
-    label: Sift-owned collector reads stdout and attaches routing, credentials, and delivery policy outside Keep
-  query:
+    label: Shared JSON formatter writes bounded axiom.service.log.v1 records to stdout
+  external:
     kind: process
-    label: VAT starts a real Keep process, collects records through Sift, and queries durable Sift evidence
-  done:
+    label: Deployment-owned Sift collector tails stdout and owns endpoint, auth, batching, retry, and ingestion routing
+  proof:
     kind: terminal
-    label: Keep remains Sift-agnostic while its operational events are queryable by stable service identity
+    label: Local real-process contract and Sift VAT ingestion query both pass without a Keep to Sift dependency
 edges:
-  - { from: start, to: resolve }
-  - { from: resolve, to: shared }
-  - { from: shared, to: stdout }
-  - { from: stdout, to: collector }
-  - { from: collector, to: query }
-  - { from: query, to: done }
+  - { from: parse, to: config }
+  - { from: config, to: identity }
+  - { from: identity, to: request }
+  - { from: request, to: jsonl }
+  - { from: jsonl, to: external }
+  - { from: external, to: proof }
 ---
 flowchart TD
-  start[Keep process starts with service-owned logging options] --> resolve[Resolve log level, log format, and optional OTLP endpoint]
-  resolve --> shared[Compose shared service-observability with identity keep]
-  shared --> stdout[JSON mode emits axiom.service.log.v1 stdout records with W3C correlation]
-  stdout --> collector[Sift-owned collector performs routing and delivery outside Keep]
-  collector --> query[VAT starts Keep, collects with Sift, and queries durable evidence]
-  query --> done[Keep stays Sift-agnostic and events remain queryable]
+  parse[Parse Keep server options and environment] --> config[Map log format and optional OTLP endpoint into shared HttpConfig]
+  config --> identity[Initialize shared tracing with keep identity before startup logs]
+  identity --> request[Existing service-http layer records canonical W3C request correlation]
+  request --> jsonl[Shared JSON formatter writes axiom.service.log.v1 to stdout]
+  jsonl --> external[Deployment-owned Sift collector owns transport and delivery]
+  external --> proof[Local producer and Sift VAT ingestion proofs pass without direct coupling]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
