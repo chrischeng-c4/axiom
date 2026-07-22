@@ -3,8 +3,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
-      - --target=sift
+      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.sift
       - --tag=${_REGISTRY}/sift:${_TAG}
       - .
 
