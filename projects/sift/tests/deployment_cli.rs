@@ -30,6 +30,19 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(dockerfile.contains("COPY --chown=65532:65532"));
     assert!(dockerfile.contains("next:"));
 
+    let release_dockerfile = sift(&[
+        "dockerfile",
+        "render",
+        "--variant",
+        "release",
+        "--version",
+        "sift@0.1.0",
+    ]);
+    assert!(release_dockerfile.contains("SIFT_VERSION=0.1.0"));
+    assert!(release_dockerfile.contains("x86_64-unknown-linux-gnu"));
+    assert!(release_dockerfile.contains("aarch64-unknown-linux-gnu"));
+    assert!(release_dockerfile.contains("install -m 755"));
+
     let crd = sift(&["k8s", "crd", "render"]);
     assert!(crd.contains("kind: CustomResourceDefinition"));
     assert!(crd.contains("sifts.sift.axiom.dev"));
