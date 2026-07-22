@@ -562,6 +562,10 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The operator and online CLI pull both ring and aws-lc-rs through the
+    // shared transport stack. Pick the ecosystem-wide provider before any
+    // TLS client (notably kube) initializes it.
+    peer_tls::install_default_crypto_provider();
     match Cli::parse().command {
         Command::Serve(args) => serve(args).await,
         Command::Collect(args) => collect(args).await,
@@ -612,6 +616,15 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn installs_rustls_provider_before_kubernetes_cli_initializes_tls() {
+        peer_tls::install_default_crypto_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 }
 

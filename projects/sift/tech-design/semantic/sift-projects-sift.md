@@ -226,7 +226,7 @@ changes:
     action: modify
     section: schema
     impl_mode: hand-written
-    description: "Unified service and agent-facing CLI ownership."
+    description: "Unified service and agent-facing CLI ownership, including shared Rustls crypto-provider installation before online Kubernetes and TLS paths initialize."
   - path: "projects/sift/tests/ingest_api.rs"
     action: modify
     section: schema

@@ -42,6 +42,7 @@ service-metrics = { package = "metrics-prometheus", path = "../../libs/metrics-p
 service-observability = { path = "../../libs/service-observability" }
 raft-core = { path = "../../libs/raft-core" }
 raft-host = { package = "raft-runtime", path = "../../libs/raft-runtime" }
+peer-tls = { path = "../../libs/peer-tls" }
 schemars = "0.8"
 sha2 = "0.10"
 tokio.workspace = true
@@ -50,6 +51,7 @@ tracing.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 
 [dev-dependencies]
+rustls = "0.23"
 serde_yaml.workspace = true
 tempfile = "3"
 vat = { path = "../../apps/vat", default-features = false, features = ["emulator"] }
