@@ -75,7 +75,7 @@ fn crd_flattens_cluster_spec() {
     assert!(props.get("storage").is_some());
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in operator.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2414" reason="unit-test section in operator.rs is hand-written pending codegen support">
 /// R2 — the rendered StatefulSet carries the downward-API env raft-runtime reads,
 /// the right replica count, keep's runtime knobs + disk tier, and drives a
 /// readiness/status contract.
@@ -106,7 +106,12 @@ fn render_emits_downward_api_statefulset() {
     ] {
         assert!(keys.contains(&k), "missing downward-API env {k}");
     }
-    for k in ["KEEP_HOST", "KEEP_DATA_DIR", "KEEP_SHARD_COUNT"] {
+    for k in [
+        "KEEP_HOST",
+        "KEEP_DATA_DIR",
+        "KEEP_SHARD_COUNT",
+        "KEEP_LOG_FORMAT",
+    ] {
         assert!(keys.contains(&k), "missing keep runtime env {k}");
     }
     // Durable disk tier + production hardening survive the enrichment.
@@ -130,10 +135,9 @@ fn render_emits_downward_api_statefulset() {
         of_kind(&objs, "ServiceAccount")["metadata"]["name"],
         "store"
     );
-    assert_eq!(
-        of_kind(&objs, "ConfigMap")["metadata"]["name"],
-        "store-config"
-    );
+    let config = of_kind(&objs, "ConfigMap");
+    assert_eq!(config["metadata"]["name"], "store-config");
+    assert_eq!(config["data"]["KEEP_LOG_FORMAT"], "json");
     assert_eq!(
         of_kind(&objs, "PodDisruptionBudget")["spec"]["maxUnavailable"],
         0
