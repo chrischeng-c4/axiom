@@ -36,13 +36,13 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
         "--variant",
         "release",
         "--version",
-        "sift@0.1.0",
+        "sift@0.1.1",
     ]);
-    assert!(release_dockerfile.contains("SIFT_VERSION=0.1.0"));
+    assert!(release_dockerfile.contains("SIFT_VERSION=0.1.1"));
     assert!(release_dockerfile.contains("ARG TARGETARCH=amd64"));
-    assert!(release_dockerfile.contains("x86_64-unknown-linux-gnu"));
-    assert!(release_dockerfile.contains("aarch64-unknown-linux-gnu"));
-    assert!(release_dockerfile.contains("install -m 755"));
+    assert!(release_dockerfile.contains("x86_64-unknown-linux-musl"));
+    assert!(release_dockerfile.contains("aarch64-unknown-linux-musl"));
+    assert!(release_dockerfile.contains("gcr.io/distroless/static-debian12:nonroot"));
     assert!(release_dockerfile.contains("sha256sum -c -"));
 
     let crd = sift(&["k8s", "crd", "render"]);
@@ -71,7 +71,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("kind: Sift"));
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("auth: \"off\""));
-    assert!(instance.contains("sift:0.1.0"));
+    assert!(instance.contains("sift:0.1.1"));
 
     let collector = sift(&[
         "k8s",
