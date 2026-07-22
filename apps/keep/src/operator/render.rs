@@ -158,7 +158,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2414" reason="logic section in render.rs is hand-written pending codegen support">
 /// The sharded, durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = shardCount * replicasPerShard`, the raft-runtime env quartet + the
 /// headless-service env, the `/data` PVC) hardened with keep's probes, security
@@ -196,6 +196,7 @@ fn statefulset(keep: &Keep, cx: &RenderCtx, headless: &str) -> Value {
         from_cfg("KEEP_PORT"),
         from_cfg("KEEP_SHARDS"),
         from_cfg("KEEP_LOG_LEVEL"),
+        from_cfg("KEEP_LOG_FORMAT"),
     ];
 
     let mut sts = render::sharded_statefulset(ShardedStatefulSet {
