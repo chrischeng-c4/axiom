@@ -1,17 +1,17 @@
 # GCP operator acceptance: Lumen, then Sift
 
-This harness is a short-lived, low-cost GKE proof for the shared service
+This harness is a low-cost GKE proof for the shared service
 operator shape. It completes an independent Lumen acceptance phase first; only
 then does it install Sift and its node-level collector to collect Lumen's real
 structured stdout. The image, Terraform, manifest-rendering, evidence, and
 cleanup boundaries remain reusable for Tape, Relay, and Defer.
 
-It creates exactly these billable resources, all tagged with one `RUN_ID`:
+It keeps one named Standard GKE test cluster between runs, then creates these
+short-lived resources tagged with one `RUN_ID`:
 
-- one zonal Standard GKE cluster with a bounded 1–2 node `e2-standard-2` pool;
 - one force-destroy GCS backup bucket with uniform bucket access, enforced
   public-access prevention, and a one-day object lifecycle;
-- one disposable GKE node service account and one shared backup GSA;
+- one shared backup GSA;
 - bucket-scoped `roles/storage.objectAdmin` for that backup GSA;
 - Workload Identity bindings for `lumen/lumen-backup` and
   `sift/sift-backup`.
@@ -61,8 +61,8 @@ iamcredentials.googleapis.com
 storage.googleapis.com
 ```
 
-The caller needs permission to submit Cloud Builds, create/delete Standard GKE
-clusters, node pools and service accounts, bind IAM, create/delete one bucket, and push to
+The caller needs permission to submit Cloud Builds, create/delete the initial Standard GKE
+cluster, bind IAM, create/delete one bucket, and push to
 the existing Docker repository. Required local commands are `cargo`, `curl`,
 `gcloud`, `git`, `jq`, `kubectl`, and `terraform`.
 
@@ -87,6 +87,15 @@ ARTIFACT_REGISTRY_REPOSITORY=courier \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
+The first run bootstraps `axiom-operator-acceptance`; later runs reuse it. To
+create it explicitly (or select a different persistent name), run:
+
+```bash
+PROJECT_ID=axiom-502607 REGION=asia-east1 GKE_ZONE=asia-east1-a \
+PERSISTENT_CLUSTER_NAME=axiom-operator-acceptance \
+benchmarks/gcp-operator-acceptance/scripts/bootstrap-cluster.sh
+```
+
 `run.sh` performs this order:
 
 1. verify pre-existing APIs/repository and build the Lumen/Sift deployment
@@ -96,9 +105,8 @@ benchmarks/gcp-operator-acceptance/scripts/run.sh
 3. resolve both pushed tags to `sha256` digest references;
 4. use each app CLI to render CRD, operator, and instance layers, then validate
    the overlays with `kubectl kustomize`;
-5. create the zonal Standard cluster and bounded node pool, GCS bucket, GSA,
-   and Workload Identity edges
-   from local Terraform state;
+5. bootstrap or reuse the zonal Standard cluster and bounded node pool, then
+   create only the run-scoped GCS bucket, GSA, and Workload Identity edges;
 6. apply only the CLI-rendered Lumen layers, require status generation, perform
    operator drift/takeover tests, verify persistence and GCS backup, then
    require the exact 1-to-2 shard transition;
@@ -106,13 +114,15 @@ benchmarks/gcp-operator-acceptance/scripts/run.sh
    run its drift/takeover tests, deploy its CLI-rendered Standard-GKE CRI
    collector, and query the materialized Sift log produced by a new Lumen
    collection event; then prove Sift's live backup reaches GCS;
-8. cancel any still-running Cloud Build, destroy Terraform resources, remove
-   only run-tagged image tags/digests and the exact Cloud Build source prefix,
-   and independently verify cleanup.
+8. cancel any still-running Cloud Build, delete app namespaces and CRDs,
+   destroy only run-scoped Terraform resources, remove only run-tagged image
+   tags/digests and the exact Cloud Build source prefix, and independently
+   verify cleanup. The persistent cluster stays available for the next run.
 
 The cloud portion has a hard maximum of 2,700 seconds (45 minutes). `EXIT`,
-`INT`, `TERM`, failures, and the watchdog all enter the same cleanup trap.
-There is intentionally no keep-resources switch.
+`INT`, `TERM`, failures, and the watchdog all enter the same cleanup trap. A
+separate explicit cluster teardown is deliberately required; a normal run
+never deletes the reusable cluster.
 
 If a shell or machine failure prevents the trap from finishing, rerun cleanup
 with the values printed in `run.json`:

@@ -25,6 +25,12 @@ variable "gke_zone" {
   }
 }
 
+variable "cluster_name" {
+  description = "Pre-existing persistent Standard GKE cluster used by every acceptance run."
+  type        = string
+  default     = "axiom-operator-acceptance"
+}
+
 variable "node_machine_type" {
   description = "Smallest general-purpose Standard GKE machine shape used by this disposable acceptance run."
   type        = string

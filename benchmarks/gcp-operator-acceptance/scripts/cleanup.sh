@@ -12,6 +12,7 @@ set -euo pipefail
 : "${GCS_SOURCE_PREFIX:?GCS_SOURCE_PREFIX is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
+PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 export KUBECONFIG
 
@@ -64,6 +65,10 @@ delete_run_image() {
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
+  kubectl delete namespace lumen lumen-system sift sift-system \
+    --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
+    --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
 fi
 
 if [[ -f "$STATE_DIR/cloud-build-id.txt" ]]; then
@@ -109,4 +114,5 @@ gcloud storage rm --recursive "${GCS_SOURCE_PREFIX}/**" >/dev/null 2>&1 || true
 PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" \
   REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
   GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
+  PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
   "$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
