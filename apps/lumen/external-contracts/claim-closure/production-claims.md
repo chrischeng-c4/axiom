@@ -647,7 +647,7 @@ e2e_tests:
     claim_id: stale-single-member-hpa-handoff-deletion
     contract_id: dynamic-stale-hpa-handoff
     category: behavior
-    command: "cargo test -p lumen --features operator prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+    command: "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
     assertions:
       - "The reconcile loop deletes a stale operator-rendered HPA when fixed shard topology takes ownership."
   - id: lumen-claim-dynamic-post-cutover-usage-freshness
@@ -688,7 +688,7 @@ e2e_tests:
     claim_id: topology-transition-hpa-handoff-deletion
     contract_id: k8s-topology-hpa-handoff
     category: behavior
-    command: "cargo test -p lumen --features operator prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+    command: "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
     assertions:
       - "The Kubernetes reconcile loop deletes stale autoscaling state when fixed storage topology takes over."
 
