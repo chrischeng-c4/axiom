@@ -47,3 +47,28 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-full-width-titlebar-tabs-verification
+requirements:
+  full_width_titlebar_tabs:
+    id: R1
+    text: "Terminal tabs are attached to a native titlebar accessory and remain visible above terminal content."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testTerminalTabsUseFullWidthTitlebarAccessory
+  native_package_builds:
+    id: R2
+    text: "The native macOS package compiles and its test suite passes with the full-width titlebar tab host."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+---
+flowchart TD
+    r1[R1 full width titlebar tabs] --> workbenchmacuitests_testterminaltabsusefullwidthtitlebaraccessory[WorkbenchMacUITests.testTerminalTabsUseFullWidthTitlebarAccessory]
+    r2[R2 native package builds] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
