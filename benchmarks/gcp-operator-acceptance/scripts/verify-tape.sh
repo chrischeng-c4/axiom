@@ -137,7 +137,9 @@ capture_topology_diagnostics() {
 pod_forward_pids=()
 
 pod_port() {
-  echo $((18130 + "$1"))
+  # No quotes inside arithmetic: bash rejects $((18130 + "0")) outright, and
+  # this line first executes only once a run survives into the failover leg.
+  echo $((18130 + $1))
 }
 
 stop_pod_forwards() {
