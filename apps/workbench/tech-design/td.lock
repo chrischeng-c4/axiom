@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T12:59:11.015923+00:00"
-digest = "sha256:0214d5fccf07f0b1d5148be0a6b5a183e146174cc8d8325a05c20a46e9ab860a"
-source_digest = "sha256:0214d5fccf07f0b1d5148be0a6b5a183e146174cc8d8325a05c20a46e9ab860a"
-ir_digest = "sha256:5b7905e7b0e4b863817f7d95bd9119de9d442cc022c9261f4bb33c33551cbefe"
+generated_at = "2026-07-23T13:26:16.824459+00:00"
+digest = "sha256:5c40d0f94088aa645fadde4392d57ac0cb948b390ee4e77bb760ca3f53fbd545"
+source_digest = "sha256:5c40d0f94088aa645fadde4392d57ac0cb948b390ee4e77bb760ca3f53fbd545"
+ir_digest = "sha256:2987ea94ae23d765df9eefa643e98a94efab75088a13d3b3ab045ca2f374d66a"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -89,6 +89,12 @@ section_count = 3
 path = "logic/lift-terminal-tabs-into-titlebar.md"
 digest = "sha256:246faf5a6f32f8901a7f39941f936f00fd0186e154937eec254186cb5b6f4fe4"
 ir_digest = "sha256:5ac17d5697c928b6296974a8b59e3a91e866b341de94d8f9e58b4ee43a0b7ff2"
+section_count = 3
+
+[[files]]
+path = "logic/make-native-titlebar-terminal-tabs-full-width.md"
+digest = "sha256:6f7344a0a734fe91e3d3b3b8fc213e44670701fcf37c3512438951d1bb36c6c4"
+ir_digest = "sha256:065850fce795bfbaf06e9a57e0ccfa3e8c2bc63698a890014001905ac68035ed"
 section_count = 3
 
 [[files]]
