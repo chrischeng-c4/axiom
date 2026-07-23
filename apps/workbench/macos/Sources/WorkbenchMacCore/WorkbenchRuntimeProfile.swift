@@ -8,7 +8,7 @@ public enum WorkbenchRuntimeProfile: String, CaseIterable, Sendable {
     case beta
 
     public static func from(bundle: Bundle = .main) -> WorkbenchRuntimeProfile {
-        guard let value = bundle.object(forInfoDictionaryKey: "WorkbenchRuntimeProfile") as? String,
+        guard let value = bundle.object(forInfoDictionaryKey: "WORKBENCH_RUNTIME_PROFILE") as? String,
               let profile = WorkbenchRuntimeProfile(rawValue: value)
         else {
             return .stable

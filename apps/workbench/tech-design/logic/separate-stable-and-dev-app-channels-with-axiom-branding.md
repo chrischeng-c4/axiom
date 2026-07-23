@@ -56,6 +56,11 @@ changes:
     section: contract
     impl_mode: hand-written
     description: Define stable and beta product configurations with separate name, bundle identifier, runtime profile, and asset catalog.
+  - path: apps/workbench/macos/Info.plist
+    action: create
+    section: contract
+    impl_mode: hand-written
+    description: Expand the configuration-owned runtime profile into each app bundle's Info.plist.
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchRuntimeProfile.swift
     action: create
     section: contract
