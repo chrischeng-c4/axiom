@@ -25,6 +25,12 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
     let mut roles = BTreeSet::new();
     for module in ir.modules.iter().filter(|m| m.path.starts_with("src/")) {
         let name = module.path.trim_end_matches(".py").rsplit('/').next().unwrap_or_default();
+        // Python package markers carry import topology only. They have no
+        // target-native declaration, so emitting an empty Rust module for
+        // them would add noise without preserving any TD contract.
+        if module.declarations.is_empty() && name == "__init__" {
+            continue;
+        }
         if !ident(name) || module.declarations.is_empty() { bail!("unsupported Python TD module `{}` for Rust target", module.id); }
         let role = match &module.role {
             super::python_td::PythonTdRole::Domain => "domain",

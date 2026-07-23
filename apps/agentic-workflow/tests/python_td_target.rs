@@ -11,6 +11,14 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn todo_td() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap()
+        .join("examples/todo-app/td")
+}
+
 fn snapshot(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     let mut files = walkdir::WalkDir::new(root)
         .into_iter()
@@ -150,6 +158,50 @@ fn td_gen_rust_target_routes_to_native_emitter() {
     assert!(result.status.success(), "stderr={}", String::from_utf8_lossy(&result.stderr));
     assert!(output.path().join("Cargo.toml").is_file());
     assert!(output.path().join("tests/generated_inventory.rs").is_file());
+}
+
+#[test]
+fn todo_python_td_generates_a_compiling_rust_target_through_the_cli() {
+    let output = tempfile::tempdir().unwrap();
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap()
+        .to_path_buf();
+    let result = Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args([
+            "td",
+            "gen",
+            "--target",
+            "rust",
+            "--source-root",
+            todo_td().to_str().unwrap(),
+            "--output-dir",
+            output.path().to_str().unwrap(),
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "Todo Python TD Rust generation failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(output.path().join("src/domain/todo.rs").is_file());
+    assert!(output.path().join("src/interface/todo_ui.rs").is_file());
+
+    let test = Command::new("cargo")
+        .args(["test", "--quiet"])
+        .current_dir(output.path())
+        .output()
+        .unwrap();
+    assert!(
+        test.status.success(),
+        "generated Todo Rust target tests failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&test.stdout),
+        String::from_utf8_lossy(&test.stderr)
+    );
 }
 
 #[test]
