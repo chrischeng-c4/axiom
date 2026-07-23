@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T08:24:07.864456+00:00"
-digest = "sha256:d0d3d0395dfda8781973ff9813428098c912c159204ec923d518a906b9b709d1"
-source_digest = "sha256:d0d3d0395dfda8781973ff9813428098c912c159204ec923d518a906b9b709d1"
-ir_digest = "sha256:dcaca81e58a24e9e21351b52f7b15d95fe540b1ec15d6f5ca8c24c1047b83447"
+generated_at = "2026-07-23T09:05:39.393996+00:00"
+digest = "sha256:dbf9f6ee126da9679514d69924ae4f1c4019be8e14545f85bc6217b81664b45c"
+source_digest = "sha256:dbf9f6ee126da9679514d69924ae4f1c4019be8e14545f85bc6217b81664b45c"
+ir_digest = "sha256:e0acde9b9e565124207e159e7c22b074e2ed4d0eedd39b685b0e53768e0d6704"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -35,6 +35,12 @@ section_count = 3
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
 digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
 ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
+section_count = 3
+
+[[files]]
+path = "logic/add-an-auxiliary-files-section-beside-the-terminal.md"
+digest = "sha256:34af588fc901258a5f52d7a218cf71c52d69751e0972438a5bfb5477c51ddd61"
+ir_digest = "sha256:b9147a4cbd02aa73a24d5036128cebcbf870f169facedd6a1191af47409e7440"
 section_count = 3
 
 [[files]]
@@ -87,8 +93,8 @@ section_count = 3
 
 [[files]]
 path = "logic/separate-stable-and-dev-app-channels-with-axiom-branding.md"
-digest = "sha256:fe608dbf6d9a1ca7feb5d5b0fc50453a7287d14832cc99bd16dce86f4f5bc384"
-ir_digest = "sha256:d42eeee38d32c1ae11321f45f08b2f01e3af154813e7ae69d7af84ac2f59cea5"
+digest = "sha256:3c04c5826dae2289d8f7a7a0169e57511babd89d0e383fcdaa75ebf0f34aad3e"
+ir_digest = "sha256:406b1fcad5577ea8a81c1bfe563c419a7159661b29d79f159fc5028fd6426c8b"
 section_count = 3
 
 [[files]]
