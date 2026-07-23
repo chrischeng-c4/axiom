@@ -28,6 +28,24 @@ check_empty() {
   fi
 }
 
+wait_for_empty() {
+  local label="$1"
+  shift
+  local deadline=$((SECONDS + 90))
+  local output
+  while true; do
+    output="$("$@" 2>/dev/null || true)"
+    [[ -z "$output" ]] && return 0
+    if (( SECONDS >= deadline )); then
+      echo "leftover ${label} after 90-second propagation wait:" >&2
+      echo "$output" >&2
+      leftovers=1
+      return 0
+    fi
+    sleep 5
+  done
+}
+
 if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" >/dev/null 2>&1; then
   echo "persistent GKE cluster is missing: $PERSISTENT_CLUSTER_NAME" >&2
@@ -45,7 +63,7 @@ check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" 
   --filter="name=${bucket}" --format='value(name)'
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
   --filter="email:${prefix}-node@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
-check_empty "backup service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
+wait_for_empty "backup service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
   --filter="email:${prefix}-backup@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
 check_empty "persistent disk" gcloud compute disks list --project="$PROJECT_ID" \
   --filter="name~'${prefix}|gke-${prefix}'" --format='value(name)'

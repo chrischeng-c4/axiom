@@ -29,6 +29,7 @@ rg -F '-var="lumen_only=$LUMEN_ONLY"' "$RUN_SCRIPT" >/dev/null
 rg -F '-var="lumen_only=$LUMEN_ONLY"' "$CLEANUP_SCRIPT" >/dev/null
 rg -F 'LUMEN_ONLY="$LUMEN_ONLY"' "$RUN_SCRIPT" >/dev/null
 rg -F 'LUMEN_ONLY="$LUMEN_ONLY"' "$CLEANUP_SCRIPT" >/dev/null
+rg -F 'wait_for_empty "backup service account"' "$VERIFY_CLEAN_SCRIPT" >/dev/null
 jq -e '.properties.mode.enum == ["full", "lumen-only"]' "$SCHEMA" >/dev/null
 jq -e '.properties.acceptance.required == ["lumen"]' "$SCHEMA" >/dev/null
 
