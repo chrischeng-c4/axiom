@@ -294,9 +294,20 @@ else
 fi
 
 cleanup_armed=1
+# The watchdog polls its parent between short sleeps and disarms itself the
+# moment the parent is gone. A single long sleep followed by an unconditional
+# `kill -TERM $$` outlives a parent that died without reaching cleanup(), and
+# minutes later fires at whatever process RECYCLED the parent's pid — attempt
+# 0723113842 was killed exactly that way by a prior run's leftover.
+run_main_pid="$$"
 (
-  sleep "$MAX_CLOUD_SECONDS"
-  kill -TERM "$$" >/dev/null 2>&1 || true
+  waited=0
+  while (( waited < MAX_CLOUD_SECONDS )); do
+    sleep 10
+    waited=$((waited + 10))
+    kill -0 "$run_main_pid" >/dev/null 2>&1 || exit 0
+  done
+  kill -TERM "$run_main_pid" >/dev/null 2>&1 || true
 ) &
 watchdog_pid="$!"
 

@@ -21,7 +21,12 @@ stop_forward() {
     forward_pid=""
   fi
 }
-trap stop_forward EXIT INT TERM
+trap stop_forward EXIT INT
+# Stray TERMs killed run 0723113842's verify mid-loop (a leftover watchdog
+# firing into a recycled pid). The legitimate deadline TERM targets run.sh,
+# never this child, so ignoring TERM here is safe and makes the verify immune
+# to that class; run.sh's cleanup still reclaims everything if the parent dies.
+trap '' TERM
 
 start_forward() {
   stop_forward
