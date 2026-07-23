@@ -172,6 +172,27 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
             .with_context(|| format!("create bootstrap data dir {}", data_dir.display()))?;
     }
 
+    // A single-node tape has no raft applied index, so its `/admin/backup`
+    // snapshot honestly carries `up_to: 0` — but raft treats a snapshot at
+    // index 0 as nonexistent, so seeding it verbatim boots a Ready replica
+    // group with an EMPTY journal (#2465; GKE runs 0723113842/0723120246).
+    // Install such a seed at a real genesis index instead, rewriting the
+    // embedded `up_to` so the raft snapshot metadata and the state machine
+    // agree on every identically-seeded member.
+    let (seed_index, seed_bytes) = if snapshot.up_to == 0 {
+        let genesis = JournalSnapshot {
+            up_to: 1,
+            journal: snapshot.journal,
+            completed_proposals: snapshot.completed_proposals,
+        };
+        (
+            1,
+            serde_json::to_vec(&genesis).context("re-encode genesis bootstrap snapshot")?,
+        )
+    } else {
+        (snapshot.up_to, bytes.to_vec())
+    };
+
     let raft_dir = data_dir.join("raft");
     let store = RaftStore::open(
         raft_dir
@@ -180,7 +201,7 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
         node_id,
         FsyncPolicy::Always,
     )?;
-    store.seed_snapshot(snapshot.up_to, 0, bytes.to_vec())?;
+    store.seed_snapshot(seed_index, 0, seed_bytes)?;
     Ok(())
 }
 // </HANDWRITE>
