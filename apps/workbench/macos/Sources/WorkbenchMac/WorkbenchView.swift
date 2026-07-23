@@ -9,13 +9,21 @@ import WorkbenchMacCore
 struct WorkbenchView: View {
     @ObservedObject var model: WorkbenchModel
     @State private var projectPendingRemoval: RegisteredProject?
+    private let runtimeProfile = WorkbenchRuntimeProfile.from()
 
     var body: some View {
         NavigationSplitView {
             folderSidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
-            terminalWorkspace
+            HStack(spacing: 0) {
+                if runtimeProfile == .beta {
+                    auxiliaryColumn
+                        .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
+                    Divider()
+                }
+                terminalWorkspace
+            }
         }
         .navigationTitle("Workbench")
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
@@ -139,6 +147,96 @@ struct WorkbenchView: View {
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var auxiliaryColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("AUXILIARY")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("Files")
+                    .font(.headline.weight(.semibold))
+            }
+
+            if let project = model.projects.first(where: { $0.id == model.selectedProjectId }) {
+                Text(project.rootPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("auxiliary.files.root")
+            }
+
+            filesContent
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+        .accessibilityIdentifier("auxiliary.column")
+        .accessibilityLabel("Auxiliary Files")
+    }
+
+    @ViewBuilder
+    private var filesContent: some View {
+        switch model.projectFileListing {
+        case .noProject:
+            ContentUnavailableView(
+                "No project selected",
+                systemImage: "folder",
+                description: Text("Select a project to see its top-level files.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 160)
+            .accessibilityIdentifier("auxiliary.files.no-project")
+        case .empty:
+            ContentUnavailableView(
+                "No visible files",
+                systemImage: "folder",
+                description: Text("This project root has no visible top-level items.")
+            )
+            .frame(maxWidth: .infinity, minHeight: 160)
+            .accessibilityIdentifier("auxiliary.files.empty")
+        case let .unavailable(message):
+            ContentUnavailableView(
+                "Files unavailable",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message)
+            )
+            .frame(maxWidth: .infinity, minHeight: 160)
+            .accessibilityIdentifier("auxiliary.files.unavailable")
+        case let .available(entries, isTruncated):
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(entries) { entry in
+                        HStack(spacing: 8) {
+                            Image(systemName: entry.kind == .directory ? "folder.fill" : "doc")
+                                .foregroundStyle(entry.kind == .directory ? Color.accentColor : Color.secondary)
+                                .frame(width: 16)
+                                .accessibilityHidden(true)
+                            Text(entry.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: 28)
+                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("auxiliary.file.(entry.id)")
+                        .accessibilityLabel("\(entry.kind == .directory ? "Folder" : "File") \(entry.name)")
+                    }
+                    if isTruncated {
+                        Text("Showing the first \(ProjectFileListing.maximumEntries) visible items.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                            .accessibilityIdentifier("auxiliary.files.truncated")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityIdentifier("auxiliary.files.list")
+        }
     }
 
     private var terminalTabStrip: some View {

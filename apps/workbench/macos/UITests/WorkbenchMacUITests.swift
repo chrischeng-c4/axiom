@@ -2,6 +2,31 @@
 import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
+    @MainActor
+    func testFilesAuxiliaryColumnShowsFixtureEntries() throws {
+        continueAfterFailure = false
+
+        let fixtureFolder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workbench-files-ui-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureFolder) }
+        try FileManager.default.createDirectory(at: fixtureFolder.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: fixtureFolder.appendingPathComponent("README.md").path, contents: Data())
+
+        let app = XCUIApplication()
+        app.terminate()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchEnvironment["WORKBENCH_UI_TEST_FOLDER"] = fixtureFolder.path
+        app.launch()
+        defer { app.terminate() }
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.column"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.files.list"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("Sources").path)"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("README.md").path)"].exists)
+    }
+
     /// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#unit-test
     @MainActor
     func testNativeShellJourney() throws {

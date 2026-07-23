@@ -69,17 +69,25 @@ public final class WorkbenchModel: ObservableObject {
     @Published public private(set) var projects: [RegisteredProject]
     @Published public private(set) var selectedProjectId: String?
     @Published public private(set) var selectedFolder: URL?
+    @Published public private(set) var projectFileListing: ProjectFileListingState
     @Published public private(set) var statusMessage = "Add a project, then explicitly start a terminal."
 
     private let client: any CoreClientProtocol
     private let projectStore: ProjectStore
+    private let fileListing: ProjectFileListing
     private var pollTask: Task<Void, Never>?
 
-    public init(client: any CoreClientProtocol = RustCoreClient(), projectStore: ProjectStore = ProjectStore()) {
+    public init(
+        client: any CoreClientProtocol = RustCoreClient(),
+        projectStore: ProjectStore = ProjectStore(),
+        fileListing: ProjectFileListing = ProjectFileListing()
+    ) {
         self.client = client
         self.projectStore = projectStore
+        self.fileListing = fileListing
         tabs = Self.defaultTabs
         activeTabId = Self.defaultTabs[0].id
+        projectFileListing = .noProject
         let loaded = projectStore.load()
         projects = loaded
         if let first = loaded.first {
@@ -103,6 +111,7 @@ public final class WorkbenchModel: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }) else { return }
         selectedProjectId = project.id
         selectedFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
+        projectFileListing = fileListing.load(root: selectedFolder)
     }
 
     public func removeProject(_ id: String) {
@@ -112,6 +121,7 @@ public final class WorkbenchModel: ObservableObject {
         if selectedProjectId == id {
             selectedProjectId = nil
             selectedFolder = nil
+            projectFileListing = .noProject
             if let next = projects.first {
                 selectProject(next.id)
             }

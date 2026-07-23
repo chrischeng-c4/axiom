@@ -17,6 +17,7 @@
 		200000000000000000000009 /* DiagnosticLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000011 /* DiagnosticLog.swift */; };
 		200000000000000000000010 /* LocalRuntimeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000012 /* LocalRuntimeServer.swift */; };
 		200000000000000000000011 /* WorkbenchRuntimeProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000013 /* WorkbenchRuntimeProfile.swift */; };
+		200000000000000000000014 /* ProjectFileListing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000016 /* ProjectFileListing.swift */; };
 		200000000000000000000012 /* Stable assets in Resources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000014 /* Stable */; };
 		200000000000000000000013 /* Beta assets in Resources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000015 /* Beta */; };
 		200000000000000000000006 /* WorkbenchMacUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101000000000000000000006 /* WorkbenchMacUITests.swift */; };
@@ -49,6 +50,7 @@
 		101000000000000000000013 /* WorkbenchRuntimeProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchRuntimeProfile.swift; sourceTree = "<group>"; };
 		101000000000000000000014 /* Stable */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets/Stable; sourceTree = SOURCE_ROOT; };
 		101000000000000000000015 /* Beta */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets/Beta; sourceTree = SOURCE_ROOT; };
+		101000000000000000000016 /* ProjectFileListing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectFileListing.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -112,6 +114,7 @@
 				101000000000000000000011 /* DiagnosticLog.swift */,
 				101000000000000000000012 /* LocalRuntimeServer.swift */,
 				101000000000000000000013 /* WorkbenchRuntimeProfile.swift */,
+				101000000000000000000016 /* ProjectFileListing.swift */,
 			);
 			name = WorkbenchMacCore;
 			path = Sources/WorkbenchMacCore;
@@ -274,6 +277,7 @@
 				200000000000000000000009 /* DiagnosticLog.swift in Sources */,
 				200000000000000000000010 /* LocalRuntimeServer.swift in Sources */,
 				200000000000000000000011 /* WorkbenchRuntimeProfile.swift in Sources */,
+				200000000000000000000014 /* ProjectFileListing.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
