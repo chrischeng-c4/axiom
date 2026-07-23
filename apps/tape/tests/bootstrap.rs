@@ -42,6 +42,41 @@ async fn file_snapshot_seeds_fresh_pvc_before_raft_catch_up() {
     assert_eq!(events[0].payload["n"], 7);
 }
 
+/// #2443: a freshly provisioned cloud PV mounts its ext4 filesystem root at
+/// the data dir, so `lost+found` exists on every real PVC. It is mkfs output,
+/// not raft state, and must not block a cold seed.
+#[test]
+fn ext4_lost_and_found_alone_is_not_raft_state() {
+    let source = Arc::new(Mutex::new(TapeJournal::default()));
+    source
+        .lock()
+        .unwrap()
+        .append("orders", None, serde_json::json!({ "n": 9 }), Some(100));
+    let bytes = snapshot_bytes(&source, 7).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("lost+found")).unwrap();
+    prepare_bootstrap_seed(dir.path(), 2, &bytes).unwrap();
+    assert!(dir.path().join("raft").exists());
+}
+
+/// #2443: `lost+found` is the ONLY tolerated entry — anything else alongside
+/// it is still treated as existing raft state and refused.
+#[test]
+fn lost_and_found_plus_any_other_entry_is_still_rejected() {
+    let source = Arc::new(Mutex::new(TapeJournal::default()));
+    let bytes = snapshot_bytes(&source, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("lost+found")).unwrap();
+    let sentinel = dir.path().join("existing-state");
+    std::fs::write(&sentinel, b"keep").unwrap();
+
+    let err = prepare_bootstrap_seed(dir.path(), 0, &bytes).unwrap_err();
+    assert!(err.to_string().contains("empty data directory"), "{err:#}");
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+    assert!(!dir.path().join("raft").exists());
+}
+
 #[test]
 fn dirty_pvc_is_rejected_without_overwriting_local_state() {
     let source = Arc::new(Mutex::new(TapeJournal::default()));
