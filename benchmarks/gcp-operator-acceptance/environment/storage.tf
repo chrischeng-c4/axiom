@@ -29,6 +29,18 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
   member = "serviceAccount:${google_service_account.backup.email}"
 }
 
+# Direct workload-identity-federation grant for Tape's SERVING pods: run
+# 0723110114 proved the GSA-impersonation path (KSA annotation +
+# workloadIdentityUser binding) can still yield a pool-identity token that GCS
+# 403s, so the bucket additionally trusts the pod's federated principal
+# directly — no annotation or impersonation moving parts involved. Read-only:
+# the serving pod only fetches the exact bootstrapSeedUri object.
+resource "google_storage_bucket_iam_member" "tape_serving_reader" {
+  bucket = google_storage_bucket.backups.name
+  role   = "roles/storage.objectViewer"
+  member = "principal://iam.googleapis.com/projects/${var.project_number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape"
+}
+
 resource "google_service_account_iam_member" "backup_workload_identity" {
   for_each = toset([
     "lumen/lumen-backup",

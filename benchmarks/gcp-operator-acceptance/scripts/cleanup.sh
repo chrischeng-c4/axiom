@@ -108,6 +108,10 @@ if [[ -f "$STATE_DIR/cloud-build-id.txt" ]]; then
 fi
 
 if [[ -f "$state" ]]; then
+  # Self-contained for the post-crash recovery path: the run's exported
+  # environment is gone by then, so resolve the project number again here.
+  project_number="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)' 2>/dev/null || true)"
+  [[ "$project_number" =~ ^[0-9]+$ ]] || project_number="0"
   destroy_args=(
     -state="$state"
     -auto-approve
@@ -117,6 +121,7 @@ if [[ -f "$state" ]]; then
     -var="run_id=$RUN_ID"
     -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY"
     -var="image_tag=$IMAGE_TAG"
+    -var="project_number=$project_number"
   )
   for attempt in 1 2 3; do
     if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
