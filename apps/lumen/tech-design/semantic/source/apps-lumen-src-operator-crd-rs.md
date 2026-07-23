@@ -20,26 +20,26 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 320 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 459 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 297 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 511 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 327 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 466 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 304 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 518 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 483 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 264 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 163 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 434 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 415 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 347 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 135 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 308 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 335 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 274 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 283 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 588 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 673 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 569 | storage_pod_count(&self) -> i32 |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 490 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 271 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 170 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 205 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 441 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 422 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 354 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 142 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 315 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 342 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 281 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 290 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 595 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 680 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 576 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -157,6 +157,13 @@ pub struct LumenSpec {
     /// setting.
     #[serde(default)]
     pub tokens_secret_provider_class: Option<String>,
+
+    /// CSI driver name for the `tokensSecretProviderClass` projection.
+    /// Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed
+    /// Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE
+    /// instances must set that value (#2456).
+    #[serde(default)]
+    pub tokens_secret_csi_driver: Option<String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]

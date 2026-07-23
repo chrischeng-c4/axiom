@@ -88,7 +88,10 @@ fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>>
     tape.spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
+        .map(|provider_class| render::TokenRegistrySource::Csi {
+            provider_class,
+            driver: None,
+        })
 }
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">

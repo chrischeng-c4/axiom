@@ -98,7 +98,10 @@ fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_
         .spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
+        .map(|provider_class| render::TokenRegistrySource::Csi {
+            provider_class,
+            driver: lumen.spec.tokens_secret_csi_driver.as_deref(),
+        })
 }
 
 /// Stateful data pods are never a direct HPA target. A vanilla HPA changes

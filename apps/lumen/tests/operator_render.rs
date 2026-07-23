@@ -43,6 +43,7 @@ fn dev_spec() -> LumenSpec {
         auth: AuthMode::Off,
         tokens_secret: None,
         tokens_secret_provider_class: None,
+        tokens_secret_csi_driver: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 1,
@@ -69,6 +70,7 @@ fn prod_spec() -> LumenSpec {
         auth: AuthMode::Required,
         tokens_secret: Some("lumen-tokens".into()),
         tokens_secret_provider_class: None,
+        tokens_secret_csi_driver: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 6,
@@ -522,6 +524,31 @@ fn prod_wires_auth_via_csi_secret_provider_class() {
     assert_eq!(
         registry_volume["csi"]["volumeAttributes"]["secretProviderClass"],
         "lumen-tokens-spc"
+    );
+}
+
+#[test]
+fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
+    let mut spec = prod_spec();
+    spec.tokens_secret = None;
+    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
+    spec.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
+    let l = lumen("lumen", spec);
+    let objs = render(&l);
+
+    // GKE's managed Secrets Store add-on registers a different CSI driver
+    // name than the community default (#2456/#2457); an explicit
+    // `tokensSecretCsiDriver` must render that name on the pod volume.
+    let dep = find(&objs, "StatefulSet", "lumen");
+    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "lumen-token-registry")
+        .expect("token registry volume");
+    assert_eq!(
+        registry_volume["csi"]["driver"],
+        "secrets-store-gke.csi.k8s.io"
     );
 }
 

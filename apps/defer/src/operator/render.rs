@@ -64,7 +64,10 @@ fn token_source(defer: &Defer) -> Option<render::TokenRegistrySource<'_>> {
         .spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
+        .map(|provider_class| render::TokenRegistrySource::Csi {
+            provider_class,
+            driver: None,
+        })
 }
 
 pub fn render(defer: &Defer) -> Vec<Value> {

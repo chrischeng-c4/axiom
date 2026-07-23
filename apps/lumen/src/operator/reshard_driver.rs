@@ -2503,6 +2503,7 @@ mod tests {
             auth: Default::default(),
             tokens_secret: None,
             tokens_secret_provider_class: None,
+            tokens_secret_csi_driver: None,
             serving: ServingSpec::default(),
             reshard_policy: ReshardPolicy {
                 max_shard_bytes,
