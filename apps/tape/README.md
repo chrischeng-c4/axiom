@@ -283,6 +283,8 @@ explicit ack to advance it. This is Tape's high-QPS pull/replay comparison
 path. Subscription creation is intrinsically pull-only: Tape exposes no push,
 consumer-group, lease, or bidirectional consume surface. Cursor mutations use
 the existing committed checkpoint path rather than executor ownership state.
+`ack` accepts any monotonic in-range offset without verifying it was pulled;
+consumer libraries must self-enforce pull-then-ack.
 Gate Inventory:
 - apps/tape/src/lib.rs
 - apps/tape/src/bin/tape.rs
