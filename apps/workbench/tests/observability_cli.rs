@@ -83,5 +83,4 @@ fn public_argv_and_json_envelopes_are_exact() {
     assert_eq!(error.code, "invalid_arguments");
 }
 
-<!-- marker: missing-generator:contract:d5af2cf3 path: apps/workbench/tests/observability_cli.rs reason: Lock down accepted argv, JSON envelopes, registry validation, token propagation, payload bounds, and typed error codes. -->
 // HANDWRITE-END

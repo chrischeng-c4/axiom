@@ -37,6 +37,11 @@ pub mod context;
 /// @spec apps/workbench/tech-design/logic/prove-the-workbench-folder-to-agent-to-artifact-production-journ.md#logic
 pub mod production_journey;
 
+/// Read-only local snapshot and diagnostic CLI contract for the native client.
+///
+/// @spec apps/workbench/tech-design/interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md#contract
+pub mod observability_cli;
+
 /// Marker emitted only after the configured native window exists.
 pub const HOST_READY_MARKER: &str = "WORKBENCH_HOST_READY";
 

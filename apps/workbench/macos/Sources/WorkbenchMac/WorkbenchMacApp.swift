@@ -8,9 +8,16 @@ import WorkbenchMacCore
 @main
 struct WorkbenchMacApp: App {
     @StateObject private var model: WorkbenchModel
+    private let localRuntime: LocalRuntimeServer
 
     init() {
         let model = WorkbenchModel()
+        let localRuntime = LocalRuntimeServer()
+        do {
+            try localRuntime.start()
+        } catch {
+            WorkbenchDiagnosticLog.write("runtime.start_failed", details: ["error": error.localizedDescription])
+        }
         WorkbenchDiagnosticLog.write("app.started", details: [
             "executable": Bundle.main.executableURL?.path ?? "unknown",
         ])
@@ -20,6 +27,7 @@ struct WorkbenchMacApp: App {
             model.registerProject(URL(fileURLWithPath: fixtureFolder, isDirectory: true))
         }
         _model = StateObject(wrappedValue: model)
+        self.localRuntime = localRuntime
     }
 
     var body: some Scene {
@@ -29,6 +37,7 @@ struct WorkbenchMacApp: App {
                 .task { model.beginPolling() }
                 .onDisappear {
                     Task { await model.endPolling() }
+                    localRuntime.stop()
                 }
         }
         .defaultSize(width: 1280, height: 820)

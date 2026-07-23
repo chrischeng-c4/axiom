@@ -67,6 +67,27 @@ cleanup. It does not store vendor sessions or derive context cwd from terminal
 text. The production journey composes this runtime with authoritative
 cwd-to-context synchronization without adding vendor session ownership.
 
+## Local Snapshot and Diagnostics CLI
+
+The native `Workbench.app` publishes one owner-only, loopback-only runtime
+registry at `~/.axiom-workbench/runtime/current.json`. It is a local testing
+surface, not an agent-control plane: it can capture the Workbench content view
+or read the bounded diagnostic log, but cannot send terminal input, manage
+projects, start processes, or dispatch agents.
+
+```bash
+workbench snapshot --out /tmp/workbench.png
+workbench logs --tail 100
+```
+
+`snapshot` requires an already-running Workbench instance and writes only to
+the explicit caller path. It captures the app's own AppKit content view, not
+the screen, so it uses neither Accessibility nor screen-recording permission.
+`logs` works without the app running and reads only
+`~/.axiom-workbench/logs/workbench.log`; terminal input and output are never
+recorded there. Both commands emit one JSON result line and fail with a typed
+JSON error plus a runnable next step.
+
 ## Authoritative Active Cwd
 
 Active context follows explicit OSC 7 `file://localhost/...` control frames
@@ -196,4 +217,6 @@ cargo test -p workbench --test context_provenance -- --nocapture
 cargo test -p workbench --test graph_context_adapter -- --nocapture
 cargo test -p workbench --test derived_page_context_adapter -- --nocapture
 cargo test -p workbench --test production_journey -- --nocapture
+cargo test -p workbench --test observability_cli -- --nocapture
+swift test --package-path apps/workbench/macos
 ```

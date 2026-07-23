@@ -3,7 +3,7 @@
 
 use std::{
     env,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
@@ -230,5 +230,4 @@ fn invalid_arguments(message: impl Into<String>) -> CliError {
     CliError::new("invalid_arguments", message, "workbench snapshot --out /tmp/workbench.png")
 }
 
-<!-- marker: missing-generator:contract:ff9d0c0a path: apps/workbench/src/observability_cli.rs reason: Implement the versioned registry and line-delimited request/response contract, typed JSON result envelopes, bounded PNG validation, and atomic caller-directed writes. -->
 // HANDWRITE-END

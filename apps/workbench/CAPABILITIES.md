@@ -51,3 +51,4 @@ Gate Inventory:
 | optional-graph-adapter | change | #2199 | complete | verified | prototype | `graph_context_adapter` bounded compatibility payload, provenance, and failure isolation |
 | optional-derived-page-adapter | change | #2200 | complete | verified | prototype | `derived_page_context_adapter` bounded pages, citation provenance, freshness, and failure isolation |
 | production-journey | change | #2201 | complete | verified | production | `production_journey` plus `evidence/production-journey/v1/manifest.json` |
+| local-snapshot-and-diagnostics-cli | change | #2435 | in-progress | verified | prototype | `observability_cli` plus native Swift runtime tests |
