@@ -2267,6 +2267,25 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
     }
 }
 
+/// Repair the pre-EC-first persisted `aw td create <wi>` action when the
+/// tracker has already advanced beyond the only phase where TD creation is
+/// valid. The loop-state action is normally authoritative, but an old action
+/// must not override the current phase with a command that the CLI rejects.
+fn phase_routed_stale_loop_next_action(raw_command: &str, issue: &Issue) -> Option<String> {
+    let phase = issue.phase.as_deref().map(td_phase::normalize)?;
+    let advanced_phase = matches!(
+        phase,
+        td_phase::TD_CREATED
+            | td_phase::CB_GENNED
+            | "cb_fill_in_progress"
+            | td_phase::CB_FILLED
+            | td_phase::TD_MERGED
+    );
+    let stale_td_create =
+        raw_command.trim() == format!("aw td create {}", issue_cli_ref(issue));
+    (advanced_phase && stale_td_create).then(|| wi_change_lifecycle_step(issue).0)
+}
+
 /// #188 E1: build the run envelope from a WI's loop-state block. The loop's
 /// `next_action` (set by `decide_next_action` from the latest verifier result)
 /// is the authority: a command -> dispatch it (iterate or finalize); none ->
@@ -2290,7 +2309,9 @@ fn loop_state_envelope(
         // a blocked/HITL envelope naming the bad command instead of running
         // it verbatim.
         Some(raw_command) => {
-            match crate::cli::chain::normalize_legacy_next_action(raw_command, &slug) {
+            match phase_routed_stale_loop_next_action(raw_command, issue)
+                .or_else(|| crate::cli::chain::normalize_legacy_next_action(raw_command, &slug))
+            {
                 Some(command) => {
                     let converged = matches!(
                         loop_state.status,
@@ -4084,6 +4105,23 @@ workspaces = []
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
         assert_eq!(e.next.command, "aw td code-check 188");
+
+        // #2423: an old loop-state can still name `aw td create <wi>` after
+        // the CB fill has advanced the tracker. The loop must route by the
+        // current phase instead of emitting the rejected create command.
+        let mut filled = issue.clone();
+        filled.phase = Some("cb_filled".to_string());
+        let s = LoopState {
+            status: LoopStatus::Iterating,
+            next_action: Some("aw td create 188".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root.clone(), &filled, &s);
+        assert_eq!(e.action, "dispatch");
+        assert_eq!(
+            e.next.command,
+            "aw ec verify --project jet --required-only --wi 188"
+        );
 
         // An unparseable/unrepairable command must not dispatch verbatim —
         // fall through to blocked/HITL naming the bad command.
