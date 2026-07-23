@@ -2,10 +2,16 @@ version = 2
 project = "loom"
 ir_kind = "td"
 td_path = "apps/loom/tech-design"
-generated_at = "2026-07-20T10:03:34.828639+00:00"
-digest = "sha256:0f70a523bd282622a7ba73da2a1a31f438a7a7b64d8e728d25bfce2ff7d5a505"
-source_digest = "sha256:0f70a523bd282622a7ba73da2a1a31f438a7a7b64d8e728d25bfce2ff7d5a505"
-ir_digest = "sha256:80f2212910bdd9dea34c1ef1e8e892c80b8fb185f779296467948b0f10e175cd"
+generated_at = "2026-07-23T01:30:18.905821+00:00"
+digest = "sha256:368b820a75092dd578b7483c5f7a99ba3534787a280a223904080c2e006890bf"
+source_digest = "sha256:368b820a75092dd578b7483c5f7a99ba3534787a280a223904080c2e006890bf"
+ir_digest = "sha256:2425856d8c80b1722886fa6688c7c5769fc59407dde156bf4c26c12fb1b9a47a"
+
+[[files]]
+path = "interfaces/rest/adopt-sift-owned-operational-telemetry-contract.md"
+digest = "sha256:8f4b91815af6d10d163ea23b0e7856d14908b5b166054bb8f4517b1042b7b7d9"
+ir_digest = "sha256:78fb8ef6b59bd267405399ecb1fe4c33a315515dea05dc7e974a7c0ab7ae723d"
+section_count = 3
 
 [[files]]
 path = "specs/apps/loom/benchmark/celery_app.md"
