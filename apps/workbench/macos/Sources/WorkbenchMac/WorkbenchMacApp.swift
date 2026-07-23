@@ -1,4 +1,5 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:f6671efc" tracker="pending-tracker" reason="Bootstrap the macOS-only SwiftUI application and native commands."
+import AppKit
 import SwiftUI
 #if canImport(WorkbenchMacCore)
 import WorkbenchMacCore
@@ -15,6 +16,9 @@ struct WorkbenchMacApp: App {
         let localRuntime = LocalRuntimeServer()
         do {
             try localRuntime.start()
+        } catch LocalRuntimeError.alreadyRunning {
+            WorkbenchDiagnosticLog.write("runtime.already_running")
+            DispatchQueue.main.async { NSApp.terminate(nil) }
         } catch {
             WorkbenchDiagnosticLog.write("runtime.start_failed", details: ["error": error.localizedDescription])
         }
