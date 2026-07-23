@@ -247,10 +247,21 @@ pub enum Analyzer {
 // Index (write)
 // ---------------------------------------------------------------------------
 
+/// Maximum number of items accepted in one [`IndexRequest`]. `index` is the
+/// high-traffic partial-write path (unlike the full-replacement
+/// [`MAX_BATCH_REPLACE_SIZE`]/[`MAX_BATCH_SEARCH_SIZE`] batches, which stay
+/// at 32), so the cap is set well above those to avoid breaking bulk
+/// loaders while still bounding single-request raft-apply amplification. A
+/// request with more items than this is rejected with 400 before any
+/// per-item work starts.
+pub const MAX_INDEX_BATCH_SIZE: usize = 1000;
+
 /// `POST /collections/{id}/index` body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 pub struct IndexRequest {
+    /// At most [`MAX_INDEX_BATCH_SIZE`] items; a longer batch is rejected
+    /// with 400 before any item runs.
     pub items: Vec<IndexItem>,
     /// Optional idempotency key. Repeated requests within 5 min are
     /// silently deduplicated.

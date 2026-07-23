@@ -55,7 +55,7 @@ use crate::types::{
     ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchAllRequest,
     SearchAllResponse, SearchHit, SearchRequest, SearchResponse, StatsResponse, StorageStats,
     TermQuery, TermsQuery, VectorBackend, VectorMetric, VectorQuantize, VectorSpec,
-    MAX_BATCH_REPLACE_SIZE, MAX_BATCH_SEARCH_SIZE,
+    MAX_BATCH_REPLACE_SIZE, MAX_BATCH_SEARCH_SIZE, MAX_INDEX_BATCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -1134,6 +1134,8 @@ async fn drop_collection(
 // Index
 // ---------------------------------------------------------------------------
 
+/// At most [`MAX_INDEX_BATCH_SIZE`] items per request; a longer batch is
+/// rejected with 400 before any item runs.
 #[utoipa::path(
     post,
     path = "/collections/{collection_id}/index",
@@ -1142,6 +1144,7 @@ async fn drop_collection(
     request_body = IndexRequest,
     responses(
         (status = 200, description = "Items indexed",     body = IndexResponse),
+        (status = 400, description = "Batch size over the limit", body = ApiError),
         (status = 404, description = "Unknown collection", body = ApiError),
         (status = 422, description = "Type mismatch",      body = ApiError)
     )
@@ -1154,6 +1157,16 @@ async fn index(
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    if req.items.len() > MAX_INDEX_BATCH_SIZE {
+        return Err(ApiErr::new(
+            StatusCode::BAD_REQUEST,
+            "batch_too_large",
+            format!(
+                "batch has {} items, max is {MAX_INDEX_BATCH_SIZE}",
+                req.items.len()
+            ),
+        ));
+    }
     for item in &req.items {
         enforce_write_fence(&state, &collection_id, &item.external_id)?;
     }
