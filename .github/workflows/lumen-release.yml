@@ -27,9 +27,17 @@ on:
     tags:
       - "lumen@*"
   workflow_dispatch:
+    inputs:
+      image_version:
+        description: >-
+          Existing lumen release tag to containerize and push to GHCR
+          (e.g. lumen@0.4.23). Leave empty for a build-only smoke run.
+        required: false
+        default: ""
 
 permissions:
   contents: write  # needed to create / upload release assets
+  packages: write  # needed to push the GHCR image (#2462)
 
 jobs:
   build:
@@ -168,4 +176,80 @@ jobs:
             ```
 
             Or pick a target tarball below and extract it manually.
+
+  # #2462: durable, digest-pinned container images per release. Runs after
+  # `release` because `Dockerfile.release` downloads the published tarballs;
+  # also runnable retroactively for an EXISTING release via workflow_dispatch
+  # with `image_version` (that path pays an unused smoke build — acceptable
+  # for a rare retro fill).
+  ghcr-image:
+    name: publish ghcr image
+    needs: release
+    if: >-
+      !cancelled() && (
+        (startsWith(github.ref, 'refs/tags/lumen@') && needs.release.result == 'success')
+        || (github.event_name == 'workflow_dispatch' && inputs.image_version != '')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag and image tags
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${{ inputs.image_version || github.ref_name }}"
+          [[ "$raw" == lumen@* ]] || {
+            echo "expected a lumen@<version> tag, got: $raw" >&2
+            exit 1
+          }
+          semver="${raw#lumen@}"
+          tags="ghcr.io/${{ github.repository_owner }}/lumen:${semver}"
+          # `latest` only when cutting a NEW release; a retro fill of an old
+          # version must not steal the floating tag.
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            tags="${tags},ghcr.io/${{ github.repository_owner }}/lumen:latest"
+          fi
+          echo "release_tag=${raw}" >> "$GITHUB_OUTPUT"
+          echo "semver=${semver}" >> "$GITHUB_OUTPUT"
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/lumen/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            LUMEN_VERSION=${{ steps.ver.outputs.release_tag }}
+          tags: ${{ steps.ver.outputs.tags }}
+
+      - name: Append image digest to the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.release_tag }}"
+          image="ghcr.io/${{ github.repository_owner }}/lumen:${{ steps.ver.outputs.semver }}@${{ steps.push.outputs.digest }}"
+          body="$(gh release view "$tag" --repo "${{ github.repository }}" --json body --jq .body)"
+          if grep -qF "${{ steps.push.outputs.digest }}" <<<"$body"; then
+            echo "digest already recorded"
+            exit 0
+          fi
+          printf '%s\n\n## Container image\n\n```text\n%s\n```\n' "$body" "$image" \
+            | gh release edit "$tag" --repo "${{ github.repository }}" --notes-file -
             macOS is Apple Silicon only; for Linux choose x86_64 or aarch64.
