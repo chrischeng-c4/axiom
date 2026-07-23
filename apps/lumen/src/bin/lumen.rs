@@ -1774,13 +1774,17 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
         K8sInstanceProfile::Staging => (
             "lumen",
             "staging",
-            format!("lumen:{default_version}"),
+            // Published releases live at ghcr.io/chrischeng-c4/lumen:<version>
+            // (digest in each release's notes); this is the handed-out default.
+            format!("ghcr.io/chrischeng-c4/lumen:{default_version}"),
             InstanceBody::Staging,
         ),
         K8sInstanceProfile::Prod => (
             "lumen",
             "production",
-            format!("registry.example.com/lumen:{default_version}"),
+            // Same published GHCR default as staging; override with `--image`
+            // to pin @sha256 or point at a mirrored registry.
+            format!("ghcr.io/chrischeng-c4/lumen:{default_version}"),
             InstanceBody::Prod,
         ),
         K8sInstanceProfile::Template => (

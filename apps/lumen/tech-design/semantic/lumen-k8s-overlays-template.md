@@ -71,13 +71,15 @@ deployment:
           # AND the OPTIONAL auth patch block at the bottom.
           # - secret.yaml
         
-        # REQUIRED #1 — point the image at YOUR registry. base ships `lumen:latest`;
-        # GKE/most clusters cannot pull an unprefixed name. You build + push it
-        # (lumen publishes no image). `name: lumen` matches the base image's name.
+        # REQUIRED #1 — point the image at YOUR registry. base ships `lumen:latest`
+        # as a local-build placeholder; GKE/most clusters cannot pull an unprefixed
+        # name. Published releases live at ghcr.io/chrischeng-c4/lumen:<version>
+        # (digest in each release's notes); point REPLACE_ME__REGISTRY there unless
+        # you build + push your own. `name: lumen` matches the base image's name.
         images:
           - name: lumen
-            newName: REPLACE_ME__REGISTRY/lumen   # e.g. asia-east1-docker.pkg.dev/PROJECT/REPO/lumen
-            newTag: REPLACE_ME__IMAGE_TAG         # e.g. v1   (avoid :latest in prod)
+            newName: REPLACE_ME__REGISTRY/lumen   # e.g. ghcr.io/chrischeng-c4/lumen
+            newTag: REPLACE_ME__IMAGE_TAG         # e.g. 0.4.24 (avoid :latest in prod)
         
         # Direct kustomize is single-node. For HA, render/apply a Lumen CR through the
         # operator with replicasPerShard > 1.
