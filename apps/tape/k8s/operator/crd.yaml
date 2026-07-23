@@ -36,7 +36,7 @@ spec:
                 description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
                 type: string
               bootstrapSeedUri:
-                description: Exact backup object URI used only when a replacement replica starts on a fresh PVC. The server consumes it before Raft catch-up and refuses a non-empty data directory, so this is cold recovery rather than live replica synchronization.
+                description: 'Exact backup object URI used only when a replacement replica starts on a fresh PVC. The server consumes it before Raft catch-up and refuses a non-empty data directory, so this is cold recovery rather than live replica synchronization. One-shot (#2468): once the seeded topology converges, remove this field from the CR — leaving it set makes every future pod replacement crash-loop on the same non-empty-PVC refusal.'
                 nullable: true
                 type: string
               graceSecs:
