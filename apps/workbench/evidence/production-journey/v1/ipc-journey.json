@@ -13,9 +13,9 @@
     "normal-exit"
   ],
   "noLeakedChildren": true,
-  "launchToReadyMaxMs": 352,
+  "launchToReadyMaxMs": 331,
   "launchToReadyLimitMs": 2000,
-  "peakRssKib": 15280,
+  "peakRssKib": 15248,
   "peakRssLimitKib": 524288,
   "peakTranscriptBytes": 210,
   "transcriptLimitBytes": 524288,
