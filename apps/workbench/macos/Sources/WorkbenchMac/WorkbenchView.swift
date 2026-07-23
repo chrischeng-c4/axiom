@@ -28,6 +28,7 @@ struct WorkbenchView: View {
             .accessibilityIdentifier("workbench.detail")
         }
         .navigationTitle("Workbench")
+        .background(Color(nsColor: .windowBackgroundColor))
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
         // inside controls still belongs to the control's click action.
         .textSelection(.enabled)
@@ -138,7 +139,9 @@ struct WorkbenchView: View {
             }
 
         }
-        .padding(18)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
+        .padding(.top, 48)
         .background(.thinMaterial)
     }
 
@@ -244,33 +247,34 @@ struct WorkbenchView: View {
     }
 
     private var terminalTabStrip: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: 3) {
                     ForEach(model.tabs) { tab in
                         HStack(spacing: 0) {
                             Button {
                                 model.selectTab(tab.id)
                             } label: {
-                                HStack(spacing: 6) {
+                                HStack(spacing: 5) {
                                     Circle()
                                         .fill(stateColor(tab.lifecycle))
-                                        .frame(width: 6, height: 6)
+                                        .frame(width: 5, height: 5)
                                         .accessibilityHidden(true)
                                     Text(tab.title)
-                                        .font(.subheadline.weight(.medium))
+                                        .font(.caption.weight(.semibold))
                                         .lineLimit(1)
                                     Text(tab.lifecycle.label)
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                 }
-                                .padding(.horizontal, 8)
-                                .frame(minHeight: 40)
-                                .contentShape(RoundedRectangle(cornerRadius: 8))
+                                .padding(.leading, 9)
+                                .padding(.trailing, 5)
+                                .frame(minHeight: 34)
+                                .contentShape(RoundedRectangle(cornerRadius: 6))
                             }
                             .buttonStyle(.plain)
-                            .contentShape(RoundedRectangle(cornerRadius: 8))
+                            .contentShape(RoundedRectangle(cornerRadius: 6))
                             .accessibilityIdentifier("terminal.tab.\(tab.id)")
                             .accessibilityLabel(tab.accessibilityLabel)
                             .accessibilityAddTraits(model.activeTabId == tab.id ? .isSelected : [])
@@ -284,7 +288,7 @@ struct WorkbenchView: View {
                                     Image(systemName: "xmark")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundStyle(.secondary)
-                                        .frame(width: 30, height: 40)
+                                        .frame(width: 24, height: 34)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -292,24 +296,24 @@ struct WorkbenchView: View {
                                 .accessibilityLabel("Close \(tab.title)")
                             }
                         }
-                        .frame(minHeight: 40)
+                        .frame(minHeight: 34)
                         .background(
                             model.activeTabId == tab.id
                                 ? Color.accentColor.opacity(0.16)
                                 : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8)
+                            in: RoundedRectangle(cornerRadius: 6)
                         )
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 6)
                                 .stroke(
                                     model.activeTabId == tab.id
-                                        ? Color.accentColor.opacity(0.65)
-                                        : Color.secondary.opacity(0.18)
+                                        ? Color.accentColor.opacity(0.7)
+                                        : Color.secondary.opacity(0.12)
                                 )
                         }
                     }
                 }
-                .padding(.vertical, 1)
+                .padding(.vertical, 2)
             }
 
             Button {
@@ -317,7 +321,7 @@ struct WorkbenchView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.subheadline.weight(.semibold))
-                    .frame(width: 36, height: 40)
+                    .frame(width: 32, height: 34)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -325,8 +329,9 @@ struct WorkbenchView: View {
             .accessibilityLabel("Add shell terminal tab")
             .accessibilityHint("Adds and selects an idle tab without starting a shell")
         }
-        .padding(.horizontal, 12)
-        .frame(height: 42)
+        .padding(.horizontal, 8)
+        .frame(height: 38)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
         .accessibilityIdentifier("terminal.titlebar-tabs")
     }
 

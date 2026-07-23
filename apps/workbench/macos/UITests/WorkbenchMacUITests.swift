@@ -3,7 +3,7 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
-    func testTerminalTabsRemainVisibleInContent() throws {
+    func testTerminalTabsRemainInContentChrome() throws {
         continueAfterFailure = false
 
         let fixtureFolder = FileManager.default.temporaryDirectory
@@ -28,6 +28,11 @@ final class WorkbenchMacUITests: XCTestCase {
             terminalTab.frame.minY,
             terminalWorkspace.frame.minY,
             "Terminal tabs must stay in app content instead of fullscreen-auto-hidden titlebar chrome."
+        )
+        XCTAssertLessThanOrEqual(
+            terminalTab.frame.maxY,
+            terminalWorkspace.frame.minY + 48,
+            "The compact tab strip should remain the terminal workspace's top chrome."
         )
     }
 

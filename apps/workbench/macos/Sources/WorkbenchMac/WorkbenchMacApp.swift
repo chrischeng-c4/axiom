@@ -48,6 +48,8 @@ struct WorkbenchMacApp: App {
         WindowGroup("Workbench") {
             WorkbenchView(model: model)
                 .frame(minWidth: 760, minHeight: 520)
+                .background(AppOwnedWindowChrome())
+                .ignoresSafeArea(.container, edges: .top)
                 .task { model.beginPolling() }
                 .onDisappear {
                     Task { await model.endPolling() }
@@ -56,7 +58,6 @@ struct WorkbenchMacApp: App {
         }
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandMenu("Terminal") {
                 Button("New Shell Tab") { model.addShellTab() }
@@ -82,6 +83,39 @@ struct WorkbenchMacApp: App {
                         )
                 }
             }
+        }
+    }
+}
+
+/// Makes the window's titlebar a visual part of the app without moving any
+/// controls into native titlebar or toolbar territory. Native chrome is hidden
+/// by macOS in fullscreen; this represented view only makes app content reach
+/// the top edge so terminal tabs stay visible in every window mode.
+private struct AppOwnedWindowChrome: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.configure(view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.configure(view.window)
+    }
+
+    final class Coordinator {
+        private weak var configuredWindow: NSWindow?
+
+        func configure(_ window: NSWindow?) {
+            guard let window, configuredWindow !== window else { return }
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.isMovableByWindowBackground = true
+            configuredWindow = window
         }
     }
 }
