@@ -61,6 +61,35 @@ fn spec_routes_list_topic_contract() {
     assert!(stdout.contains("/docs"));
 }
 
+/// #2482: `/topics/{topic}/retention` is served with both GET and PUT
+/// (`retention_get`/`retention_put` in `src/server.rs`), so the published
+/// route inventory must list both methods, not only the PUT.
+#[test]
+fn spec_routes_list_retention_get_and_put_methods() {
+    let output = Command::new(tape_bin())
+        .args(["spec", "--format", "routes"])
+        .output()
+        .expect("run tape spec routes");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("routes json parses");
+    let methods: Vec<&str> = doc["routes"]
+        .as_array()
+        .expect("routes is a JSON array")
+        .iter()
+        .filter(|route| route["path"] == "/topics/{topic}/retention")
+        .map(|route| route["method"].as_str().expect("method is a string"))
+        .collect();
+    assert!(
+        methods.contains(&"GET"),
+        "route inventory must publish GET /topics/{{topic}}/retention, got {methods:?}"
+    );
+    assert!(
+        methods.contains(&"PUT"),
+        "route inventory must publish PUT /topics/{{topic}}/retention, got {methods:?}"
+    );
+}
+
 #[test]
 fn subscription_cli_surface() {
     let help = Command::new(tape_bin())
