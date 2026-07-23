@@ -15,6 +15,7 @@ jq empty "$ACCEPTANCE_ROOT/evidence/schema.json"
 for terraform_dir in environment cluster; do
   terraform -chdir="$ACCEPTANCE_ROOT/$terraform_dir" fmt -check -recursive
 done
+bash "$ACCEPTANCE_ROOT/tests/lumen_only_mode.sh"
 
 # Validate in a disposable copy so provider initialization never writes a
 # lock/cache artifact into the source tree.

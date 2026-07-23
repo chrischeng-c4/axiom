@@ -87,6 +87,24 @@ ARTIFACT_REGISTRY_REPOSITORY=courier \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
+To verify Lumen before the deferred Sift collection phase, select the
+Lumen-only mode and provide the exact immutable Lumen image. This mode does
+not build, render, deploy, or query Sift; it proves only Lumen reconcile,
+PVC-backed restart persistence, GCS backup readback, the bounded disk-triggered
+split, and cleanup.
+
+```bash
+PROJECT_ID=axiom-502607 \
+LUMEN_ONLY=1 \
+LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
+`LUMEN_ONLY=1` rejects a mutable or omitted image reference and rejects
+`LUMEN_PRIOR_ACCEPTANCE`: a current GKE run is required. The terminal
+`acceptance.json` records `mode: lumen-only` and explicitly excludes Sift
+collection, CPU/memory actuator, and live replica-membership claims.
+
 For routine acceptance, pass the immutable GitHub-release-derived image
 digests and no Cloud Build or staged source archive is used. A candidate can
 replace just one service; the harness builds only the missing service target.
