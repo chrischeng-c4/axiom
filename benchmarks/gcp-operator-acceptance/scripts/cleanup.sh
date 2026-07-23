@@ -13,6 +13,7 @@ set -euo pipefail
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
+LUMEN_ONLY="${LUMEN_ONLY:-0}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 export KUBECONFIG
@@ -26,8 +27,10 @@ capture_failure_evidence() {
     > "$EVIDENCE_DIR/kubernetes/workloads-before-cleanup.json" 2>/dev/null || true
   kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
     > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
-  kubectl logs -n sift-system deployment/sift-operator --tail=500 --request-timeout=15s \
-    > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
+  if [[ "$LUMEN_ONLY" != "1" ]]; then
+    kubectl logs -n sift-system deployment/sift-operator --tail=500 --request-timeout=15s \
+      > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
+  fi
 }
 
 delete_run_image() {
@@ -66,7 +69,10 @@ delete_run_image() {
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
-  namespaces=(lumen lumen-system sift sift-system)
+  namespaces=(lumen lumen-system)
+  if [[ "$LUMEN_ONLY" != "1" ]]; then
+    namespaces+=(sift sift-system)
+  fi
   for namespace in "${namespaces[@]}"; do
     kubectl delete namespace "$namespace" --ignore-not-found --wait=false \
       >/dev/null 2>&1 || true
@@ -89,8 +95,12 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     fi
     sleep 5
   done
-  kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
+  kubectl delete customresourcedefinition lumens.lumen.dev \
     --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+  if [[ "$LUMEN_ONLY" != "1" ]]; then
+    kubectl delete customresourcedefinition sifts.sift.axiom.dev \
+      --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+  fi
 fi
 
 if [[ -f "$STATE_DIR/cloud-build-id.txt" ]]; then
@@ -115,6 +125,7 @@ if [[ -f "$state" ]]; then
     -var="run_id=$RUN_ID"
     -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY"
     -var="image_tag=$IMAGE_TAG"
+    -var="lumen_only=$LUMEN_ONLY"
   )
   for attempt in 1 2 3; do
     if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
@@ -130,11 +141,14 @@ if [[ -f "$state" ]]; then
 fi
 
 delete_run_image lumen
-delete_run_image sift
+if [[ "$LUMEN_ONLY" != "1" ]]; then
+  delete_run_image sift
+fi
 gcloud storage rm --recursive "${GCS_SOURCE_PREFIX}/**" >/dev/null 2>&1 || true
 
 PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" \
   REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
   GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
+  LUMEN_ONLY="$LUMEN_ONLY" \
   "$ACCEPTANCE_ROOT/scripts/verify-clean.sh"

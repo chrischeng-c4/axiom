@@ -10,6 +10,7 @@ set -euo pipefail
 : "${GCS_SOURCE_PREFIX:?GCS_SOURCE_PREFIX is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
+LUMEN_ONLY="${LUMEN_ONLY:-0}"
 
 prefix="axo-${RUN_ID}"
 bucket="${PROJECT_ID}-${prefix}-backup"
@@ -34,10 +35,12 @@ if ! gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
 fi
 check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
 check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
-check_empty "Sift namespace" kubectl get namespace sift --no-headers
-check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
 check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
-check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+if [[ "$LUMEN_ONLY" != "1" ]]; then
+  check_empty "Sift namespace" kubectl get namespace sift --no-headers
+  check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+  check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+fi
 check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
   --filter="name=${bucket}" --format='value(name)'
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
@@ -48,8 +51,10 @@ check_empty "persistent disk" gcloud compute disks list --project="$PROJECT_ID" 
   --filter="name~'${prefix}|gke-${prefix}'" --format='value(name)'
 check_empty "Lumen image tag" gcloud artifacts docker images describe \
   "$REGISTRY/lumen:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
-check_empty "Sift image tag" gcloud artifacts docker images describe \
-  "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+if [[ "$LUMEN_ONLY" != "1" ]]; then
+  check_empty "Sift image tag" gcloud artifacts docker images describe \
+    "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+fi
 check_empty "Cloud Build source" gcloud storage ls --recursive "${GCS_SOURCE_PREFIX}/**"
 
 # The repository and APIs predate this run and are deliberately not Terraform

@@ -6,10 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCEPTANCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_SCRIPT="$ACCEPTANCE_ROOT/scripts/run.sh"
 RENDER_SCRIPT="$ACCEPTANCE_ROOT/scripts/render-manifests.sh"
+ENVIRONMENT_DIR="$ACCEPTANCE_ROOT/environment"
+CLEANUP_SCRIPT="$ACCEPTANCE_ROOT/scripts/cleanup.sh"
+VERIFY_CLEAN_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
 SCHEMA="$ACCEPTANCE_ROOT/evidence/schema.json"
 
 bash -n "$RUN_SCRIPT"
 bash -n "$RENDER_SCRIPT"
+bash -n "$CLEANUP_SCRIPT"
+bash -n "$VERIFY_CLEAN_SCRIPT"
 jq empty "$SCHEMA"
 
 rg -F 'LUMEN_ONLY="${LUMEN_ONLY:-0}"' "$RUN_SCRIPT" >/dev/null
@@ -18,6 +23,12 @@ rg -F 'LUMEN_PRIOR_ACCEPTANCE is not allowed' "$RUN_SCRIPT" >/dev/null
 rg -F 'Lumen-only acceptance passed; mandatory cleanup runs on EXIT' "$RUN_SCRIPT" >/dev/null
 rg -F 'if [[ "$LUMEN_ONLY" != "1" ]]; then' "$RUN_SCRIPT" >/dev/null
 rg -F 'if [[ "$LUMEN_ONLY" != "1" ]]; then' "$RENDER_SCRIPT" >/dev/null
+rg -F 'variable "lumen_only"' "$ENVIRONMENT_DIR/variables.tf" >/dev/null
+rg -F 'var.lumen_only ? [] : ["sift/sift-backup"]' "$ENVIRONMENT_DIR/storage.tf" >/dev/null
+rg -F '-var="lumen_only=$LUMEN_ONLY"' "$RUN_SCRIPT" >/dev/null
+rg -F '-var="lumen_only=$LUMEN_ONLY"' "$CLEANUP_SCRIPT" >/dev/null
+rg -F 'LUMEN_ONLY="$LUMEN_ONLY"' "$RUN_SCRIPT" >/dev/null
+rg -F 'LUMEN_ONLY="$LUMEN_ONLY"' "$CLEANUP_SCRIPT" >/dev/null
 jq -e '.properties.mode.enum == ["full", "lumen-only"]' "$SCHEMA" >/dev/null
 jq -e '.properties.acceptance.required == ["lumen"]' "$SCHEMA" >/dev/null
 

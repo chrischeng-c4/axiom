@@ -66,6 +66,7 @@ cleanup() {
       GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
       ARTIFACT_REGISTRY_REPOSITORY="$ARTIFACT_REGISTRY_REPOSITORY" \
       PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
+      LUMEN_ONLY="$LUMEN_ONLY" \
       "$SCRIPT_DIR/cleanup.sh"; then
       echo "cleanup failed; Terraform state remains at $STATE_DIR" >&2
       ec=1
@@ -380,7 +381,8 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="cluster_name=$PERSISTENT_CLUSTER_NAME" \
   -var="run_id=$RUN_ID" \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
-  -var="image_tag=$IMAGE_TAG"
+  -var="image_tag=$IMAGE_TAG" \
+  -var="lumen_only=$LUMEN_ONLY"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" output \
   -state="$STATE_DIR/environment.tfstate" -json > "$EVIDENCE_DIR/terraform-output.json"
