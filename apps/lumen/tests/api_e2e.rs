@@ -1322,6 +1322,52 @@ async fn type_mismatch_422() {
     resp.assert_status(axum::http::StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// #2478: a batch at exactly [`lumen::types::MAX_INDEX_BATCH_SIZE`] items is
+/// accepted.
+#[tokio::test]
+async fn index_batch_at_limit_is_accepted() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let items: Vec<Value> = (0..lumen::types::MAX_INDEX_BATCH_SIZE)
+        .map(|i| json!({ "external_id": format!("row-{i}"), "field": "state", "value": "open" }))
+        .collect();
+
+    let resp = s
+        .post("/collections/rows/index")
+        .json(&json!({ "items": items }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["indexed"], lumen::types::MAX_INDEX_BATCH_SIZE as u64);
+}
+
+/// #2478: a batch over [`lumen::types::MAX_INDEX_BATCH_SIZE`] items is
+/// rejected with 400 before any item runs.
+#[tokio::test]
+async fn index_batch_over_limit_returns_400() {
+    let s = server();
+    s.put("/collections/rows")
+        .json(&json!({ "fields": { "state": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let items: Vec<Value> = (0..=lumen::types::MAX_INDEX_BATCH_SIZE)
+        .map(|i| json!({ "external_id": format!("row-{i}"), "field": "state", "value": "open" }))
+        .collect();
+
+    let resp = s
+        .post("/collections/rows/index")
+        .json(&json!({ "items": items }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "batch_too_large");
+}
+
 #[tokio::test]
 async fn unsupported_sort_shape_returns_400() {
     let s = server();
@@ -1526,8 +1572,15 @@ async fn upsert_rejects_incompatible_redeclaration() {
     resp.assert_status_failure();
 }
 
+/// `lumen::storage::MAX_INDEX_ITEMS` (10_000) is a storage-layer safety net
+/// that used to be the only bulk-index bound, rejected with 413. #2478 adds
+/// a tighter API-layer cap ([`lumen::types::MAX_INDEX_BATCH_SIZE`], 1000)
+/// that now fires first for any request this large, with the sibling
+/// batch-endpoints' 400 `batch_too_large` shape — so a batch this far over
+/// the limit is rejected at 400, not 413. See `index_batch_over_limit_returns_400`
+/// for the exact 1000/1001 boundary.
 #[tokio::test]
-async fn bulk_limit_rejected_413() {
+async fn bulk_limit_rejected_400() {
     let s = server();
     s.put("/collections/u")
         .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
@@ -1546,7 +1599,9 @@ async fn bulk_limit_rejected_413() {
         .post("/collections/u/index")
         .json(&json!({ "items": items }))
         .await;
-    resp.assert_status(axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "batch_too_large");
 }
 
 #[tokio::test]

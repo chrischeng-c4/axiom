@@ -696,7 +696,7 @@ semantic_domain:
           - name: "upsert_rejects_incompatible_redeclaration"
             kind: "function"
             public: false
-          - name: "bulk_limit_rejected_413"
+          - name: "bulk_limit_rejected_400"
             kind: "function"
             public: false
           - name: "openapi_spec_served"
@@ -715,6 +715,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "replace_docs_over_limit_returns_400"
+            kind: "function"
+            public: false
+          - name: "index_batch_at_limit_is_accepted"
+            kind: "function"
+            public: false
+          - name: "index_batch_over_limit_returns_400"
             kind: "function"
             public: false
           - name: "read_consistency_peer"
