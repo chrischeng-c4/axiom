@@ -417,23 +417,56 @@ const TOPICS: &[cli_std::llm::Topic] = &[
     },
 ];
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2415" reason="logic section in main.rs is hand-written pending codegen support">
+fn init_service_tracing() -> anyhow::Result<()> {
+    let log_format = match std::env::var("LOOM_LOG_FORMAT").as_deref() {
+        Ok("json") => service_http::LogFormat::Json,
+        Ok("pretty") | Err(_) => service_http::LogFormat::Pretty,
+        Ok(value) => anyhow::bail!(
+            "LOOM_LOG_FORMAT must be `pretty` or `json`, got `{value}`"
+        ),
+    };
+    let config = service_http::HttpConfig::new(
+        "0.0.0.0",
+        0,
+        std::env::var("LOOM_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+        log_format,
+        0,
+        0,
+        std::env::var("LOOM_OTLP_ENDPOINT")
+            .ok()
+            .filter(|endpoint| !endpoint.is_empty()),
+    );
+    let identity = service_http::ServiceIdentity::new("loom", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Controller => loom::controller::run(),
-        Command::Worker => loom::worker::run(),
-        Command::RunTask => loom::runtask::run(),
-        Command::JobController => loom::jobcontroller::run(),
-        Command::SchemaLayer => loom::schema_layer::run(),
-        // Offline: emit the OpenAPI contract (or a typed client), no server.
+        Command::Controller => {
+            init_service_tracing()?;
+            loom::controller::run()
+        }
+        Command::Worker => {
+            init_service_tracing()?;
+            loom::worker::run()
+        }
+        Command::RunTask => {
+            init_service_tracing()?;
+            loom::runtask::run()
+        }
+        Command::JobController => {
+            init_service_tracing()?;
+            loom::jobcontroller::run()
+        }
+        Command::SchemaLayer => {
+            init_service_tracing()?;
+            loom::schema_layer::run()
+        }
         Command::Spec(args) => spec(args),
-        // Offline: emit a container image Dockerfile, no server.
         Command::Dockerfile(args) => dockerfile(args),
-        // k8s artifacts (offline render, except `operator run`).
         Command::K8s(args) => k8s(args),
-        // Upload a raft snapshot via service-backup (operator build only).
         Command::Backup(args) => backup(args),
-        // Offline: render the in-code topics, no runtime/server/I/O beyond stdout.
         Command::Llm(args) => {
             let out = cli_std::llm::render(
                 TOOL.project,
@@ -445,8 +478,6 @@ fn main() -> anyhow::Result<()> {
             println!("{out}");
             Ok(())
         }
-        // The standard ops are async; loom's role commands each build their own
-        // runtime, so main stays sync and these block on a local one.
         Command::Upgrade(args) => block_on(cli_std::upgrade::run(
             &TOOL,
             cli_std::upgrade::Options {
