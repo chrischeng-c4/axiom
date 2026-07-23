@@ -107,3 +107,49 @@ changes:
     impl_mode: hand-written
     description: Spawn the real controller, exercise valid invalid and absent traceparent requests, and assert schema identity W3C correlation and no direct Sift linkage.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: loom-sift-agnostic-telemetry-verification
+requirements:
+  collector_boundary:
+    id: R3
+    text: "Loom adds neither a Sift dependency nor Sift endpoint, token, header, route, or collector configuration; collection remains external."
+    kind: negative
+    risk: medium
+    verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic
+  existing_controller_surface:
+    id: R5
+    text: "The existing shared standard endpoint surface remains available after tracing initialization is moved to the process boundary."
+    kind: regression
+    risk: medium
+    verify: apps/loom/src/controller.rs::tests::standard_endpoints_served
+  real_controller_jsonl:
+    id: R2
+    text: "A real Loom controller under LOOM_LOG_FORMAT=json emits a nonzero service.name=loom JSONL completion record for valid, missing, and malformed traceparent requests."
+    kind: functional
+    risk: high
+    verify: apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout
+  shared_completion:
+    id: R1
+    text: "The shared HTTP trace layer emits exactly one axiom.service.log.v1 http_request_complete event with method, URI, response status, latency, and inherited W3C context."
+    kind: functional
+    risk: high
+    verify: libs/service-http/tests/request_completion_event.rs::completion_event_is_schema_valid_and_w3c_correlated
+  workload_configuration:
+    id: R4
+    text: "Both checked-in and operator-rendered controller workloads request JSON service logging without changing replica or workflow semantics."
+    kind: regression
+    risk: medium
+    verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging
+---
+flowchart TD
+    r1[R1 shared completion] --> libs_service_http_tests_request_completion_event_rs_completion_event_is_schema_valid_and_w3c_correlated[libs/service-http/tests/request_completion_event.rs::completion_event_is_schema_valid_and_w3c_correlated]
+    r2[R2 real controller jsonl] --> apps_loom_tests_structured_stdout_traceparent_rs_real_loom_controller_correlates_structured_stdout[apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout]
+    r3[R3 collector boundary] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_remains_sift_agnostic[apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic]
+    r4[R4 workload configuration] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_workloads_request_json_logging[apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging]
+    r5[R5 existing controller surface] --> apps_loom_src_controller_rs_tests_standard_endpoints_served[apps/loom/src/controller.rs::tests::standard_endpoints_served]
+```
