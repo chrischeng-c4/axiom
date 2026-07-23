@@ -1555,6 +1555,12 @@ semantic_domain:
           - name: "backup_cronjob_wires_retention_and_admin_token"
             kind: "function"
             public: false
+          - name: "admission_spec_wires_serving_env"
+            kind: "function"
+            public: false
+          - name: "admission_spec_absent_renders_no_admission_env"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

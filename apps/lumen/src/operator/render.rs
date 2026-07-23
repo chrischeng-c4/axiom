@@ -465,6 +465,26 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         env.push(json!({ "name": "LUMEN_DATA_DIR", "value": EMBEDDED_DATA_DIR }));
         env.push(json!({ "name": "LUMEN_PERSISTENCE", "value": "segment" }));
     }
+    // #2477: pure exposure of the pre-existing `LUMEN_ADMISSION_*` env
+    // grammar (`service_http::AdmissionConfig`) — no new semantics, only a
+    // declarative path onto the same env vars `serve()` already reads.
+    if let Some(admission) = &lumen.spec.admission {
+        if let Some(v) = admission.read_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_READ_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.write_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_WRITE_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.admin_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_ADMIN_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.refill_secs {
+            env.push(json!({ "name": "LUMEN_ADMISSION_REFILL_SECS", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.max_keys {
+            env.push(json!({ "name": "LUMEN_ADMISSION_MAX_KEYS", "value": v.to_string() }));
+        }
+    }
     env
 }
 

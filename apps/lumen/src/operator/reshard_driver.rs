@@ -2510,6 +2510,7 @@ mod tests {
                 ..Default::default()
             },
             observability: false,
+            admission: None,
         }
     }
 

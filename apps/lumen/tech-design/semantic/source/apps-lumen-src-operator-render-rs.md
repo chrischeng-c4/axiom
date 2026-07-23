@@ -57,9 +57,9 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 121 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 146 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 110 | wants_hpa(_lumen: &Lumen) -> bool |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 124 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 149 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 113 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -148,27 +148,26 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-/// Which source (if any) supplies the token registry file. `tokensSecret`
-/// wins over `tokensSecretProviderClass` when both are set (backward
-/// compatible; documented as precedence, not schema-enforced mutual
-/// exclusion). `None` when `auth: off` or neither is set.
-enum TokenRegistrySource<'a> {
-    Secret(&'a str),
-    Csi(&'a str),
-}
-
-fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
+/// Which shared projection source (if any) supplies the token registry file.
+/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
+fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;
     }
     if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
-        return Some(TokenRegistrySource::Secret(secret));
+        return Some(render::TokenRegistrySource::Secret {
+            name: secret,
+            key: TOKEN_REGISTRY_KEY,
+        });
     }
     lumen
         .spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(TokenRegistrySource::Csi)
+        .map(|provider_class| render::TokenRegistrySource::Csi {
+            provider_class,
+            driver: lumen.spec.tokens_secret_csi_driver.as_deref(),
+        })
 }
 
 /// Stateful data pods are never a direct HPA target. A vanilla HPA changes
@@ -340,28 +339,13 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     if let Some(source) = token_registry_source(lumen) {
-        volume_mounts.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
-            "readOnly": true,
-        }));
-        let mut volume = json!({ "name": TOKEN_REGISTRY_VOLUME });
-        match source {
-            TokenRegistrySource::Secret(secret) => {
-                volume["secret"] = json!({
-                    "secretName": secret,
-                    "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-                });
-            }
-            TokenRegistrySource::Csi(provider_class) => {
-                volume["csi"] = json!({
-                    "driver": "secrets-store.csi.k8s.io",
-                    "readOnly": true,
-                    "volumeAttributes": { "secretProviderClass": provider_class },
-                });
-            }
-        }
-        volumes.push(volume);
+        let projection = render::TokenRegistryProjection {
+            volume_name: TOKEN_REGISTRY_VOLUME,
+            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
+            source,
+        };
+        volume_mounts.push(render::token_registry_mount(&projection));
+        volumes.push(render::token_registry_volume(&projection));
     }
     let spread = |key: &str| {
         json!({
@@ -411,17 +395,8 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             "prometheus.io/port": CLIENT_PORT.to_string(),
             "prometheus.io/path": "/metrics",
         })),
-        pod_security_context: Some(json!({
-            "runAsNonRoot": true,
-            "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
-            "seccompProfile": { "type": "RuntimeDefault" },
-        })),
-        container_security_context: Some(json!({
-            "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
-            "allowPrivilegeEscalation": false,
-            "readOnlyRootFilesystem": true,
-            "capabilities": { "drop": ["ALL"] },
-        })),
+        pod_security_context: Some(render::restricted_pod_security_context()),
+        container_security_context: Some(render::restricted_container_security_context()),
         termination_grace_period_seconds: Some(s.grace_secs),
         readiness_probe: Some(json!({
             "httpGet": { "path": "/readyz", "port": "http" },
@@ -555,6 +530,26 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if lumen.spec.replicas_per_shard <= 1 {
         env.push(json!({ "name": "LUMEN_DATA_DIR", "value": EMBEDDED_DATA_DIR }));
         env.push(json!({ "name": "LUMEN_PERSISTENCE", "value": "segment" }));
+    }
+    // #2477: pure exposure of the pre-existing `LUMEN_ADMISSION_*` env
+    // grammar (`service_http::AdmissionConfig`) — no new semantics, only a
+    // declarative path onto the same env vars `serve()` already reads.
+    if let Some(admission) = &lumen.spec.admission {
+        if let Some(v) = admission.read_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_READ_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.write_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_WRITE_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.admin_capacity {
+            env.push(json!({ "name": "LUMEN_ADMISSION_ADMIN_CAPACITY", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.refill_secs {
+            env.push(json!({ "name": "LUMEN_ADMISSION_REFILL_SECS", "value": v.to_string() }));
+        }
+        if let Some(v) = admission.max_keys {
+            env.push(json!({ "name": "LUMEN_ADMISSION_MAX_KEYS", "value": v.to_string() }));
+        }
     }
     env
 }

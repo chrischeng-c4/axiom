@@ -133,6 +133,47 @@ pub struct LumenSpec {
     /// CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
     #[serde(default)]
     pub observability: bool,
+
+    /// Optional in-process request admission (bounded token-bucket rate
+    /// limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env
+    /// grammar `libs/service-http::AdmissionConfig` already parses (see
+    /// `bin/lumen.rs`'s `serve` wiring). Absent means admission stays
+    /// disabled — the pre-existing default; no new semantics, only a
+    /// declarative surface for the existing env-driven behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSpec>,
+}
+
+/// Declarative form of the `LUMEN_ADMISSION_*` env grammar. Every field is
+/// optional and independently maps to one env var; a field left unset never
+/// enables admission for that class (mirrors `AdmissionConfig::from_env`'s
+/// "capacity absent = class unbounded" semantics exactly).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct AdmissionSpec {
+    /// Token-bucket capacity for read-class requests
+    /// (`LUMEN_ADMISSION_READ_CAPACITY`). Unset leaves reads unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_capacity: Option<u32>,
+    /// Token-bucket capacity for write-class requests
+    /// (`LUMEN_ADMISSION_WRITE_CAPACITY`). Unset leaves writes unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_capacity: Option<u32>,
+    /// Token-bucket capacity for admin-class requests
+    /// (`LUMEN_ADMISSION_ADMIN_CAPACITY`). Unset leaves admin unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_capacity: Option<u32>,
+    /// Refill window in seconds, shared by every configured class
+    /// (`LUMEN_ADMISSION_REFILL_SECS`). Unset falls back to
+    /// `AdmissionConfig::DEFAULT_REFILL_SECS` (60s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refill_secs: Option<u32>,
+    /// Maximum distinct admission keys retained per class
+    /// (`LUMEN_ADMISSION_MAX_KEYS`). Unset falls back to
+    /// `AdmissionConfig::DEFAULT_MAX_KEYS` (1024).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_keys: Option<u32>,
 }
 
 /// Versioned virtual-bucket map control-plane metadata.

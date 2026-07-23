@@ -20,26 +20,27 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 327 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 466 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 304 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 518 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 154 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 368 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 507 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 345 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 559 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 490 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 271 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 170 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 205 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 441 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 422 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 354 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 142 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 315 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 342 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 281 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 290 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 595 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 680 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 576 | storage_pod_count(&self) -> i32 |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 531 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 312 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 211 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 246 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 482 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 463 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 395 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 183 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 356 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 383 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 322 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 331 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 636 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 721 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 617 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -179,6 +180,47 @@ pub struct LumenSpec {
     /// CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
     #[serde(default)]
     pub observability: bool,
+
+    /// Optional in-process request admission (bounded token-bucket rate
+    /// limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env
+    /// grammar `libs/service-http::AdmissionConfig` already parses (see
+    /// `bin/lumen.rs`'s `serve` wiring). Absent means admission stays
+    /// disabled — the pre-existing default; no new semantics, only a
+    /// declarative surface for the existing env-driven behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSpec>,
+}
+
+/// Declarative form of the `LUMEN_ADMISSION_*` env grammar. Every field is
+/// optional and independently maps to one env var; a field left unset never
+/// enables admission for that class (mirrors `AdmissionConfig::from_env`'s
+/// "capacity absent = class unbounded" semantics exactly).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct AdmissionSpec {
+    /// Token-bucket capacity for read-class requests
+    /// (`LUMEN_ADMISSION_READ_CAPACITY`). Unset leaves reads unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_capacity: Option<u32>,
+    /// Token-bucket capacity for write-class requests
+    /// (`LUMEN_ADMISSION_WRITE_CAPACITY`). Unset leaves writes unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_capacity: Option<u32>,
+    /// Token-bucket capacity for admin-class requests
+    /// (`LUMEN_ADMISSION_ADMIN_CAPACITY`). Unset leaves admin unbounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_capacity: Option<u32>,
+    /// Refill window in seconds, shared by every configured class
+    /// (`LUMEN_ADMISSION_REFILL_SECS`). Unset falls back to
+    /// `AdmissionConfig::DEFAULT_REFILL_SECS` (60s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refill_secs: Option<u32>,
+    /// Maximum distinct admission keys retained per class
+    /// (`LUMEN_ADMISSION_MAX_KEYS`). Unset falls back to
+    /// `AdmissionConfig::DEFAULT_MAX_KEYS` (1024).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_keys: Option<u32>,
 }
 
 /// Versioned virtual-bucket map control-plane metadata.

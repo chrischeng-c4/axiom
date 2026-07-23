@@ -720,6 +720,7 @@ mod tests {
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
+            admission: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1103,6 +1104,7 @@ mod tests {
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
+            admission: None,
         }
     }
 

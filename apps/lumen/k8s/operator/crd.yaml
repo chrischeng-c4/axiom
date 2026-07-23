@@ -34,6 +34,36 @@ spec:
           spec:
             description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source'
             properties:
+              admission:
+                description: Optional in-process request admission (bounded token-bucket rate limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env grammar `libs/service-http::AdmissionConfig` already parses (see `bin/lumen.rs`'s `serve` wiring). Absent means admission stays disabled — the pre-existing default; no new semantics, only a declarative surface for the existing env-driven behavior.
+                nullable: true
+                properties:
+                  adminCapacity:
+                    description: Token-bucket capacity for admin-class requests (`LUMEN_ADMISSION_ADMIN_CAPACITY`). Unset leaves admin unbounded.
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  maxKeys:
+                    description: Maximum distinct admission keys retained per class (`LUMEN_ADMISSION_MAX_KEYS`). Unset falls back to `AdmissionConfig::DEFAULT_MAX_KEYS` (1024).
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  readCapacity:
+                    description: Token-bucket capacity for read-class requests (`LUMEN_ADMISSION_READ_CAPACITY`). Unset leaves reads unbounded.
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  refillSecs:
+                    description: Refill window in seconds, shared by every configured class (`LUMEN_ADMISSION_REFILL_SECS`). Unset falls back to `AdmissionConfig::DEFAULT_REFILL_SECS` (60s).
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  writeCapacity:
+                    description: Token-bucket capacity for write-class requests (`LUMEN_ADMISSION_WRITE_CAPACITY`). Unset leaves writes unbounded.
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                type: object
               auth:
                 default: disabled
                 description: 'Auth mode: `off` (dev) or `required` (token registry supplied via `tokensSecret` or `tokensSecretProviderClass`).'
