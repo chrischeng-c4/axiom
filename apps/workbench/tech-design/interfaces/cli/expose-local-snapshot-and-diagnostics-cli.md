@@ -53,3 +53,62 @@ workbench logs --tail <count> does not need the app to be running. It reads only
 The control protocol is read-only in this slice. It contains snapshot and an internal uiState identity response only; it cannot send terminal input, mutate projects, manage processes, or dispatch agents. MCP, remote access, generic screen capture, and write commands remain out of scope.
 
 Verification covers registry/CLI parsing, loopback success, stale/not-running and version-mismatch behavior, bounded-log privacy behavior, and a deterministic native snapshot whose PNG signature and content-area dimensions are validated without Computer Use, Accessibility permission, or screen-recording permission.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/src/main.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: main
+    description: Dispatch the explicit read-only snapshot and logs subcommands before falling through to the existing desktop host.
+  - path: apps/workbench/src/observability_cli.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define strict Workbench CLI parsing, runtime-registry discovery, authenticated local snapshot requests, bounded log tailing, typed errors, and structured results.
+  - path: apps/workbench/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run
+    description: Export the observability CLI module while retaining the desktop-host entrypoint.
+  - path: apps/workbench/tests/observability_cli.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove bounded log tails, malformed or stale runtime-registry recovery, authenticated snapshot request construction, unavailable-runtime errors, and output-path validation without a live GUI or screen capture.
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/LocalRuntimeServer.swift
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Own the single-instance lease, owner-readable runtime registry, loopback authenticated request handling, MainActor content-view PNG capture, bounded responses, and cleanup.
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchMacApp.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Start the local observability runtime once for the native application and release its lease during app teardown.
+  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Verify registry publication and cleanup, token rejection, stale-registry recovery, bounded request parsing, and PNG capture response semantics using in-process views.
+  - path: apps/workbench/macos/WorkbenchMac.xcodeproj/project.pbxproj
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Include the local runtime server source in the native app target so Xcode and SwiftPM compile the same runtime surface.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document the single-instance local observability boundary and the snapshot and logs CLI contracts.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Register the local snapshot and diagnostics capability work root with its deterministic test gates.
+```
