@@ -4,43 +4,35 @@ summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
 
-## Logic
+## Contract
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
 ---
-id: workbench-switching-state
-entry: project_select
+id: workbench-native-switch-contract
+entry: user_action
 nodes:
-  project_select: { kind: start, label: select-project }
-  workspace: { kind: process, label: update-selected-workspace }
-  files: { kind: process, label: refresh-files-listing }
-  no_pty_change: { kind: terminal, label: preserve-existing-pty }
-  tab_select: { kind: start, label: select-tab }
-  show_layer: { kind: process, label: show-tab-layer }
-  retained_view: { kind: process, label: retain-terminal-view }
-  incremental: { kind: terminal, label: feed-new-bytes-only }
+  user_action: { kind: start, label: select-project-or-tab }
+  project_state: { kind: process, label: selected-project-workspace }
+  tab_state: { kind: process, label: selected-terminal-layer }
+  no_sidecar: { kind: terminal, label: no-project-lifecycle-call }
+  same_renderer: { kind: terminal, label: same-renderer-on-return }
 edges:
-  - { from: project_select, to: workspace }
-  - { from: workspace, to: files }
-  - { from: files, to: no_pty_change }
-  - { from: tab_select, to: show_layer }
-  - { from: show_layer, to: retained_view }
-  - { from: retained_view, to: incremental }
+  - { from: user_action, to: project_state, label: project }
+  - { from: project_state, to: no_sidecar }
+  - { from: user_action, to: tab_state, label: tab }
+  - { from: tab_state, to: same_renderer }
 ---
 flowchart LR
-  project_select([Select project]) --> workspace[Update selected workspace]
-  workspace --> files[Refresh Files and launch root]
-  files --> no_pty_change([Preserve existing PTY])
-  tab_select([Select tab]) --> show_layer[Show selected terminal layer]
-  show_layer --> retained_view[Retain tab-keyed TerminalView]
-  retained_view --> incremental([Feed new bytes only])
+  user_action([User selection]) -->|Project| project_state[Selected project workspace]
+  project_state --> no_sidecar([No existing PTY mutation])
+  user_action -->|Tab| tab_state[Selected terminal layer]
+  tab_state --> same_renderer([Same renderer on return])
 ```
 
-Project selection updates the selected project id, launch root, and file listing together on the main actor. This selection is for future terminal launches; it never sends a lifecycle request or rewrites an existing tab's cwd.
+A project selection is a synchronous presentation-state transition: the selected project id, launch folder, and visible file listing describe the same registered project. It affects only future launches; active and exited terminal tabs retain their own process state and cwd.
 
-Every non-idle and non-failed tab owns a mounted `TerminalSurface` keyed by tab id. Inactive layers are visually hidden and non-interactive instead of destroyed. Their coordinators retain both the SwiftTerm terminal buffer and fed-byte cursor, so a tab switch only exposes its existing renderer; polling supplies subsequent incremental bytes.
-
+A tab selection is also a presentation-state transition. It must not launch, terminate, resize, or rebuild a terminal process. Each launched tab keeps one native SwiftTerm view and coordinator for its lifetime; only the selected layer accepts input and is visible.
 ## Changes
 <!-- type: changes lang: yaml -->
 
