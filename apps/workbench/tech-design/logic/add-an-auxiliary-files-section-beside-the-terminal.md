@@ -84,3 +84,42 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-beta-auxiliary-files-verification
+requirements:
+  beta_only_layout:
+    id: R1
+    text: "Beta renders a bounded read-only Files auxiliary column while Stable remains unchanged."
+    kind: functional
+    risk: medium
+    verify: WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct
+  desktop_interaction:
+    id: R4
+    text: "The Beta app exposes accessible Files column and rows when a fixture project is selected."
+    kind: e2e
+    risk: medium
+    verify: WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries
+  deterministic_listing:
+    id: R2
+    text: "The selected project root lists only immediate visible entries in directory-first localized order and caps output."
+    kind: functional
+    risk: medium
+    verify: ProjectFileListingTests.testVisibleEntriesAreSortedAndBounded
+  read_only_failure_states:
+    id: R3
+    text: "No project, unreadable roots, and empty roots render actionable state without launching a terminal or mutating files."
+    kind: regression
+    risk: medium
+    verify: ProjectFileListingTests.testUnavailableAndEmptyRootsRemainExplicit
+---
+flowchart TD
+    r1[R1 beta only layout] --> workbenchruntimeprofiletests_teststableandbetaproductsaredistinct[WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct]
+    r2[R2 deterministic listing] --> projectfilelistingtests_testvisibleentriesaresortedandbounded[ProjectFileListingTests.testVisibleEntriesAreSortedAndBounded]
+    r3[R3 read only failure states] --> projectfilelistingtests_testunavailableandemptyrootsremainexplicit[ProjectFileListingTests.testUnavailableAndEmptyRootsRemainExplicit]
+    r4[R4 desktop interaction] --> workbenchmacuitests_testfilesauxiliarycolumnshowsfixtureentries[WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries]
+```
