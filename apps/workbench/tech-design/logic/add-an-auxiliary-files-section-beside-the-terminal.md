@@ -88,27 +88,27 @@ changes:
 ---
 id: workbench-beta-auxiliary-files-verification
 requirements:
-  beta_only_layout:
-    id: R1
-    text: "Beta renders a bounded read-only Files auxiliary column while Stable remains unchanged."
-    kind: functional
-    risk: medium
-    verify: WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct
-  desktop_interaction:
+  accessible_beta_surface:
     id: R4
-    text: "The Beta app exposes accessible Files column and rows when a fixture project is selected."
+    text: "Beta exposes accessible Files column and fixture rows alongside terminal tabs."
     kind: e2e
     risk: medium
     verify: WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries
+  beta_only_layout:
+    id: R1
+    text: "Only Beta renders the read-only Files auxiliary column; Stable retains its prior layout."
+    kind: functional
+    risk: medium
+    verify: WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct
   deterministic_listing:
     id: R2
-    text: "The selected project root lists only immediate visible entries in directory-first localized order and caps output."
+    text: "Visible immediate root entries are directory-first, sorted, and bounded."
     kind: functional
     risk: medium
     verify: ProjectFileListingTests.testVisibleEntriesAreSortedAndBounded
-  read_only_failure_states:
+  safe_states:
     id: R3
-    text: "No project, unreadable roots, and empty roots render actionable state without launching a terminal or mutating files."
+    text: "No-project, missing/unreadable, empty, and truncated listings are explicit and read-only."
     kind: regression
     risk: medium
     verify: ProjectFileListingTests.testUnavailableAndEmptyRootsRemainExplicit
@@ -116,6 +116,6 @@ requirements:
 flowchart TD
     r1[R1 beta only layout] --> workbenchruntimeprofiletests_teststableandbetaproductsaredistinct[WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct]
     r2[R2 deterministic listing] --> projectfilelistingtests_testvisibleentriesaresortedandbounded[ProjectFileListingTests.testVisibleEntriesAreSortedAndBounded]
-    r3[R3 read only failure states] --> projectfilelistingtests_testunavailableandemptyrootsremainexplicit[ProjectFileListingTests.testUnavailableAndEmptyRootsRemainExplicit]
-    r4[R4 desktop interaction] --> workbenchmacuitests_testfilesauxiliarycolumnshowsfixtureentries[WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries]
+    r3[R3 safe states] --> projectfilelistingtests_testunavailableandemptyrootsremainexplicit[ProjectFileListingTests.testUnavailableAndEmptyRootsRemainExplicit]
+    r4[R4 accessible beta surface] --> workbenchmacuitests_testfilesauxiliarycolumnshowsfixtureentries[WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries]
 ```
