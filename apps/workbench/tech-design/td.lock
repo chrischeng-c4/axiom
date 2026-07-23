@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T10:09:47.784793+00:00"
-digest = "sha256:1263febc426eba7fed876797c627b5fd8efc2a08472fce8241a370419a6965ac"
-source_digest = "sha256:1263febc426eba7fed876797c627b5fd8efc2a08472fce8241a370419a6965ac"
-ir_digest = "sha256:4ce856548dafe2f6d46ba31e87081883ceb00774f537db3f105d1e3effe3463e"
+generated_at = "2026-07-23T12:33:12.864620+00:00"
+digest = "sha256:c9c87f1d4d5880e964b37fbc96c5fdfacf3e560d6462ff3c859f16ca045cd82c"
+source_digest = "sha256:c9c87f1d4d5880e964b37fbc96c5fdfacf3e560d6462ff3c859f16ca045cd82c"
+ir_digest = "sha256:37ae6891100c8fc571bd5f8bbcd11b476c2d13d6853acedc9ae41afef3d261fe"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -77,6 +77,12 @@ section_count = 3
 path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
 digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
 ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
+section_count = 3
+
+[[files]]
+path = "logic/lift-terminal-tabs-into-titlebar.md"
+digest = "sha256:246faf5a6f32f8901a7f39941f936f00fd0186e154937eec254186cb5b6f4fe4"
+ir_digest = "sha256:5ac17d5697c928b6296974a8b59e3a91e866b341de94d8f9e58b4ee43a0b7ff2"
 section_count = 3
 
 [[files]]
