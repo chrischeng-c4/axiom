@@ -4,46 +4,48 @@ summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
 
-## Logic
+## Contract
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
 ---
-id: workbench-delivery-channels
-entry: build
+id: workbench-channel-contract
+entry: profile
 nodes:
-  build: { kind: start, label: selected-channel-build }
-  stable: { kind: process, label: stable-product }
-  beta: { kind: process, label: beta-product }
-  roots: { kind: process, label: isolated-state-roots }
-  registry: { kind: process, label: profile-runtime-registry }
-  verify: { kind: decision, label: independent-runtime-proof }
-  done: { kind: terminal, label: safe-daily-and-beta-use }
+  profile: { kind: start, label: explicit-profile }
+  roots: { kind: process, label: derive-state-root }
+  bundle: { kind: process, label: select-product-identity }
+  cli: { kind: process, label: profile-scoped-cli }
+  build: { kind: process, label: matching-build-skill }
+  isolate: { kind: decision, label: no-cross-channel-state }
+  reject: { kind: terminal, label: typed-profile-error }
+  done: { kind: terminal, label: isolated-product }
 edges:
-  - { from: build, to: stable, label: stable }
-  - { from: build, to: beta, label: beta }
-  - { from: stable, to: roots }
-  - { from: beta, to: roots }
-  - { from: roots, to: registry }
-  - { from: registry, to: verify }
-  - { from: verify, to: done, label: yes }
+  - { from: profile, to: roots }
+  - { from: roots, to: bundle }
+  - { from: bundle, to: cli }
+  - { from: cli, to: build }
+  - { from: build, to: isolate }
+  - { from: isolate, to: reject, label: no }
+  - { from: isolate, to: done, label: yes }
 ---
 flowchart LR
-  build([Selected build skill]) -->|Stable| stable[Axiom Workbench]
-  build -->|Beta| beta[Axiom Workbench Beta]
-  stable --> roots[Separate state roots]
-  beta --> roots
-  roots --> registry[Profile runtime registry]
-  registry --> verify{Independent?}
-  verify -->|Yes| done([Safe daily use])
+  profile([Profile]) --> roots[Derive state root]
+  roots --> bundle[Select product]
+  bundle --> cli[Scope CLI]
+  cli --> build[Run matching skill]
+  build --> isolate{Isolated?}
+  isolate -->|No| reject([Typed error])
+  isolate -->|Yes| done([Product ready])
 ```
 
-Stable is `Axiom Workbench`, bundle id `com.axiom.workbench`, profile `stable`, and state root `~/.axiom-workbench`. Beta is `Axiom Workbench Beta`, bundle id `com.axiom.workbench.beta`, profile `beta`, and state root `~/.axiom-workbench-beta`. Each has its own runtime registry, lock, logs, and project metadata. Stable uses the approved cobalt/amber icon; Beta uses the ultraviolet/mint icon.
+`stable` and `beta` are the only profiles. Stable has product name `Axiom Workbench`, bundle id `com.axiom.workbench`, state root `~/.axiom-workbench`, app bundle `Axiom Workbench.app`, and the cobalt/amber icon. Beta has product name `Axiom Workbench Beta`, bundle id `com.axiom.workbench.beta`, state root `~/.axiom-workbench-beta`, app bundle `Axiom Workbench Beta.app`, and the ultraviolet/mint icon. Both settings are supplied by the compiled application bundle, never inferred from process name.
 
-Build scripts select an explicit Xcode scheme/configuration and only terminate the matching bundle executable. `workbench-build-beta` may never touch Stable. `workbench-build-stable` builds/opens Stable only when invoked. The CLI accepts `--profile stable|beta`, defaults to stable, and derives all local paths from that profile; a cross-profile snapshot cannot discover another runtime.
+All profile-owned state is rooted under the selected profile: `projects/`, `logs/workbench.log`, and `runtime/current.json` plus lock. `workbench snapshot|logs --profile stable|beta` defaults to stable, rejects duplicate or unknown profile flags with `invalid_arguments`, and reads exactly that profile root. A missing profile runtime returns `runtime_unavailable`; it must not inspect, activate, or substitute the other profile.
 
-The legacy cclab bundle is not deleted. A new product starts independently; its one-runtime lease is scoped to its own state root. Tests inspect bundle identities, app names, state-root derivation, icon assets, and two simultaneous profile registries without Computer Use.
+The Stable and Beta skills invoke their own named Xcode schemes/configurations, query the exact product bundle path, terminate only the exact matching executable, and open only that bundle. They build the Rust sidecar as a shared dependency but never replace the other app product. Stable build is explicit; no Beta/debug command may invoke it. Legacy `com.cclab.workbench` is neither deleted nor adopted.
 
+Each app icon asset catalog names its own `AppIcon` and includes a generated 1024px source that Xcode derives into the application icon. The Stable and Beta icon images retain the same geometric mark but distinct approved palettes. Tests assert identities, root derivation, CLI profile boundaries, and script/product matching; integration evidence builds both app bundles and proves each profile registry responds only to its matching CLI request.
 ## Changes
 <!-- type: changes lang: yaml -->
 
