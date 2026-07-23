@@ -1012,7 +1012,7 @@ async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
     envelope
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// `aw goal backlog --project <p>` -- drain ready change leaves from the
 /// accepted and completely published project graph (#1899 R7, #2389).
 /// Epic priority chooses project direction before dependency readiness and
@@ -1022,9 +1022,6 @@ async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
 /// <epic>` for the existing terminal rollup and is never re-atomized.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> Result<()> {
-    if is_self_hosting_project(project) {
-        return emit_self_hosting_policy_error(project, "backlog", project, print);
-    }
     let project_root = crate::find_project_root()?;
     let root = WorkflowNode {
         kind: "backlog".to_string(),
