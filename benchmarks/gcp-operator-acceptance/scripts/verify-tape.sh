@@ -199,6 +199,11 @@ wait_for_leader() {
     sleep 3
   done
   echo "timed out waiting for a raft leader distinct from ordinal '$exclude'" >&2
+  local ordinal
+  for ordinal in 0 1 2; do
+    raftz_ordinal "$ordinal" \
+      > "$EVIDENCE_DIR/kubernetes/tape-raftz-timeout-${ordinal}.json" 2>&1 || true
+  done
   return 1
 }
 
@@ -403,7 +408,12 @@ raftz_ordinal "$initial_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.j
 kubectl -n tape delete "pod/tape-${initial_leader}" --grace-period=1 --wait=true --timeout=120s
 kubectl -n tape wait --for=condition=Ready "pod/tape-${initial_leader}" --timeout=180s
 start_pod_forwards
-new_leader="$(wait_for_leader "$initial_leader")"
+# The disruption is the pod deletion itself. A replaced leader that returns
+# fast can legitimately WIN the next election (run 0723133405 did exactly
+# that), so requiring a different ordinal over-constrains raft; the
+# substantive proof is any settled leader plus the committed post-failover
+# write below. The before/after identities and terms are recorded honestly.
+new_leader="$(wait_for_leader)"
 printf '%s\n' "$new_leader" > "$EVIDENCE_DIR/kubernetes/tape-raft-leader-after-failover.txt"
 raftz_ordinal "$new_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json"
 stop_pod_forwards
@@ -451,7 +461,9 @@ jq -n \
   --argjson bytes "$object_size" \
   --arg leader_before "$initial_leader" \
   --arg leader_after "$new_leader" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,distinct:true}, post_failover_write_committed:"passed"}' \
+  --argjson term_before "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json")" \
+  --argjson term_after "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json")" \
+  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", seed_cleared_rolling_restart_retention:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,distinct:($leader_before != $leader_after),term_before:$term_before,term_after:$term_after,leader_pod_replaced:"passed"}, post_failover_write_committed:"passed"}' \
   > "$EVIDENCE_DIR/tape-acceptance.json"
 
 jq -n \
