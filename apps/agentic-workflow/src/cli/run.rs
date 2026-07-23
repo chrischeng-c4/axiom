@@ -815,14 +815,12 @@ pub(crate) async fn run_capability_root(
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Command string for the project-scoped capability completion loop that
-/// subsumes a project root.
+/// subsumes a project root. Self-hosting projects use the same bounded root
+/// tick as every other project.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
-    if is_self_hosting_project(project) {
-        return format!("aw health --project {project} claims");
-    }
     format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
 }
 // </HANDWRITE>
