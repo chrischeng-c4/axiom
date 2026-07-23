@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T09:24:15.603408+00:00"
-digest = "sha256:2c8aec3d45f1fe4b9f6d733d722c04087c25aaaf664d00258a2dd250c04657c8"
-source_digest = "sha256:2c8aec3d45f1fe4b9f6d733d722c04087c25aaaf664d00258a2dd250c04657c8"
-ir_digest = "sha256:b9e5b5fa5717664ee701eff48673b9f2611904ffff89d598df100917b6c1f32b"
+generated_at = "2026-07-23T09:38:20.685105+00:00"
+digest = "sha256:08169545fd0c013d880de5ceee52a91e4c23d240f5370eca58ae263c8ad8f908"
+source_digest = "sha256:08169545fd0c013d880de5ceee52a91e4c23d240f5370eca58ae263c8ad8f908"
+ir_digest = "sha256:365e1f892854310b43679733bf3fb45d7a7880487533d64d728678afcddfd987"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -80,6 +80,12 @@ ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962
 section_count = 3
 
 [[files]]
+path = "logic/place-auxiliary-column-to-the-right-of-terminal.md"
+digest = "sha256:e636ee2c52765f9ab62f813e95dba9ee58d11e80bd7204d81503aaec8b9bcf28"
+ir_digest = "sha256:f105815c53941c2c7690f0649018e85b51da746cc67cbe39ac399d83c70c14b5"
+section_count = 3
+
+[[files]]
 path = "logic/preserve-canonical-provenance-for-extracted-and-inferred-workben.md"
 digest = "sha256:82664bfe94b2dc499ad71eee9a9688b588be4caba4b3ffe58cd47d65fa67d96d"
 ir_digest = "sha256:d394e408c482ee644dddebffc33feff817dc4f4f4a7324ee60647323179f588b"
@@ -90,6 +96,12 @@ path = "logic/prove-the-workbench-folder-to-agent-to-artifact-production-journ.m
 digest = "sha256:6fd349e4570976be682f463e3d66ca92211f4e026492d1d6eb9f4310d33ff7c1"
 ir_digest = "sha256:9b0f5167f6483485cfba178d55ef87e87cd1ae2e97150daabe3bd16fbd908fbc"
 section_count = 3
+
+[[files]]
+path = "logic/remove-unused-top-titlebar-band-above-workspace.md"
+digest = "sha256:78cc4fa1b97a07cb5b08b3e9a3c5cea6825f2daddd538a18c13c9e2baafec881"
+ir_digest = "sha256:13b115ffc3bd12d0c7b3261cd54c14f3437dd3deb60ffffab026ef6f6d2e858d"
+section_count = 0
 
 [[files]]
 path = "logic/render-aw-typed-artifacts-as-optional-read-only-workbench-contex.md"
