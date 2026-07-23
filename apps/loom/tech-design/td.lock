@@ -2,15 +2,15 @@ version = 2
 project = "loom"
 ir_kind = "td"
 td_path = "apps/loom/tech-design"
-generated_at = "2026-07-23T01:30:18.905821+00:00"
-digest = "sha256:368b820a75092dd578b7483c5f7a99ba3534787a280a223904080c2e006890bf"
-source_digest = "sha256:368b820a75092dd578b7483c5f7a99ba3534787a280a223904080c2e006890bf"
-ir_digest = "sha256:2425856d8c80b1722886fa6688c7c5769fc59407dde156bf4c26c12fb1b9a47a"
+generated_at = "2026-07-23T01:32:30.461389+00:00"
+digest = "sha256:0caba246a2630e5a2fa087e62a076ee9b1286ff714a6a402cd3ad12399e914a9"
+source_digest = "sha256:0caba246a2630e5a2fa087e62a076ee9b1286ff714a6a402cd3ad12399e914a9"
+ir_digest = "sha256:e84a1810777b6dfb654b8060e736f05c4d374a73c99d7334517c7584995ce4de"
 
 [[files]]
 path = "interfaces/rest/adopt-sift-owned-operational-telemetry-contract.md"
-digest = "sha256:8f4b91815af6d10d163ea23b0e7856d14908b5b166054bb8f4517b1042b7b7d9"
-ir_digest = "sha256:78fb8ef6b59bd267405399ecb1fe4c33a315515dea05dc7e974a7c0ab7ae723d"
+digest = "sha256:5cae20c3c948ba3b73d4b2d2fc2daa6d1b42926fc8e09f0476e339cef671d634"
+ir_digest = "sha256:90f3d5167b2c50da790d311488a627b050149f96277501159a127ec1ddb02487"
 section_count = 3
 
 [[files]]
