@@ -127,3 +127,35 @@ changes:
     impl_mode: hand-written
     description: Build and launch only the Beta product.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-delivery-channels-verification
+requirements:
+  native_products_are_distinct:
+    id: R2
+    text: "The two Xcode products expose Axiom names, com.axiom bundle identities, and separate icon asset catalogs."
+    kind: integration
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct
+  profile_paths_are_isolated:
+    id: R1
+    text: "Stable and Beta derive distinct bundle-owned state roots, registry paths, logs, and project metadata with no fallback between profiles."
+    kind: contract
+    risk: high
+    verify: tests/observability_cli.rs::profiles_have_distinct_runtime_and_log_paths
+  skills_never_cross_terminate:
+    id: R3
+    text: "Stable and Beta build scripts target and terminate only their matching product executable."
+    kind: regression
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testBuildSkillsAreProductScoped
+---
+flowchart TD
+    r1[R1 profile paths are isolated] --> tests_observability_cli_rs_profiles_have_distinct_runtime_and_log_paths[tests/observability_cli.rs::profiles_have_distinct_runtime_and_log_paths]
+    r2[R2 native products are distinct] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_teststableandbetaproductsaredistinct[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct]
+    r3[R3 skills never cross terminate] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_testbuildskillsareproductscoped[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testBuildSkillsAreProductScoped]
+```
