@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-21T07:46:24.796589+00:00"
-digest = "sha256:3ca9094bcd966b2236a07e4202ed943ef36519660f9deeb0fffe8a618743e711"
-source_digest = "sha256:3ca9094bcd966b2236a07e4202ed943ef36519660f9deeb0fffe8a618743e711"
-ir_digest = "sha256:f703276dcd3114f9fc3c406afc84c3cedb9c5e21b0830afd88bd2697c6967232"
+generated_at = "2026-07-23T02:57:23.147212+00:00"
+digest = "sha256:d71a256c49f124d9b9cb6534cdc3cc6a81fb983f24d7c1bc49d00d1eaeb4d5ac"
+source_digest = "sha256:d71a256c49f124d9b9cb6534cdc3cc6a81fb983f24d7c1bc49d00d1eaeb4d5ac"
+ir_digest = "sha256:0eff9425b2b4c30c5ca7959af80cdc6fb15b91b3d0dd3d4bc6cb6479b8473b95"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -285,8 +285,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-operator.md"
-digest = "sha256:789e0d17cc441a06544efb22da9767f74d0249e97c5f3a304b4d9e036802e0c2"
-ir_digest = "sha256:1a4dbdf7278f0ce0697e0419c4dd99b51667f39cf78e97ea6211c24b9deb1887"
+digest = "sha256:7f30be62bece4dffbe262b356bef0e0cd09eb246b9eb4d898a6d39c2ca9fe7ec"
+ir_digest = "sha256:2ecdb28056de0ed3427a31a591cd462aef1f776ebb7d44a57e4a4fe3a0001568"
 section_count = 2
 
 [[files]]
@@ -321,8 +321,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-runtime-image.md"
-digest = "sha256:62e74fe9d113944befcfa645e0808ae8c61ce83845478d6dfd9f3e0573619227"
-ir_digest = "sha256:896c0c8c1b24731bbb043090c66cfdf9804dad5bd9cff4c149e20850ac97dd4c"
+digest = "sha256:70e85233308e7c8c50e027836639f13b4c4845e3061c1e66f8db6e262a93d5e4"
+ir_digest = "sha256:23865145466f07f2229e4830b8ba482f7c3c7c500f1a15dc75de5cedbc94f89b"
 section_count = 2
 
 [[files]]
@@ -393,8 +393,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-bin-lumen-rs.md"
-digest = "sha256:1ee0e573ebc24a55620b3129092beebc69764e17d0d1d442cc77214cc6b2b196"
-ir_digest = "sha256:3130c57e7274de1e1a71165b0e134ef8ca83c848225d2df66e4d33210634da2e"
+digest = "sha256:a3785a067cf4ce01a37c87d2e577197d0cef79bda27f8ad1ce476a96ec86919e"
+ir_digest = "sha256:88e9fd6aad471206d9e5f247d7233b4f82073063e4ac75ce4f1255ef1cc0413b"
 section_count = 3
 
 [[files]]
@@ -411,8 +411,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-coordinator-rs.md"
-digest = "sha256:51d2f65b51e7a8485b22336715f0b8f744dcd3dfdd4a18b675119e5a4d1ace78"
-ir_digest = "sha256:f6e83d47495dc271d3f9fe0d69dea388f5dcfdbb16a18e061cef2bc26828774b"
+digest = "sha256:38a1351fde9cf0ac456df0fb10a911b11318ccddb043775ff71c3799bd9c73f7"
+ir_digest = "sha256:e4816c4f5f80b04eb7d67f885a15430f3cf249a9b508d76906b070d13c2c738f"
 section_count = 3
 
 [[files]]
@@ -465,8 +465,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-operator-render-rs.md"
-digest = "sha256:f64476afda28aae7a4b5bb00c7badb2a94b64980e365f8d7859fd46de95d7e70"
-ir_digest = "sha256:e498642108c144f6006392c3833cc0d0021a5de9dea14c3b966078706099aaa1"
+digest = "sha256:4198b6277db1139fbeff6947f6b9d1ff9e5aae458dce9086f93a02c97728d77b"
+ir_digest = "sha256:59623506ad01b59b9c3d08c1a4479549a1c577fb57cf12d0db68b23432704032"
 section_count = 3
 
 [[files]]
@@ -531,14 +531,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-spec-rs.md"
-digest = "sha256:f2c0e151a2cda3ec2b439164f57c680edf0d67251c4cbb1d3c6dc90a53e5c8cf"
-ir_digest = "sha256:8694aeaaa230406785a954b27b26c97b05c72a8ac668aeed6f30535e02316038"
+digest = "sha256:59cf73848e2b9afdc508569900f0dbb14fed7f068ce4b486dcc7834e3f1a2944"
+ir_digest = "sha256:7cb1a3dbc214b380b6654023fdb88eb02cbad3e1655afb9af76f67f933130558"
 section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-storage-rs.md"
-digest = "sha256:bfa856671461873a7ccccad58f74f6e2e9244262a3575c5d7a55e85ee7ce5291"
-ir_digest = "sha256:a96844d7c2e2a6d0437b0e28bfa2b47e68d0f7a437bafa667f55a5db42884839"
+digest = "sha256:23a4541ce6fdab2f4737cbf888dd9445aec397f20b7534551852c32c6f04b960"
+ir_digest = "sha256:0e9453f33e6eee327abb7218dec994f46d2f844d58eb6d8d86e8097ae8562222"
 section_count = 3
 
 [[files]]
@@ -599,4 +599,10 @@ section_count = 3
 path = "validate/link-stateful-service-workload-claim-to-primary-td-verification.md"
 digest = "sha256:2645752ee8b89e114a6e8df282fb77ed383ad156913c73b8909c639d73f61979"
 ir_digest = "sha256:3c895f5992b4e5b038d6e53c33417917f9e006282b9639f5a59d04731943bfbe"
+section_count = 3
+
+[[files]]
+path = "validate/verify-low-cost-gke-deployment-scaling-and-cleanup.md"
+digest = "sha256:9a63a5b7d5b9bef07b4ca5e034559635b357a12a0e8cdc95576e63a8f8860896"
+ir_digest = "sha256:cdeb8fc99b42ec0aa881678dc2b2c4b5d77387811914777c02d42e6d1ed28903"
 section_count = 3
