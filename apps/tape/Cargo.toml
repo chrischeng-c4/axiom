@@ -1,7 +1,10 @@
 # <HANDWRITE gap="missing-generator:project-bootstrap" tracker="#768" reason="Initial Tape Rust crate manifest following the Lumen-style service slice.">
 [package]
 name = "tape"
-version.workspace = true
+# tape owns its version and releases independently (tape@<version> tags →
+# .github/workflows/tape-release.yml); it no longer inherits the shared
+# workspace version.
+version = "0.4.10"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true

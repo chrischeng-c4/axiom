@@ -15,6 +15,9 @@ resources:
   # - secret.yaml
 
 images:
+  # Published releases live at ghcr.io/chrischeng-c4/tape:<version> (digest
+  # in each release's notes); point REPLACE_ME__REGISTRY there unless you
+  # mirror images into your own registry.
   - name: tape
     newName: REPLACE_ME__REGISTRY/tape
     newTag: REPLACE_ME__IMAGE_TAG
