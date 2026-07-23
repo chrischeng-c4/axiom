@@ -112,3 +112,49 @@ changes:
     impl_mode: hand-written
     description: Register the local snapshot and diagnostics capability work root with its deterministic test gates.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-local-observability-verification
+requirements:
+  logs_are_local_and_bounded:
+    id: R1
+    text: "workbench logs tails only the local diagnostic file, clamps the requested line count, preserves whole lines, and works while Workbench.app is not running."
+    kind: functional
+    risk: medium
+    verify: tests/observability_cli.rs::logs_tail_is_local_line_bounded_and_runtime_independent
+  native_capture_uses_own_content_view:
+    id: R5
+    text: "The native endpoint captures its own AppKit content view on the main actor and returns a PNG response within the configured bound, independent of macOS screen-capture permission or an external UI automation agent."
+    kind: integration
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testContentViewCaptureReturnsBoundedPNG
+  native_runtime_is_singleton_and_clean:
+    id: R4
+    text: "The native host holds one user-scoped lease, publishes one 0600 registry with a fresh token, rejects an invalid token, and removes its registry on orderly shutdown while only reclaiming stale state after PID and endpoint checks."
+    kind: lifecycle
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testRegistryLeaseAuthenticationAndCleanup
+  snapshot_requires_live_authenticated_runtime:
+    id: R2
+    text: "workbench snapshot discovers only the owner-readable runtime registry, sends the registry token on its local request, and returns a typed unavailable error for missing, malformed, stale, or unreachable runtime state without launching Workbench.app."
+    kind: failure-recovery
+    risk: high
+    verify: tests/observability_cli.rs::snapshot_registry_and_authentication_fail_closed_without_launching_gui
+  snapshot_writes_only_requested_png:
+    id: R3
+    text: "A successful snapshot response is accepted only as a bounded PNG payload and is atomically written to the explicit caller-selected output path; no screen recording, accessibility traversal, or terminal interaction occurs."
+    kind: boundary
+    risk: high
+    verify: tests/observability_cli.rs::snapshot_accepts_bounded_png_and_writes_only_explicit_output
+---
+flowchart TD
+    r1[R1 logs are local and bounded] --> tests_observability_cli_rs_logs_tail_is_local_line_bounded_and_runtime_independent[tests/observability_cli.rs::logs_tail_is_local_line_bounded_and_runtime_independent]
+    r2[R2 snapshot requires live authenticated runtime] --> tests_observability_cli_rs_snapshot_registry_and_authentication_fail_closed_without_launching_gui[tests/observability_cli.rs::snapshot_registry_and_authentication_fail_closed_without_launching_gui]
+    r3[R3 snapshot writes only requested png] --> tests_observability_cli_rs_snapshot_accepts_bounded_png_and_writes_only_explicit_output[tests/observability_cli.rs::snapshot_accepts_bounded_png_and_writes_only_explicit_output]
+    r4[R4 native runtime is singleton and clean] --> macos_tests_workbenchmaccoretests_localruntimeservertests_swift_testregistryleaseauthenticationandcleanup[macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testRegistryLeaseAuthenticationAndCleanup]
+    r5[R5 native capture uses own content view] --> macos_tests_workbenchmaccoretests_localruntimeservertests_swift_testcontentviewcapturereturnsboundedpng[macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testContentViewCaptureReturnsBoundedPNG]
+```
