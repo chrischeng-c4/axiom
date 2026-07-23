@@ -53,9 +53,8 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    anchor: resolver_accepts_account_local_macOS_fallback_paths
+    anchor: resolver_accepts_account_local_macos_fallback_paths
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
