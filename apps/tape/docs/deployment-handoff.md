@@ -177,12 +177,36 @@ tape backup --url http://localhost:7137 --dest file:///tmp/tape-backups \
   --token "$TAPE_BACKUP_TOKEN" --retention-secs 604800
 ```
 
-`--dest` accepts `file://` (always supported) or `s3://` (feature `backup`,
-`service-backup/s3`). The bearer token needs `admin` on `*`; omit it entirely
-when the node runs `--auth off`. `--retention-secs` prunes older backup
-objects at the destination after a successful put; omit to keep everything.
-In-cluster, the operator's backup CronJob passes
+`--dest` accepts `file://` (always supported), `s3://` (feature `backup`,
+`service-backup/s3`), or `gs://` (feature `backup`, always linked —
+`service-backup/gcs` is unconditional). `gs://` authenticates via
+workload-identity ADC in-cluster (GKE-proven) and Vat's
+`STORAGE_EMULATOR_HOST` locally. The bearer token needs `admin` on `*`; omit
+it entirely when the node runs `--auth off`. `--retention-secs` prunes older
+backup objects at the destination after a successful put; omit to keep
+everything. In-cluster, the operator's backup CronJob passes
 `http://<name>.<namespace>.svc.cluster.local:7137` as `--url`.
+
+### Cold restore runbook (#2465, #2468)
+
+`bootstrapSeedUri` is a **one-shot** cold-recovery field, not a live restore
+endpoint: the server refuses to seed a non-empty `TAPE_DATA_DIR`, so it only
+ever fires on a replica's first (empty-PVC) start.
+
+1. Set `spec.bootstrapSeedUri` on a **fresh** instance (empty PVCs — a new
+   deployment, or one whose PVCs were explicitly wiped) to the backup object
+   URI.
+2. Wait for the CR to report Ready, then verify the expected data replayed
+   (e.g. `curl $BASE/topics/<topic>/replay?from_offset=0`).
+3. Remove the field so future pod replacements don't attempt to reseed an
+   already-populated PVC (which would be refused, but leaving it set is a
+   crash-loop trap — see #2468):
+   ```bash
+   kubectl patch tape/<name> --type=json \
+     -p '[{"op":"remove","path":"/spec/bootstrapSeedUri"}]'
+   ```
+4. Wait for the rollout to settle and confirm replacement pods still start
+   cleanly (no seed attempted, PVC already populated).
 
 ---
 

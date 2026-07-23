@@ -519,8 +519,9 @@ Type: Service
 Root WI: #1327, #1585
 Status: confirmed
 Surfaces: RaftHost: leader forwarding, committed apply, InstallSnapshot, and
-follower catch-up; Backup seed: exact `file://` or backup-enabled `s3://`
-object read through `libs/service-backup` before an empty PVC joins the group.
+follower catch-up; Backup seed: exact `file://`, `s3://`, or `gs://` (workload-identity
+ADC in-cluster, GKE-proven) object read through `libs/service-backup` before an
+empty PVC joins the group.
 EC Dimensions: behavior: `cargo test -p tape --test raft_cluster --test
 bootstrap` - live replica convergence and seed-before-catch-up conformance;
 stability: `cargo test -p tape --test raft_failover --test raft_persistence` -
