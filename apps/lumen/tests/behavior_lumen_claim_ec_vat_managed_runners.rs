@@ -7,14 +7,15 @@
 // @contract ec-vat-managed-runners
 // @category behavior
 // @required_for_production true
-// @command cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter
+// @command cargo test -p lumen --test ec_claim_closure_consistency vat_managed_runner_bindings_resolve_to_declared_runners -- --exact --nocapture
 // AW-EC-END
 
-// Contract: The vat-managed meter runner remains executable for Lumen efficiency EC dispatch.
+// Contract: Every vat runner referenced by the generated production EC inventory resolves to a declared lumen vat.toml runner, while the independent efficiency and resilience cases retain the heavy runner executions.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_ec_vat_managed_runners() {
-    let command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter";
+    let command =
+        "cargo test -p lumen --test ec_claim_closure_consistency vat_managed_runner_bindings_resolve_to_declared_runners -- --exact --nocapture";
     let id = "lumen-claim-ec-vat-managed-runners";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

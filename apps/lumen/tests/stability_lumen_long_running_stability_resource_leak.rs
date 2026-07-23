@@ -10,7 +10,8 @@
 // @command cd apps/lumen && ../../target/debug/vat run rig-endurance
 // AW-EC-END
 
-// Contract: (e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen).
+// Contract: fd_leak resolves the unique Lumen listener PID, runs sustained bounded-keyspace index and search work, records independent fd/socket/thread counts before and after, requires zero request failures, and gates every after count at <= 1.20 * before + 16.
+// Contract: soak_rss_plateau warms a bounded keyspace, runs two mixed workload windows with zero request failures, measures rss_w1/rss_w2 from the live Lumen PID, and requires rss_w2 <= 1.10 * rss_w1.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_resource_leak() {
