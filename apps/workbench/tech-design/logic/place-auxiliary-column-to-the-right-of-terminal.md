@@ -50,3 +50,28 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-auxiliary-right-order-verification
+requirements:
+  beta_column_order:
+    id: R1
+    text: "Beta renders Projects, then the primary terminal workspace, then the Auxiliary Files column."
+    kind: e2e
+    risk: medium
+    verify: WorkbenchMacUITests.testFilesAuxiliaryColumnFollowsTerminalWorkspace
+  stable_unchanged:
+    id: R2
+    text: "Stable keeps the two-column Projects and Terminal workspace without Auxiliary Files."
+    kind: regression
+    risk: medium
+    verify: WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct
+---
+flowchart TD
+    r1[R1 beta column order] --> workbenchmacuitests_testfilesauxiliarycolumnfollowsterminalworkspace[WorkbenchMacUITests.testFilesAuxiliaryColumnFollowsTerminalWorkspace]
+    r2[R2 stable unchanged] --> workbenchruntimeprofiletests_teststableandbetaproductsaredistinct[WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct]
+```
