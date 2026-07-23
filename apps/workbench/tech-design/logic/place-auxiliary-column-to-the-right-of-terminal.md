@@ -9,31 +9,33 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-auxiliary-right-order
-entry: profile
+id: workbench-auxiliary-right-contract
+entry: selected-project
 nodes:
-  profile: { kind: decision, label: "Beta profile?" }
+  selected-project: { kind: start, label: "selected registered project" }
+  profile: { kind: decision, label: "beta runtime profile?" }
+  terminal: { kind: process, label: "render central terminal workspace" }
+  files: { kind: process, label: "render read-only Files auxiliary" }
   stable: { kind: terminal, label: "Projects | Terminal" }
-  terminal: { kind: process, label: "render primary terminal workspace" }
-  auxiliary: { kind: process, label: "render Files auxiliary after terminal" }
   beta: { kind: terminal, label: "Projects | Terminal | Auxiliary" }
 edges:
+  - { from: selected-project, to: profile }
   - { from: profile, to: stable, label: "stable" }
   - { from: profile, to: terminal, label: "beta" }
-  - { from: terminal, to: auxiliary }
-  - { from: auxiliary, to: beta }
+  - { from: terminal, to: files }
+  - { from: files, to: beta }
 ---
 flowchart LR
-    profile{Beta profile?} -->|Stable| stable([Projects | Terminal])
-    profile -->|Beta| terminal[Primary terminal workspace]
-    terminal --> auxiliary[Files auxiliary]
-    auxiliary --> beta([Projects | Terminal | Auxiliary])
+    selectedProject([Selected project]) --> profile{Beta profile?}
+    profile -->|Stable| stable([Projects | Terminal])
+    profile -->|Beta| terminal[Central terminal]
+    terminal --> files[Read-only Files]
+    files --> beta([Projects | Terminal | Auxiliary])
 ```
 
-`WorkbenchView.body` remains a `NavigationSplitView` with the registered Projects sidebar as its leading column. Within the detail `HStack`, `terminalWorkspace` is always rendered first and remains the only flexible workspace. When `WorkbenchRuntimeProfile` is `beta`, a divider and the existing bounded `auxiliaryColumn` follow it, yielding the visible order Projects | Terminal | Auxiliary. Stable does not render the divider or Auxiliary column and therefore remains Projects | Terminal.
+The user-visible layout contract is fixed: Projects is the native NavigationSplitView sidebar, Terminal is the primary flexible detail region, and Beta-only Auxiliary is the trailing bounded detail region. `terminalWorkspace` must precede `auxiliaryColumn` in the detail HStack, separated by exactly one divider. Stable omits the trailing divider and Auxiliary column.
 
-The implementation changes only detail-child ordering and the terminal workspace sizing priority. It does not change file listing, project selection, tab lifecycle, PTY launch, or the native sidebar toggle. Native UI coverage asserts that terminal controls appear horizontally before the Auxiliary Files element in Beta, while the Stable profile has no Auxiliary element.
-
+The file listing stays read-only and project-scoped. The layout reorder does not initiate a process, alter an existing terminal's cwd, change the active tab, or affect the native window sidebar toggle.
 ## Changes
 <!-- type: changes lang: yaml -->
 
