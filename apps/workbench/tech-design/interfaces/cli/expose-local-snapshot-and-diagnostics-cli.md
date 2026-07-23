@@ -4,56 +4,55 @@ summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
 
-## Logic
+## Contract
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
 ---
-id: workbench-local-observability
-entry: cli
+id: workbench-local-observability-contract
+entry: argv
 nodes:
-  cli: { kind: start, label: workbench-cli }
-  logs: { kind: process, label: bounded-log-tail }
-  registry: { kind: process, label: runtime-registry }
-  endpoint: { kind: decision, label: runtime-reachable }
-  unavailable: { kind: terminal, label: typed-not-running }
-  capture: { kind: process, label: mainactor-content-snapshot }
-  png: { kind: process, label: bounded-png-response }
-  out: { kind: process, label: caller-output-write }
-  done: { kind: terminal, label: structured-result }
+  argv: { kind: start, label: workbench-observability-argv }
+  parse: { kind: decision, label: strict-subcommand-parse }
+  logs: { kind: process, label: emit-json-log-tail }
+  registry: { kind: process, label: load-owner-registry }
+  request: { kind: process, label: authenticated-loopback-request }
+  response: { kind: decision, label: matching-success-response }
+  unavailable: { kind: terminal, label: typed-cli-error }
+  write: { kind: process, label: atomic-png-write }
+  success: { kind: terminal, label: json-success }
 edges:
-  - { from: cli, to: logs, label: logs }
-  - { from: logs, to: done }
-  - { from: cli, to: registry, label: snapshot }
-  - { from: registry, to: endpoint }
-  - { from: endpoint, to: unavailable, label: no }
-  - { from: endpoint, to: capture, label: yes }
-  - { from: capture, to: png }
-  - { from: png, to: out }
-  - { from: out, to: done }
+  - { from: argv, to: parse }
+  - { from: parse, to: logs, label: logs }
+  - { from: parse, to: registry, label: snapshot }
+  - { from: parse, to: unavailable, label: invalid }
+  - { from: logs, to: success }
+  - { from: registry, to: request }
+  - { from: request, to: response }
+  - { from: response, to: unavailable, label: no }
+  - { from: response, to: write, label: yes }
+  - { from: write, to: success }
 ---
 flowchart LR
-    cli([Workbench CLI]) -->|logs| logs[Read bounded diagnostic tail]
-    logs --> done([Structured result])
-    cli -->|snapshot| registry[Read runtime registry]
-    registry --> endpoint{Runtime reachable?}
-    endpoint -->|No| unavailable([Typed not-running result])
-    endpoint -->|Yes| capture[MainActor captures content view]
-    capture --> png[Return bounded PNG bytes]
-    png --> out[CLI writes explicit output path]
-    out --> done
+    argv([argv]) --> parse{Valid read-only command?}
+    parse -->|logs| logs[Return bounded log JSON]
+    parse -->|snapshot| registry[Load owner registry]
+    parse -->|invalid| unavailable([Typed error])
+    logs --> success([JSON success])
+    registry --> request[Authenticate loopback request]
+    request --> response{Matching success response?}
+    response -->|No| unavailable
+    response -->|Yes| write[Atomically write PNG]
+    write --> success
 ```
 
-Workbench.app is the only UI runtime. At launch it obtains a per-user singleton lease before presenting a window, starts a loopback-only control listener, and atomically publishes ~/.axiom-workbench/runtime/current.json containing protocolVersion, instanceId, pid, port, and a random token. The registry and token are owner-readable only. A second launch first probes the registered runtime with the token; a matching response receives an activate request and the second process exits. A dead PID plus unreachable endpoint is stale registration: the prospective owner removes only that record, obtains the lease, and publishes a fresh runtime. The CLI never uses pgrep or selects an arbitrary process.
+The public surface is exactly `workbench snapshot --out <png-path>` and `workbench logs [--tail <count>]`. Both write one newline-terminated JSON object to stdout on success. `snapshot` succeeds with `{\"kind\":\"snapshot\",\"instanceId\":\"…\",\"path\":\"…\",\"bytes\":N}`. `logs` succeeds with `{\"kind\":\"logs\",\"path\":\"…\",\"lines\":[…],\"truncated\":false}`. Unknown flags, nonpositive values, duplicate options, unreadable output parents, non-PNG responses, oversized payloads, and a non-atomic output replacement are errors. The default log tail is 100 complete lines and any requested tail is clamped to 1,000; raw terminal bytes are never part of the result.
 
-workbench snapshot --out <png-path> is a Rust subcommand in the existing Workbench executable. It reads the registry, validates the version and bounded loopback endpoint, sends newline-framed JSON with a nonzero request id and token, and requires the response to echo the instance and request ids. The Swift listener authenticates first, then on MainActor rasterizes only the active Workbench content view through AppKit bitmap caching. It returns bounded PNG bytes; the CLI writes those bytes to the caller-selected output path, so the app never accepts an arbitrary filesystem write path. Missing registry, unreachable runtime, authentication failure, version mismatch, and encoding failure are typed results with executable remediation and never silently launch another app.
+The registry is `~/.axiom-workbench/runtime/current.json`, created through atomic replacement and mode 0600 under a mode-0700 runtime directory. Its versioned fields are `protocolVersion`, `instanceId`, `pid`, `port`, and `token`. Only `127.0.0.1` ports in 1024…65535 are valid. The CLI connects with a bounded deadline and sends exactly one newline-delimited JSON request `{protocolVersion:1,requestId,token,method:\"snapshot\"}`. The response must echo `protocolVersion`, `requestId`, and `instanceId`, carry `ok:true`, declare `mimeType:\"image/png\"`, and hold a Base64 PNG no larger than 16 MiB. This is an internal local protocol, not a general RPC or public network API.
 
-workbench logs --tail <count> does not need the app to be running. It reads only ~/.axiom-workbench/logs/workbench.log, clamps the tail count to a documented maximum, and returns newest complete lines. The existing diagnostic writer remains the privacy boundary: terminal input and output are never retained, and this CLI introduces no secondary transcript source. A missing log returns an explicit empty-log result.
+CLI errors use stderr JSON `{\"kind\":\"error\",\"code\":\"…\",\"message\":\"…\",\"next\":\"…\"}` and a nonzero exit. Stable codes are `invalid_arguments`, `log_unavailable`, `runtime_unavailable`, `runtime_protocol_mismatch`, `runtime_authentication_failed`, `snapshot_failed`, and `output_write_failed`. `runtime_unavailable` always recommends opening Workbench; the CLI never opens or activates the app by itself. The app accepts only `snapshot` and `uiState` after token validation; every request is bounded, request ids are nonzero, and unexpected methods fail closed.
 
-The control protocol is read-only in this slice. It contains snapshot and an internal uiState identity response only; it cannot send terminal input, mutate projects, manage processes, or dispatch agents. MCP, remote access, generic screen capture, and write commands remain out of scope.
-
-Verification covers registry/CLI parsing, loopback success, stale/not-running and version-mismatch behavior, bounded-log privacy behavior, and a deterministic native snapshot whose PNG signature and content-area dimensions are validated without Computer Use, Accessibility permission, or screen-recording permission.
-
+The host acquires one per-user lock before registry publication. A second native launch probes the registered instance using its token, activates that instance on a positive response, and exits. Recovery may remove a stale registry only after both an absent/dead recorded pid and a failed endpoint probe. It never uses broad process scans. Snapshot capture is dispatched to the main actor and draws the Workbench window content view via AppKit bitmap caching; it excludes all other desktop windows and requires neither screen-recording nor Accessibility permission.
 ## Changes
 <!-- type: changes lang: yaml -->
 
