@@ -417,6 +417,7 @@ const TOPICS: &[cli_std::llm::Topic] = &[
     },
 ];
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Controller => loom::controller::run(),
@@ -458,6 +459,7 @@ fn main() -> anyhow::Result<()> {
         Command::Issue(args) => block_on(issue(args)),
     }
 }
+// </HANDWRITE>
 
 /// Dispatch `loom issue <search|view|create>` to the shared `cli_std::issue`
 /// implementation. `search`/`view` are read-only; `create` files (or previews)

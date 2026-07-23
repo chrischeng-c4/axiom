@@ -40,6 +40,7 @@ fn image_pull_policy(loom: &Loom) -> &str {
     loom.spec.image_pull_policy.as_deref().unwrap_or("IfNotPresent")
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
 /// The loom-specific env appended after the downward-API quartet.
 fn extra_env(loom: &Loom, headless: &str) -> Vec<Value> {
     vec![
@@ -53,6 +54,7 @@ fn extra_env(loom: &Loom, headless: &str) -> Vec<Value> {
         json!({ "name": "LOOM_GC_RETENTION_SECS", "value": loom.spec.gc_retention_secs.to_string() }),
     ]
 }
+// </HANDWRITE>
 
 /// The controller StatefulSet: the shared sharded-StatefulSet helper (env
 /// quartet + PVC + Parallel) augmented with the archetype probes + hardening.
