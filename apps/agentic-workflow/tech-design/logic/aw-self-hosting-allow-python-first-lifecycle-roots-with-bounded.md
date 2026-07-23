@@ -81,12 +81,15 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+  - path: apps/agentic-workflow/CONTRIBUTING.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
   - path: apps/agentic-workflow/CAPABILITIES.md
     action: modify
     section: logic
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
