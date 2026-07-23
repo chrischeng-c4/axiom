@@ -57,6 +57,10 @@ final class WorkbenchModelTests: XCTestCase {
         await projectsPersistIndependentlyAndRemoveOnlyMetadata()
     }
 
+    func testProjectsSwitchWorkspaceStateWithoutTouchingTerminals() async {
+        await projectsSwitchWorkspaceStateWithoutTouchingTerminals()
+    }
+
     func closingTabRemovesTabAndSelectsAdjacent() async {
         let client = MockCoreClient()
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -97,6 +101,56 @@ final class WorkbenchModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.projectDirectory(first.id).path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: firstProject.path), "removing a project must not delete its files")
         XCTAssertEqual(model.projects.map(\.rootPath), [secondProject.path])
+
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    func projectsSwitchWorkspaceStateWithoutTouchingTerminals() async {
+        let client = MockCoreClient()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let firstProject = tempDir.appendingPathComponent("first", isDirectory: true)
+        let secondProject = tempDir.appendingPathComponent("second", isDirectory: true)
+        try? FileManager.default.createDirectory(at: firstProject, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: secondProject, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: secondProject.appendingPathComponent("project-marker.txt").path,
+            contents: Data()
+        )
+        let model = WorkbenchModel(
+            client: client,
+            projectStore: ProjectStore(storageDirectory: tempDir)
+        )
+        model.registerProject(firstProject)
+        model.registerProject(secondProject)
+        let first = try! XCTUnwrap(model.projects.first)
+        let second = try! XCTUnwrap(model.projects.last)
+
+        model.selectProject(first.id)
+        await client.enqueue(
+            response(
+                tabId: "claude",
+                profile: .claude,
+                running: true,
+                cwd: firstProject.path,
+                sequence: 0
+            )
+        )
+        await model.startActiveTab()
+        let requestsBeforeSwitch = await client.requests()
+
+        model.selectProject(second.id)
+
+        XCTAssertEqual(model.selectedWorkspace?.project.id, second.id)
+        XCTAssertEqual(model.selectedFolder?.path, secondProject.path)
+        if case let .available(entries, _) = model.projectFileListing {
+            XCTAssertTrue(entries.contains(where: { $0.name == "project-marker.txt" }))
+        } else {
+            XCTFail("selected project should expose its Files listing")
+        }
+        XCTAssertEqual(model.activeTab?.activeCwd, firstProject.path)
+        XCTAssertEqual(model.activeTab?.lifecycle, .running)
+        let requestsAfterSwitch = await client.requests()
+        XCTAssertEqual(requestsAfterSwitch, requestsBeforeSwitch)
 
         try? FileManager.default.removeItem(at: tempDir)
     }

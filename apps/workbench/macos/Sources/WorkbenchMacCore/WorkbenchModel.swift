@@ -22,6 +22,11 @@ public enum TerminalLifecycle: Equatable, Sendable {
     public var isRunning: Bool {
         self == .running || self == .starting
     }
+
+    public var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
 }
 
 public struct TerminalTab: Identifiable, Equatable, Sendable {
@@ -52,6 +57,22 @@ public struct TerminalTab: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The project-scoped values the native workspace renders together.
+///
+/// Keeping these values in one published value prevents the sidebar, launch
+/// root, and Files column from observing different projects during selection.
+public struct SelectedProjectWorkspace: Equatable, Sendable {
+    public let project: RegisteredProject
+    public let launchFolder: URL
+    public let fileListing: ProjectFileListingState
+
+    public init(project: RegisteredProject, fileListing: ProjectFileListingState) {
+        self.project = project
+        launchFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
+        self.fileListing = fileListing
+    }
+}
+
 /// Native presentation state; every process action is delegated to the Rust core.
 ///
 /// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#logic
@@ -67,9 +88,7 @@ public final class WorkbenchModel: ObservableObject {
     @Published public private(set) var tabs: [TerminalTab]
     @Published public private(set) var activeTabId: String
     @Published public private(set) var projects: [RegisteredProject]
-    @Published public private(set) var selectedProjectId: String?
-    @Published public private(set) var selectedFolder: URL?
-    @Published public private(set) var projectFileListing: ProjectFileListingState
+    @Published public private(set) var selectedWorkspace: SelectedProjectWorkspace?
     @Published public private(set) var statusMessage = "Add a project, then explicitly start a terminal."
 
     private let client: any CoreClientProtocol
@@ -87,7 +106,7 @@ public final class WorkbenchModel: ObservableObject {
         self.fileListing = fileListing
         tabs = Self.defaultTabs
         activeTabId = Self.defaultTabs[0].id
-        projectFileListing = .noProject
+        selectedWorkspace = nil
         let loaded = projectStore.load()
         projects = loaded
         if let first = loaded.first {
@@ -100,6 +119,18 @@ public final class WorkbenchModel: ObservableObject {
         tabs.first { $0.id == activeTabId }
     }
 
+    public var selectedProjectId: String? {
+        selectedWorkspace?.project.id
+    }
+
+    public var selectedFolder: URL? {
+        selectedWorkspace?.launchFolder
+    }
+
+    public var projectFileListing: ProjectFileListingState {
+        selectedWorkspace?.fileListing ?? .noProject
+    }
+
     public func registerProject(_ url: URL) {
         let project = projectStore.register(url: url)
         projects = projectStore.load()
@@ -109,9 +140,11 @@ public final class WorkbenchModel: ObservableObject {
 
     public func selectProject(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }) else { return }
-        selectedProjectId = project.id
-        selectedFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
-        projectFileListing = fileListing.load(root: selectedFolder)
+        let launchFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
+        selectedWorkspace = SelectedProjectWorkspace(
+            project: project,
+            fileListing: fileListing.load(root: launchFolder)
+        )
     }
 
     public func removeProject(_ id: String) {
@@ -119,9 +152,7 @@ public final class WorkbenchModel: ObservableObject {
         projectStore.remove(id: id)
         projects = projectStore.load()
         if selectedProjectId == id {
-            selectedProjectId = nil
-            selectedFolder = nil
-            projectFileListing = .noProject
+            selectedWorkspace = nil
             if let next = projects.first {
                 selectProject(next.id)
             }

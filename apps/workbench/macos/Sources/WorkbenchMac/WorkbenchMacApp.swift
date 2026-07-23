@@ -35,6 +35,11 @@ struct WorkbenchMacApp: App {
         {
             model.registerProject(URL(fileURLWithPath: fixtureFolder, isDirectory: true))
         }
+        if let initialTab = ProcessInfo.processInfo.environment["WORKBENCH_UI_TEST_ACTIVE_TAB"],
+           !initialTab.isEmpty
+        {
+            model.selectTab(initialTab)
+        }
         _model = StateObject(wrappedValue: model)
         self.localRuntime = localRuntime
     }

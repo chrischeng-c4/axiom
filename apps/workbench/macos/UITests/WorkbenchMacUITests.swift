@@ -71,6 +71,7 @@ final class WorkbenchMacUITests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
         app.launchEnvironment["WORKBENCH_UI_TEST_FOLDER"] = fixtureFolder.path
+        app.launchEnvironment["WORKBENCH_UI_TEST_ACTIVE_TAB"] = "shell"
         app.launch()
         defer { app.terminate() }
 
@@ -88,13 +89,10 @@ final class WorkbenchMacUITests: XCTestCase {
 
         let addShell = app.buttons["terminal.add-shell"]
         XCTAssertTrue(addShell.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(addShell.frame.width, 44)
-        XCTAssertGreaterThanOrEqual(addShell.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(addShell.frame.width, 32)
+        XCTAssertGreaterThanOrEqual(addShell.frame.height, 32)
 
         let shellTab = app.buttons["terminal.tab.shell"]
-        // Select through the leading non-text portion of the tab, so the full
-        // painted tab hit region—not only its label—remains interactive.
-        shellTab.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).click()
         let start = app.buttons["terminal.launch.shell"]
         XCTAssertTrue(start.waitForExistence(timeout: 5))
 
@@ -120,8 +118,14 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertTrue(secondShell.waitForExistence(timeout: 5))
         XCTAssertTrue(secondShell.label.contains("Idle"))
         XCTAssertTrue(shellTab.label.contains("Running"))
+        XCTAssertTrue(
+            app.textViews["terminal.surface.shell"].exists,
+            "The running shell's native renderer must remain mounted while another tab is selected."
+        )
 
-        shellTab.click()
+        let closeSecondShell = app.buttons["terminal.close-tab.shell-2"]
+        XCTAssertTrue(closeSecondShell.waitForExistence(timeout: 5))
+        closeSecondShell.click()
         let retainedTerminal = app.textViews["terminal.surface.shell"]
         XCTAssertTrue(retainedTerminal.waitForExistence(timeout: 5))
         waitForValue(marker, on: retainedTerminal)

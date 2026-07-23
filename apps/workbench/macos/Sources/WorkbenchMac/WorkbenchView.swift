@@ -160,8 +160,8 @@ struct WorkbenchView: View {
                     .font(.headline.weight(.semibold))
             }
 
-            if let project = model.projects.first(where: { $0.id == model.selectedProjectId }) {
-                Text(project.rootPath)
+            if let workspace = model.selectedWorkspace {
+                Text(workspace.project.rootPath)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -327,32 +327,55 @@ struct WorkbenchView: View {
 
     @ViewBuilder
     private var terminalBody: some View {
-        if let tab = model.activeTab {
-            if tab.lifecycle == .idle {
-                terminalStartState(tab)
-            } else if case let .failed(message) = tab.lifecycle {
-                terminalFailureState(tab, message: message)
+        Group {
+            if let tab = model.activeTab {
+                if tab.lifecycle == .idle {
+                    terminalStartState(tab)
+                        .background(terminalLayers)
+                } else if case let .failed(message) = tab.lifecycle {
+                    terminalFailureState(tab, message: message)
+                        .background(terminalLayers)
+                } else {
+                    terminalLayers
+                }
             } else {
-                TerminalSurface(
-                    tabId: tab.id,
-                    output: tab.output,
-                    acceptsInput: tab.lifecycle == .running,
-                    onInput: { data in
-                        Task { await model.sendInput(tabId: tab.id, data: data) }
-                    },
-                    onResize: { rows, cols in
-                        Task { await model.resize(tabId: tab.id, rows: rows, cols: cols) }
-                    }
-                )
-                .id(tab.id)
-                .padding(4)
-                .background(Color(nsColor: .black))
-                .accessibilityIdentifier("terminal.surface.\(tab.id)")
-                .accessibilityLabel("\(tab.title) terminal, \(tab.lifecycle.label)")
+                ContentUnavailableView("No terminal tab", systemImage: "terminal")
             }
-        } else {
-            ContentUnavailableView("No terminal tab", systemImage: "terminal")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var terminalLayers: some View {
+        ZStack {
+            ForEach(model.tabs) { tab in
+                if tab.lifecycle != .idle, !tab.lifecycle.isFailed {
+                    terminalSurface(tab)
+                        .opacity(model.activeTabId == tab.id ? 1 : 0)
+                        .allowsHitTesting(model.activeTabId == tab.id)
+                        .accessibilityHidden(model.activeTabId != tab.id)
+                        .zIndex(model.activeTabId == tab.id ? 1 : 0)
+                }
+            }
+        }
+    }
+
+    private func terminalSurface(_ tab: TerminalTab) -> some View {
+        TerminalSurface(
+            tabId: tab.id,
+            output: tab.output,
+            acceptsInput: tab.lifecycle == .running && model.activeTabId == tab.id,
+            onInput: { data in
+                Task { await model.sendInput(tabId: tab.id, data: data) }
+            },
+            onResize: { rows, cols in
+                Task { await model.resize(tabId: tab.id, rows: rows, cols: cols) }
+            }
+        )
+        .id(tab.id)
+        .padding(4)
+        .background(Color(nsColor: .black))
+        .accessibilityIdentifier("terminal.surface.\(tab.id)")
+        .accessibilityLabel("\(tab.title) terminal, \(tab.lifecycle.label)")
     }
 
     private func terminalStartState(_ tab: TerminalTab) -> some View {
@@ -368,8 +391,8 @@ struct WorkbenchView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
-            if let project = model.projects.first(where: { $0.id == model.selectedProjectId }) {
-                Text(project.rootPath)
+            if let workspace = model.selectedWorkspace {
+                Text(workspace.project.rootPath)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
