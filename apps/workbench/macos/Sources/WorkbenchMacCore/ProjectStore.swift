@@ -18,16 +18,15 @@ public struct RegisteredProject: Codable, Identifiable, Equatable, Sendable {
 /// Filesystem-backed registry for the projects a user intentionally adds to Workbench.
 ///
 /// Every project owns one metadata directory under
-/// `~/.axiom-workbench/projects/<project-id>/project.json`; the repository itself
-/// is never modified or deleted by this store.
+/// the active profile's `projects/<project-id>/project.json`; the repository
+/// itself is never modified or deleted by this store.
 public final class ProjectStore: @unchecked Sendable {
     private let rootDirectory: URL
     private let fileManager: FileManager
 
     public init(storageDirectory: URL? = nil, fileManager: FileManager = .default) {
         self.fileManager = fileManager
-        rootDirectory = storageDirectory
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".axiom-workbench")
+        rootDirectory = storageDirectory ?? WorkbenchRuntimeProfile.stable.projectsRoot(fileManager: fileManager)
     }
 
     public func load() -> [RegisteredProject] {

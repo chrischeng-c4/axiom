@@ -1,9 +1,9 @@
 ---
 name: workbench-build-debug
-description: Build and launch the current native macOS Workbench debug app, including its Rust PTY sidecar. Use when the user asks to build, rebuild, run, relaunch, or inspect the local Workbench desktop application.
+description: Compatibility entry point for building and launching only Axiom Workbench Beta. Prefer workbench-build-beta for new requests.
 ---
 
-# /workbench:build:debug
+# Build Axiom Workbench Beta (compatibility entry point)
 
 Run the dispatcher without arguments:
 
@@ -11,11 +11,8 @@ Run the dispatcher without arguments:
 .agents/skills/workbench-build-debug/scripts/build.sh
 ```
 
-The dispatcher builds `workbench-core`, builds the Xcode `Workbench.app` that
-macOS launches for `com.cclab.workbench`, embeds the exact sidecar in the app,
-and opens that app bundle. Do not substitute a SwiftPM executable: it has the
-same sources but is a different launch surface and can drift from the Xcode
-application.
+This compatibility dispatcher invokes the Beta-only build skill. It does not
+launch Stable and never targets the retired `com.cclab.workbench` product.
 
 Report the app path and the result. On failure, report the failing build phase
 and preserve its output. Do not commit, install, or modify user project metadata.

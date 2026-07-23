@@ -7,15 +7,19 @@ import Foundation
 /// lifecycle, sidecar resolution, request type, and recoverable error context.
 public enum WorkbenchDiagnosticLog {
     private static let maximumBytes = 1_048_576
+    private static var activeProfile = WorkbenchRuntimeProfile.stable
+
+    public static func configure(profile: WorkbenchRuntimeProfile) {
+        activeProfile = profile
+    }
 
     public static func write(_ event: String, details: [String: String] = [:]) {
         guard !Bundle.allBundles.contains(where: { $0.bundlePath.hasSuffix(".xctest") }) else {
             return
         }
         let fileManager = FileManager.default
-        let directory = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".axiom-workbench/logs", isDirectory: true)
-        let file = directory.appendingPathComponent("workbench.log")
+        let file = activeProfile.logFile(fileManager: fileManager)
+        let directory = file.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         if let attributes = try? fileManager.attributesOfItem(atPath: file.path),

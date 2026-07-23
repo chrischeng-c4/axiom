@@ -19,8 +19,7 @@ public final class LocalRuntimeServer {
 
     public init(fileManager: FileManager = .default, runtimeDirectory: URL? = nil) {
         self.fileManager = fileManager
-        self.runtimeDirectory = runtimeDirectory ?? fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".axiom-workbench/runtime", isDirectory: true)
+        self.runtimeDirectory = runtimeDirectory ?? WorkbenchRuntimeProfile.stable.runtimeRoot(fileManager: fileManager)
     }
 
     public func start() throws {

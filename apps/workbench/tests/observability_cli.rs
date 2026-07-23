@@ -3,7 +3,10 @@ use std::{io::{BufRead, BufReader, Write}, net::TcpListener, thread};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tempfile::tempdir;
-use workbench::observability_cli::{run_with_paths, CliResult};
+use workbench::observability_cli::{
+    diagnostic_log_path_for, parse_profile_args, run_with_paths, runtime_root_for, CliResult,
+    RuntimeProfile,
+};
 
 #[test]
 fn logs_tail_is_local_line_bounded_and_runtime_independent() {
@@ -81,6 +84,27 @@ fn public_argv_and_json_envelopes_are_exact() {
     assert_eq!(error.code, "invalid_arguments");
     let error = run_with_paths(&["snapshot".into(), "--out".into()], temp.path(), &temp.path().join("log")).unwrap_err();
     assert_eq!(error.code, "invalid_arguments");
+}
+
+#[test]
+fn profiles_have_distinct_runtime_and_log_paths() {
+    assert_ne!(runtime_root_for(RuntimeProfile::Stable), runtime_root_for(RuntimeProfile::Beta));
+    assert_ne!(diagnostic_log_path_for(RuntimeProfile::Stable), diagnostic_log_path_for(RuntimeProfile::Beta));
+    assert!(runtime_root_for(RuntimeProfile::Stable).ends_with(".axiom-workbench/runtime"));
+    assert!(runtime_root_for(RuntimeProfile::Beta).ends_with(".axiom-workbench-beta/runtime"));
+
+    let (profile, args) = parse_profile_args(&[
+        "snapshot".into(), "--out".into(), "/tmp/screen.png".into(), "--profile".into(), "beta".into(),
+    ]).unwrap();
+    assert_eq!(profile, RuntimeProfile::Beta);
+    assert_eq!(args, ["snapshot", "--out", "/tmp/screen.png"]);
+
+    let duplicate = parse_profile_args(&[
+        "logs".into(), "--profile".into(), "stable".into(), "--profile".into(), "beta".into(),
+    ]).unwrap_err();
+    assert_eq!(duplicate.code, "invalid_arguments");
+    let unknown = parse_profile_args(&["logs".into(), "--profile".into(), "dev".into()]).unwrap_err();
+    assert_eq!(unknown.code, "invalid_arguments");
 }
 
 // HANDWRITE-END

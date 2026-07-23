@@ -128,6 +128,16 @@ changes:
     section: contract
     impl_mode: hand-written
     description: Beta product build dispatcher.
+  - path: .agents/skills/workbench-build-debug/SKILL.md
+    action: modify
+    section: contract
+    impl_mode: hand-written
+    description: Preserve the legacy debug skill as an explicit alias for the Beta product.
+  - path: .agents/skills/workbench-build-debug/scripts/build.sh
+    action: modify
+    section: contract
+    impl_mode: hand-written
+    description: Dispatch the legacy debug entry point only to the Beta product.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->

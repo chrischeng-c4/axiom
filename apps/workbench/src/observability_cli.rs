@@ -40,6 +40,29 @@ pub enum CliResult {
     Logs { path: String, lines: Vec<String>, truncated: bool },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeProfile {
+    Stable,
+    Beta,
+}
+
+impl RuntimeProfile {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "stable" => Some(Self::Stable),
+            "beta" => Some(Self::Beta),
+            _ => None,
+        }
+    }
+
+    fn state_directory_name(self) -> &'static str {
+        match self {
+            Self::Stable => ".axiom-workbench",
+            Self::Beta => ".axiom-workbench-beta",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RuntimeRegistry {
     #[serde(rename = "protocolVersion")]
@@ -79,29 +102,66 @@ struct RuntimeResponse {
 
 /// Run only explicit read-only Workbench CLI commands. `None` means launch the desktop host.
 pub fn run_if_requested(args: &[String]) -> Option<i32> {
-    if args.len() < 2 || !matches!(args[1].as_str(), "snapshot" | "logs") {
+    if args.len() < 2 {
         return None;
     }
 
-    let result = run_with_paths(&args[1..], &runtime_root(), &diagnostic_log_path());
+    let (profile, command_args) = match parse_profile_args(&args[1..]) {
+        Ok(parsed) if matches!(parsed.1.first().map(String::as_str), Some("snapshot" | "logs")) => parsed,
+        Ok(_) => return None,
+        Err(error) => return Some(print_error(error)),
+    };
+    let result = run_with_paths(
+        &command_args,
+        &runtime_root_for(profile),
+        &diagnostic_log_path_for(profile),
+    );
     match result {
         Ok(result) => {
             println!("{}", serde_json::to_string(&result).expect("CLI results serialize"));
             Some(0)
         }
-        Err(error) => {
-            eprintln!(
-                "{}",
-                serde_json::json!({
-                    "kind": "error",
-                    "code": error.code,
-                    "message": error.message,
-                    "next": error.next,
-                })
-            );
-            Some(2)
-        }
+        Err(error) => Some(print_error(error)),
     }
+}
+
+fn print_error(error: CliError) -> i32 {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "kind": "error",
+            "code": error.code,
+            "message": error.message,
+            "next": error.next,
+        })
+    );
+    2
+}
+
+/// Extract the one optional profile switch without allowing it to alter the
+/// command grammar. The profile is deliberately unavailable to the runtime
+/// protocol: it selects the local discovery root only.
+pub fn parse_profile_args(args: &[String]) -> Result<(RuntimeProfile, Vec<String>), CliError> {
+    let mut profile = RuntimeProfile::Stable;
+    let mut profile_seen = false;
+    let mut command_args = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "--profile" {
+            if profile_seen {
+                return Err(invalid_arguments("--profile may be specified only once"));
+            }
+            let value = args.get(index + 1).ok_or_else(|| invalid_arguments("--profile requires `stable` or `beta`"))?;
+            profile = RuntimeProfile::parse(value)
+                .ok_or_else(|| invalid_arguments("--profile must be `stable` or `beta`"))?;
+            profile_seen = true;
+            index += 2;
+            continue;
+        }
+        command_args.push(args[index].clone());
+        index += 1;
+    }
+    Ok((profile, command_args))
 }
 
 pub fn run_with_paths(args: &[String], runtime_root: &Path, log_path: &Path) -> Result<CliResult, CliError> {
@@ -210,12 +270,12 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
     result.map_err(|error| CliError::new("output_write_failed", format!("cannot write {}: {error}", path.display()), "choose a writable output path and retry snapshot"))
 }
 
-fn runtime_root() -> PathBuf {
-    home_directory().join(".axiom-workbench/runtime")
+pub fn runtime_root_for(profile: RuntimeProfile) -> PathBuf {
+    home_directory().join(profile.state_directory_name()).join("runtime")
 }
 
-fn diagnostic_log_path() -> PathBuf {
-    home_directory().join(".axiom-workbench/logs/workbench.log")
+pub fn diagnostic_log_path_for(profile: RuntimeProfile) -> PathBuf {
+    home_directory().join(profile.state_directory_name()).join("logs/workbench.log")
 }
 
 fn home_directory() -> PathBuf {

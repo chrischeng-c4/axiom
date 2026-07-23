@@ -12,8 +12,12 @@ struct WorkbenchMacApp: App {
     private let localRuntime: LocalRuntimeServer
 
     init() {
-        let model = WorkbenchModel()
-        let localRuntime = LocalRuntimeServer()
+        let runtimeProfile = WorkbenchRuntimeProfile.from()
+        WorkbenchDiagnosticLog.configure(profile: runtimeProfile)
+        let model = WorkbenchModel(
+            projectStore: ProjectStore(storageDirectory: runtimeProfile.projectsRoot())
+        )
+        let localRuntime = LocalRuntimeServer(runtimeDirectory: runtimeProfile.runtimeRoot())
         do {
             try localRuntime.start()
         } catch LocalRuntimeError.alreadyRunning {
@@ -24,6 +28,7 @@ struct WorkbenchMacApp: App {
         }
         WorkbenchDiagnosticLog.write("app.started", details: [
             "executable": Bundle.main.executableURL?.path ?? "unknown",
+            "profile": runtimeProfile.rawValue,
         ])
         if let fixtureFolder = ProcessInfo.processInfo.environment["WORKBENCH_UI_TEST_FOLDER"],
            !fixtureFolder.isEmpty
