@@ -34,6 +34,10 @@ resource "google_service_account_iam_member" "backup_workload_identity" {
     "lumen/lumen-backup",
     "sift/sift-backup",
     "tape/tape-backup",
+    # Tape's SERVING pods also need GCS read: `bootstrapSeedUri` is fetched
+    # by the tape server itself before Raft catch-up, under the
+    # operator-rendered `tape` ServiceAccount (run 0723080156 failure 2).
+    "tape/tape",
   ])
 
   service_account_id = google_service_account.backup.name

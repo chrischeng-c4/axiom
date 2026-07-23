@@ -72,6 +72,12 @@ metadata:
   namespace: tape
 spec:
   schedule: "*/5 * * * *"
+  # The acceptance flow triggers exactly one Job via
+  # \`kubectl create job --from=cronjob/tape-backup\` (which works on a
+  # suspended CronJob). An unsuspended schedule kept firing against the
+  # torn-down 1x1 instance during the cold-restore rebuild (run 0723080156).
+  suspend: true
+  concurrencyPolicy: Forbid
   jobTemplate:
     spec:
       template:

@@ -5,6 +5,7 @@ set -euo pipefail
 : "${REGION:?REGION is required}"
 : "${RUN_ID:?RUN_ID is required}"
 : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
+: "${BACKUP_GSA_EMAIL:?BACKUP_GSA_EMAIL is required}"
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 
@@ -100,8 +101,29 @@ wait_for_topology() {
     sleep 5
   done
   echo "tape did not converge to $want ready replicas" >&2
-  kubectl -n tape get tape/tape,statefulset/tape,pvc -o yaml >&2 || true
+  capture_topology_diagnostics
   return 1
+}
+
+# Preserve the CR/StatefulSet/PVC state, pod conditions, and serving-pod logs
+# before the outer run trap deletes the namespace. Run 0723080156 failed with
+# neither: the old one-liner mixed resource/name and bare-resource kubectl
+# forms (invalid), and no pod logs were captured, leaving the Ready=False
+# root cause unprovable.
+capture_topology_diagnostics() {
+  kubectl -n tape get tape/tape statefulset/tape -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/tape-topology-failure.yaml" 2>&1 || true
+  kubectl -n tape get pvc -o yaml \
+    >> "$EVIDENCE_DIR/kubernetes/tape-topology-failure.yaml" 2>&1 || true
+  kubectl -n tape describe pods \
+    > "$EVIDENCE_DIR/kubernetes/tape-pods-describe.txt" 2>&1 || true
+  local pod
+  for pod in $(kubectl -n tape get pods -o name 2>/dev/null); do
+    kubectl -n tape logs "$pod" --all-containers --tail=200 --prefix \
+      >> "$EVIDENCE_DIR/kubernetes/tape-pods.log" 2>&1 || true
+    kubectl -n tape logs "$pod" --all-containers --tail=200 --prefix --previous \
+      >> "$EVIDENCE_DIR/kubernetes/tape-pods-previous.log" 2>&1 || true
+  done
 }
 
 # ---- per-pod raft status forwards (topology + failover, step D only) ----
@@ -255,6 +277,14 @@ jq -e --arg topic "$topic" \
 # apply-then-patch here: a pod racing up from the pre-patch spec could write
 # journal state onto a fresh PVC and poison the seed's empty-dir requirement.
 stop_forward
+# The seed object is fetched by the tape SERVER itself (before Raft catch-up)
+# under the operator-rendered `tape` ServiceAccount, so that KSA needs the
+# same Workload Identity impersonation the backup KSA gets from Terraform
+# (`tape/tape` member in environment/storage.tf). The operator's
+# server-side-apply field manager does not own this externally added
+# annotation, so drift repair preserves it.
+kubectl -n tape annotate serviceaccount/tape \
+  "iam.gke.io/gcp-service-account=${BACKUP_GSA_EMAIL}" --overwrite
 kubectl -n tape patch tape/tape --type=merge --patch \
   "$(jq -n --arg seed "$first_object" '{spec:{replicasPerShard:3,voterCount:3,bootstrapSeedUri:$seed}}')"
 # Mark the PVCs terminating FIRST: pvc-protection keeps them alive while the
