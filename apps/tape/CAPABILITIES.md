@@ -59,6 +59,18 @@ group — genesis-index mapping added, regression
 one-shot: leaving it on the CR crash-loops any pod replacement; the
 operator-side lifecycle decision remains open).
 
+### GKE acceptance run 0723155311 (2026-07-23, PASSED — released GHCR image)
+
+Re-run of the full 8-proof acceptance with the PUBLISHED release image —
+`image_provenance: prebuilt`, zero Cloud Build (#2462's acceptance
+condition): `ghcr.io/chrischeng-c4/tape@sha256:ca2928c83fd76681924fd419f35d128933c9abbd1da42342062f96b264b10a12`
+(the `tape@0.4.10` musl-static release, pulled anonymously from public
+GHCR). All eight proofs passed again on the release binary, which also
+carries the adoption fixes (#2482 GET-retention contract, #2484 body
+limit + bounded replay, #2468 runbook semantics). `cleanup.json`
+`status: clean` (2026-07-23T16:04:36Z). Evidence root:
+`axiom-gcp-run-backup/evidence/0723155311/`.
+
 Exclusions (recorded, not claimed): shard migration (`shardCount` pinned
 to 1), live in-place replica membership change (startup-static
 membership), and CPU/memory pressure actuation — product gaps tracked in
