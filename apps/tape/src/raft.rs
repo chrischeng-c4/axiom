@@ -152,9 +152,16 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
         serde_json::from_slice(bytes).context("decode bootstrap JournalSnapshot JSON")?;
 
     if data_dir.exists() {
-        let mut entries = std::fs::read_dir(data_dir)
+        let entries = std::fs::read_dir(data_dir)
             .with_context(|| format!("read bootstrap data dir {}", data_dir.display()))?;
-        if entries.next().transpose()?.is_some() {
+        for entry in entries {
+            let entry = entry?;
+            // A freshly provisioned cloud PV mounts its ext4 filesystem root
+            // directly at the data dir, so `lost+found` is present on every
+            // real PVC (#2443). It is mkfs output, not raft state.
+            if entry.file_name() == "lost+found" {
+                continue;
+            }
             anyhow::bail!(
                 "bootstrap seed requires an empty data directory {}; refusing to replace existing raft state",
                 data_dir.display()
