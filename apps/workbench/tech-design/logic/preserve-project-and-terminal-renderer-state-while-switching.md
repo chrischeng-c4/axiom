@@ -40,30 +40,17 @@ A tab selection is also a presentation-state transition. It must not launch, ter
 changes:
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchModel.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
     anchor: WorkbenchModel
-    description: Publish one selected project workspace value so project id, launch root, and Files listing change together without changing existing PTY tabs.
+    description: Make selected project workspace state coherent and expose the project identity used for launch and file content.
   - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
     anchor: WorkbenchView
-    description: Keep launched terminal surfaces mounted in tab-keyed layers and expose only the selected layer.
-  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift
-    action: modify
-    section: unit-test
-    impl_mode: hand-written
-    anchor: WorkbenchModelTests
-    description: Prove project selection changes launch and files state without issuing terminal lifecycle requests or modifying existing tabs.
-  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
-    action: modify
-    section: unit-test
-    impl_mode: hand-written
-    anchor: WorkbenchMacUITests
-    description: Prove a running shell tab retains terminal content after switching to another tab and back.
+    description: Render stable tab-keyed terminal layers so selection changes visibility and focus rather than renderer identity.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
