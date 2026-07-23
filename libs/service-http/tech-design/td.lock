@@ -2,10 +2,10 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-17T08:17:11.632244+00:00"
-digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
-source_digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
-ir_digest = "sha256:54e9c6fba4bb68ab977a994ac4984c937be11f2d0b11f6066ea9898944cb17d6"
+generated_at = "2026-07-23T00:34:35.624944+00:00"
+digest = "sha256:a6eda79019d8f7e8095785d75ab59567b6c095b5228745c671e68655ca19eede"
+source_digest = "sha256:a6eda79019d8f7e8095785d75ab59567b6c095b5228745c671e68655ca19eede"
+ir_digest = "sha256:ab7e7c07866ea0aef15d0eeceb468dda6fa7b8b2f59808c0799bcfcd92ae48e8"
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
@@ -17,6 +17,12 @@ section_count = 3
 path = "logic/add-shared-opaque-key-admission-control.md"
 digest = "sha256:1f4cf1730baffaad653e5bb73ea10b45b6a4b9b14dc5f34dbb5982a9d13993c1"
 ir_digest = "sha256:5aa5c1582186b07a2dd0e9edecd9daa1fc87d4d57fb6549113ac2c99698a5707"
+section_count = 3
+
+[[files]]
+path = "logic/emit-w3c-correlated-request-completion-events.md"
+digest = "sha256:6440d80701dd6f5eaf75a29ef181643399d75c6db1083b4b9d8d1aa1f162be21"
+ir_digest = "sha256:e5c357ee80ca1a378e64348bcf4dad193e1a02f5d715fcee3dc05c874bbdbd1f"
 section_count = 3
 
 [[files]]
