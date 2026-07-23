@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T09:38:20.685105+00:00"
-digest = "sha256:08169545fd0c013d880de5ceee52a91e4c23d240f5370eca58ae263c8ad8f908"
-source_digest = "sha256:08169545fd0c013d880de5ceee52a91e4c23d240f5370eca58ae263c8ad8f908"
-ir_digest = "sha256:365e1f892854310b43679733bf3fb45d7a7880487533d64d728678afcddfd987"
+generated_at = "2026-07-23T10:09:47.784793+00:00"
+digest = "sha256:1263febc426eba7fed876797c627b5fd8efc2a08472fce8241a370419a6965ac"
+source_digest = "sha256:1263febc426eba7fed876797c627b5fd8efc2a08472fce8241a370419a6965ac"
+ir_digest = "sha256:4ce856548dafe2f6d46ba31e87081883ceb00774f537db3f105d1e3effe3463e"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -89,6 +89,12 @@ section_count = 3
 path = "logic/preserve-canonical-provenance-for-extracted-and-inferred-workben.md"
 digest = "sha256:82664bfe94b2dc499ad71eee9a9688b588be4caba4b3ffe58cd47d65fa67d96d"
 ir_digest = "sha256:d394e408c482ee644dddebffc33feff817dc4f4f4a7324ee60647323179f588b"
+section_count = 3
+
+[[files]]
+path = "logic/preserve-project-and-terminal-renderer-state-while-switching.md"
+digest = "sha256:b4e206f59c39704ebb9b55b6b9302e6485b1665091ac851be0efb72428191462"
+ir_digest = "sha256:b76c07f7faafb72f1ce7055364644ba58248b430e53a4ff0109fc76e2d9a5b39"
 section_count = 3
 
 [[files]]
