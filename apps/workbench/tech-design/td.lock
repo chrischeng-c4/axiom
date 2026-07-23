@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T12:48:36.400650+00:00"
-digest = "sha256:6b3ebde28272d00097d5bed9a15ff8bd0c0006e19aea09e13043e009dbcd26fa"
-source_digest = "sha256:6b3ebde28272d00097d5bed9a15ff8bd0c0006e19aea09e13043e009dbcd26fa"
-ir_digest = "sha256:0c24ec08726daf2a3045d60ded4b13d50b8c7821ff14d2e53fd4938a11787ede"
+generated_at = "2026-07-23T12:59:11.015923+00:00"
+digest = "sha256:0214d5fccf07f0b1d5148be0a6b5a183e146174cc8d8325a05c20a46e9ab860a"
+source_digest = "sha256:0214d5fccf07f0b1d5148be0a6b5a183e146174cc8d8325a05c20a46e9ab860a"
+ir_digest = "sha256:5b7905e7b0e4b863817f7d95bd9119de9d442cc022c9261f4bb33c33551cbefe"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -77,6 +77,12 @@ section_count = 3
 path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
 digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
 ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
+section_count = 3
+
+[[files]]
+path = "logic/host-terminal-tabs-in-native-macos-titlebar.md"
+digest = "sha256:99d05cbc4156864f724f82e6c664713a5bb34c4a19fc26689989a2cb95e5a0cc"
+ir_digest = "sha256:de311b006c81c7461b9aa4e6d00ed9668ee39050b0ac91cf911ecfd6bf834e36"
 section_count = 3
 
 [[files]]
