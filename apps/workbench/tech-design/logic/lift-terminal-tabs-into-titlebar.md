@@ -49,3 +49,28 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-titlebar-terminal-tabs-verification
+requirements:
+  native_layout_builds:
+    id: R2
+    text: "The native macOS package layout compiles with the titlebar-aligned terminal workspace."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+  terminal_tabs_top_aligned:
+    id: R1
+    text: "The terminal tab strip begins at the top edge of the central terminal workspace while the sidebar remains below its titlebar control region."
+    kind: e2e
+    risk: medium
+    verify: WorkbenchMacUITests.testTerminalTabsUseTopContentEdge
+---
+flowchart TD
+    r1[R1 terminal tabs top aligned] --> workbenchmacuitests_testterminaltabsusetopcontentedge[WorkbenchMacUITests.testTerminalTabsUseTopContentEdge]
+    r2[R2 native layout builds] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
