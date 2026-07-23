@@ -600,6 +600,15 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
     })
 }
 
+// #2475: alerts are added here only when the metric an `expr` reads is
+// actually published today. Two candidates stay unaddressed for lack of a
+// backing series and should not be added until one exists:
+//   - "reshard stalled": the reshard driver tracks convergence/remediation
+//     state in `LumenStatus.reshard` (CR status), not in `/metrics` or any
+//     kube-state-metrics custom-resource-state config this operator ships,
+//     so there is no PromQL series to alert on yet.
+//   - "raft leader absent": neither `lumen::metrics` nor the raft-host libs
+//     this binary composes publish a leader-id/is-leader gauge.
 fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     json!({
         "apiVersion": "monitoring.coreos.com/v1",
@@ -608,13 +617,35 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
         "spec": {
             "groups": [{
                 "name": "lumen.slo",
-                "rules": [{
-                    "alert": "LumenNoReadyServingPods",
-                    "expr": format!("kube_deployment_status_replicas_available{{deployment=\"{}\"}} == 0", cx.name),
-                    "for": "2m",
-                    "labels": { "severity": "critical" },
-                    "annotations": { "summary": "No ready lumen serving pods for {{ $labels.deployment }}" },
-                }],
+                "rules": [
+                    {
+                        "alert": "LumenNoReadyServingPods",
+                        "expr": format!("kube_deployment_status_replicas_available{{deployment=\"{}\"}} == 0", cx.name),
+                        "for": "2m",
+                        "labels": { "severity": "critical" },
+                        "annotations": { "summary": "No ready lumen serving pods for {{ $labels.deployment }}" },
+                    },
+                    {
+                        "alert": "LumenBackupCronJobFailed",
+                        "expr": format!(
+                            "kube_job_status_failed{{namespace=\"{}\", job_name=~\"^{}-backup-.*\"}} > 0",
+                            cx.ns, cx.name
+                        ),
+                        "for": "5m",
+                        "labels": { "severity": "warning" },
+                        "annotations": { "summary": "lumen backup CronJob {{ $labels.job_name }} failed in {{ $labels.namespace }}" },
+                    },
+                    {
+                        "alert": "LumenPodCrashLooping",
+                        "expr": format!(
+                            "increase(kube_pod_container_status_restarts_total{{namespace=\"{}\", pod=~\"^{}-[0-9]+$\"}}[15m]) > 3",
+                            cx.ns, cx.name
+                        ),
+                        "for": "5m",
+                        "labels": { "severity": "warning" },
+                        "annotations": { "summary": "lumen pod {{ $labels.pod }} is crash-looping in {{ $labels.namespace }}" },
+                    },
+                ],
             }],
         },
     })
