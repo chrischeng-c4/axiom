@@ -16,6 +16,7 @@ REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}
 INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
 LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
+LUMEN_ONLY="${LUMEN_ONLY:-0}"
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
@@ -92,18 +93,36 @@ done
   echo "MAX_CLOUD_SECONDS must be an integer no greater than 2700" >&2
   exit 1
 }
-for input_image in "$INPUT_LUMEN_IMAGE" "$INPUT_SIFT_IMAGE"; do
-  [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
-    echo "caller-supplied service images must be immutable @sha256 digest references" >&2
+[[ "$LUMEN_ONLY" == "0" || "$LUMEN_ONLY" == "1" ]] || {
+  echo "LUMEN_ONLY must be 0 or 1" >&2
+  exit 1
+}
+if [[ "$LUMEN_ONLY" == "1" ]]; then
+  [[ -n "$INPUT_LUMEN_IMAGE" && "$INPUT_LUMEN_IMAGE" == *@sha256:* ]] || {
+    echo "LUMEN_ONLY=1 requires LUMEN_IMAGE as an immutable @sha256 digest reference" >&2
     exit 1
   }
-done
-if [[ -n "$INPUT_LUMEN_IMAGE" && -n "$INPUT_SIFT_IMAGE" ]]; then
+  [[ -z "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
+    echo "LUMEN_ONLY=1 requires a current Lumen proof; LUMEN_PRIOR_ACCEPTANCE is not allowed" >&2
+    exit 1
+  }
   IMAGE_PROVENANCE="prebuilt"
-elif [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
-  IMAGE_PROVENANCE="mixed"
+  service_images=(lumen)
 else
-  IMAGE_PROVENANCE="cloud-build"
+  for input_image in "$INPUT_LUMEN_IMAGE" "$INPUT_SIFT_IMAGE"; do
+    [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
+      echo "caller-supplied service images must be immutable @sha256 digest references" >&2
+      exit 1
+    }
+  done
+  if [[ -n "$INPUT_LUMEN_IMAGE" && -n "$INPUT_SIFT_IMAGE" ]]; then
+    IMAGE_PROVENANCE="prebuilt"
+  elif [[ -n "$INPUT_LUMEN_IMAGE" || -n "$INPUT_SIFT_IMAGE" ]]; then
+    IMAGE_PROVENANCE="mixed"
+  else
+    IMAGE_PROVENANCE="cloud-build"
+  fi
+  service_images=(lumen sift)
 fi
 if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
   [[ -f "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
@@ -185,7 +204,7 @@ if [[ "$IMAGE_PROVENANCE" != "prebuilt" ]]; then
   fi
 fi
 
-for image in lumen sift; do
+for image in "${service_images[@]}"; do
   inventory="$EVIDENCE_DIR/preexisting-${image}-images.json"
   if ! gcloud artifacts docker images list "$REGISTRY/$image" \
     --project="$PROJECT_ID" --include-tags --format=json > "$inventory"; then
@@ -233,10 +252,12 @@ jq -n \
 echo ">> local deployment CLI build and render-surface preflight"
 cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
   -p lumen --bin lumen --features operator
-cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-  -p sift --bin sift
 LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
-SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+if [[ "$LUMEN_ONLY" != "1" ]]; then
+  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    -p sift --bin sift
+  SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
+fi
 
 cleanup_armed=1
 (
@@ -260,7 +281,9 @@ resolve_digest() {
 if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   echo ">> using caller-supplied immutable release or candidate images"
   LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
-  SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+  if [[ "$LUMEN_ONLY" != "1" ]]; then
+    SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+  fi
 else
   CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.yaml"
   if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
@@ -321,15 +344,23 @@ else
     SIFT_IMAGE="$(resolve_digest sift)"
   fi
 fi
-jq -n --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
-  '{lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
+if [[ "$LUMEN_ONLY" == "1" ]]; then
+  jq -n --arg mode "lumen-only" --arg lumen "$LUMEN_IMAGE" \
+    '{mode:$mode,lumen:$lumen}' > "$EVIDENCE_DIR/images.json"
+else
+  jq -n --arg mode "full" --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
+    '{mode:$mode,lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
+fi
 
 # Resource names are deterministic Terraform values, so render and validate all
 # app-owned Kubernetes layers before creating the cluster.
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
-export LUMEN_CLI SIFT_CLI LUMEN_IMAGE SIFT_IMAGE BACKUP_BUCKET BACKUP_GSA_EMAIL
+export LUMEN_CLI LUMEN_IMAGE BACKUP_BUCKET BACKUP_GSA_EMAIL LUMEN_ONLY
+if [[ "$LUMEN_ONLY" != "1" ]]; then
+  export SIFT_CLI SIFT_IMAGE
+fi
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR
 "$SCRIPT_DIR/render-manifests.sh"
@@ -380,6 +411,24 @@ else
   "$SCRIPT_DIR/verify-lumen.sh"
   export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
   export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
+fi
+
+if [[ "$LUMEN_ONLY" == "1" ]]; then
+  jq -n \
+    --arg schema "axiom.gcp.operator.acceptance.v1" \
+    --arg mode "lumen-only" \
+    --arg project_id "$PROJECT_ID" \
+    --arg region "$REGION" \
+    --arg gke_zone "$GKE_ZONE" \
+    --arg run_id "$RUN_ID" \
+    --arg backup_bucket "$BACKUP_BUCKET" \
+    --slurpfile lumen "$EVIDENCE_DIR/lumen-acceptance.json" \
+    '{schema:$schema,mode:$mode,project_id:$project_id,region:$region,gke_zone:$gke_zone,run_id:$run_id,backup_bucket:$backup_bucket,acceptance:{lumen:$lumen[0]},exclusions:["sift_collection_deferred","cpu_memory_actuator_not_claimed","live_replica_membership_not_claimed"]}' \
+    > "$EVIDENCE_DIR/acceptance.json"
+  jq -e '.mode == "lumen-only" and .acceptance.lumen.operator_reconcile_1x1 == "passed" and .acceptance.lumen.pod_restart_data_retention == "passed" and .acceptance.lumen.gcs_backup_before_split == "passed" and .acceptance.lumen.auto_split_delta == 1' \
+    "$EVIDENCE_DIR/acceptance.json" >/dev/null
+  echo ">> Lumen-only acceptance passed; mandatory cleanup runs on EXIT"
+  exit 0
 fi
 
 # Only a successful Lumen phase starts the Sift data plane. The collector then
