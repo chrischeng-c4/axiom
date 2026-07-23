@@ -117,6 +117,8 @@ capture_topology_diagnostics() {
     >> "$EVIDENCE_DIR/kubernetes/tape-topology-failure.yaml" 2>&1 || true
   kubectl -n tape describe pods \
     > "$EVIDENCE_DIR/kubernetes/tape-pods-describe.txt" 2>&1 || true
+  kubectl -n tape get serviceaccount/tape -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/tape-serviceaccount-at-failure.yaml" 2>&1 || true
   local pod
   for pod in $(kubectl -n tape get pods -o name 2>/dev/null); do
     kubectl -n tape logs "$pod" --all-containers --tail=200 --prefix \
@@ -283,6 +285,8 @@ stop_forward
 # annotation, so drift repair preserves it.
 kubectl -n tape annotate serviceaccount/tape \
   "iam.gke.io/gcp-service-account=${BACKUP_GSA_EMAIL}" --overwrite
+kubectl -n tape get serviceaccount/tape -o yaml \
+  > "$EVIDENCE_DIR/kubernetes/tape-serviceaccount-annotated.yaml"
 # Teardown ordering (run 0723092118 postmortem): the CR must be GONE before
 # the StatefulSet and PVCs are deleted. While the CR exists, drift repair
 # recreates the StatefulSet within seconds and its replacement pods — even
@@ -309,6 +313,15 @@ kubectl patch --local -f "$MANIFEST_DIR/tape/instance/tape.yaml" --type=merge \
       bootstrapSeedUri:$seed}}')" \
   -o yaml > "$EVIDENCE_DIR/kubernetes/tape-restore-cr.yaml"
 kubectl apply -f "$EVIDENCE_DIR/kubernetes/tape-restore-cr.yaml"
+# Re-assert the serving KSA's impersonation annotation after the rebuild
+# apply, then snapshot it: if a future failure shows 403 again WITH the
+# annotation present (see tape-serviceaccount-*.yaml), the impersonation
+# path itself is at fault and the bucket's direct principal:// grant in
+# environment/storage.tf is the load-bearing credential.
+kubectl -n tape annotate serviceaccount/tape \
+  "iam.gke.io/gcp-service-account=${BACKUP_GSA_EMAIL}" --overwrite
+kubectl -n tape get serviceaccount/tape -o yaml \
+  > "$EVIDENCE_DIR/kubernetes/tape-serviceaccount-after-restore-apply.yaml"
 wait_for_topology 3
 kubectl -n tape get tape/tape -o json > "$EVIDENCE_DIR/kubernetes/tape-after-restore.json"
 

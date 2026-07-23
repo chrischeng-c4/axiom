@@ -79,3 +79,13 @@ variable "image_tag" {
   description = "Run-unique image tag; workloads use the resolved immutable digest."
   type        = string
 }
+
+variable "project_number" {
+  description = "Numeric project number backing project_id; required for workload-identity-pool principal:// IAM members."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.project_number))
+    error_message = "project_number must be the numeric GCP project number."
+  }
+}
