@@ -98,7 +98,7 @@ requirements:
     verify: apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout
   rendered_json_contract:
     id: R4
-    text: "The controller's static and operator-rendered workloads select JSON logging without modifying scale or state inputs."
+    text: "The controller static and operator-rendered workloads select JSON logging without modifying scale or state inputs."
     kind: regression
     risk: medium
     verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging
