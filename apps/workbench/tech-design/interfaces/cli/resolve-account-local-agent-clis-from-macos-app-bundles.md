@@ -56,3 +56,35 @@ changes:
     impl_mode: hand-written
     anchor: resolver_accepts_account_local_macOS_fallback_paths
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-macos-agent-path-verification
+requirements:
+  failure:
+    id: R3
+    text: "Missing executable remains a recoverable unavailable error."
+    kind: regression
+    risk: medium
+    verify: pty_agent_adapters::unavailable_agent_is_recoverable
+  fallback:
+    id: R1
+    text: "A macOS account-local executable resolves after an inherited PATH miss."
+    kind: functional
+    risk: high
+    verify: pty_agent_adapters::resolver_accepts_account_local_macos_fallback_paths
+  precedence:
+    id: R2
+    text: "An inherited executable keeps precedence over fallback locations."
+    kind: regression
+    risk: medium
+    verify: pty_agent_adapters::inherited_path_precedes_account_local_fallback
+---
+flowchart TD
+    r1[R1 fallback] --> pty_agent_adapters_resolver_accepts_account_local_macos_fallback_paths[pty_agent_adapters::resolver_accepts_account_local_macos_fallback_paths]
+    r2[R2 precedence] --> pty_agent_adapters_inherited_path_precedes_account_local_fallback[pty_agent_adapters::inherited_path_precedes_account_local_fallback]
+    r3[R3 failure] --> pty_agent_adapters_unavailable_agent_is_recoverable[pty_agent_adapters::unavailable_agent_is_recoverable]
+```
