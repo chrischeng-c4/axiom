@@ -1269,9 +1269,13 @@ Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
 Lumen's adapter delegates validation and atomic last-known-good replacement to
 `service-auth`; `LumenVerifier::reload_file` and `reload_json` are the explicit
-in-process rotation boundary. The default `serve` bootstrap loads once, so a
-deployment that does not call that boundary should roll serving pods through a
-Secret reloader controller when the mounted file changes.
+in-process rotation boundary. Rotation is automatic: whenever
+`LUMEN_TOKEN_REGISTRY_FILE` is set, the default `serve` bootstrap spawns
+`service_auth::spawn_registry_file_watcher`, which polls the mounted file
+every 15s and hot-swaps the live verifier on change — no pod restart or
+external Secret-reloader controller required. Invalid replacements are
+rejected and the process stays on its last-known-good registry, emitting a
+redacted auth audit event.
 
 `token-registry.json` shape:
 
