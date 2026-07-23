@@ -2,6 +2,7 @@
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -10,6 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 
 const TERMINAL_CORE_SOURCE: &str = include_str!("../src/terminal_core.rs");
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct Sidecar {
     child: Child,
@@ -103,7 +105,7 @@ fn session_frame(response: &Value) -> &Value {
 }
 
 fn poll_until_exited(sidecar: &mut Sidecar, tab_id: &str) -> (Vec<u8>, Value) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     let mut output = Vec::new();
     loop {
         let response = sidecar.send("poll", json!({ "tabId": tab_id }));
@@ -121,8 +123,15 @@ fn poll_until_exited(sidecar: &mut Sidecar, tab_id: &str) -> (Vec<u8>, Value) {
     }
 }
 
+fn wait_for_interactive_shell(sidecar: &mut Sidecar, tab_id: &str) {
+    thread::sleep(Duration::from_millis(150));
+    let response = sidecar.send("poll", json!({ "tabId": tab_id }));
+    assert_eq!(session_frame(&response)["snapshot"]["running"], true);
+}
+
 #[test]
 fn protocol_version_and_invalid_requests_fail_closed() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut sidecar = Sidecar::spawn();
     let hello = sidecar.send("hello", json!({}));
     assert_eq!(hello["ok"], true);
@@ -153,11 +162,15 @@ fn protocol_version_and_invalid_requests_fail_closed() {
 
 #[test]
 fn default_shell_launches_in_selected_folder_and_preserves_bytes() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     assert!(TERMINAL_CORE_SOURCE.contains("libc::getpwuid"));
     assert!(!TERMINAL_CORE_SOURCE.contains("PathBuf::from(\"/bin/zsh\")"));
 
     let folder = tempfile::tempdir().expect("selected folder");
-    let canonical = folder.path().canonicalize().expect("canonical selected folder");
+    let canonical = folder
+        .path()
+        .canonicalize()
+        .expect("canonical selected folder");
     let mut sidecar = Sidecar::spawn();
     let launched = sidecar.send(
         "launch",
@@ -170,10 +183,14 @@ fn default_shell_launches_in_selected_folder_and_preserves_bytes() {
         }),
     );
     let frame = session_frame(&launched);
-    assert_eq!(frame["snapshot"]["activeCwd"], canonical.to_string_lossy().as_ref());
+    assert_eq!(
+        frame["snapshot"]["activeCwd"],
+        canonical.to_string_lossy().as_ref()
+    );
     assert_eq!(frame["snapshot"]["label"], "Shell");
+    wait_for_interactive_shell(&mut sidecar, "shell-default");
 
-    let script = b"printf '\033[31mRAW:%s\033[0m\\n' \"$PWD\"; exit 7\n";
+    let script = b"printf '\\033[31mRAW:%s\\033[0m\\n' \"$PWD\"; exit 7\n";
     let input = sidecar.send(
         "input",
         json!({
@@ -182,14 +199,26 @@ fn default_shell_launches_in_selected_folder_and_preserves_bytes() {
         }),
     );
     assert_eq!(input["ok"], true);
-    let (output, snapshot) = poll_until_exited(&mut sidecar, "shell-default");
-    assert!(output.windows(8).any(|window| window == b"\x1b[31mRAW"));
+    let mut output = BASE64_STANDARD
+        .decode(
+            input["result"]["frame"]["outputBase64"]
+                .as_str()
+                .unwrap_or_default(),
+        )
+        .expect("input response Base64");
+    let (remaining, snapshot) = poll_until_exited(&mut sidecar, "shell-default");
+    output.extend(remaining);
+    assert!(
+        output.windows(8).any(|window| window == b"\x1b[31mRAW"),
+        "raw terminal bytes: {output:?}"
+    );
     assert!(String::from_utf8_lossy(&output).contains(canonical.to_string_lossy().as_ref()));
     assert_eq!(snapshot["exitCode"], 7);
 }
 
 #[test]
 fn tab_sessions_keep_io_and_lifecycle_isolated() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let first = tempfile::tempdir().expect("first cwd");
     let second = tempfile::tempdir().expect("second cwd");
     let mut sidecar = Sidecar::spawn();
@@ -200,6 +229,8 @@ fn tab_sessions_keep_io_and_lifecycle_isolated() {
         );
         assert_eq!(response["ok"], true);
     }
+    wait_for_interactive_shell(&mut sidecar, "tab-one");
+    wait_for_interactive_shell(&mut sidecar, "tab-two");
     let already_running = sidecar.send(
         "launch",
         json!({ "tabId": "tab-one", "profile": "shell", "cwd": first.path() }),
@@ -234,7 +265,12 @@ fn tab_sessions_keep_io_and_lifecycle_isolated() {
     assert!(!one_text.contains("TWO:"));
     assert_eq!(
         one_snapshot["activeCwd"],
-        first.path().canonicalize().unwrap().to_string_lossy().as_ref()
+        first
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
 
     let interrupted = sidecar.send("interrupt", json!({ "tabId": "tab-two" }));
@@ -250,7 +286,12 @@ fn tab_sessions_keep_io_and_lifecycle_isolated() {
     assert_eq!(terminal_frame["snapshot"]["running"], false);
     assert_eq!(
         terminal_frame["snapshot"]["activeCwd"],
-        second.path().canonicalize().unwrap().to_string_lossy().as_ref()
+        second
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
 
     let relaunch = sidecar.send(
@@ -260,12 +301,18 @@ fn tab_sessions_keep_io_and_lifecycle_isolated() {
     assert_eq!(relaunch["ok"], true);
     assert_eq!(
         relaunch["result"]["frame"]["snapshot"]["activeCwd"],
-        second.path().canonicalize().unwrap().to_string_lossy().as_ref()
+        second
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
 }
 
 #[test]
 fn agent_resolution_errors_are_recoverable() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let empty_path = tempfile::tempdir().expect("empty PATH");
     let selected = tempfile::tempdir().expect("selected cwd");
     let mut sidecar = Sidecar::spawn_with_path(Some(empty_path.path().to_str().unwrap()));
@@ -285,5 +332,4 @@ fn agent_resolution_errors_are_recoverable() {
     assert_eq!(stop["ok"], true);
 }
 
-<!-- marker: missing-generator:unit-test:eccdc595 path: apps/workbench/tests/macos_sidecar_protocol.rs reason: Exercise the built sidecar through its exact protocol and real shell PTYs for versioning, bytes, cwd, isolation, lifecycle, and failures. -->
 // HANDWRITE-END

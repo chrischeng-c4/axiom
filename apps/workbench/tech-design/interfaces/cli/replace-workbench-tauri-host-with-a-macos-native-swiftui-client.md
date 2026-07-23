@@ -56,6 +56,8 @@ The Rust `workbench-core` sidecar owns the closed profile enum, safe bounded tab
 The local protocol is newline-framed JSON with `protocolVersion`, monotonically unique request ids, a closed method enum, and a required safe `tabId` for session methods. Responses echo request id and return either a typed result or a typed recoverable error. Terminal output is byte-preserving Base64 in a per-tab poll frame with a monotonic sequence so SwiftTerm receives each byte once. Launch, poll, input, resize, interrupt, terminate, and shutdown are independently addressable. Unknown versions, methods, profiles, ids, invalid cwd, unavailable programs, already-running launches, and missing sessions fail without mutating another tab.
 
 The Swift client starts and supervises exactly one sidecar child, serializes requests, validates response ids and protocol version, and routes frames only to the matching tab model and terminal view. A sidecar failure changes running tabs to a visible recoverable error without losing folder or tab presentation. The terminal surface is an `NSViewRepresentable` around SwiftTerm `TerminalView`; SwiftTerm renders ANSI/VT bytes while the Rust sidecar remains the only PTY owner. Each terminal delegate sends keystrokes and dimensions back with that tab id. Native focus rings, VoiceOver labels, state text, commands for tab selection and new tabs, minimum 44-point controls, constrained window layout, and reduced-motion-safe transitions are required. Existing context/provenance Rust modules remain reusable but are not duplicated into Swift in this vertical slice; the Tauri/WebView host is retired rather than kept as a second production application.
+
+The native interaction smoke is deterministic XCUIAutomation, not an agent-vision loop. A thin Xcode application target compiles the same Swift sources, embeds the current `workbench-core` build, and owns a UI-testing bundle. The test launches the built application with only a canonical temporary-folder fixture, while the production model and real account-default-shell sidecar remain unchanged. Stable accessibility identifiers address the four idle tabs, plus control, lifecycle actions, status, and terminal surface. The journey starts Shell explicitly, types through SwiftTerm, observes the real PTY output and cwd through the terminal accessibility value, adds an idle second Shell tab, proves the first tab remains running with retained output, and stops it. The kept `.xcresult` screenshot and accessibility hierarchy replace recurring Computer Use as the machine gate; Computer Use remains optional human visual acceptance only.
 ## Changes
 <!-- type: changes lang: yaml -->
 
@@ -122,6 +124,26 @@ changes:
     section: logic
     impl_mode: hand-written
     description: Embed SwiftTerm TerminalView through NSViewRepresentable and route raw input and resize only to the represented tab.
+  - path: apps/workbench/macos/WorkbenchMac.xcodeproj/project.pbxproj
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define the thin macOS application and UI-testing targets over the existing Swift sources with an embedded Rust sidecar build phase.
+  - path: apps/workbench/macos/WorkbenchMac.xcodeproj/xcshareddata/xcschemes/WorkbenchMac.xcscheme
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Expose one shared command-line scheme that builds the native app and runs its deterministic UI test bundle.
+  - path: apps/workbench/macos/Scripts/embed-workbench-core.sh
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Incrementally build or accept an explicit workbench-core binary and embed it into the Xcode application resources before signing.
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Drive the built application through XCUIAutomation and prove the real default-shell cwd, output, explicit start, plus-tab isolation, retention, stop, accessibility labels, and screenshot evidence.
   - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift
     action: create
     section: unit-test
@@ -164,10 +186,10 @@ requirements:
     verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::defaultTabsAreOrderedAndIdle
   native_terminal_surface:
     id: R7
-    text: "The production macOS executable builds with SwiftUI and an AppKit SwiftTerm terminal surface, native focus and accessibility labels, and no WebView terminal."
+    text: "The production macOS executable builds with SwiftUI and an AppKit SwiftTerm terminal surface, and deterministic XCUIAutomation proves native focus, accessibility labels, explicit real-shell input/output, plus-tab isolation, retained output, and stop without a WebView or agent-vision gate."
     kind: accessibility
     risk: high
-    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::nativeClientUsesSwiftTermWithoutWebView
+    verify: macos/UITests/WorkbenchMacUITests.swift::testNativeShellJourney
   protocol_fails_closed:
     id: R1
     text: "The sidecar accepts only the current protocol version, known methods and profiles, unique request ids, and safe tab ids, and every response remains request-correlated."
@@ -206,6 +228,6 @@ flowchart TD
     r4[R4 default tabs are idle] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_defaulttabsareorderedandidle[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::defaultTabsAreOrderedAndIdle]
     r5[R5 shell plus is explicit] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_addingshelltabselectswithoutlaunching[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::addingShellTabSelectsWithoutLaunching]
     r6[R6 agent failure is recoverable] --> tests_macos_sidecar_protocol_rs_agent_resolution_errors_are_recoverable[tests/macos_sidecar_protocol.rs::agent_resolution_errors_are_recoverable]
-    r7[R7 native terminal surface] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_nativeclientusesswifttermwithoutwebview[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::nativeClientUsesSwiftTermWithoutWebView]
+    r7[R7 native terminal surface] --> macos_uitests_workbenchmacuitests_swift_testnativeshelljourney[macos/UITests/WorkbenchMacUITests.swift::testNativeShellJourney]
     r8[R8 swift routing and state] --> macos_tests_workbenchmaccoretests_workbenchmodeltests_swift_responsesremaintabscopedandlifecycletextisvisible[macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift::responsesRemainTabScopedAndLifecycleTextIsVisible]
 ```

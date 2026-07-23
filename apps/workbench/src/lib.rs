@@ -17,6 +17,16 @@ pub mod cwd_context;
 /// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#logic
 pub mod native_agent_pty;
 
+/// Platform-neutral multi-tab PTY ownership used by native clients.
+///
+/// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#logic
+pub mod terminal_core;
+
+/// Versioned local sidecar protocol used by the macOS-native client.
+///
+/// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#logic
+pub mod core_protocol;
+
 /// Provider-neutral, read-only context renderer registry.
 ///
 /// @spec apps/workbench/tech-design/logic/add-workbench-context-renderer-registry-with-markdown-and-git-re.md#logic

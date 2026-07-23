@@ -9,7 +9,10 @@ const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// @spec apps/workbench/tech-design/interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md#unit-test
 #[test]
-#[cfg_attr(not(target_os = "macos"), ignore = "native launch smoke currently runs on macOS")]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "native launch smoke currently runs on macOS"
+)]
 fn launches_native_window_and_exits_cleanly() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_workbench"))
         .env("WORKBENCH_SMOKE_CONTROL", "stdio")
@@ -80,7 +83,10 @@ fn product_contract_keeps_native_agents_authoritative() {
         include_str!("../CAPABILITIES.md")
     );
     for agent in ["Claude Code", "Codex", "AGY"] {
-        assert!(contract.contains(agent), "missing native-agent boundary for {agent}");
+        assert!(
+            contract.contains(agent),
+            "missing native-agent boundary for {agent}"
+        );
     }
     assert!(contract.contains("authoritative"));
     assert!(contract.contains("optional"));
@@ -101,7 +107,10 @@ fn bootstrap_surface_excludes_later_slice_ownership() {
         "pub trait ContextRenderer",
         "aw::",
     ] {
-        assert!(!source.contains(forbidden), "bootstrap owns forbidden surface {forbidden}");
+        assert!(
+            !source.contains(forbidden),
+            "bootstrap owns forbidden surface {forbidden}"
+        );
     }
 }
 

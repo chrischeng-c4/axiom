@@ -36,5 +36,4 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-<!-- marker: missing-generator:logic:e4006843 path: apps/workbench/src/bin/workbench-core.rs reason: Run one stdin/stdout sidecar loop with JSON only on stdout, ordered responses, explicit shutdown, and terminal cleanup. -->
 // HANDWRITE-END

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Workbench Debug"
+  short_description: "Build and launch the native Workbench debug app."
+  default_prompt: "Build the current Workbench app and launch the resulting native debug bundle."

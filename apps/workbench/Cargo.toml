@@ -16,10 +16,16 @@ path = "src/lib.rs"
 name = "workbench"
 path = "src/main.rs"
 
+[[bin]]
+name = "workbench-core"
+path = "src/bin/workbench-core.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64.workspace = true
+libc = "0.2"
 portable-pty = "0.9"
 pulldown-cmark = "0.12"
 serde.workspace = true
@@ -29,7 +35,6 @@ tauri-plugin-dialog = "2"
 url.workspace = true
 
 [dev-dependencies]
-libc = "0.2"
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 

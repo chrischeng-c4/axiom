@@ -17,8 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     cwd_context::ActiveCwdContext,
     native_agent_pty::{
-        AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySession,
-        PtySize,
+        AgentKind, AgentLaunchCommand, PtyCommand, PtyLaunchError, PtyRuntime, PtySession, PtySize,
     },
 };
 
@@ -285,10 +284,7 @@ impl Default for TerminalCore {
 }
 
 impl TerminalCore {
-    pub fn with_runtime_and_shell(
-        runtime: PtyRuntime,
-        default_shell: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn with_runtime_and_shell(runtime: PtyRuntime, default_shell: impl Into<PathBuf>) -> Self {
         Self {
             runtime,
             default_shell: default_shell.into(),
@@ -385,7 +381,11 @@ pub fn validate_tab_id(tab_id: &str) -> Result<(), TerminalCoreError> {
 
 pub fn system_default_shell() -> PathBuf {
     account_default_shell()
-        .or_else(|| env::var_os("SHELL").filter(|value| !value.is_empty()).map(PathBuf::from))
+        .or_else(|| {
+            env::var_os("SHELL")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
         .unwrap_or_else(platform_fallback_shell)
 }
 
@@ -427,5 +427,4 @@ fn platform_fallback_shell() -> PathBuf {
     PathBuf::from("sh")
 }
 
-<!-- marker: missing-generator:logic:17a15d58 path: apps/workbench/src/terminal_core.rs reason: Own profiles, macOS account-default-shell resolution, safe tab ids, real PTY sessions, byte frames, cwd, lifecycle state, and isolation. -->
 // HANDWRITE-END

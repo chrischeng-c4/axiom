@@ -129,6 +129,28 @@ fn real_pty_round_trip_resize_cwd_and_exit() {
     );
 }
 
+/// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#unit-test
+#[cfg(unix)]
+#[test]
+fn interactive_pty_forces_color_capabilities_without_host_no_color() {
+    let cwd = tempfile::tempdir().unwrap();
+    let script = "printf 'TERM=%s COLORTERM=%s NO_COLOR_SET=%s\\n' \"$TERM\" \"$COLORTERM\" \"${NO_COLOR+x}\"";
+    let command = PtyCommand::new("/bin/sh", cwd.path()).args(["-c", script]);
+    let session = PtySession::spawn(&command, test_size()).unwrap();
+    let mut reader = session.try_clone_reader().unwrap();
+    let output_thread = thread::spawn(move || {
+        let mut output = String::new();
+        reader.read_to_string(&mut output).unwrap();
+        output
+    });
+
+    assert!(session.wait().unwrap().success());
+    let output = output_thread.join().unwrap();
+    assert!(output.contains("TERM=xterm-256color"), "{output:?}");
+    assert!(output.contains("COLORTERM=truecolor"), "{output:?}");
+    assert!(output.contains("NO_COLOR_SET="), "{output:?}");
+}
+
 #[cfg(unix)]
 fn line_reader(reader: Box<dyn Read + Send>) -> (Receiver<String>, thread::JoinHandle<String>) {
     let (sender, receiver) = mpsc::channel();

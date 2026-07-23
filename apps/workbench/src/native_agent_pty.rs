@@ -215,6 +215,10 @@ impl PtyRuntime {
         let mut builder = CommandBuilder::new(program);
         builder.args(command.args.iter());
         builder.cwd(&command.cwd);
+        // Codex and other hosts commonly set NO_COLOR for their own logs. A
+        // PTY is an interactive terminal boundary, so do not leak that opt-out
+        // into Claude, Codex, AGY, or shells launched inside Workbench.
+        builder.env_remove("NO_COLOR");
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         builder.env(CWD_TELEMETRY_ENV, CWD_TELEMETRY_PROTOCOL);

@@ -73,7 +73,11 @@ impl CoreResponse {
 }
 
 #[derive(Clone, Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum CoreResult {
     Hello {
         profiles: [TerminalProfile; 4],
@@ -217,12 +221,14 @@ impl ProtocolServer {
             }
             CoreMethod::Input => {
                 let params: InputParams = decode_params(request.params)?;
-                let bytes = BASE64_STANDARD.decode(params.data_base64).map_err(|error| {
-                    (
-                        CoreErrorCode::InvalidParams,
-                        format!("input dataBase64 is invalid: {error}"),
-                    )
-                })?;
+                let bytes = BASE64_STANDARD
+                    .decode(params.data_base64)
+                    .map_err(|error| {
+                        (
+                            CoreErrorCode::InvalidParams,
+                            format!("input dataBase64 is invalid: {error}"),
+                        )
+                    })?;
                 let frame = self
                     .core
                     .input(&params.tab_id, &bytes)
@@ -322,5 +328,4 @@ fn map_terminal_error(error: TerminalCoreError) -> (CoreErrorCode, String) {
     (code, error.to_string())
 }
 
-<!-- marker: missing-generator:logic:40123b56 path: apps/workbench/src/core_protocol.rs reason: Define and dispatch the versioned newline-framed JSON request, response, result, and recoverable error contract. -->
 // HANDWRITE-END
