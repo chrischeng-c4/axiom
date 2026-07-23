@@ -52,19 +52,19 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: pub fn trace_layer
+    anchor: trace_layer
     description: Specify the response-completion event as the shared HTTP contract used by Loom.
   - path: apps/loom/src/main.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: fn main
+    anchor: main
     description: Enforce logging configuration validation and shared identity initialization at long-running role entry.
   - path: apps/loom/src/operator/render.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: fn extra_env
+    anchor: extra_env
     description: Preserve the production JSON logging contract in rendered workloads.
   - path: apps/loom/k8s/base/statefulset.yaml
     action: modify
