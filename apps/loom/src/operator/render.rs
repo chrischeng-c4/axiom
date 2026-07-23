@@ -40,7 +40,7 @@ fn image_pull_policy(loom: &Loom) -> &str {
     loom.spec.image_pull_policy.as_deref().unwrap_or("IfNotPresent")
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in render.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2415" reason="logic section in render.rs is hand-written pending codegen support">
 /// The loom-specific env appended after the downward-API quartet.
 fn extra_env(loom: &Loom, headless: &str) -> Vec<Value> {
     vec![
@@ -48,6 +48,7 @@ fn extra_env(loom: &Loom, headless: &str) -> Vec<Value> {
         json!({ "name": "LOOM_RAFT_DIR", "value": "/data/raft" }),
         json!({ "name": "LOOM_HEADLESS_SERVICE", "value": headless }),
         json!({ "name": "LOOM_DRAIN_GRACE_SECS", "value": "10" }),
+        json!({ "name": "LOOM_LOG_FORMAT", "value": "json" }),
         json!({ "name": "LOOM_RELAY", "value": loom.spec.relay }),
         json!({ "name": "LOOM_KEEP", "value": loom.spec.keep }),
         json!({ "name": "LOOM_COMPLETION_SHARDS", "value": loom.spec.completion_shards.to_string() }),
