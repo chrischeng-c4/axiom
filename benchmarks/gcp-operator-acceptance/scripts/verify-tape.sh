@@ -268,14 +268,12 @@ jq -e --arg topic "$topic" \
 
 # ---- Step D: cold restore + 3-replica topology stand-up, including failover ----
 # `prepare_bootstrap_seed` (apps/tape/src/raft.rs) hard-fails on data
-# directories carrying raft state, so this must be a genuine cold restore.
-# Patch the LIVE CR first (one atomic desired-state change: 3 replicas, 3
-# voters, seed URI), then delete the StatefulSet and PVCs. The operator's
-# server-side-apply drift repair — proven earlier by verify-operator-cell.sh —
-# recreates the StatefulSet from the already-patched CR, so every replica
-# starts on a fresh PVC and independently consumes the same GCS seed. Never
-# apply-then-patch here: a pod racing up from the pre-patch spec could write
-# journal state onto a fresh PVC and poison the seed's empty-dir requirement.
+# directories carrying raft state, so this must be a genuine cold restore:
+# tear the whole instance down (CR first — see the ordering note below), let
+# the claims drain, then apply ONE complete seeded 3x3 CR so every replica
+# starts on a fresh PVC and independently consumes the same GCS seed. A pod
+# must never run a pre-seed spec against a fresh PVC: any journal write there
+# would poison the seed's empty-dir requirement.
 stop_forward
 # The seed object is fetched by the tape SERVER itself (before Raft catch-up)
 # under the operator-rendered `tape` ServiceAccount, so that KSA needs the
@@ -285,23 +283,32 @@ stop_forward
 # annotation, so drift repair preserves it.
 kubectl -n tape annotate serviceaccount/tape \
   "iam.gke.io/gcp-service-account=${BACKUP_GSA_EMAIL}" --overwrite
-kubectl -n tape patch tape/tape --type=merge --patch \
-  "$(jq -n --arg seed "$first_object" '{spec:{replicasPerShard:3,voterCount:3,bootstrapSeedUri:$seed}}')"
-# Mark the PVCs terminating FIRST: pvc-protection keeps them alive while the
-# old pods run, and the scheduler refuses to bind any post-patch pod to a
-# terminating claim — so no replacement pod can ever adopt an old journal.
+# Teardown ordering (run 0723092118 postmortem): the CR must be GONE before
+# the StatefulSet and PVCs are deleted. While the CR exists, drift repair
+# recreates the StatefulSet within seconds and its replacement pods — even
+# unschedulable Pending ones — count as PVC users to the pvc-protection
+# controller, so the old claims can never finish deleting (deadlock: the pod
+# waits on the terminating claim, the claim waits on the pod). With the CR
+# absent nothing recreates pods, the claims drain cleanly, and the rebuilt CR
+# below arrives fully formed so no pod ever runs a pre-seed spec.
+kubectl -n tape delete tape/tape --wait=true --timeout=120s
+kubectl -n tape delete statefulset/tape --wait=true --timeout=180s \
+  --cascade=foreground --ignore-not-found
 kubectl -n tape delete pvc -l app.kubernetes.io/instance=tape \
-  --wait=false --ignore-not-found
-kubectl -n tape delete statefulset/tape --wait=true --timeout=180s --cascade=foreground
-pvc_deadline=$((SECONDS + 300))
-while kubectl -n tape get pvc -l app.kubernetes.io/instance=tape --no-headers 2>/dev/null | rg -q .; do
-  if (( SECONDS >= pvc_deadline )); then
-    echo "old tape PVCs did not finish deleting before the cold-restore rebuild" >&2
-    kubectl -n tape get pvc -o yaml >&2 || true
-    exit 1
-  fi
-  sleep 3
-done
+  --wait=true --timeout=300s --ignore-not-found
+# Rebuild the instance CR offline as ONE complete document: the rendered CR
+# plus the kustomize-era sizing plus the seeded 3x3 topology. kubectl patch
+# --local performs the merge without touching the cluster.
+kubectl patch --local -f "$MANIFEST_DIR/tape/instance/tape.yaml" --type=merge \
+  --patch "$(jq -n --arg seed "$first_object" '{spec:{
+      imagePullPolicy:"IfNotPresent",
+      resources:{cpu:"500m",memory:"1Gi"},
+      storage:"1Gi",
+      replicasPerShard:3,
+      voterCount:3,
+      bootstrapSeedUri:$seed}}')" \
+  -o yaml > "$EVIDENCE_DIR/kubernetes/tape-restore-cr.yaml"
+kubectl apply -f "$EVIDENCE_DIR/kubernetes/tape-restore-cr.yaml"
 wait_for_topology 3
 kubectl -n tape get tape/tape -o json > "$EVIDENCE_DIR/kubernetes/tape-after-restore.json"
 
