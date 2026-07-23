@@ -236,7 +236,7 @@ impl<B> MakeSpan<B> for CorrelatingMakeSpan {
 /// [`CorrelatingMakeSpan`]. The event itself adds only the response facts that
 /// are not known when the span is created.
 #[derive(Debug, Clone, Copy)]
-struct RequestCompletionEvent;
+pub struct RequestCompletionEvent;
 
 impl<B> tower_http::trace::OnResponse<B> for RequestCompletionEvent {
     fn on_response(
