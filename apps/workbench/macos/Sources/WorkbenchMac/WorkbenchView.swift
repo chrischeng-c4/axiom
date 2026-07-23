@@ -24,6 +24,8 @@ struct WorkbenchView: View {
                         .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workbench.detail")
         }
         .navigationTitle("Workbench")
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
@@ -147,6 +149,10 @@ struct WorkbenchView: View {
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        // The central terminal owns its compact chrome. Let its tab strip use
+        // the hidden-titlebar region without moving the sidebar controls.
+        .ignoresSafeArea(.container, edges: .top)
+        .accessibilityIdentifier("terminal.workspace")
     }
 
     @ViewBuilder

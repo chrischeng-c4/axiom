@@ -3,6 +3,34 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
+    func testTerminalTabsUseTopContentEdge() throws {
+        continueAfterFailure = false
+
+        let fixtureFolder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workbench-titlebar-tabs-ui-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureFolder) }
+
+        let app = XCUIApplication()
+        app.terminate()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchEnvironment["WORKBENCH_UI_TEST_FOLDER"] = fixtureFolder.path
+        app.launch()
+        defer { app.terminate() }
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let terminalTab = app.buttons["terminal.tab.claude"]
+        let detail = app.descendants(matching: .any)["workbench.detail"]
+        XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        XCTAssertLessThan(
+            terminalTab.frame.minY,
+            detail.frame.minY,
+            "Terminal tabs should extend into the titlebar rather than leaving a blank central strip."
+        )
+    }
+
+    @MainActor
     func testFilesAuxiliaryColumnFollowsTerminalWorkspace() throws {
         continueAfterFailure = false
 
