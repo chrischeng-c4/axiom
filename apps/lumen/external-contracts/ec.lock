@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-21T10:02:23.126132+00:00"
+generated_at = "2026-07-23T04:56:02.314611+00:00"
 ir_digest = "sha256:4fbbfe940424a64056c3d920b6b696f56f73a138aad4dfdc799762bb633dd27c"
-source_digest = "sha256:c7c8ce41b170e1398dcca1f7803a7650109ee45c25ddb57ab9f8481401876be5"
+source_digest = "sha256:a889213acb68180f5ab5bc6350803768fb4030bdbbdf6490d891603ec9310697"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:43dec8cb89b5a507232db7f2640c105acfa19c83e8cae142e77df913289cae79"
+digest = "sha256:02a9d5c65127a12a6e5c8d17f41f3fbc744c85d0845a2c84fd5ce69519b3f7ea"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
