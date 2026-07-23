@@ -9,30 +9,29 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-app-owned-terminal-chrome
-entry: native-window
+id: workbench-app-owned-terminal-chrome-contract
+entry: window-attach
 nodes:
-  native-window: { kind: start, label: "native macOS window" }
-  content: { kind: process, label: "full-size app-owned content" }
-  columns: { kind: process, label: "aligned Projects terminal Auxiliary columns" }
-  tabs: { kind: terminal, label: "always-visible terminal tabs" }
+  window-attach: { kind: start, label: "SwiftUI window attached" }
+  configure: { kind: process, label: "configure transparent full-size titlebar" }
+  render: { kind: process, label: "render app content through top edge" }
+  visible: { kind: terminal, label: "tabs visible fullscreen" }
 edges:
-  - { from: native-window, to: content }
-  - { from: content, to: columns }
-  - { from: columns, to: tabs }
+  - { from: window-attach, to: configure }
+  - { from: configure, to: render }
+  - { from: render, to: visible }
 ---
 flowchart LR
-  window([Native window]) --> content[App-owned top chrome]
-  content --> columns[Three aligned columns]
-  columns --> tabs([Always-visible terminal tabs])
+  attach([Window attached]) --> configure[Transparent full-size chrome]
+  configure --> render[App-owned three-column content]
+  render --> visible([Fullscreen-visible tabs])
 ```
 
-The native window uses a transparent titlebar and full-size content view, while the terminal tab strip stays inside the SwiftUI terminal workspace. The root workspace therefore reaches the same top edge in the Projects, terminal, and Auxiliary columns. In both normal and macOS fullscreen modes, the tab strip is app content and never depends on native toolbar or titlebar hover reveal.
+`WorkbenchMacApp` installs an AppKit bridge that configures only the hosting `NSWindow`: `titlebarAppearsTransparent` is enabled, the title visibility is hidden, and `fullSizeContentView` is present. The bridge is idempotent, runs on the main actor, and changes no window state after the first successful attachment.
 
-The Project column retains a narrow leading titlebar-safe region for traffic-light controls in a normal window. The center column owns a compact 40-point tab header, with ordinary whole-tab selection, independent close controls, keyboard shortcuts, and the add-shell action.
+`WorkbenchView` draws its `NavigationSplitView` through the top container safe area. The Project, terminal, and optional Beta Auxiliary columns therefore begin at the same y-origin. The terminal tab strip remains the first child of `terminalWorkspace`; it owns the terminal action controls and stays visible when macOS hides native chrome in fullscreen.
 
-The layout operation cannot change project selection, PTY cwd, terminal lifecycle, renderer retention, tab identifiers, or Auxiliary file-listing state.
-
+The Project column includes a titlebar-leading clearance in windowed mode only for traffic-light safety. Its project buttons, terminal tab state, PTY sessions, files listing, and runtime profile remain unchanged.
 ## Changes
 <!-- type: changes lang: yaml -->
 
