@@ -49,3 +49,28 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-visible-terminal-tabs-verification
+requirements:
+  native_package_builds:
+    id: R2
+    text: "The native macOS package compiles and its test suite passes with the normal terminal content safe area."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+  terminal_tabs_visible:
+    id: R1
+    text: "The terminal tab strip stays visible below the native titlebar in the Beta application."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testTerminalTabsRemainVisibleBelowTitlebar
+---
+flowchart TD
+    r1[R1 terminal tabs visible] --> workbenchmacuitests_testterminaltabsremainvisiblebelowtitlebar[WorkbenchMacUITests.testTerminalTabsRemainVisibleBelowTitlebar]
+    r2[R2 native package builds] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
