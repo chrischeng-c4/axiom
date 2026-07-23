@@ -1,0 +1,216 @@
+# Build `tape` binaries and the GHCR release image.
+#
+# Triggers:
+#   - push of a tag matching `tape@*`  → build + attach to GitHub release,
+#                                        then publish the container image
+#   - workflow_dispatch               → build artifacts only (manual smoke),
+#                                       or containerize an EXISTING release
+#                                       via the image_version input (#2462)
+#
+# Targets (tape's release image is distroless/cc consuming the gnu tarballs,
+# so no musl legs are needed):
+#   - aarch64-apple-darwin        (Apple Silicon,      macos-14 native)
+#   - x86_64-unknown-linux-gnu    (most Linux servers, ubuntu-latest native)
+#   - aarch64-unknown-linux-gnu   (Linux on ARM,       ubuntu-latest cross)
+#
+# The released binary is the SERVING binary: it must carry the operator and
+# backup features (the GKE image runs `tape serve` / `tape k8s operator run`
+# / `tape backup`) plus the standard self-update/issue CLI surface.
+name: tape-release
+
+on:
+  push:
+    tags:
+      - "tape@*"
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: >-
+          Existing tape release tag to containerize and push to GHCR
+          (e.g. tape@0.4.10). Leave empty for a build-only smoke run.
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # create / upload release assets
+  packages: write  # push the GHCR image (#2462)
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolchain (Linux aarch64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tape-${{ matrix.target }}
+
+      - name: Build tape binary
+        run: cargo build --release --locked -p tape --bin tape --features "operator backup self-update issue" --target ${{ matrix.target }}
+
+      - name: Package artifact
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="tape-${{ matrix.target }}"
+          stage="pkg/${name}"
+          mkdir -p "${stage}"
+          cp "target/${{ matrix.target }}/release/tape" "${stage}/tape"
+          cp apps/tape/README.md "${stage}/README.md"
+          mkdir -p out
+          tarball="out/${name}.tar.gz"
+          tar -C pkg -czf "${tarball}" "${name}"
+          if command -v shasum >/dev/null; then
+            shasum -a 256 "${tarball}" | awk '{print $1}' > "${tarball}.sha256"
+          else
+            sha256sum "${tarball}" | awk '{print $1}' > "${tarball}.sha256"
+          fi
+          echo "tarball=${tarball}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${tarball}.sha256" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tape-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.sha }}
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/tape@')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts (debug)
+        run: find dist -type f -maxdepth 4 -print
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/tape-*.tar.gz
+            dist/**/tape-*.tar.gz.sha256
+          generate_release_notes: true
+          body: |
+            `tape` release built from tag ${{ github.ref_name }}.
+
+            ## Install
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/apps/tape/install.sh | sh
+            ```
+
+            Or pick a target tarball below and extract it manually.
+
+  # #2462: durable, digest-pinned container images per release. Runs after
+  # `release` because Dockerfile.release downloads the published tarballs;
+  # also runnable retroactively for an EXISTING release via workflow_dispatch
+  # with `image_version`.
+  ghcr-image:
+    name: publish ghcr image
+    needs: release
+    if: >-
+      !cancelled() && (
+        (startsWith(github.ref, 'refs/tags/tape@') && needs.release.result == 'success')
+        || (github.event_name == 'workflow_dispatch' && inputs.image_version != '')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag and image tags
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${{ inputs.image_version || github.ref_name }}"
+          [[ "$raw" == tape@* ]] || {
+            echo "expected a tape@<version> tag, got: $raw" >&2
+            exit 1
+          }
+          semver="${raw#tape@}"
+          tags="ghcr.io/${{ github.repository_owner }}/tape:${semver}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            tags="${tags},ghcr.io/${{ github.repository_owner }}/tape:latest"
+          fi
+          echo "release_tag=${raw}" >> "$GITHUB_OUTPUT"
+          echo "semver=${semver}" >> "$GITHUB_OUTPUT"
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/tape/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            TAPE_VERSION=${{ steps.ver.outputs.release_tag }}
+          tags: ${{ steps.ver.outputs.tags }}
+
+      - name: Append image digest to the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.release_tag }}"
+          image="ghcr.io/${{ github.repository_owner }}/tape:${{ steps.ver.outputs.semver }}@${{ steps.push.outputs.digest }}"
+          body="$(gh release view "$tag" --repo "${{ github.repository }}" --json body --jq .body)"
+          if grep -qF "${{ steps.push.outputs.digest }}" <<<"$body"; then
+            echo "digest already recorded"
+            exit 0
+          fi
+          printf '%s\n\n## Container image\n\n```text\n%s\n```\n' "$body" "$image" \
+            | gh release edit "$tag" --repo "${{ github.repository }}" --notes-file -
