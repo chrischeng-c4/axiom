@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:1e5c89914673167be6bd8538b1a5a5b7d3adea821bc802ee67caae816dd059cb",
+  "source_digest": "sha256:98469f0f32a6e3a7247ab8006066b9938350454c7f3ebf553bb618c6d91f8e2d",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/agentic_workflow_ec_review",
-  "reviewed_at": "2026-07-23T07:54:47.137789+00:00",
-  "summary": "Accepted for the exact source digest reviewed. The 96 required behavior cases cover the DeveloperTool capability claims and required behavior dimension. The five prompt-contract cases now provide concrete independent oracles for the public language, typed envelope projection, lifecycle stage ownership, blocker typing, and rollup terminal distinctions. The public Markdown and JSON prompt renderers are compared, the complete Closed vocabulary and Closed ASCII grammar sections are pinned byte-for-byte, the full EC-first Python pipeline and authority boundary are asserted, and Unicode lookalikes are rejected. Production WorkflowEnvelope serialization pins the complete prompt_contract JSON and exact rendered agent_prompt from the decoded IR while an invalid artifact identity fails serialization. All nine Python phase-table rows pin scopes, predicates, terminal levels, and guards, including five concrete frontend artifact-quality guards. All three revised exact selectors executed one test and passed; no zero-test, empty-renderer, added-vocabulary/operator, omitted-phase, scope, or fallback loophole remains.",
+  "reviewed_at": "2026-07-23T08:45:42.679226+00:00",
+  "summary": "The three restored EC IDs are unique in the current Markdown source and match their historical ec.lock and generated-inventory identities one-for-one. Their registered Python-first claim bindings, required behavior coverage, exact CLI-envelope assertions, independent oracle, bounded-fallback protections, and zero-test false-green guard are semantically unchanged from the accepted prior revision. Stable identity restoration therefore introduces neither a collision nor a coverage gap.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,5 +15,6 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": []
+  "findings": [],
+  "target_path": "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
 }

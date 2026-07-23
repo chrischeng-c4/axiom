@@ -3,20 +3,20 @@
 // AW-EC-BEGIN
 // @ec self-hosting-health-policy
 // @capability workflow-root-runner
-// @claim self-hosting-root-runner-policy
+// @claim python-first-self-hosting-admission
 // @contract self-hosting-health-policy
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture
+// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_health_reports_bounded_fallback -- --nocapture
 // AW-EC-END
 
-// Contract: health emits policy_mode, hard_gates, and advisory_axes
-// Contract: health next never re-enters aw capability run for the self project
+// Contract: health emits policy_mode python_first_lifecycle and fallback_mode bounded_direct_repair
+// Contract: health pins fallback_trigger selected_worker_verb_is_broken, fallback_scope current_change_only, fallback_required_trailer Refs #<issue>, and direct_repair_default false
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn self_hosting_health_policy() {
     let command =
-        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture";
+        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_health_reports_bounded_fallback -- --nocapture";
     let id = "self-hosting-health-policy";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join("aw.toml").is_file() {

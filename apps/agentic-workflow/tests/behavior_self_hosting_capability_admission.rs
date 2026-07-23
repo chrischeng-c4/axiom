@@ -3,20 +3,21 @@
 // AW-EC-BEGIN
 // @ec self-hosting-capability-admission
 // @capability workflow-root-runner
-// @claim self-hosting-root-runner-policy
+// @claim python-first-self-hosting-admission
 // @contract self-hosting-capability-admission
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_and_capability_roots_are_rejected_before_mutation -- --nocapture
+// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_capability_and_backlog_enter_normal_verifiers -- --nocapture
 // AW-EC-END
 
-// Contract: project and capability root commands emit aw.cli.v1 blocked policy envelopes
-// Contract: the fixture tree is byte-for-byte unchanged
+// Contract: the capability root emits status blocked, action blocked, root kind capability, workflow_complete false, next kind blocked with no command, and reason capability root is not runnable: failed to parse capability map
+// Contract: the backlog root emits status blocked, action blocked, root backlog:agentic-workflow, workflow_complete false, next kind run_command, and exact command aw wi plan --project agentic-workflow --json because the reviewed_graph_missing blocker is the only admitted fixture outcome
+// Contract: neither envelope contains action self_hosting_policy or policy_mode sanctioned_direct_commit
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn self_hosting_capability_admission() {
     let command =
-        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_and_capability_roots_are_rejected_before_mutation -- --nocapture";
+        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_capability_and_backlog_enter_normal_verifiers -- --nocapture";
     let id = "self-hosting-capability-admission";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join("aw.toml").is_file() {
