@@ -32,3 +32,20 @@ flowchart LR
 `terminalWorkspace` stays inside the normal top container safe area. The native titlebar keeps ownership of its hit-test and drawing region, while the tab strip remains the first visible control in the terminal content area.
 
 The recovery does not change project selection, PTY cwd, terminal lifecycle, terminal renderer identity, or terminal-tab identifiers. A future native toolbar integration may change titlebar placement only with a dedicated AppKit integration contract.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
