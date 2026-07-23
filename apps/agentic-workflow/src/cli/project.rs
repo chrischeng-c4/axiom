@@ -2161,10 +2161,10 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
     )
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in project.rs is hand-written pending codegen support">
-/// Self-AW health is a read-only policy report. Expose its gate partition in
-/// the compact and full envelopes so an agent cannot mistake advisory
-/// implementation coverage for an admission requirement to run AW itself.
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in project.rs is hand-written pending codegen support">
+/// Self-AW health remains a read-only policy report, but self-hosting uses the
+/// ordinary Python-first lifecycle. Direct repair is only a bounded recovery
+/// path when the selected worker verb itself is broken.
 fn add_self_hosting_policy_fields(
     report: &ProjectHealthReport,
     mut summary: serde_json::Value,
@@ -2177,7 +2177,27 @@ fn add_self_hosting_policy_fields(
         .expect("health summary must serialize as an object");
     object.insert(
         "policy_mode".to_string(),
-        serde_json::Value::String(crate::cli::run::SELF_HOSTING_POLICY_MODE.to_string()),
+        serde_json::Value::String("python_first_lifecycle".to_string()),
+    );
+    object.insert(
+        "fallback_mode".to_string(),
+        serde_json::Value::String("bounded_direct_repair".to_string()),
+    );
+    object.insert(
+        "fallback_trigger".to_string(),
+        serde_json::Value::String("selected_worker_verb_is_broken".to_string()),
+    );
+    object.insert(
+        "fallback_scope".to_string(),
+        serde_json::Value::String("current_change_only".to_string()),
+    );
+    object.insert(
+        "fallback_required_trailer".to_string(),
+        serde_json::Value::String("Refs #<issue>".to_string()),
+    );
+    object.insert(
+        "direct_repair_default".to_string(),
+        serde_json::Value::Bool(false),
     );
     object.insert(
         "hard_gates".to_string(),
