@@ -19,10 +19,10 @@ fn self_hosting_wi_admission() {
         "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture";
     let id = "self-hosting-wi-admission";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

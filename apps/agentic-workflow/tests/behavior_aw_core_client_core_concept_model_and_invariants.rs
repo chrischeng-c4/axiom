@@ -7,21 +7,21 @@
 // @contract aw-core-client-core-concept-model-and-invariants
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md
+// @command cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture
 // AW-EC-END
 
-// Contract: agent-first project iteration model TD validates as the source claim for AW invariants
+// Contract: from an admitted CB-generated child, the real compiled goal runner follows emitted CB commands, closes the child, rolls up its epic and capability, and terminates with completion.workflow_complete=true
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_core_client_core_concept_model_and_invariants() {
     let command =
-        "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md";
+        "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture";
     let id = "aw-core-client-core-concept-model-and-invariants";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

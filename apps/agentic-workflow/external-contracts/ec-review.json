@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:deff28acf6c19840482804052250ed06c067b4f0714e79b1a391b774081be992",
+  "source_digest": "sha256:1294c1a81bc431cc4dc87cfa2d00cec064ea8e731d27b26576fe62d61bf4ff3a",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/ec_2184_review",
-  "reviewed_at": "2026-07-22T04:41:22.739047+00:00",
-  "summary": "Accepted for the exact source digest reviewed. The 81 behavior cases cover the DeveloperTool capability claims and required behavior dimension with concrete observable assertions. The two previously deficient cases now execute the real compiled aw health surface against a hermetic non-self generator-authoritative fixture: one proves a tracked regenerability gap makes production_ready false and emits blocker/remediation evidence, while the other proves actual verbose JSONL ordering and reads the emitted payload for command/blocker evidence. Both exact selectors ran one test and passed, closing zero-test and constructed-output loopholes. Oracles use independently constructed fixture inputs and literal expected outputs rather than aw ec or implementation-derived expectations.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/agentic_workflow_ec_review",
+  "reviewed_at": "2026-07-23T05:30:44.903974+00:00",
+  "summary": "Accepted for the exact source digest reviewed. The refreshed legacy TD-derived EC inventory contains 91 required behavior cases covering the DeveloperTool capability claims and required behavior dimension. The prior four defects are closed by five added exact cases: separate EC-first phase routing, phase-less admission, and remote-ledger proofs; a configured required-EC red-to-green terminal fixture; a public goal convergence fixture that reaches CB fill/check and required EC; and real-listener HTTP/1.1+h2c plus service-http delegation proofs. Assertions pin concrete commands, phases, refusal/closure state, consulted-case evidence, protocol responses, and router bodies. The oracles are independently defined in exact test/fixture expectations rather than aw ec or the implementation's own reported truth. Every re-reviewed selector executed exactly one test; all seven relevant exact tests passed, including the two localhost listener cases, so no empty-filter or trivial-behavior loophole remains.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

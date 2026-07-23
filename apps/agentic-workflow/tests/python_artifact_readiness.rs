@@ -82,17 +82,30 @@ fn python_artifact_readiness_reports_shared_ids_dimensions_and_digests() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path(), true);
 
-    let readiness = evaluate(root.path(), "demo").unwrap().expect("python-v1 projection");
+    let readiness = evaluate(root.path(), "demo")
+        .unwrap()
+        .expect("python-v1 projection");
 
     assert!(readiness.ready, "{:#?}", readiness.blockers);
-    assert_eq!(readiness.td_module_ids, vec!["module:src.demo.domain.order"]);
+    assert_eq!(
+        readiness.td_module_ids,
+        vec!["module:src.demo.domain.order"]
+    );
     assert_eq!(readiness.required_case_count, 1);
     assert_eq!(readiness.ready_case_count, 1);
     assert_eq!(readiness.cases[0].id, "order-behavior");
     assert_eq!(readiness.cases[0].dimension, "behavior");
     assert_eq!(readiness.cases[0].applicability, "td");
-    assert!(readiness.ec_source_digest.as_deref().unwrap().starts_with("sha256:"));
-    assert!(readiness.dependency_lock_digest.as_deref().unwrap().starts_with("sha256:"));
+    assert!(readiness
+        .ec_source_digest
+        .as_deref()
+        .unwrap()
+        .starts_with("sha256:"));
+    assert!(readiness
+        .dependency_lock_digest
+        .as_deref()
+        .unwrap()
+        .starts_with("sha256:"));
 }
 
 #[test]
@@ -100,13 +113,15 @@ fn python_artifact_readiness_routes_missing_evidence_to_one_stage_command() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path(), false);
 
-    let readiness = evaluate(root.path(), "demo").unwrap().expect("python-v1 projection");
+    let readiness = evaluate(root.path(), "demo")
+        .unwrap()
+        .expect("python-v1 projection");
 
     assert!(!readiness.ready);
     assert_eq!(readiness.ready_case_count, 0);
     assert_eq!(
         readiness.next_command.as_deref(),
-        Some("aw ec verify --project demo --stage core")
+        Some("aw ec verify --project demo --stage td")
     );
 }
 
@@ -117,7 +132,10 @@ fn python_artifact_readiness_leaves_legacy_projects_unchanged() {
     let config = fs::read_to_string(root.path().join("aw.toml")).unwrap();
     fs::write(
         root.path().join("aw.toml"),
-        config.replace("artifact_model = \"python-v1\"", "artifact_model = \"legacy\""),
+        config.replace(
+            "artifact_model = \"python-v1\"",
+            "artifact_model = \"legacy\"",
+        ),
     )
     .unwrap();
 

@@ -3282,7 +3282,10 @@ auth_method = "cli"
             assert!(skill_path.exists(), "aw-review skill should be installed");
             let content = fs::read_to_string(&skill_path).unwrap();
             assert!(content.contains("aw review --project"));
-            assert!(content.contains("aw health"), "should state the aw health/aw review boundary");
+            assert!(
+                content.contains("aw health"),
+                "should state the aw health/aw review boundary"
+            );
         }
     }
 

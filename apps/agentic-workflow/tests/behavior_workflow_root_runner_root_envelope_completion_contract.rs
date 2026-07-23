@@ -18,10 +18,10 @@ fn workflow_root_runner_root_envelope_completion_contract() {
         "cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact -- --nocapture";
     let id = "workflow-root-runner-root-envelope-completion-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

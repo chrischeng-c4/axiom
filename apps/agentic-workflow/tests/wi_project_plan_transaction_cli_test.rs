@@ -197,27 +197,21 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
     assert_eq!(manifest["schema"], "aw.wi.project-plan-transaction.v1");
     assert_eq!(manifest["project"], "demo");
     assert_eq!(manifest["issue_snapshots"].as_array().unwrap().len(), 1);
-    assert!(
-        manifest["tracker_snapshot_digest"]
-            .as_str()
-            .is_some_and(|digest| digest.starts_with("sha256:"))
-    );
+    assert!(manifest["tracker_snapshot_digest"]
+        .as_str()
+        .is_some_and(|digest| digest.starts_with("sha256:")));
     assert_eq!(manifest["apply_command"], payload["next_command"]);
     assert_eq!(planned["next"], manifest["apply_command"]);
-    assert!(
-        manifest["mutations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|mutation| mutation["action"] == "create")
-    );
-    assert!(
-        manifest["mutations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|mutation| mutation["action"] != "update")
-    );
+    assert!(manifest["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|mutation| mutation["action"] == "create"));
+    assert!(manifest["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|mutation| mutation["action"] != "update"));
 
     accept_review(&payload_path);
     let evidence = payload_path.to_string_lossy().to_string();
@@ -242,11 +236,9 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
         1,
         "a graph-clean epic must not receive a provenance-only mutation"
     );
-    assert!(
-        bodies
-            .iter()
-            .any(|body| body.contains("epic:42") && body.contains("type: change"))
-    );
+    assert!(bodies
+        .iter()
+        .any(|body| body.contains("epic:42") && body.contains("type: change")));
 
     let review_path = PathBuf::from(applied["review_path"].as_str().unwrap());
     let review_evidence = review_path.to_string_lossy().to_string();

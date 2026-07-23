@@ -7,8 +7,8 @@ capability_refs:
     role: primary
     gap: shared-service-kit-substrate
     claim: shared-service-kit-substrate
-    coverage: partial
-    rationale: "Extends the shared service kit convention with reusable server runtime layers so apps and service archetype adopters do not hand-roll accept loops, drain behavior, or connection budgeting."
+    coverage: full
+    rationale: "Exact runtime tests cover TCP admission and permit release, durable drain state, HTTP/1.1 plus h2c option dispatch, and service-http delegation through the shared server layers."
 ---
 
 # TD: shared server substrate performance layers

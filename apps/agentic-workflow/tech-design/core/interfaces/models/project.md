@@ -74,9 +74,9 @@ definitions:
         type: string
         description: "Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent."
         x-serde-skip-if: "Option::is_none"
-      artifact_model:
+      spec_model:
         $ref: "#/definitions/ProjectArtifactModel"
-        description: "Explicit lifecycle artifact model. Omitted projects retain the legacy compatibility default."
+        description: "Explicit specification model. `artifact_model` remains a read-only compatibility alias."
         x-serde-skip-if: "Option::is_none"
       ec:
         type: object
@@ -102,8 +102,8 @@ definitions:
 
   ProjectArtifactModel:
     type: string
-    enum: [legacy, python-v1]
-    description: "Explicit project artifact lifecycle; unknown values are configuration errors and the omitted value defaults to legacy compatibility."
+    enum: [legacy, python]
+    description: "Explicit project specification lifecycle; `python-v1` is accepted only as a read-compatible legacy value and omitted defaults to legacy."
     x-rust-enum:
       derive: [Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize]
       variants:

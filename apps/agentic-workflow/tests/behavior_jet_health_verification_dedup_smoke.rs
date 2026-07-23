@@ -19,10 +19,10 @@ fn jet_health_verification_dedup_smoke() {
         "cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture";
     let id = "jet-health-verification-dedup-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

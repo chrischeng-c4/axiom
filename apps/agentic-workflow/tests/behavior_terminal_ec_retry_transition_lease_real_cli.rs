@@ -12,7 +12,7 @@
 
 // Contract: a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held
 // Contract: the second process reads retry phase and promptly receives terminal_ec_single_flight
-// Contract: the refusal points to the exact same-slug aw td code-check retry
+// Contract: the refusal points to the exact same-slug aw cb check retry
 // Contract: after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
@@ -21,10 +21,10 @@ fn terminal_ec_retry_transition_lease_real_cli() {
         "cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture";
     let id = "terminal-ec-retry-transition-lease-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

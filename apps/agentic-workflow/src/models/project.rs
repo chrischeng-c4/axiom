@@ -76,10 +76,14 @@ pub struct Project {
     /// Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent.
     #[serde(default, alias = "td_path", skip_serializing_if = "Option::is_none")]
     pub tech_design_dir: Option<String>,
-    /// Explicit lifecycle artifact model. When absent, compatibility defaults to
-    /// [`ProjectArtifactModel::Legacy`] without forcing an overlay to erase a
-    /// root-level opt-in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit specification model. `spec_model` is canonical; the former
+    /// `artifact_model` spelling remains read-compatible during migration.
+    #[serde(
+        default,
+        rename = "spec_model",
+        alias = "artifact_model",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub artifact_model: Option<ProjectArtifactModel>,
     /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -96,13 +100,15 @@ pub struct Project {
 
 /// The project artifact lifecycle selected by `aw.toml`.
 ///
-/// `legacy` retains Markdown-oriented readers. `python-v1` opts a project into
-/// the explicit Python artifact adapters; it is never inferred from files.
+/// `legacy` retains Markdown-oriented readers. `python` opts a project into
+/// direct Python EC/TD authoring; the historical `python-v1` value is accepted
+/// only for reading existing configuration.
 /// @spec apps/agentic-workflow/tech-design/core/logic/python-artifact-model-selector.md#logic
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectArtifactModel {
     Legacy,
+    #[serde(rename = "python", alias = "python-v1")]
     PythonV1,
 }
 
@@ -113,7 +119,7 @@ impl Default for ProjectArtifactModel {
 }
 
 impl Project {
-    /// Compatibility model used when a project omits `artifact_model`.
+    /// Compatibility model used when a project omits `spec_model`.
     pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
         self.artifact_model.unwrap_or_default()
     }

@@ -1,27 +1,27 @@
 # FocusFlow Todo
 
-A dependency-free full-stack Todo web app. The browser UI and Python API are
-served from one process; tasks persist in SQLite.
+A full-stack Todo web app. A Rust (Axum) API serves the browser UI from the
+same process; tasks persist in SQLite through `rusqlite`.
 
 ## Run
 
 ```bash
-python3 -m backend.server
+cargo run --manifest-path backend-rust/Cargo.toml
 ```
 
 Then open [http://127.0.0.1:8080](http://127.0.0.1:8080). The database is
-created at `backend/data/todos.sqlite3` on first start.
+created at `backend-rust/data/todos.sqlite3` on first start.
 
 To keep data elsewhere or choose a port:
 
 ```bash
-python3 -m backend.server --port 3000 --db /tmp/focusflow.sqlite3
+cargo run --manifest-path backend-rust/Cargo.toml -- --port 3000 --db /tmp/focusflow.sqlite3
 ```
 
 ## Test
 
 ```bash
-python3 -m unittest discover -s backend/tests -v
+cargo test --manifest-path backend-rust/Cargo.toml
 ```
 
 ## API

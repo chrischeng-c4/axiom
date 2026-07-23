@@ -83,7 +83,7 @@ fn python_td_target_generates_deterministic_packages_and_native_tests() {
 }
 
 #[test]
-fn td_gen_python_target_routes_to_native_emitter() {
+fn cb_gen_python_target_routes_to_native_emitter() {
     let output = tempfile::tempdir().unwrap();
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -92,7 +92,7 @@ fn td_gen_python_target_routes_to_native_emitter() {
         .to_path_buf();
     let result = Command::new(env!("CARGO_BIN_EXE_aw"))
         .args([
-            "td",
+            "cb",
             "gen",
             "--target",
             "python",
@@ -106,7 +106,7 @@ fn td_gen_python_target_routes_to_native_emitter() {
         .unwrap();
     assert!(
         result.status.success(),
-        "aw td gen --target python failed:\nstdout={}\nstderr={}",
+        "aw cb gen --target python failed:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
@@ -131,7 +131,12 @@ fn python_ir_rust_target_is_compiling_cold_and_fail_closed() {
         .current_dir(first.path())
         .output()
         .unwrap();
-    assert!(check.status.success(), "stdout={} stderr={}", String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(
+        check.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
 
     let bad = tempfile::tempdir().unwrap();
     let mut unsupported = ir.clone();
@@ -143,19 +148,39 @@ fn python_ir_rust_target_is_compiling_cold_and_fail_closed() {
         .declarations[0]
         .name = "not-valid".to_string();
     assert!(emit_python_td_rust_target(&unsupported, bad.path()).is_err());
-    assert!(!bad.path().join("Cargo.toml").exists(), "unsupported IR must not partially apply");
+    assert!(
+        !bad.path().join("Cargo.toml").exists(),
+        "unsupported IR must not partially apply"
+    );
 }
 
 #[test]
-fn td_gen_rust_target_routes_to_native_emitter() {
+fn cb_gen_rust_target_routes_to_native_emitter() {
     let output = tempfile::tempdir().unwrap();
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().and_then(|path| path.parent()).unwrap().to_path_buf();
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap()
+        .to_path_buf();
     let result = Command::new(env!("CARGO_BIN_EXE_aw"))
-        .args(["td", "gen", "--target", "rust", "--source-root", fixture("python_spec_typer").to_str().unwrap(), "--output-dir", output.path().to_str().unwrap()])
+        .args([
+            "cb",
+            "gen",
+            "--target",
+            "rust",
+            "--source-root",
+            fixture("python_spec_typer").to_str().unwrap(),
+            "--output-dir",
+            output.path().to_str().unwrap(),
+        ])
         .current_dir(workspace_root)
         .output()
         .unwrap();
-    assert!(result.status.success(), "stderr={}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(output.path().join("Cargo.toml").is_file());
     assert!(output.path().join("tests/generated_inventory.rs").is_file());
 }
@@ -170,7 +195,7 @@ fn todo_python_td_generates_a_compiling_rust_target_through_the_cli() {
         .to_path_buf();
     let result = Command::new(env!("CARGO_BIN_EXE_aw"))
         .args([
-            "td",
+            "cb",
             "gen",
             "--target",
             "rust",
@@ -244,7 +269,7 @@ fn python_ir_typescript_target_is_tested_cold_and_fail_closed() {
 }
 
 #[test]
-fn td_gen_typescript_target_routes_to_native_emitter() {
+fn cb_gen_typescript_target_routes_to_native_emitter() {
     let output = tempfile::tempdir().unwrap();
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -253,7 +278,7 @@ fn td_gen_typescript_target_routes_to_native_emitter() {
         .to_path_buf();
     let result = Command::new(env!("CARGO_BIN_EXE_aw"))
         .args([
-            "td",
+            "cb",
             "gen",
             "--target",
             "typescript",
@@ -267,14 +292,12 @@ fn td_gen_typescript_target_routes_to_native_emitter() {
         .unwrap();
     assert!(
         result.status.success(),
-        "aw td gen --target typescript failed:\nstderr={}",
+        "aw cb gen --target typescript failed:\nstderr={}",
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(output.path().join("src/index.ts").is_file());
-    assert!(
-        output
-            .path()
-            .join("tests/generated_inventory.test.mjs")
-            .is_file()
-    );
+    assert!(output
+        .path()
+        .join("tests/generated_inventory.test.mjs")
+        .is_file());
 }

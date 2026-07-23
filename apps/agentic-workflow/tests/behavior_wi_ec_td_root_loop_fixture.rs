@@ -7,7 +7,7 @@
 // @contract wi-ec-td-root-loop-fixture
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+// @command cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture
 // AW-EC-END
 
 // Contract: fixture root follows emitted commands until completion.workflow_complete=true
@@ -15,13 +15,14 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn wi_ec_td_root_loop_fixture() {
-    let command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture";
+    let command =
+        "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture";
     let id = "wi-ec-td-root-loop-fixture";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

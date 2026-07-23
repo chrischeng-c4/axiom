@@ -7,7 +7,7 @@
 //! moved to `legacy_cli_removal_test.rs` (issue #856f): that file already
 //! defines the identical `Cli { command: Commands }` clap harness this file
 //! duplicated, and is the dedicated home for removed-command assertions.
-//! This file keeps its lifecycle (terminal `aw td code-check`) tests, which
+//! This file keeps its lifecycle (terminal `aw cb check`) tests, which
 //! don't use that harness at all — they drive the real `aw` binary via
 //! `CARGO_BIN_EXE_aw`.
 
@@ -46,7 +46,7 @@ fn count_cb_code_check_trailer_commits(git: &std::path::Path, root: &std::path::
 /// present, and no `Cb-CodeCheck` trailer commit in the log — is the exact
 /// partial-failure shape left behind when `maybe_push_remote` or
 /// `commit_cb_code_check_terminal` errors after `backend.update` already
-/// ran. Re-running `aw td code-check <slug>` must complete the missing
+/// ran. Re-running `aw cb check <slug>` must complete the missing
 /// terminal steps and exit `done` (AC1), release `score:locked` (AC2), and
 /// land the `Cb-CodeCheck` trailer commit (AC3). A second retry against the
 /// now fully-completed `td_merged` issue must be a clean idempotent no-op —
@@ -157,15 +157,15 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
         "sanity: no Cb-CodeCheck trailer commit exists before the retry"
     );
 
-    // Retry: re-run `aw td code-check <slug>` exactly as a caller unsticking
+    // Retry: re-run `aw cb check <slug>` exactly as a caller unsticking
     // issue #846 would.
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -222,12 +222,12 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
     // fully-completed td_merged phase must be a clean no-op done, not a
     // duplicate commit.
     let output2 = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check (second retry)");
+        .expect("run aw cb check (second retry)");
     let stdout2 = String::from_utf8_lossy(&output2.stdout);
     assert!(
         output2.status.success(),
@@ -247,7 +247,7 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
 }
 
 // ---------------------------------------------------------------------------
-// #807 / #1275: terminal `aw td code-check` must refuse to perform ANY
+// #807 / #1275: terminal `aw cb check` must refuse to perform ANY
 // mutation (the phase-advancing `backend.update`, remote closure, branch
 // landing, terminal commit, or lock release) while a file in the WI's own
 // touched scope is dirty in git — the exact shape that let a WI's
@@ -286,12 +286,12 @@ async fn test_code_check_refuses_dirty_touched_scope_untracked() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -314,7 +314,7 @@ async fn test_code_check_refuses_dirty_touched_scope_untracked() {
         stdout
     );
     assert!(
-        stdout.contains(&format!("aw td code-check {slug}")),
+        stdout.contains(&format!("aw cb check {slug}")),
         "error message must name the re-run command, got:\n{}",
         stdout
     );
@@ -377,12 +377,12 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -425,7 +425,7 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
 }
 
 // ---------------------------------------------------------------------------
-// #858 (epic #1270 R1b): terminal `aw td code-check` must consult the
+// #858 (epic #1270 R1b): terminal `aw cb check` must consult the
 // completing WI's configured EC inventory before the first real close
 // mutation (`backend.update`) — "the gate is EC" is the lifecycle's stated
 // contract, and until this issue terminal close ran no EC/verification gate
@@ -591,12 +591,12 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -619,14 +619,12 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
         stdout
     );
     assert!(
-        stdout.contains(&format!(
-            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
-        )),
+        stdout.contains(&format!("\"next\":{{\"command\":\"aw cb check {slug}\"}}")),
         "error envelope must carry the exact runnable terminal retry, got:\n{}",
         stdout
     );
     assert!(
-        stdout.contains(&format!("aw td code-check {slug}")),
+        stdout.contains(&format!("aw cb check {slug}")),
         "error message must name the re-run command, got:\n{}",
         stdout
     );
@@ -716,12 +714,12 @@ while :; do :; done
 
     let started = std::time::Instant::now();
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "1")
         .current_dir(root)
         .output()
-        .expect("run bounded aw td code-check");
+        .expect("run bounded aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -743,9 +741,7 @@ while :; do :; done
         "timeout must be a typed structured error, got:\n{stdout}"
     );
     assert!(
-        stdout.contains(&format!(
-            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
-        )),
+        stdout.contains(&format!("\"next\":{{\"command\":\"aw cb check {slug}\"}}")),
         "timeout next must be the exact terminal retry, got:\n{stdout}"
     );
     let pid = std::fs::read_to_string(&wrapper_pid)
@@ -817,7 +813,7 @@ exit 1
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let first = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
         .current_dir(root)
@@ -835,7 +831,7 @@ exit 1
 
     let second_started = std::time::Instant::now();
     let second = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
         .current_dir(root)
@@ -856,9 +852,7 @@ exit 1
         "duplicate must receive a single-flight envelope, got:\n{second_stdout}"
     );
     assert!(
-        second_stdout.contains(&format!(
-            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
-        )),
+        second_stdout.contains(&format!("\"next\":{{\"command\":\"aw cb check {slug}\"}}")),
         "single-flight next must retry the exact original command, got:\n{second_stdout}"
     );
 
@@ -936,7 +930,7 @@ exit 0
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let stale_reader = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env(
             "AW_TEST_TERMINAL_EC_AFTER_INITIAL_ISSUE_READ_BARRIER_DIR",
@@ -956,7 +950,7 @@ exit 0
     );
 
     let first = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .current_dir(root)
         .output()
@@ -1046,7 +1040,7 @@ exit 0
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let first = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env(
             "AW_TEST_TERMINAL_EC_AFTER_PHASE_UPDATE_BARRIER_DIR",
@@ -1067,7 +1061,7 @@ exit 0
 
     let retry_started = std::time::Instant::now();
     let retry = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .env("AW_DISABLE_CAP", "1")
         .current_dir(root)
         .output()
@@ -1087,9 +1081,7 @@ exit 0
         "retry should refuse promptly while the transition lease is held"
     );
     assert!(
-        retry_stdout.contains(&format!(
-            "\"next\":{{\"command\":\"aw td code-check {slug}\"}}"
-        )),
+        retry_stdout.contains(&format!("\"next\":{{\"command\":\"aw cb check {slug}\"}}")),
         "retry contention must preserve exact same-slug guidance: {retry_stdout}"
     );
     assert!(
@@ -1139,12 +1131,12 @@ async fn test_code_check_passes_configured_green_ec_gate_and_records_gates() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1227,12 +1219,12 @@ async fn test_code_check_no_ec_inventory_closes_with_advisory_marker() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1307,12 +1299,12 @@ async fn test_code_check_ec_gate_skips_advisory_case_and_records_it() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1522,12 +1514,12 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
     // implementation commit becomes reachable from `main`, the trailer
     // commit ends up on `main`, and the branch is deleted.
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1623,12 +1615,12 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
     // be a clean landing no-op (`"status":"skipped"`), not a second merge
     // attempt or a duplicate trailer commit.
     let output2 = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check (idempotent retry)");
+        .expect("run aw cb check (idempotent retry)");
     let stdout2 = String::from_utf8_lossy(&output2.stdout);
     assert!(
         output2.status.success(),
@@ -1649,7 +1641,7 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
 
 // ---------------------------------------------------------------------------
 // #847: the removed `aw td merge` "Bug 2" empty-implementation gate, wired
-// back into the terminal `aw td code-check` fresh-entry path (before the
+// back into the terminal `aw cb check` fresh-entry path (before the
 // phase-advancing `backend.update`, so a refusal leaves the issue untouched).
 // ---------------------------------------------------------------------------
 
@@ -1695,8 +1687,8 @@ fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
 }
 
 /// Commit every current working-tree change (`git add -A && git commit`).
-/// Real `aw td gen`/`aw td fill` already commit generated/filled
-/// implementation files before terminal `aw td code-check` ever runs
+/// Real `aw cb gen`/`aw cb fill` already commit generated/filled
+/// implementation files before terminal `aw cb check` ever runs
 /// (`commit_lifecycle` in td.rs, `stage_and_commit_cb_fill` in cb_fill.rs);
 /// fixtures below that hand-write a WI's touched-scope file directly
 /// (simulating a hand-written `impl_mode` completion with no gen/fill step)
@@ -1757,7 +1749,7 @@ const DEMO_SPEC_REL: &str = ".aw/tech-design/specs/demo.md";
 /// Write a minimal TD spec at `.aw/tech-design/specs/demo.md` (the default
 /// `tech_design_path` fallback for an empty `aw.toml`) whose
 /// `## Changes` section lists the given `(path, action)` entries, each
-/// `impl_mode: hand-written` so `aw td gen` would have emitted nothing —
+/// `impl_mode: hand-written` so `aw cb gen` would have emitted nothing —
 /// the exact "gen-code skipped" shape the gate detects.
 fn write_847_changes_spec(root: &std::path::Path, entries: &[(&str, &str)]) {
     let mut yaml = String::from("changes:\n");
@@ -1832,7 +1824,7 @@ fn git_bytes_1635(git: &std::path::Path, root: &std::path::Path, args: &[&str]) 
 }
 
 /// Seed an open issue at `phase` with no `td-<slug>` branch — the shape of a
-/// real `cb_genned`/`cb_filled` WI walking into `aw td code-check` for the
+/// real `cb_genned`/`cb_filled` WI walking into `aw cb check` for the
 /// first time (fresh entry, not the #846 retry path). `spec_rel` is recorded
 /// as `Issue.implements` (issue #854) so the terminal marker gate and
 /// empty-implementation gate scope to this WI's own spec instead of the
@@ -1912,12 +1904,12 @@ async fn test_code_check_refuses_when_all_changes_paths_missing() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -1998,10 +1990,10 @@ async fn test_code_check_refuses_unchanged_hand_written_modify_paths() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -2071,10 +2063,10 @@ async fn test_code_check_refuses_partial_hand_written_lifecycle_diff() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -2148,10 +2140,10 @@ async fn test_code_check_accepts_complete_hand_written_lifecycle_diff() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.contains("\"action\":\"done\""),
@@ -2193,13 +2185,13 @@ async fn test_code_check_allow_empty_impl_skips_refusal() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .arg("--allow-empty-impl")
         .current_dir(root)
         .output()
-        .expect("run aw td code-check --allow-empty-impl");
+        .expect("run aw cb check --allow-empty-impl");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2265,12 +2257,12 @@ async fn test_code_check_partial_implementation_completes() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2392,12 +2384,12 @@ async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2465,10 +2457,10 @@ async fn test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, tape_spec).await;
 
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.contains("\"action\":\"done\""),
@@ -2574,10 +2566,10 @@ async fn test_code_check_prefers_project_td_when_implements_cache_is_absent() {
     backend.create(&issue).await.expect("seed cache-loss issue");
 
     let output = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.contains("\"action\":\"done\""),
@@ -2635,12 +2627,12 @@ async fn test_code_check_blocks_on_marker_inside_wi_scope() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -2705,12 +2697,12 @@ async fn test_code_check_docs_only_wi_passes_vacuously() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2808,7 +2800,7 @@ fn test_enumerate_markers_for_scope_empty_scope_finds_nothing() {
 /// local-write + remote-push cycle after the fact. "One write cycle" isn't
 /// directly observable from outside the process, so this asserts the
 /// observable equivalent: the lock is fully released (label AND projection
-/// body) after exactly ONE `aw td code-check` run against a fresh entry —
+/// body) after exactly ONE `aw cb check` run against a fresh entry —
 /// no retry needed, and (unlike the #846 retry fixture) never previously
 /// closed.
 #[tokio::test]
@@ -2842,7 +2834,7 @@ async fn test_code_check_folds_lock_release_into_single_write() {
         issue_id: slug.to_string(),
         locked: true,
         owner: Some("td".to_string()),
-        expected_command: Some("aw td code-check".to_string()),
+        expected_command: Some("aw cb check".to_string()),
         ..Default::default()
     };
     let body =
@@ -2892,12 +2884,12 @@ async fn test_code_check_folds_lock_release_into_single_write() {
     backend.create(&issue).await.expect("seed locked issue");
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2968,12 +2960,12 @@ async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
 
     let slug = "never-seeded-wi";
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -3001,7 +2993,7 @@ async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
 
 /// Issue #939: prove `Issue.implements`, once populated by a REAL `aw td
 /// create` call (not a hand-seeded test fixture), is actually consumed by
-/// `aw td code-check`'s tier-1 `Issue.implements` scope resolution (#854,
+/// `aw cb check`'s tier-1 `Issue.implements` scope resolution (#854,
 /// `resolve_slug_spec_paths` in `cb.rs`). Uses a custom `--spec-path` that
 /// differs from what tier-3's derived-default guess would produce for this
 /// issue's labels (`.aw/tech-design/projects/score/logic/...`, per the
@@ -3140,12 +3132,12 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
     commit_all(&git, root);
 
     let check_out = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&check_out.stdout);
     assert!(
         check_out.status.success(),
@@ -3334,12 +3326,12 @@ async fn test_code_check_blocks_touched_unmarked_file_post_bootstrap() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -3412,12 +3404,12 @@ async fn test_code_check_warns_touched_unmarked_file_pre_bootstrap() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -3483,12 +3475,12 @@ async fn test_code_check_blocks_touched_handwrite_missing_tracker_post_bootstrap
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -3565,12 +3557,12 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("code-check")
+        .arg("cb")
+        .arg("check")
         .arg(slug)
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -3606,7 +3598,7 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
 
 /// #1635 AC1-AC6: a committed hand-edit in this WI's accepted CODEGEN block
 /// refuses before EC or lifecycle mutation, emits an executable scoped
-/// `aw td gen <slug>` repair, ignores a simultaneously drifted unrelated
+/// `aw cb gen <slug>` repair, ignores a simultaneously drifted unrelated
 /// spec/target, then permits the normal EC/close path and its idempotent
 /// terminal retry once parity is restored.
 #[tokio::test]
@@ -3691,7 +3683,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     let unrelated_before = std::fs::read(root.join(unrelated_target)).unwrap();
 
     let red = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
         .unwrap();
@@ -3703,7 +3695,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     let red_json: serde_json::Value = serde_json::from_slice(&red.stdout).unwrap();
     assert_eq!(red_json["error_kind"], "terminal_touched_codegen_drift");
     assert_eq!(red_json["files"], serde_json::json!([accepted_target]));
-    assert_eq!(red_json["next"]["command"], format!("aw td gen {slug}"));
+    assert_eq!(red_json["next"]["command"], format!("aw cb gen {slug}"));
     assert!(red_json["findings"]
         .as_array()
         .unwrap()
@@ -3758,7 +3750,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
         .success());
     std::fs::remove_file(root.join(staged_sentinel)).unwrap();
     let repair = Command::new(&aw_bin)
-        .args(["td", "gen", slug])
+        .args(["cb", "gen", slug])
         .current_dir(root)
         .output()
         .unwrap();
@@ -3776,7 +3768,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     );
     assert_eq!(
         repair_json["next"]["command"],
-        format!("aw td code-check {slug}")
+        format!("aw cb check {slug}")
     );
     assert!(!ec_sentinel.exists(), "repair launched EC");
     let after_repair = backend.get(slug).await.unwrap().unwrap();
@@ -3792,7 +3784,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
         .any(|report| matches!(report.kind, ReportKind::Drift { .. })));
 
     let green = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
         .unwrap();
@@ -3810,7 +3802,7 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     assert_eq!(closed.state, IssueState::Closed);
 
     let retry = Command::new(&aw_bin)
-        .args(["td", "code-check", slug])
+        .args(["cb", "check", slug])
         .current_dir(root)
         .output()
         .unwrap();

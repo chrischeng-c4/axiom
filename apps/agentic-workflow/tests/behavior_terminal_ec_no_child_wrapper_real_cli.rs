@@ -13,7 +13,7 @@
 // Contract: the real aw binary returns within the configured one-second deadline plus bounded cleanup grace
 // Contract: the helper confirms its external child exited before the wrapper timed out
 // Contract: the wrapper PID no longer exists after aw returns
-// Contract: the envelope has terminal_ec_timeout and exact aw td code-check slug next.command
+// Contract: the envelope has terminal_ec_timeout and exact aw cb check slug next.command
 // Contract: the work item remains open in cb_filled and no terminal commit is created
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
@@ -22,10 +22,10 @@ fn terminal_ec_no_child_wrapper_real_cli() {
         "cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture";
     let id = "terminal-ec-no-child-wrapper-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

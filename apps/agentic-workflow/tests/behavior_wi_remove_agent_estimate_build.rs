@@ -7,20 +7,21 @@
 // @contract wi-remove-agent-estimate-build
 // @category behavior
 // @required_for_production true
-// @command cargo build -p agentic-workflow --bin aw
+// @command cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture
 // AW-EC-END
 
-// Contract: the aw binary builds after removing estimate helpers
+// Contract: prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn wi_remove_agent_estimate_build() {
-    let command = "cargo build -p agentic-workflow --bin aw";
+    let command =
+        "cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture";
     let id = "wi-remove-agent-estimate-build";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

@@ -18,10 +18,10 @@ fn existing_project_standardization_managed_and_semantic_production_gates() {
         "cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap -- --nocapture";
     let id = "existing-project-standardization-managed-and-semantic-production-gates";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

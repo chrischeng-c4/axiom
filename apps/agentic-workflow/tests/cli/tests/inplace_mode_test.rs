@@ -1666,7 +1666,7 @@ fn td_1598_changes_skeleton_body(path: &std::path::Path) -> String {
 /// Logic and Unit Test in both passes. This real-binary lifecycle edits the
 /// initialized Changes skeleton through `aw td create --apply`, proves every
 /// transition is represented by the projection lock (including the first
-/// contract section), and finally runs `aw td gen` to create a brand-new target
+/// contract section), and finally runs `aw cb gen` to create a brand-new target
 /// that target inference could never discover.
 #[test]
 fn td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target() {
@@ -1852,7 +1852,7 @@ type = "local"
     )
     .unwrap();
     envelope = run_td_section_apply(&bin, root, slug, "contract", "unit-test", spec_path);
-    assert_eq!(envelope["invoke"]["command"], "aw td gen");
+    assert_eq!(envelope["invoke"]["command"], "aw cb gen");
     let projection =
         agentic_workflow::cli::workflow_guard::parse_projection(&read_issue_fixture(root, slug))
             .expect("terminal contract apply should retain an unlocked projection record");
@@ -1996,10 +1996,10 @@ type = "local"
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
-        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .args(["cb", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
-        .expect("run emitted aw td gen");
+        .expect("run emitted aw cb gen");
     let gen_stdout = String::from_utf8_lossy(&gen.stdout);
     let gen_stderr = String::from_utf8_lossy(&gen.stderr);
     assert!(
@@ -2934,7 +2934,7 @@ flowchart TD
     assert!(!final_spec.contains("stale --> disk"));
 }
 
-/// Issue #1633: `aw td gen` must prepare the complete shared-section target
+/// Issue #1633: `aw cb gen` must prepare the complete shared-section target
 /// plan before activating an existing `td-<slug>` branch. A valid earlier
 /// Logic target followed by two Schema CODEGEN targets returns one structured,
 /// actionable envelope while preserving every lifecycle and repository byte.
@@ -3096,10 +3096,10 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
-        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .args(["cb", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
-        .expect("run ambiguous-plan aw td gen");
+        .expect("run ambiguous-plan aw cb gen");
     let envelope = td_dispatch_envelope(&gen, "ambiguous-plan td gen");
     assert_eq!(envelope["action"], "error");
     assert_eq!(envelope["error_kind"], "ambiguous_generation_plan");
@@ -3110,7 +3110,7 @@ changes:
     );
     assert_eq!(
         envelope["next"]["command"],
-        format!("aw td gen {slug} --spec-path {spec_path}"),
+        format!("aw cb gen {slug} --spec-path {spec_path}"),
     );
     assert_eq!(envelope["completion"]["workflow_complete"], false);
     assert!(
@@ -3267,7 +3267,7 @@ definitions:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
-        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .args(["cb", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
         .expect("generate one inferred Schema target");
@@ -3406,7 +3406,7 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
-        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .args(["cb", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
         .expect("generate exact Schema partitions");
@@ -3524,7 +3524,7 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
-        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .args(["cb", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
         .expect("reject unsupported owned unit");
@@ -3538,7 +3538,7 @@ changes:
     assert_eq!(envelope["completion"]["requires_hitl"], true);
     assert_eq!(
         envelope["next"]["command"],
-        format!("aw td gen {slug} --spec-path {spec_path}"),
+        format!("aw cb gen {slug} --spec-path {spec_path}"),
     );
 
     assert_eq!(
@@ -3563,6 +3563,14 @@ changes:
         std::fs::read(root.join("src/alias.rs")).unwrap(),
         target_before
     );
+}
+
+/// EC umbrella for WorkItem artifact admission: exercise both sides through
+/// the real compiled CLI so a structural TD check cannot self-oracle green.
+#[test]
+fn workitem_artifact_admission_gate_real_cli_positive_and_negative() {
+    td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation();
+    td_gen_exact_schema_unit_ownership_partitions_real_targets();
 }
 
 // CODEGEN-END

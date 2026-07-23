@@ -234,7 +234,7 @@ struct ProjectAwIdentity {
     path: Option<String>,
     #[serde(default, alias = "tech_design_dir")]
     td_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "spec_model", alias = "artifact_model")]
     artifact_model: Option<ProjectArtifactModel>,
     #[serde(default)]
     cap_path: Option<String>,
@@ -276,7 +276,7 @@ struct ProjectRowToml {
     path: String,
     #[serde(default, alias = "tech_design_dir")]
     td_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "spec_model", alias = "artifact_model")]
     artifact_model: Option<ProjectArtifactModel>,
     #[serde(default)]
     cap_path: Option<String>,

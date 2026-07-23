@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:deff28acf6c19840482804052250ed06c067b4f0714e79b1a391b774081be992"
+generated_from_td_digest = "sha256:1294c1a81bc431cc4dc87cfa2d00cec064ea8e731d27b26576fe62d61bf4ff3a"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -100,9 +100,45 @@ contract_id = "aw-core-client-core-concept-model-and-invariants"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-core-concept-model-and-invariants"
 test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs"
-command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
 required_for_production = true
-assertions = ["agent-first project iteration model TD validates as the source claim for AW invariants"]
+assertions = ["from an admitted CB-generated child, the real compiled goal runner follows emitted CB commands, closes the child, rolls up its epic and capability, and terminates with completion.workflow_complete=true"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-core-concept-model-ec-first-phase-table"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "core-concept-model-and-invariants"
+contract_id = "aw-core-client-core-concept-model-ec-first-phase-table"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-core-concept-model-ec-first-phase-table"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_ec_first_phase_table.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_goal_routing_uses_one_ec_first_phase_table -- --exact --nocapture"
+required_for_production = true
+assertions = ["the Python Spec lifecycle has one explicit EC review, TD behavior/security, CB generation/check, and terminal all-dimension EC routing table with no phase gaps"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-core-concept-model-phase-less-admission"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "core-concept-model-and-invariants"
+contract_id = "aw-core-client-core-concept-model-phase-less-admission"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-core-concept-model-phase-less-admission"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_phase_less_admission.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::phase_less_project_wi_enters_ec_before_td -- --exact --nocapture"
+required_for_production = true
+assertions = ["a phase-less project WorkItem enters EC authoring before any TD authoring command"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-core-concept-model-remote-ledger-admission"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "core-concept-model-and-invariants"
+contract_id = "aw-core-client-core-concept-model-remote-ledger-admission"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-core-concept-model-remote-ledger-admission"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_remote_ledger_admission.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::remote_wi_admission_seeds_the_local_ec_lifecycle_ledger -- --exact --nocapture"
+required_for_production = true
+assertions = ["admitting a remote WorkItem seeds the local EC-first lifecycle ledger before dispatching artifact work"]
 
 [[aw.ec.generated.cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"
@@ -112,9 +148,9 @@ contract_id = "aw-core-client-workitem-artifact-admission-gate"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-workitem-artifact-admission-gate"
 test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_artifact_admission_gate.rs"
-command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md"
+command = "cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture"
 required_for_production = true
-assertions = ["workitem artifact gate TD validates as the admission gate claim"]
+assertions = ["the real compiled CB generator rejects an unsupported or unadmitted artifact before issue, Git, or source mutation and accepts a valid admitted WorkItem with exact generated ownership"]
 
 [[aw.ec.generated.cases]]
 id = "aw-core-client-workitem-loop-state-model"
@@ -157,6 +193,7 @@ required_for_production = true
 assertions = [
     "run.rs:open_epic_envelope is present in EMIT_REGISTRY",
     "aw wi atomize --project pgpool parses through the real CLI tree",
+    "aw conf init --project-label app:workbench parses through the real CLI tree",
 ]
 
 [[aw.ec.generated.cases]]
@@ -328,6 +365,54 @@ required_for_production = true
 assertions = ["semantic coverage prioritizes missing TD before generator gaps"]
 
 [[aw.ec.generated.cases]]
+id = "existing-project-standardization-shared-service-kit-connection-budget"
+capability_id = "existing-project-standardization"
+claim_id = "shared-service-kit-substrate"
+contract_id = "existing-project-standardization-shared-service-kit-connection-budget"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-connection-budget"
+test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_connection_budget.rs"
+command = "cargo test -p server-tcp --lib tests::connection_budget_releases_after_handler_finishes -- --exact --nocapture"
+required_for_production = true
+assertions = ["connection admission consumes the configured budget and releases the permit after the handler finishes"]
+
+[[aw.ec.generated.cases]]
+id = "existing-project-standardization-shared-service-kit-drain"
+capability_id = "existing-project-standardization"
+claim_id = "shared-service-kit-substrate"
+contract_id = "existing-project-standardization-shared-service-kit-drain"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-drain"
+test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_drain.rs"
+command = "cargo test -p server-lifecycle --test drain_prestart receiverless_drain_persists_for_late_subscriber -- --exact --nocapture"
+required_for_production = true
+assertions = ["a drain transition published before subscription remains durable and is observed by a late server-plane subscriber"]
+
+[[aw.ec.generated.cases]]
+id = "existing-project-standardization-shared-service-kit-http1-h2c-options"
+capability_id = "existing-project-standardization"
+claim_id = "shared-service-kit-substrate"
+contract_id = "existing-project-standardization-shared-service-kit-http1-h2c-options"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-http1-h2c-options"
+test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_http1_h2c_options.rs"
+command = "cargo test -p server-http --lib tests::serves_http1_and_h2c_on_one_listener_with_tunable_options -- --exact --nocapture"
+required_for_production = true
+assertions = ["the shared HTTP runtime serves HTTP/1.1 and h2c on one real listener while accepting explicit HTTP/2 stream and drain options"]
+
+[[aw.ec.generated.cases]]
+id = "existing-project-standardization-shared-service-kit-service-http-delegation"
+capability_id = "existing-project-standardization"
+claim_id = "shared-service-kit-substrate"
+contract_id = "existing-project-standardization-shared-service-kit-service-http-delegation"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-service-http-delegation"
+test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_service_http_delegation.rs"
+command = "cargo test -p service-http --lib transport::delegation_tests::serve_delegates_listener_to_shared_http_runtime -- --exact --nocapture"
+required_for_production = true
+assertions = ["the service-http policy shell delegates listener ownership and request dispatch to server-http while preserving the service router response"]
+
+[[aw.ec.generated.cases]]
 id = "existing-project-standardization-shared-service-kit-substrate"
 capability_id = "existing-project-standardization"
 claim_id = "shared-service-kit-substrate"
@@ -335,9 +420,9 @@ contract_id = "existing-project-standardization-shared-service-kit-substrate"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-substrate"
 test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs"
-command = "cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http"
+command = "cargo test -p server-tcp --lib tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture"
 required_for_production = true
-assertions = ["the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)"]
+assertions = ["the shared TCP accept loop binds a real listener, admits a connection, invokes the closure handler, and completes without an async-trait box (#1241)"]
 
 [[aw.ec.generated.cases]]
 id = "existing-project-standardization-traceability-closure-gate"
@@ -693,9 +778,21 @@ contract_id = "td-cb-lifecycle-automation-chain-liveness-proof"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-chain-liveness-proof"
 test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs"
-command = "cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture"
 required_for_production = true
-assertions = ["a driven chain never lands on a deadlock phase and code-check terminates and retries within its tick budget (#914, refs"]
+assertions = ["the exact driven chain reaches a terminal action within its bounded hop budget without landing on a deadlock phase (#914, refs #921)"]
+
+[[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-chain-liveness-retry"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "chain-liveness-proof"
+contract_id = "td-cb-lifecycle-automation-chain-liveness-retry"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-chain-liveness-retry"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_retry.rs"
+command = "cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget -- --exact --nocapture"
+required_for_production = true
+assertions = ["a stranded terminal retry emits the exact `aw cb check <slug>` command, remains within its tick budget, and preserves the lifecycle state until successful completion"]
 
 [[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
@@ -710,6 +807,18 @@ required_for_production = true
 assertions = ["TD created phase dispatches directly to generation in the linear lifecycle"]
 
 [[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "hand-written-implementation-evidence-gate"
+contract_id = "td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_complete_evidence_gate.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_accepts_complete_hand_written_lifecycle_diff -- --exact --nocapture"
+required_for_production = true
+assertions = ["terminal CB check accepts complete evidence only after every declared hand-written create and modify target has a committed implementation diff"]
+
+[[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
 capability_id = "td-cb-lifecycle-automation"
 claim_id = "hand-written-implementation-evidence-gate"
@@ -717,9 +826,21 @@ contract_id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-g
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
 test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs"
-command = "cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture"
 required_for_production = true
-assertions = ["terminal code-check refuses hand-written create/modify paths with no committed diff since their Td-Init baseline (#1382)"]
+assertions = ["terminal CB check refuses a hand-written modify path with zero committed implementation diff since its Td-Init baseline (#1382)"]
+
+[[aw.ec.generated.cases]]
+id = "td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "hand-written-implementation-evidence-gate"
+contract_id = "td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
+test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_partial_evidence_gate.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_partial_hand_written_lifecycle_diff -- --exact --nocapture"
+required_for_production = true
+assertions = ["terminal CB check refuses partial evidence when any declared hand-written create or modify target still has no committed implementation diff"]
 
 [[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-remove-td-merge-command"
@@ -729,9 +850,9 @@ contract_id = "td-cb-lifecycle-automation-remove-td-merge-command"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-remove-td-merge-command"
 test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_remove_td_merge_command.rs"
-command = "cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture"
 required_for_production = true
-assertions = ["the retired `td merge` subcommand stays absent from the clap tree (#914, refs"]
+assertions = ["the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)"]
 
 [[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
@@ -741,9 +862,9 @@ contract_id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
 test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs"
-command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture"
 required_for_production = true
-assertions = ["fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case"]
+assertions = ["a configured required EC case refuses the unchanged CB-filled WorkItem while red without phase or close mutation, then permits terminal close only when green and records the consulted case in the success envelope"]
 
 [[aw.ec.generated.cases]]
 id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
@@ -753,9 +874,9 @@ contract_id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-termin
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
 test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec.rs"
-command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture"
 required_for_production = true
-assertions = ["the epic's terminal EC-gated fixture-loop proof (#1270 children"]
+assertions = ["the public goal runner follows CB fill and check, stops at terminal required EC while red, resumes the same CB-filled WorkItem when green, records the consulted case, and closes at the unified terminal check"]
 
 [[aw.ec.generated.cases]]
 id = "td-default-section-queue-real-cli"
@@ -870,7 +991,7 @@ required_for_production = true
 assertions = [
     "the first aw process owns the project lock while its EC command runs",
     "the second same-slug aw process returns terminal_ec_single_flight promptly",
-    "both refusal envelopes point to exact aw td code-check slug retry commands",
+    "both refusal envelopes point to exact aw cb check slug retry commands",
     "the append-only EC launch marker contains exactly one line",
     "the work item remains open in cb_filled and no terminal commit is created",
 ]
@@ -906,7 +1027,7 @@ assertions = [
     "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace",
     "the helper confirms its external child exited before the wrapper timed out",
     "the wrapper PID no longer exists after aw returns",
-    "the envelope has terminal_ec_timeout and exact aw td code-check slug next.command",
+    "the envelope has terminal_ec_timeout and exact aw cb check slug next.command",
     "the work item remains open in cb_filled and no terminal commit is created",
 ]
 
@@ -923,7 +1044,7 @@ required_for_production = true
 assertions = [
     "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held",
     "the second process reads retry phase and promptly receives terminal_ec_single_flight",
-    "the refusal points to the exact same-slug aw td code-check retry",
+    "the refusal points to the exact same-slug aw cb check retry",
     "after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit",
 ]
 
@@ -940,7 +1061,7 @@ required_for_production = true
 assertions = [
     "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged",
     "the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted",
-    "the emitted aw td gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command",
+    "the emitted aw cb gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command",
     "restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit",
 ]
 
@@ -1042,7 +1163,7 @@ contract_id = "wi-ec-td-root-loop-fixture"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md#wi-ec-td-root-loop-fixture"
 test_path = "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs"
-command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
 required_for_production = true
 assertions = [
     "fixture root follows emitted commands until completion.workflow_complete=true",
@@ -1072,9 +1193,9 @@ contract_id = "wi-remove-agent-estimate-build"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md#wi-remove-agent-estimate-build"
 test_path = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_build.rs"
-command = "cargo build -p agentic-workflow --bin aw"
+command = "cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture"
 required_for_production = true
-assertions = ["the aw binary builds after removing estimate helpers"]
+assertions = ["prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result"]
 
 [[aw.ec.generated.cases]]
 id = "wi-remove-agent-estimate-spec-check"
@@ -1084,9 +1205,9 @@ contract_id = "wi-remove-agent-estimate-spec-check"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md#wi-remove-agent-estimate-spec-check"
 test_path = "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs"
-command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
+command = "cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture"
 required_for_production = true
-assertions = ["the canonical contract remains parseable by td check"]
+assertions = ["legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement"]
 
 [[aw.ec.generated.cases]]
 id = "wi-remove-agent-estimate-unit-command"

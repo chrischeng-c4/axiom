@@ -22,10 +22,10 @@ fn aw_epic_project_label_dispatch_focused() {
         "cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture";
     let id = "aw-epic-project-label-dispatch-focused";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

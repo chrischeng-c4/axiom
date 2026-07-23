@@ -45,8 +45,8 @@ The shared projection is read-only. It exposes stable TD module IDs, direct
 Python EC case IDs, dimension/applicability, source and dependency digests, and
 per-case evidence readiness. Capability and health both consume the same
 projection; missing TD/EC inventory routes to `aw ec check`, while missing
-required `td` evidence routes to core EC verification and post-generation
-evidence routes to operational verification. Legacy projects receive no added
+required `td` evidence routes to TD-stage EC verification and post-generation
+evidence routes to CB-stage verification. Legacy projects receive no added
 projection or blocker.
 
 ## Unit Test

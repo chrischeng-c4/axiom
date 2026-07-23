@@ -4,8 +4,8 @@
 //! Digest-bound, retry-safe publication of one reviewed project plan.
 
 use super::{
-    Issue, IssueBackend, IssueFilter, IssuePatch, IssueType, ProjectPlan,
-    explicit_parent_references, issue_key,
+    explicit_parent_references, issue_key, Issue, IssueBackend, IssueFilter, IssuePatch, IssueType,
+    ProjectPlan,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -1316,10 +1316,8 @@ mod tests {
             &lifecycle_advanced,
         )
         .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("issue `42` graph labels changed")
-        );
+        assert!(error
+            .to_string()
+            .contains("issue `42` graph labels changed"));
     }
 }

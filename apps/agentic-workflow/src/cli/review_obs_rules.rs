@@ -81,14 +81,17 @@ pub(crate) fn apply_observability_and_raft_rules(
 /// is actually emitted.
 pub(crate) const RULE_ID_OBS_STRUCTURED_LOGGING: &str = "obs:structured-logging-metrics-adoption";
 pub(crate) const RULE_ID_OBS_W3C_CONTEXT: &str = "obs:w3c-context-propagation-adoption";
-pub(crate) const RULE_ID_RAFT_PROPOSAL_ROUTING_TELEMETRY: &str = "raft:proposal-routing-telemetry-gap";
+pub(crate) const RULE_ID_RAFT_PROPOSAL_ROUTING_TELEMETRY: &str =
+    "raft:proposal-routing-telemetry-gap";
 pub(crate) const RULE_ID_RAFT_LEADER_ROUTE_REPLICATION_LAG: &str =
     "raft:leader-route-and-replication-lag-telemetry-gap";
-pub(crate) const RULE_ID_RAFT_HIGH_CARDINALITY_LABEL: &str = "raft:high-cardinality-label-antipattern";
+pub(crate) const RULE_ID_RAFT_HIGH_CARDINALITY_LABEL: &str =
+    "raft:high-cardinality-label-antipattern";
 pub(crate) const RULE_ID_RAFT_TRACE_CONTEXT_CONTINUITY: &str = "raft:trace-context-continuity-gap";
 pub(crate) const RULE_ID_RAFT_FOLLOWER_LOCAL_MUTATION: &str =
     "raft:follower-local-mutation-outside-consensus";
-pub(crate) const RULE_ID_RAFT_LOSS_OF_LEADER_FAIL_OPEN: &str = "raft:loss-of-leader-fail-open-bypass";
+pub(crate) const RULE_ID_RAFT_LOSS_OF_LEADER_FAIL_OPEN: &str =
+    "raft:loss-of-leader-fail-open-bypass";
 
 fn apply_observability_baseline_rules(
     project_dir: &Path,
@@ -109,7 +112,10 @@ fn apply_observability_baseline_rules(
             "adopt libs/service-observability for the axiom.service.log.v1 structured-logging + metrics + correlation baseline instead of ad hoc or hand-rolled logging/metrics",
         ));
     }
-    if !deps.iter().any(|d| d == "service-http" || d == "transport-h2c") {
+    if !deps
+        .iter()
+        .any(|d| d == "service-http" || d == "transport-h2c")
+    {
         findings.push(finding(
             RULE_ID_OBS_W3C_CONTEXT,
             FindingSeverity::High,
@@ -233,7 +239,8 @@ fn leader_route_and_replication_lag_telemetry_gap(
 /// file. Never fired on absence.
 fn high_cardinality_label_antipattern(project_dir: &Path) -> Option<Finding> {
     const METRIC_MARKERS: &[&str] = &["counter!(", "histogram!(", "gauge!(", "obs_counter!("];
-    const HIGH_CARDINALITY_LABELS: &[&str] = &["\"queue\"", "\"topic\"", "\"message_id\"", "\"message\""];
+    const HIGH_CARDINALITY_LABELS: &[&str] =
+        &["\"queue\"", "\"topic\"", "\"message_id\"", "\"message\""];
     let metric_hits = scan_src_for_substrings(project_dir, METRIC_MARKERS);
     if metric_hits.is_empty() {
         return None;
@@ -458,7 +465,10 @@ mod tests {
     #[test]
     fn service_profile_missing_service_observability_dependency_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["service-http"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["service-http"]),
+        );
         write(&tmp.path().join("src/lib.rs"), "pub fn serve() {}\n");
 
         let resolution = resolved(service_profile());
@@ -491,7 +501,10 @@ mod tests {
     #[test]
     fn service_profile_hand_rolled_logging_substitute_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["service-http"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["service-http"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "macro_rules! obs_counter { ($name:expr) => {}; }\npub fn serve() { obs_counter!(\"served\"); }\n",
@@ -531,7 +544,10 @@ mod tests {
     #[test]
     fn raft_profile_missing_proposal_routing_telemetry_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -549,7 +565,10 @@ mod tests {
     #[test]
     fn raft_profile_missing_leader_route_and_lag_telemetry_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -567,7 +586,10 @@ mod tests {
     #[test]
     fn raft_profile_high_cardinality_label_antipattern_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -589,7 +611,10 @@ mod tests {
     #[test]
     fn raft_profile_missing_trace_context_continuity_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -608,7 +633,10 @@ mod tests {
     #[test]
     fn raft_profile_leader_only_commit_with_forwarding_passes() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest {\n    pub fn forward() {\n        // forwarded_proposals, leader_change, commit_lag, traceparent all instrumented.\n    }\n}\n",
@@ -629,7 +657,10 @@ mod tests {
     #[test]
     fn raft_profile_follower_local_mutation_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -651,7 +682,10 @@ mod tests {
     #[test]
     fn raft_profile_loss_of_leader_fail_open_bypass_is_flagged() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\n",
@@ -675,7 +709,10 @@ mod tests {
     #[test]
     fn raft_profile_missing_direct_leader_ingress_produces_no_finding() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(&tmp.path().join("src/lib.rs"), "pub fn serve() {}\n");
 
         let resolution = resolved(raft_profile());
@@ -693,7 +730,10 @@ mod tests {
     #[test]
     fn non_raft_profile_never_receives_raft_findings() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["raft-runtime"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["raft-runtime"]),
+        );
         write(
             &tmp.path().join("src/lib.rs"),
             "pub mod leader_ingest { pub fn accept() {} }\nfn bypass_raft() {}\n",
@@ -709,12 +749,17 @@ mod tests {
     #[test]
     fn structured_logging_metrics_rule_uses_named_const_id() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["service-http"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["service-http"]),
+        );
         write(&tmp.path().join("src/lib.rs"), "pub fn serve() {}\n");
 
         let resolution = resolved(service_profile());
         let findings = apply_observability_and_raft_rules(tmp.path(), &resolution);
-        assert!(findings.iter().any(|f| f.id == RULE_ID_OBS_STRUCTURED_LOGGING));
+        assert!(findings
+            .iter()
+            .any(|f| f.id == RULE_ID_OBS_STRUCTURED_LOGGING));
     }
 
     // #2169 R5: known_rule_docs() covers all eight obs/raft RULE_ID_*

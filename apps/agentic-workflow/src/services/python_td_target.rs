@@ -110,9 +110,7 @@ fn render_unit_test(ir: &PythonTdIr) -> String {
             .replace('/', ".");
         output.push_str(&format!(
             "    def test_{}(self):\n        module = importlib.import_module({name:?})\n",
-            module
-                .id
-                .replace([':', '.', '/', '-'], "_")
+            module.id.replace([':', '.', '/', '-'], "_")
         ));
         for declaration in &module.declarations {
             output.push_str(&format!(

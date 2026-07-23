@@ -286,8 +286,8 @@ loop converges on ec green.
 
 ## The decision (driven by ec, not review)
 
-    ec green  -> converged   -> aw td code-check <wi>
-    ec red    -> iterating   -> aw td gen <wi> (adapt; never re-run the same fail)
+    ec green  -> converged   -> aw cb check <wi>
+    ec red    -> iterating   -> aw cb gen <wi> (adapt; never re-run the same fail)
     blocked   -> HITL        -> surface hitl_question to a human
 
 ## The envelope

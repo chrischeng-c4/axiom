@@ -66,8 +66,16 @@ pub fn lower_python_ui_td(source: &str) -> Result<PythonUiTd> {
                     }
                     page = Some(lower_page(definition, &name, source)?);
                 }
-                if let Some(decorator) = decorators.iter().find(|decorator| decorator.name == "component") {
-                    components.push(lower_component(definition, &name, decorator.summary.as_deref(), source)?);
+                if let Some(decorator) = decorators
+                    .iter()
+                    .find(|decorator| decorator.name == "component")
+                {
+                    components.push(lower_component(
+                        definition,
+                        &name,
+                        decorator.summary.as_deref(),
+                        source,
+                    )?);
                 }
             }
             "expression_statement" => {
@@ -176,7 +184,12 @@ fn lower_component(
     for parameter in parameters(node, source)? {
         if let Some(detail_type) = generic_argument(&parameter.type_name, "Event") {
             events.push(EventDef {
-                name: kebab(parameter.name.strip_prefix("on_").unwrap_or(&parameter.name)),
+                name: kebab(
+                    parameter
+                        .name
+                        .strip_prefix("on_")
+                        .unwrap_or(&parameter.name),
+                ),
                 detail_type: Some(to_target_type(detail_type)),
                 description: None,
             });
@@ -196,7 +209,9 @@ fn lower_component(
     }
     Ok(ComponentSpec {
         tag_name: kebab(name),
-        summary: summary.unwrap_or("Python-authored UI component").to_string(),
+        summary: summary
+            .unwrap_or("Python-authored UI component")
+            .to_string(),
         attributes,
         slots,
         events,
@@ -214,7 +229,10 @@ fn parameters(node: Node<'_>, source: &str) -> Result<Vec<Parameter>> {
     let Some(parameters) = node.child_by_field_name("parameters") else {
         return Ok(Vec::new());
     };
-    let raw = text(parameters, source).trim().trim_start_matches('(').trim_end_matches(')');
+    let raw = text(parameters, source)
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')');
     if raw.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -264,9 +282,9 @@ fn find_return_call<'a>(node: Node<'a>) -> Option<Node<'a>> {
 }
 
 fn lower_call_tree(call: Node<'_>, source: &str) -> Result<WireframeNode> {
-    let function = call
-        .child_by_field_name("function")
-        .context("Python UI TD diagnostic [unsupported-call]: component call needs a function name")?;
+    let function = call.child_by_field_name("function").context(
+        "Python UI TD diagnostic [unsupported-call]: component call needs a function name",
+    )?;
     let kind = text(function, source).to_string();
     if !pascal_identifier(&kind) {
         bail!("Python UI TD diagnostic [unsupported-call]: `{kind}` must be a PascalCase component name");
@@ -294,7 +312,10 @@ fn lower_call_tree(call: Node<'_>, source: &str) -> Result<WireframeNode> {
 
 fn lower_token(node: Node<'_>, source: &str) -> Result<Option<DesignTokenEntry>> {
     let mut cursor = node.walk();
-    let Some(call) = node.named_children(&mut cursor).find(|child| child.kind() == "call") else {
+    let Some(call) = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "call")
+    else {
         return Ok(None);
     };
     let Some(function) = call.child_by_field_name("function") else {
@@ -342,7 +363,11 @@ fn unquote(value: &str) -> Result<String> {
     value
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| value.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
         .map(str::to_string)
         .context("Python UI TD diagnostic [literal-required]: use a quoted string literal")
 }
@@ -386,11 +411,7 @@ fn python_identifier(value: &str) -> bool {
 }
 
 fn pascal_identifier(value: &str) -> bool {
-    value
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_uppercase)
-        && python_identifier(value)
+    value.as_bytes().first().is_some_and(u8::is_ascii_uppercase) && python_identifier(value)
 }
 
 #[cfg(test)]

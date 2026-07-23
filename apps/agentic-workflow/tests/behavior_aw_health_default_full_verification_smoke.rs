@@ -20,10 +20,10 @@ fn aw_health_default_full_verification_smoke() {
         "cargo test -p agentic-workflow --test cli_tests health_verbose_stdout_streams_progress_before_result -- --nocapture";
     let id = "aw-health-default-full-verification-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

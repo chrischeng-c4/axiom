@@ -72,10 +72,10 @@ fn test_td_claim_phase_target() {
     assert_eq!(td_phase::TD_CREATED, "td_created");
     // The linear lifecycle's next-command router must accept claim's
     // written phase and route it to the same verb claim's own dispatch
-    // envelope names (`aw td gen`).
+    // envelope names (`aw cb gen`).
     assert_eq!(
         td_phase::next_phase_command("td_created"),
-        Some("aw td gen")
+        Some("aw cb gen")
     );
 }
 
@@ -185,7 +185,7 @@ fn test_td_claim_e2e_phase_advance() {
     // Stub MUST exist in the ephemeral issue working-copy store (issues live
     // under `/tmp/aw/...`, not `.aw/issues/`; see LocalBackend::from_project_root),
     // with phase: td_created (the linear lifecycle's post-create phase;
-    // `aw td gen`'s guard requires exactly this value — see issue #843).
+    // `aw cb gen`'s guard requires exactly this value — see issue #843).
     use agentic_workflow::issues::backends::local::LocalBackend;
     let wt_stub = LocalBackend::from_project_root(root)
         .issues_dir()
@@ -222,7 +222,7 @@ fn test_td_claim_e2e_phase_advance() {
     );
 }
 
-/// AC1/AC2: the exact command claim's dispatch envelope names (`aw td gen`)
+/// AC1/AC2: the exact command claim's dispatch envelope names (`aw cb gen`)
 /// succeeds against the phase claim just wrote, and the resulting phase after
 /// gen is one with an outgoing transition (never a dead end) — no verb
 /// sequence starting from claim reaches a phase with no successor.
@@ -318,7 +318,7 @@ fn test_td_claim_then_gen_succeeds() {
         "td claim --from-path should succeed"
     );
 
-    // The phase claim wrote must be exactly what `aw td gen`'s own guard
+    // The phase claim wrote must be exactly what `aw cb gen`'s own guard
     // requires (run_gen_code checks phase == "td_created").
     use agentic_workflow::issues::backends::local::LocalBackend;
     let wt_stub = LocalBackend::from_project_root(root)
@@ -333,16 +333,16 @@ fn test_td_claim_then_gen_succeeds() {
     );
 
     // Running exactly the command named in claim's dispatch envelope
-    // (`aw td gen`) must not hit the phase guard error.
+    // (`aw cb gen`) must not hit the phase guard error.
     let gen_output = Command::new(&aw_bin)
-        .arg("td")
+        .arg("cb")
         .arg("gen")
         .arg(slug)
         .arg("--spec-path")
         .arg("external-spec.md")
         .current_dir(root)
         .output()
-        .expect("run aw td gen");
+        .expect("run aw cb gen");
     let gen_stdout = String::from_utf8_lossy(&gen_output.stdout);
     let gen_stderr = String::from_utf8_lossy(&gen_output.stderr);
     assert!(

@@ -18,10 +18,10 @@ fn project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults() {
         "cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture";
     let id = "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

@@ -7,21 +7,21 @@
 // @contract td-cb-lifecycle-automation-remove-td-merge-command
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture
+// @command cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture
 // AW-EC-END
 
-// Contract: the retired `td merge` subcommand stays absent from the clap tree (#914, refs
+// Contract: the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn td_cb_lifecycle_automation_remove_td_merge_command() {
     let command =
-        "cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture";
+        "cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture";
     let id = "td-cb-lifecycle-automation-remove-td-merge-command";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

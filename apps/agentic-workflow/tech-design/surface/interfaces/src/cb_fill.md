@@ -37,7 +37,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/cb_fill.rs` generated fro
 
 ### Active TD marker queue
 
-Both `aw td fill` brief mode and its `--apply` continuation derive the marker
+Both `aw cb fill` brief mode and its `--apply` continuation derive the marker
 queue from the active TD's `## Changes` paths. After an apply, re-enumeration
 uses that same queue; unresolved markers owned by another app or library are
 not eligible to delay this work item's code-check.
@@ -77,17 +77,17 @@ the owning WI, so generated Rust stays parseable and passes standardization.
 ````rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 // CODEGEN-BEGIN
-//! `aw td fill` — Phase 3 marker-fill workflow.
+//! `aw cb fill` — Phase 3 marker-fill workflow.
 //!
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
 //!   marker-list dispatch envelope for mainthread,
-//!   or fast-path-dispatch directly to `aw td code-check` when zero markers
+//!   or fast-path-dispatch directly to `aw cb check` when zero markers
 //!   are present (R11).
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
 //!   projection trailers, then lock the next marker or dispatch
-//!   `aw td code-check`.
+//!   `aw cb check`.
 //!
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md
 
@@ -342,11 +342,11 @@ fn cb_marker_payload_path(project_root: &Path, slug: &str, marker_id: &str) -> P
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
-    format!("aw td fill {} --apply --marker {}", slug, marker_id)
+    format!("aw cb fill {} --apply --marker {}", slug, marker_id)
 }
 
 fn td_code_check_command(slug: &str) -> String {
-    format!("aw td code-check {slug}")
+    format!("aw cb check {slug}")
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
@@ -636,7 +636,9 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
                 .await?;
             let issue_path = backend.issue_path(issue);
             let issue_path_s = issue_path.to_string_lossy().into_owned();
-            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+            if let Err(error) =
+                stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s, None)
+            {
                 emit_error(&slug, &format!("git commit failed: {error}"))?;
                 std::process::exit(1);
             }
@@ -649,7 +651,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw td code-check",
+                "command": "aw cb check",
                 "args": { "target": slug },
             },
         });
@@ -704,7 +706,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         "next": next_for_marker(&slug, first, &first_payload),
         "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw td fill",
+            "command": "aw cb fill",
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -756,7 +758,7 @@ fn resolve_active_spec_path(
         return match paths.as_slice() {
             [path] => Ok(Some(path.clone())),
             _ => anyhow::bail!(
-                "issue '{}' owns multiple TD specs ({}); rerun aw td fill with --spec-path",
+                "issue '{}' owns multiple TD specs ({}); rerun aw cb fill with --spec-path",
                 args.slug,
                 paths.join(", ")
             ),
@@ -1029,7 +1031,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 &slug,
                 &format!(
                     "marker id '{}' is ambiguous — {} files match: {}. \
-                     Re-run `aw td fill` (no --apply) to get the disambiguated marker list.",
+                     Re-run `aw cb fill` (no --apply) to get the disambiguated marker list.",
                     marker_id,
                     many.len(),
                     paths.join(", "),
@@ -1122,7 +1124,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "next": next_for_marker(&slug, next, &next_payload),
             "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw td fill",
+                "command": "aw cb fill",
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -1156,7 +1158,12 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     let issue_path = backend.issue_path(&issue);
     let issue_path_s = issue_path.to_string_lossy().into_owned();
     maybe_push_remote(&worktree_abs, &issue_path, &slug).await?;
-    if let Err(e) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+    if let Err(e) = stage_and_commit_cb_fill(
+        &worktree_abs,
+        &slug,
+        &issue_path_s,
+        Some(&target.source_path),
+    ) {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
     }
@@ -1170,7 +1177,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         "slug": slug,
         "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw td code-check",
+            "command": "aw cb check",
             "args": { "target": slug },
         },
     });
@@ -1527,24 +1534,44 @@ fn should_stage_lifecycle_path(worktree: &Path, path: &str) -> bool {
 }
 
 // Stage files and create the `Lifecycle-Stage: Cb-Fill` commit.
-fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, issue_path: &str) -> Result<()> {
+fn stage_and_commit_cb_fill(
+    worktree: &Path,
+    slug: &str,
+    issue_path: &str,
+    final_source_path: Option<&str>,
+) -> Result<()> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
-    // Add everything that changed (source files + issue file).
-    let _ = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["add", "-A"])
-        .output()
-        .context("git add -A")?;
     if should_stage_lifecycle_path(worktree, issue_path) {
-        // Make sure issue file is staged too (-A should cover it but be explicit).
-        let _ = std::process::Command::new(&git_bin)
+        let add = std::process::Command::new(&git_bin)
             .arg("-C")
             .arg(worktree)
-            .args(["add", issue_path])
-            .output();
+            .args(["add", "--", issue_path])
+            .output()
+            .context("git add terminal Cb-Fill issue path")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                issue_path,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
+    }
+    if let Some(source_path) = final_source_path {
+        let add = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(worktree)
+            .args(["add", "--", source_path])
+            .output()
+            .context("git add final Cb-Fill source path")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                source_path,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
     }
 
     let msg = format!(
@@ -1603,7 +1630,7 @@ fn stage_and_commit_cb_marker(
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
          CB-Marker: {marker_id}\n\
-         Next-Command: aw td fill {slug} --apply --marker {next_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1649,7 +1676,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Stage: Cb-Fill-Start\n\
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
-         Next-Command: aw td fill {slug} --apply --marker {first_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1739,6 +1766,51 @@ mod tests {
         assert!(!marker_free_fill_can_commit_evidence(Some(
             "td_contract_in_progress"
         )));
+    }
+
+    #[test]
+    fn terminal_cb_fill_commit_does_not_stage_unrelated_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for args in [
+            ["init", "-q", "-b", "main"].as_slice(),
+            ["config", "user.email", "test@example.com"].as_slice(),
+            ["config", "user.name", "Test"].as_slice(),
+            ["commit", "--allow-empty", "-qm", "init"].as_slice(),
+        ] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/final.rs"), "pub fn filled() {}\n").unwrap();
+        std::fs::write(root.join("ec-review.json"), "{}\n").unwrap();
+        stage_and_commit_cb_fill(
+            root,
+            "2179",
+            "/tmp/aw/outside-issue.json",
+            Some("src/final.rs"),
+        )
+        .unwrap();
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&status.stdout).contains("ec-review.json"));
+        assert!(
+            !String::from_utf8_lossy(&status.stdout).contains("src/final.rs"),
+            "the final filled source must be included in the bounded lifecycle commit"
+        );
     }
 
     #[test]
@@ -2036,7 +2108,7 @@ pub fn existing() { 42; }\n\
 
         assert_eq!(
             next["command"],
-            "aw td fill 4124 --apply --marker missing-generator-cli"
+            "aw cb fill 4124 --apply --marker missing-generator-cli"
         );
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(
@@ -2068,7 +2140,7 @@ pub fn existing() { 42; }\n\
 
     #[test]
     fn td_code_check_next_command_uses_positional_slug() {
-        assert_eq!(td_code_check_command("4124"), "aw td code-check 4124");
+        assert_eq!(td_code_check_command("4124"), "aw cb check 4124");
         assert!(!td_code_check_command("4124").contains("--json"));
     }
 
@@ -2134,7 +2206,7 @@ pub fn before() {}\n\
     fn gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source() {
         // Issue #1898 end-to-end: drive the real `aw td gen` scaffold
         // (`crate::generate::handwrite_scaffold::scaffold_handwrite`) over a
-        // pre-existing function, then confirm `aw td fill`'s enumerator
+        // pre-existing function, then confirm `aw cb fill`'s enumerator
         // offers it (AC1), its payload adopts the existing body (AC1), and
         // applying that payload resolves the pending tracker and drops the
         // marker out of the next enumeration (AC4 in the issue's R4 sense).

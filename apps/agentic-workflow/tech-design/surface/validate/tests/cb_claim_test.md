@@ -140,7 +140,7 @@ fn test_from_source_fillback_invoked_e2e() {
     // `aw td create --from-source`, assert
     // <project>/tech-design/<group>/<derived>.md exists and contains YAML
     // frontmatter; assert the result envelope action == "dispatch" and its
-    // emitted `aw td gen-source` command reaches a terminal envelope.
+    // emitted `aw cb gen-source` command reaches a terminal envelope.
 }
 
 /// Writes a minimal `aw.toml` registering one project (`name`/`path` both
@@ -510,7 +510,7 @@ fn test_explicit_large_file_emits_single_dispatch_and_terminal_gen_source_json()
         .as_str()
         .expect("invoke.command");
     assert_eq!(envelope["next"]["command"].as_str(), Some(next));
-    assert!(next.starts_with("aw td gen-source --spec "), "{next}");
+    assert!(next.starts_with("aw cb gen-source --spec "), "{next}");
     assert!(next.ends_with(" --dry-run"), "{next}");
     let terminal_output = run_emitted_aw_command(&aw_bin, root, next);
     assert!(
@@ -627,7 +627,7 @@ changes:
     );
     std::fs::write(&spec_path, spec).unwrap();
 
-    let command = format!("aw td gen-source --spec {spec_rel} --target {target_rel}");
+    let command = format!("aw cb gen-source --spec {spec_rel} --target {target_rel}");
     let projected = run_emitted_aw_command(&aw_bin, root, &command);
     assert!(
         projected.status.success(),
@@ -674,7 +674,7 @@ changes:
     assert_eq!(noop_envelope["summary"]["wrote_files"], false);
     assert_eq!(std::fs::read_to_string(&target).unwrap(), projected_target);
 
-    let unmatched_command = format!("aw td gen-source --spec {spec_rel} --target {unmatched_rel}");
+    let unmatched_command = format!("aw cb gen-source --spec {spec_rel} --target {unmatched_rel}");
     let rejected = run_emitted_aw_command(&aw_bin, root, &unmatched_command);
     assert!(!rejected.status.success());
     let rejected_envelope = single_stdout_envelope(&rejected);
@@ -721,7 +721,7 @@ fn test_gen_source_missing_spec_is_non_hitl_error_envelope() {
     let output = run_emitted_aw_command(
         &aw_bin,
         tmp.path(),
-        "aw td gen-source --spec tech-design/direct.md --target src/lib.rs --dry-run",
+        "aw cb gen-source --spec tech-design/direct.md --target src/lib.rs --dry-run",
     );
     assert!(!output.status.success());
     let envelope = single_stdout_envelope(&output);

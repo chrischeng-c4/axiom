@@ -48,9 +48,7 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw handoff",
     "aw takeoff",
     // #918: `aw run` full removal (superseded by `aw wi run` / `aw capability
-    // run`, #917) + #857 merge-era leftovers. `"aw cb "` keeps the trailing
-    // space so it does not false-positive on prose like "the aw cb_filled
-    // phase" while still catching a literal `aw cb ...` invocation.
+    // run`, #917) + #857 merge-era leftovers.
     "aw run",
     "aw td merge",
     "aw td review",
@@ -59,7 +57,6 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw wi review",
     "aw wi arbitrate",
     "aw wi draft review",
-    "aw cb ",
     // #1278 (epic #1270 R7): `aw standardize` is fully retired -- reporting
     // folded into `aw health`'s takeover-audit axis, `audit record` rehomed
     // as `aw td audit-record`. A bare `"aw standardize"` supersedes and
@@ -1024,10 +1021,10 @@ pub(crate) fn drift_marker_health_worker_command(
 ) -> String {
     match top_finding {
         Some(finding) if finding.kind == StandardizeActionKind::RegenDrift => {
-            format!("aw td gen --force-regen --project {project}")
+            format!("aw cb gen --force-regen --project {project}")
         }
         Some(finding) if finding.kind == StandardizeActionKind::FoldShadow => {
-            format!("aw td promote {}", finding.target)
+            format!("aw cb promote {}", finding.target)
         }
         _ => format!("aw health --project {project} drift-marker --verbose"),
     }
@@ -5067,7 +5064,7 @@ fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Resu
                 ));
             } else if content != expected {
                 blockers.push(format!(
-                    "project root artifact `{rel}` is stale; run `aw td gen --force-regen --project {}`",
+                    "project root artifact `{rel}` is stale; run `aw cb gen --force-regen --project {}`",
                     shell_quote(&project)
                 ));
             }
@@ -5975,7 +5972,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::RegenDrift,
             &finding.target,
             "mainthread",
-            "mainthread: regenerate affected CODEGEN block and rerun aw td code-check",
+            "mainthread: regenerate affected CODEGEN block and rerun aw cb check",
             &finding.reason,
             true,
         );
@@ -6093,7 +6090,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::GeneratorPrimitiveGap,
             &file.rel,
             "mainthread",
-            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw td gen --force-regen --project <project> --verify",
+            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw cb gen --force-regen --project <project> --verify",
             &format!(
                 "{} is CODEGEN-marked but its language/workspace is not replay-verifiable by current generators",
                 file.language
@@ -6110,7 +6107,7 @@ fn choose_regenerable_action_with_project(
                         StandardizeActionKind::RegenDrift,
                         file,
                         "mainthread",
-                        "mainthread: repair CODEGEN replay drift, then rerun aw td gen --force-regen --project <project> --verify",
+                        "mainthread: repair CODEGEN replay drift, then rerun aw cb gen --force-regen --project <project> --verify",
                         "CODEGEN-owned file is not audit/replay clean",
                         true,
                     );
@@ -6193,7 +6190,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::PromoteHandwrite,
             &file.rel,
             "mainthread",
-            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw td code-check",
+            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw cb check",
             "managed HANDWRITE remains; full regenerability requires CODEGEN ownership",
             true,
         );
@@ -7668,7 +7665,7 @@ test_cmd = "true"
             .iter()
             .find(|blocker| blocker.contains("is stale"))
             .expect("stale llms.txt must report a remediation");
-        assert!(stale.contains("aw td gen --force-regen --project tool"));
+        assert!(stale.contains("aw cb gen --force-regen --project tool"));
         assert!(!stale.contains("aw standardize"));
 
         let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
@@ -8917,8 +8914,8 @@ command_refs:
             "aw wi draft init",
             "aw td",
             "aw td check",
-            "aw td gen",
-            "aw td code-check",
+            "aw cb gen",
+            "aw cb check",
             // #1278 (epic #1270 R7): `aw standardize` is fully retired; the
             // relocated `audit record` remediation verb lives here instead.
             "aw td audit-record",
@@ -8991,7 +8988,7 @@ command_refs:
             "AGENTS.md",
             "Kick off the loop with `aw run --project demo`.\n\
              Legacy artifact steps used `aw td merge`, `aw td review`, and `aw td revise`.\n\
-             Do not use `aw wi merge` or `aw cb fill` here.\n",
+             Do not use `aw wi merge` here.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -9008,7 +9005,6 @@ command_refs:
             "aw td review",
             "aw td revise",
             "aw wi merge",
-            "aw cb ",
         ] {
             assert!(
                 deleted_targets.contains(expected),
@@ -9019,15 +9015,15 @@ command_refs:
 
     #[test]
     fn deleted_command_paths_918_does_not_false_positive_on_new_runner_verbs() {
-        // `"aw run"` and `"aw cb "` must not match inside the new #917
-        // canonical runner shells or inside ordinary `cb_*` phase prose.
+        // `"aw run"` must not match inside the new #917 canonical runner
+        // shells, and active CB commands and `cb_*` phase prose stay valid.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "AGENTS.md",
             "Use `aw wi run 42` or `aw capability run demo:foo --project demo`.\n\
              The lifecycle transitions through the cb_filled phase before\n\
-             `aw td code-check` closes the loop.\n",
+             `aw cb check` closes the loop.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -10297,7 +10293,7 @@ target = "python"
         };
         assert_eq!(
             drift_marker_health_worker_command("demo", Some(&regen)),
-            "aw td gen --force-regen --project demo"
+            "aw cb gen --force-regen --project demo"
         );
 
         let shadow = DriftMarkerFinding {
@@ -10307,7 +10303,7 @@ target = "python"
         };
         assert_eq!(
             drift_marker_health_worker_command("demo", Some(&shadow)),
-            "aw td promote src/cli/shadow_file.rs"
+            "aw cb promote src/cli/shadow_file.rs"
         );
 
         let marker_gap = DriftMarkerFinding {

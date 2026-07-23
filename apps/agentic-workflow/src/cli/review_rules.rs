@@ -247,7 +247,10 @@ fn scan_k8s_manifests(project_dir: &Path) -> KitManifestMarkers {
         if !dir.is_dir() {
             continue;
         }
-        for entry in walkdir::WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -288,7 +291,8 @@ fn scan_k8s_manifests(project_dir: &Path) -> KitManifestMarkers {
 /// (#2169): each `finding()` call site below passes the constant instead of
 /// an inline string literal, so `known_rule_docs()` can never drift from
 /// what is actually emitted.
-pub(crate) const RULE_ID_PGPOOL_STATEFULSET_SHAPE: &str = "negative-assertion:pgpool:statefulset-shape";
+pub(crate) const RULE_ID_PGPOOL_STATEFULSET_SHAPE: &str =
+    "negative-assertion:pgpool:statefulset-shape";
 pub(crate) const RULE_ID_TAPE_RAFT_OR_PRIMARY_REPLICA: &str =
     "negative-assertion:tape:raft-or-primary-replica-signal";
 pub(crate) const RULE_ID_RELAY_DEFER_PASSIVE_REPLICA: &str =
@@ -298,7 +302,10 @@ pub(crate) const RULE_ID_LUMEN_RAFT_LEADER_INGEST: &str =
 
 /// R2 Pgpool (Deployment/ExternalState): a stateless external-state
 /// Deployment must not inherit StatefulSet/PVC/headless/Raft requirements.
-fn pgpool_negative_assertion(project_dir: &Path, resolution: &ProfileResolution) -> Option<Finding> {
+fn pgpool_negative_assertion(
+    project_dir: &Path,
+    resolution: &ProfileResolution,
+) -> Option<Finding> {
     let profile = profile_of(resolution);
     if profile.primary_workload != PrimaryWorkload::Deployment
         || profile.state_ownership != StateOwnership::ExternalState
@@ -349,7 +356,10 @@ fn tape_negative_assertion(project_dir: &Path, resolution: &ProfileResolution) -
     if raft_deps.is_empty() && !markers.primary_replica_role {
         return None;
     }
-    let mut affected: Vec<String> = raft_deps.iter().map(|d| format!("Cargo.toml:{d}")).collect();
+    let mut affected: Vec<String> = raft_deps
+        .iter()
+        .map(|d| format!("Cargo.toml:{d}"))
+        .collect();
     affected.extend(
         markers
             .hits
@@ -427,7 +437,10 @@ fn lumen_negative_assertion(project_dir: &Path, resolution: &ProfileResolution) 
     if !markers.leader_ingest {
         return None;
     }
-    let mut affected: Vec<String> = raft_deps.iter().map(|d| format!("Cargo.toml:{d}")).collect();
+    let mut affected: Vec<String> = raft_deps
+        .iter()
+        .map(|d| format!("Cargo.toml:{d}"))
+        .collect();
     affected.extend(
         markers
             .hits
@@ -545,10 +558,9 @@ pub(crate) fn apply_conformance_rules(
         _ => None,
     };
     findings.extend(negative_assertion);
-    findings.extend(crate::cli::review_obs_rules::apply_observability_and_raft_rules(
-        project_dir,
-        resolution,
-    ));
+    findings.extend(
+        crate::cli::review_obs_rules::apply_observability_and_raft_rules(project_dir, resolution),
+    );
     findings
 }
 // </HANDWRITE>
@@ -614,7 +626,14 @@ mod tests {
         };
         let envelope = review::review_envelope(&report);
 
-        for key in ["schema_version", "action", "project", "outcome", "profile", "evidence"] {
+        for key in [
+            "schema_version",
+            "action",
+            "project",
+            "outcome",
+            "profile",
+            "evidence",
+        ] {
             assert!(!envelope[key].is_null(), "missing pre-existing key {key}");
         }
         assert!(envelope["findings"].is_array());
@@ -644,13 +663,18 @@ mod tests {
             assert!(!f.id.is_empty());
             assert!(!f.affected_paths.is_empty());
             assert!(!f.remediation.to_ascii_lowercase().contains("needs review"));
-            assert!(f.remediation.to_ascii_lowercase().contains("libs/") || !f.remediation.is_empty());
+            assert!(
+                f.remediation.to_ascii_lowercase().contains("libs/") || !f.remediation.is_empty()
+            );
         }
         // Same evidence tree reproduces the same finding ids.
         let findings_again = apply_shared_kit_rules(tmp.path(), &resolution);
         assert_eq!(
             findings.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
-            findings_again.iter().map(|f| f.id.clone()).collect::<Vec<_>>()
+            findings_again
+                .iter()
+                .map(|f| f.id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -672,7 +696,10 @@ mod tests {
         let resolution = review::resolve_project_profile_for_dir(tmp.path());
         let findings = apply_shared_kit_rules(tmp.path(), &resolution);
         let hit = findings.iter().find(|f| f.id == "shared-kit:server-tcp");
-        assert!(hit.is_some(), "expected a shared-kit:server-tcp finding, got {findings:?}");
+        assert!(
+            hit.is_some(),
+            "expected a shared-kit:server-tcp finding, got {findings:?}"
+        );
         assert!(hit.unwrap().remediation.contains("libs/server-tcp"));
     }
 
@@ -709,7 +736,10 @@ mod tests {
             &tmp.path().join("aw.toml"),
             &aw_toml(&["service", "network_exposed"]),
         );
-        write(&tmp.path().join("Cargo.toml"), &cargo_toml(&["service-http"]));
+        write(
+            &tmp.path().join("Cargo.toml"),
+            &cargo_toml(&["service-http"]),
+        );
         write(&tmp.path().join("src/lib.rs"), "pub fn serve() {}\n");
 
         let resolution = review::resolve_project_profile_for_dir(tmp.path());
@@ -744,7 +774,10 @@ mod tests {
         );
         let hit = super::pgpool_negative_assertion(tmp.path(), &resolution);
         assert!(hit.is_some());
-        assert_eq!(hit.unwrap().id, "negative-assertion:pgpool:statefulset-shape");
+        assert_eq!(
+            hit.unwrap().id,
+            "negative-assertion:pgpool:statefulset-shape"
+        );
     }
 
     // R2b Tape: a StatefulSet/ReplicatedLog profile with a raft dependency
@@ -861,7 +894,10 @@ mod tests {
         };
         let hit = super::lumen_negative_assertion(tmp.path(), &resolution);
         assert!(hit.is_some());
-        assert_eq!(hit.unwrap().id, "negative-assertion:lumen:raft-leader-ingest-signal");
+        assert_eq!(
+            hit.unwrap().id,
+            "negative-assertion:lumen:raft-leader-ingest-signal"
+        );
     }
 
     // #2169 R1: KIT_RULES.id must be the full, already-prefixed

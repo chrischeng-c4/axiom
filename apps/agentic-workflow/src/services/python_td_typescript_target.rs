@@ -8,7 +8,11 @@ use super::python_td::{PythonTdDeclarationKind, PythonTdIr, PythonTdModule, Pyth
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{collections::{BTreeMap, BTreeSet}, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TypeScriptTdTarget {
@@ -28,7 +32,11 @@ pub fn emit_python_td_typescript_target(
 ) -> Result<TypeScriptTdTarget> {
     let mut files = BTreeMap::new();
     let mut roles = BTreeSet::new();
-    for module in ir.modules.iter().filter(|module| module.path.starts_with("src/")) {
+    for module in ir
+        .modules
+        .iter()
+        .filter(|module| module.path.starts_with("src/"))
+    {
         let name = module_name(module)?;
         let role = ddd_role(&module.role);
         let path = format!("src/{role}/{name}.ts");
@@ -53,7 +61,10 @@ pub fn emit_python_td_typescript_target(
     );
     files.insert("package.json".into(), package_json());
     files.insert("tsconfig.json".into(), tsconfig_json());
-    files.insert("tests/generated_inventory.test.mjs".into(), inventory_test());
+    files.insert(
+        "tests/generated_inventory.test.mjs".into(),
+        inventory_test(),
+    );
 
     let manifest = manifest(&files);
     // Rendering and validation finish before a target path is created, so an
@@ -78,7 +89,10 @@ fn module_name(module: &PythonTdModule) -> Result<&str> {
         .next()
         .unwrap_or_default();
     if !identifier(name) || module.declarations.is_empty() {
-        bail!("unsupported Python TD module `{}` for TypeScript target", module.id);
+        bail!(
+            "unsupported Python TD module `{}` for TypeScript target",
+            module.id
+        );
     }
     Ok(name)
 }

@@ -25,15 +25,33 @@ e2e_tests:
   - id: aw-core-client-core-concept-model-and-invariants
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: core-concept-model-and-invariants
-    command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture
     assertions:
-      - agent-first project iteration model TD validates as the source claim for AW invariants
+      - "from an admitted CB-generated child, the real compiled goal runner follows emitted CB commands, closes the child, rolls up its epic and capability, and terminates with completion.workflow_complete=true"
+  - id: aw-core-client-core-concept-model-ec-first-phase-table
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: core-concept-model-and-invariants
+    command: cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_goal_routing_uses_one_ec_first_phase_table -- --exact --nocapture
+    assertions:
+      - "the Python Spec lifecycle has one explicit EC review, TD behavior/security, CB generation/check, and terminal all-dimension EC routing table with no phase gaps"
+  - id: aw-core-client-core-concept-model-phase-less-admission
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: core-concept-model-and-invariants
+    command: cargo test -p agentic-workflow --lib cli::run::tests::phase_less_project_wi_enters_ec_before_td -- --exact --nocapture
+    assertions:
+      - "a phase-less project WorkItem enters EC authoring before any TD authoring command"
+  - id: aw-core-client-core-concept-model-remote-ledger-admission
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: core-concept-model-and-invariants
+    command: cargo test -p agentic-workflow --lib cli::run::tests::remote_wi_admission_seeds_the_local_ec_lifecycle_ledger -- --exact --nocapture
+    assertions:
+      - "admitting a remote WorkItem seeds the local EC-first lifecycle ledger before dispatching artifact work"
   - id: aw-core-client-workitem-artifact-admission-gate
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: workitem-artifact-admission-gate
-    command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md
+    command: cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture
     assertions:
-      - workitem artifact gate TD validates as the admission gate claim
+      - "the real compiled CB generator rejects an unsupported or unadmitted artifact before issue, Git, or source mutation and accepts a valid admitted WorkItem with exact generated ownership"
   - id: aw-core-client-agent-first-cli-product-model
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: agent-first-cli-product-model
@@ -109,39 +127,81 @@ e2e_tests:
   - id: td-cb-lifecycle-automation-self-ec-fixture-loop-gate
     capability_id: td-cb-lifecycle-automation
     claim_id: self-ec-fixture-loop-gate
-    command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture
     assertions:
-      - fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case
+      - "a configured required EC case refuses the unchanged CB-filled WorkItem while red without phase or close mutation, then permits terminal close only when green and records the consulted case in the success envelope"
   - id: td-cb-lifecycle-automation-remove-td-merge-command
     capability_id: td-cb-lifecycle-automation
     claim_id: remove-td-merge-command
-    command: cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed -- --nocapture
+    command: cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture
     assertions:
-      - the retired `td merge` subcommand stays absent from the clap tree (#914, refs #851)
+      - "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)"
   - id: td-cb-lifecycle-automation-chain-liveness-proof
     capability_id: td-cb-lifecycle-automation
     claim_id: chain-liveness-proof
-    command: cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture
+    command: cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture
     assertions:
-      - a driven chain never lands on a deadlock phase and code-check terminates and retries within its tick budget (#914, refs #921)
+      - "the exact driven chain reaches a terminal action within its bounded hop budget without landing on a deadlock phase (#914, refs #921)"
+  - id: td-cb-lifecycle-automation-chain-liveness-retry
+    capability_id: td-cb-lifecycle-automation
+    claim_id: chain-liveness-proof
+    command: cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget -- --exact --nocapture
+    assertions:
+      - "a stranded terminal retry emits the exact `aw cb check <slug>` command, remains within its tick budget, and preserves the lifecycle state until successful completion"
   - id: td-cb-lifecycle-automation-hand-written-implementation-evidence-gate
     capability_id: td-cb-lifecycle-automation
     claim_id: hand-written-implementation-evidence-gate
-    command: "cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture"
+    command: "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture"
     assertions:
-      - terminal code-check refuses hand-written create/modify paths with no committed diff since their Td-Init baseline (#1382)
+      - "terminal CB check refuses a hand-written modify path with zero committed implementation diff since its Td-Init baseline (#1382)"
+  - id: td-cb-lifecycle-automation-hand-written-partial-evidence-gate
+    capability_id: td-cb-lifecycle-automation
+    claim_id: hand-written-implementation-evidence-gate
+    command: "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_partial_hand_written_lifecycle_diff -- --exact --nocapture"
+    assertions:
+      - "terminal CB check refuses partial evidence when any declared hand-written create or modify target still has no committed implementation diff"
+  - id: td-cb-lifecycle-automation-hand-written-complete-evidence-gate
+    capability_id: td-cb-lifecycle-automation
+    claim_id: hand-written-implementation-evidence-gate
+    command: "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_accepts_complete_hand_written_lifecycle_diff -- --exact --nocapture"
+    assertions:
+      - "terminal CB check accepts complete evidence only after every declared hand-written create and modify target has a committed implementation diff"
   - id: td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
     capability_id: td-cb-lifecycle-automation
     claim_id: td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
-    command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture
     assertions:
-      - the epic's terminal EC-gated fixture-loop proof (#1270 children #1272-#1281, self-EC inventory #1280) stays green as the concrete evidence for the converged verb lifecycle policy
+      - "the public goal runner follows CB fill and check, stops at terminal required EC while red, resumes the same CB-filled WorkItem when green, records the consulted case, and closes at the unified terminal check"
   - id: existing-project-standardization-shared-service-kit-substrate
     capability_id: existing-project-standardization
     claim_id: shared-service-kit-substrate
-    command: cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http
+    command: cargo test -p server-tcp tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture
     assertions:
-      - the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)
+      - "the shared TCP accept loop binds a real listener, admits a connection, invokes the closure handler, and completes without an async-trait box (#1241)"
+  - id: existing-project-standardization-shared-service-kit-drain
+    capability_id: existing-project-standardization
+    claim_id: shared-service-kit-substrate
+    command: cargo test -p server-lifecycle --test drain_prestart receiverless_drain_persists_for_late_subscriber -- --exact --nocapture
+    assertions:
+      - "a drain transition published before subscription remains durable and is observed by a late server-plane subscriber"
+  - id: existing-project-standardization-shared-service-kit-connection-budget
+    capability_id: existing-project-standardization
+    claim_id: shared-service-kit-substrate
+    command: cargo test -p server-tcp tests::connection_budget_releases_after_handler_finishes -- --exact --nocapture
+    assertions:
+      - "connection admission consumes the configured budget and releases the permit after the handler finishes"
+  - id: existing-project-standardization-shared-service-kit-http1-h2c-options
+    capability_id: existing-project-standardization
+    claim_id: shared-service-kit-substrate
+    command: cargo test -p server-http tests::serves_http1_and_h2c_on_one_listener_with_tunable_options -- --exact --nocapture
+    assertions:
+      - "the shared HTTP runtime serves HTTP/1.1 and h2c on one real listener while accepting explicit HTTP/2 stream and drain options"
+  - id: existing-project-standardization-shared-service-kit-service-http-delegation
+    capability_id: existing-project-standardization
+    claim_id: shared-service-kit-substrate
+    command: cargo test -p service-http transport::delegation_tests::serve_delegates_listener_to_shared_http_runtime -- --exact --nocapture
+    assertions:
+      - "the service-http policy shell delegates listener ownership and request dispatch to server-http while preserving the service router response"
   - id: project-local-td-and-ec-gates-project-local-td-root-resolver
     capability_id: project-local-td-and-ec-gates
     claim_id: project-local-td-root-resolver

@@ -27,7 +27,7 @@ authoring, CLI, service, and meta-doc rules remain in
   work-root rows, WI refs, TD refs, and EC evidence resolvable.
 - For AW self-hosting repairs, direct commits are allowed when the lifecycle
   itself is broken; otherwise prefer the active `aw wi` -> `aw ec` -> `aw td`
-  -> `aw td code-check` route.
+  -> `aw cb check` route.
 - For a newly accepted bounded WI, establish the project-local EC skeleton,
   fill, independent review, and generation before `aw td create`; EC red
   returns to bounded TD/codegen adaptation, while EC green permits terminal
@@ -56,7 +56,7 @@ checks that prove the changed surface:
   `cargo check -p agentic-workflow` for Rust changes.
 - Focused behavior: the smallest relevant `cargo test -p agentic-workflow ...`
   target for the changed command, parser, validator, or doc contract.
-- Generated-code closure: `aw td code-check <changed-source> --project
+- Generated-code closure: `aw cb check <changed-source> --project
   agentic-workflow` when changing SPEC-MANAGED source or its projection.
 - Meta-doc changes: run or update the root doc allowlist/mirror tests when
   changing root/project meta-doc policy, README shells, or agent-doc placement.

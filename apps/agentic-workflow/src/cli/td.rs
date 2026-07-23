@@ -51,19 +51,6 @@ pub enum TdCommand {
     Lock(super::td_lock::TdLockArgs),
     /// Adopt an on-disk TD spec into the score lifecycle.
     Claim(TdClaimArgs),
-    /// Generate implementation code from an approved TD spec.
-    Gen(super::cb::CbGenArgs),
-    /// Forward-generate one target source file from a per-file TD source unit.
-    GenSource(super::cb::CbGenSourceArgs),
-    /// Audit code-space files for TD generation drift and HANDWRITE gaps.
-    CodeCheck(super::cb::CbCheckArgs),
-    /// Fill HANDWRITE marker blocks in generated code.
-    Fill(super::cb::CbFillArgs),
-    /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
-    /// closed (byte-equivalence-checked). This is the `promote_handwrite`
-    /// standardization action, homed as a first-class td verb (#919).
-    /// @spec apps/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
-    Promote(PromoteArgs),
     /// Record a bounded preservation audit fixture for the project. This is
     /// the former `aw standardize audit record` action, homed as a
     /// first-class td verb mirroring the `promote` precedent above (#1278,
@@ -3341,37 +3328,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
         | TdCommand::Ast(_)
         | TdCommand::Lock(_)
         | TdCommand::AuditRecord(_) => {}
-        TdCommand::CodeCheck(a) => {
-            // Issue #856d: shared slug-vs-path classifier with cb.rs's
-            // `run_check` instead of a third copy of the same check (issue
-            // #860 removed the dead top-level `CbCommand::Check` arm this
-            // comment used to reference).
-            if let Some(target) = a.target.as_deref() {
-                if super::cb::code_check_target_is_slug(&project_root, target) {
-                    super::workflow_guard::guard_issue_mutation(
-                        &project_root,
-                        Some(("td", target)),
-                    )
-                    .await?;
-                }
-            }
-        }
-        TdCommand::Gen(a) => {
-            if a.target.is_some() {
-                // Target-native generation is an offline compiler operation;
-                // it has no issue mutation or lifecycle phase to guard.
-            } else if let Some(slug) = a.slug.as_deref() {
-                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", slug)))
-                    .await?;
-            } else {
-                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            }
-        }
-        TdCommand::GenSource(a) => {
-            if !a.dry_run {
-                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            }
-        }
         TdCommand::Create(a) => {
             if a.from_source.is_some() {
                 // Folded `aw td code-claim` (#1273): same "any pending lock
@@ -3383,11 +3339,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
                     .await?;
             }
         }
-        TdCommand::Fill(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::Promote(_) => {
+        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
@@ -3399,11 +3351,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
-        TdCommand::Gen(a) => super::cb::run_gen(a).await,
-        TdCommand::GenSource(a) => super::cb::run_gen_source(a),
-        TdCommand::CodeCheck(a) => super::cb::run_check(a, project.as_deref()).await,
-        TdCommand::Fill(a) => super::cb_fill::run(a).await,
-        TdCommand::Promote(a) => run_promote(a),
         TdCommand::AuditRecord(a) => {
             super::standardize::run_audit_record(
                 project.as_deref(),
@@ -3464,7 +3411,10 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
             );
         }
         if let (Some(project), Some(wi)) = (configured_project, args.wi.as_deref()) {
-            let row = crate::services::project_registry::resolve_project_config_row(&project_root, project)?;
+            let row = crate::services::project_registry::resolve_project_config_row(
+                &project_root,
+                project,
+            )?;
             if row.effective_artifact_model()
                 == crate::models::project::ProjectArtifactModel::PythonV1
             {
@@ -3473,7 +3423,7 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
                     &project_root,
                     wi,
                     format!(
-                        "aw td gen --target python --source-root {} --output-dir {} --project {} --wi {wi}",
+                        "aw cb gen --target python --source-root {} --output-dir {} --project {} --wi {wi}",
                         shell_quote_td_arg(&candidate.display().to_string()),
                         shell_quote_td_arg(&output_dir.display().to_string()),
                         row.name,
@@ -4293,7 +4243,7 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td gen",
+            command: "aw cb gen",
             args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
         },
     })?;
@@ -4428,7 +4378,7 @@ async fn complete_section_apply(
             None => Some((
                 "Td-Applicability-Complete",
                 active_phase,
-                "aw td gen",
+                "aw cb gen",
                 serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             )),
         }
@@ -4448,7 +4398,7 @@ async fn complete_section_apply(
         Some((
             "Td-Contract-Complete",
             "td_created".to_string(),
-            "aw td gen",
+            "aw cb gen",
             serde_json::json!({
                 "slug": slug,
                 "spec_path": spec_path,
@@ -4700,7 +4650,7 @@ async fn prepare_td_generation_before_lifecycle(
         resolve_issue_td_generation_spec_path(project_root, issue, &workflow_slug).map_err(
             |error| {
                 anyhow::anyhow!(
-                    "td gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                    "cb gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw cb gen {requested_slug} --spec-path <repo-relative-spec.md>`"
                 )
             },
         )?
@@ -4710,7 +4660,7 @@ async fn prepare_td_generation_before_lifecycle(
         discovered
     } else {
         anyhow::bail!(
-            "td gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+            "cb gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw cb gen {requested_slug} --spec-path <repo-relative-spec.md>`"
         );
     };
 
@@ -4756,7 +4706,7 @@ async fn prepare_td_generation_before_lifecycle(
     };
 
     let rerun_command = format!(
-        "aw td gen {} --spec-path {}",
+        "aw cb gen {} --spec-path {}",
         shell_quote_td_arg(requested_slug),
         shell_quote_td_arg(&spec_path),
     );
@@ -4848,7 +4798,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         .with_context(|| format!("re-reading prepared TD spec {}", spec_abs.display()))?;
     if execution_spec_content != prepared.spec_content {
         anyhow::bail!(
-            "td gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw td gen` command"
+            "cb gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw cb gen` command"
         );
     }
     let td_lock =
@@ -4939,7 +4889,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td fill",
+                command: "aw cb fill",
                 args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             },
         })?;
@@ -4948,7 +4898,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td code-check",
+                command: "aw cb check",
                 args: serde_json::json!({ "target": slug }),
             },
         })?;
@@ -5028,8 +4978,8 @@ pub(crate) fn run_audit(args: AuditArgs) -> Result<()> {
     if args.drift {
         anyhow::bail!(
             "`--drift` has been removed. Drift is now the default behavior of \
-             `aw td code-check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
-             in one walk. Run `aw td code-check projects/` to scan all code."
+             `aw cb check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
+             in one walk. Run `aw cb check projects/` to scan all code."
         );
     }
 
@@ -8239,7 +8189,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td gen",
+            command: "aw cb gen",
             args: invoke_args,
         },
     })?;
@@ -8338,7 +8288,7 @@ fn commit_lifecycle_with_extra(
 /// above) with a `Promote-Target` trailer.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-fn run_promote(args: PromoteArgs) -> Result<()> {
+pub(crate) fn run_promote(args: PromoteArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     run_promote_at(&project_root, args)
 }

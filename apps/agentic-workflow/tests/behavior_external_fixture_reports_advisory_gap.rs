@@ -19,10 +19,10 @@ fn external_fixture_reports_advisory_gap() {
         "cargo test -p agentic-workflow --lib regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture";
     let id = "external-fixture-reports-advisory-gap";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

@@ -916,7 +916,7 @@ fn project_health_next_command_routes_to_drift_marker_remediation_when_otherwise
     let summary = project_health_summary(&report);
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw td gen --force-regen --project demo")
+        Some("aw cb gen --force-regen --project demo")
     );
 }
 

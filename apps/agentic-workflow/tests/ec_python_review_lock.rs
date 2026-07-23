@@ -206,7 +206,7 @@ fn assert_staged_dimensions(root: &Path) {
         )
         .unwrap();
     }
-    let (core, core_summary) = run_aw(
+    let (td, td_summary) = run_aw(
         root,
         &[
             "ec",
@@ -214,14 +214,14 @@ fn assert_staged_dimensions(root: &Path) {
             "demo",
             "verify",
             "--stage",
-            "core",
+            "td",
             "--json",
         ],
     );
-    assert!(core.status.success());
-    assert_eq!(core_summary["passed_count"], 2);
-    assert_eq!(core_summary["failed_count"], 0);
-    assert!(core_summary["results"]
+    assert!(td.status.success());
+    assert_eq!(td_summary["passed_count"], 2);
+    assert_eq!(td_summary["failed_count"], 0);
+    assert!(td_summary["results"]
         .as_array()
         .unwrap()
         .iter()
@@ -230,7 +230,7 @@ fn assert_staged_dimensions(root: &Path) {
 
     fs::remove_file(root.join("projects/demo/external-contracts/evidence/efficiency.json"))
         .unwrap();
-    let (operational, operational_summary) = run_aw(
+    let (cb, cb_summary) = run_aw(
         root,
         &[
             "ec",
@@ -238,13 +238,13 @@ fn assert_staged_dimensions(root: &Path) {
             "demo",
             "verify",
             "--stage",
-            "operational",
+            "cb",
             "--json",
         ],
     );
-    assert!(!operational.status.success());
-    assert_eq!(operational_summary["passed_count"], 1);
-    assert_eq!(operational_summary["failed_count"], 1);
+    assert!(!cb.status.success());
+    assert_eq!(cb_summary["passed_count"], 3);
+    assert_eq!(cb_summary["failed_count"], 1);
 }
 
 #[test]

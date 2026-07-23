@@ -20,7 +20,7 @@ const PROJECT_WITH_WORKSPACE: &str = r#"
 [[projects]]
 name = "demo"
 path = "projects/demo"
-artifact_model = "{artifact_model}"
+spec_model = "{artifact_model}"
 
 [[projects.workspaces]]
 paths = ["projects/demo/**"]
@@ -29,10 +29,10 @@ test_cmd = "python -m pytest"
 "#;
 
 #[test]
-fn artifact_model_config_parses_typed_legacy_and_python_v1_values() {
+fn spec_model_config_parses_canonical_python_and_legacy_compatibility_values() {
     for (value, expected) in [
         ("legacy", ProjectArtifactModel::Legacy),
-        ("python-v1", ProjectArtifactModel::PythonV1),
+        ("python", ProjectArtifactModel::PythonV1),
     ] {
         let root = root_with_config(&PROJECT_WITH_WORKSPACE.replace("{artifact_model}", value));
         let project = load_projects(root.path()).unwrap().remove(0);
@@ -48,7 +48,7 @@ fn artifact_model_config_parses_typed_legacy_and_python_v1_values() {
 #[test]
 fn artifact_model_config_defaults_unconfigured_projects_to_legacy() {
     let root = root_with_config(
-        &PROJECT_WITH_WORKSPACE.replace("artifact_model = \"{artifact_model}\"\n", ""),
+        &PROJECT_WITH_WORKSPACE.replace("spec_model = \"{artifact_model}\"\n", ""),
     );
     let project = load_projects(root.path()).unwrap().remove(0);
     let row = load_project_config_rows(root.path()).unwrap().remove(0);
@@ -70,12 +70,12 @@ fn artifact_model_config_rejects_unknown_values_with_accepted_options() {
 
     assert!(message.contains("python-v2"), "unexpected error: {message}");
     assert!(message.contains("legacy"), "unexpected error: {message}");
-    assert!(message.contains("python-v1"), "unexpected error: {message}");
+    assert!(message.contains("python"), "unexpected error: {message}");
 }
 
 #[test]
 fn artifact_model_config_preserves_root_opt_in_when_local_overlay_omits_it() {
-    let root = root_with_config(&PROJECT_WITH_WORKSPACE.replace("{artifact_model}", "python-v1"));
+    let root = root_with_config(&PROJECT_WITH_WORKSPACE.replace("{artifact_model}", "python"));
     fs::create_dir_all(root.path().join("projects/demo")).unwrap();
     fs::write(
         root.path().join("projects/demo/aw.toml"),
@@ -96,6 +96,21 @@ path = "projects/demo"
     );
     assert_eq!(
         row.effective_artifact_model(),
+        ProjectArtifactModel::PythonV1
+    );
+}
+
+#[test]
+fn legacy_artifact_model_python_v1_is_read_compatible() {
+    let config = PROJECT_WITH_WORKSPACE
+        .replace("spec_model", "artifact_model")
+        .replace("{artifact_model}", "python-v1");
+    let root = root_with_config(&config);
+    assert_eq!(
+        load_projects(root.path())
+            .unwrap()
+            .remove(0)
+            .effective_artifact_model(),
         ProjectArtifactModel::PythonV1
     );
 }

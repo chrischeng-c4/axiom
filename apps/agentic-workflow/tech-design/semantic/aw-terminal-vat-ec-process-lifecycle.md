@@ -36,7 +36,7 @@ nodes:
   classify: { kind: process, label: "Classify failed, timeout, runner, or single-flight" }
   pass: { kind: terminal, label: "Continue terminal lifecycle mutation" }
   transition: { kind: process, label: "Keep lease through full terminal transition" }
-  retry: { kind: terminal, label: "Refuse before mutation; retry aw td code-check slug" }
+  retry: { kind: terminal, label: "Refuse before mutation; retry aw cb check slug" }
 edges:
   - { from: acquire, to: locked }
   - { from: locked, to: reread, label: "yes" }
@@ -99,9 +99,9 @@ runner failure even when the leader exited 0; an unsafe background-verifier
 shape can therefore never become a false green.
 
 Terminal EC failures are classified as command failure, timeout, runner error,
-or single-flight. `aw td code-check` maps those to distinct structured
+or single-flight. `aw cb check` maps those to distinct structured
 `error_kind` values while always emitting the exact retry command
-`aw td code-check <slug>`. This refusal occurs before issue phase, close state,
+`aw cb check <slug>`. This refusal occurs before issue phase, close state,
 or terminal commit mutation. The process-local guard and project-scoped fs2
 lock form a lease that is acquired before evaluation. The caller re-reads the
 WI under that lease, evaluates only while the refreshed phase is still fresh,
@@ -216,7 +216,7 @@ e2e_tests:
       - "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace"
       - "the helper confirms its external child exited before the wrapper timed out"
       - "the wrapper PID no longer exists after aw returns"
-      - "the envelope has terminal_ec_timeout and exact aw td code-check slug next.command"
+      - "the envelope has terminal_ec_timeout and exact aw cb check slug next.command"
       - "the work item remains open in cb_filled and no terminal commit is created"
   - id: terminal-ec-cross-process-single-flight-real-cli
     name: Two aw processes launch one terminal EC inventory
@@ -226,7 +226,7 @@ e2e_tests:
     assertions:
       - "the first aw process owns the project lock while its EC command runs"
       - "the second same-slug aw process returns terminal_ec_single_flight promptly"
-      - "both refusal envelopes point to exact aw td code-check slug retry commands"
+      - "both refusal envelopes point to exact aw cb check slug retry commands"
       - "the append-only EC launch marker contains exactly one line"
       - "the work item remains open in cb_filled and no terminal commit is created"
   - id: terminal-ec-fast-green-stale-reader-real-cli
@@ -247,6 +247,6 @@ e2e_tests:
     assertions:
       - "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held"
       - "the second process reads retry phase and promptly receives terminal_ec_single_flight"
-      - "the refusal points to the exact same-slug aw td code-check retry"
+      - "the refusal points to the exact same-slug aw cb check retry"
       - "after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit"
 ```

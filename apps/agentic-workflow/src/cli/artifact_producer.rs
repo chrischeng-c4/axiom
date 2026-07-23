@@ -314,7 +314,7 @@ pub(crate) fn td_contract(
         initialized,
         slots,
         format!("aw td check {skeleton_path}"),
-        Some(format!("aw td gen {slug}")),
+        Some(format!("aw cb gen {slug}")),
         vec![skeleton_path.to_string()],
         vec![
             ArtifactOwnershipOutput {

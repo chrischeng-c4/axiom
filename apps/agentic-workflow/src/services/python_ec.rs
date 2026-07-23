@@ -35,6 +35,16 @@ pub struct PythonEcCase {
     pub target: String,
     pub command: String,
     pub evidence_paths: Vec<String>,
+    pub known_failure: Option<PythonEcKnownFailure>,
+}
+
+/// A deliberate EC-first red. It is an explicit contract exception, never a
+/// blanket ignore: the case id supplies identity and both the reason and the
+/// expected failure characteristic are required.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PythonEcKnownFailure {
+    pub reason: String,
+    pub expected: String,
 }
 
 /// The structural inventory read directly from an EC Python project's
@@ -107,6 +117,8 @@ struct PythonEcCaseConfig {
     command: String,
     #[serde(default)]
     evidence_paths: Vec<String>,
+    #[serde(default)]
+    known_failure: Option<PythonEcKnownFailure>,
 }
 
 /// Discover a Python-v1 EC inventory without importing or executing any EC
@@ -175,6 +187,10 @@ pub fn discover_python_ec_inventory(ec_root: &Path) -> Result<PythonEcInventory>
                 .into_iter()
                 .map(|path| path.trim().to_string())
                 .collect(),
+            known_failure: raw.known_failure.map(|failure| PythonEcKnownFailure {
+                reason: failure.reason.trim().to_string(),
+                expected: failure.expected.trim().to_string(),
+            }),
         };
         let label = if case.id.is_empty() {
             format!("Python EC case #{position}")
@@ -195,6 +211,7 @@ pub fn discover_python_ec_inventory(ec_root: &Path) -> Result<PythonEcInventory>
         validate_dimension_and_applicability(&case, &label, &mut findings);
         validate_test_path(artifact.root(), &case.test_path, &label, &mut findings);
         validate_execution_contract(&case, &label, &mut findings);
+        validate_known_failure(&case, &label, &mut findings);
         cases.push(case);
     }
     cases.sort_by(|left, right| left.id.cmp(&right.id));
@@ -211,6 +228,21 @@ pub fn discover_python_ec_inventory(ec_root: &Path) -> Result<PythonEcInventory>
         cases,
         findings,
     })
+}
+
+fn validate_known_failure(case: &PythonEcCase, label: &str, findings: &mut Vec<String>) {
+    let Some(failure) = case.known_failure.as_ref() else {
+        return;
+    };
+    if failure.reason.is_empty() {
+        findings.push(format!("{label} known_failure is missing `reason`"));
+    }
+    if failure.expected.is_empty() {
+        findings.push(format!("{label} known_failure is missing `expected`; state the failure characteristic that makes the red intentional"));
+    }
+    if !matches!(case.dimension.as_str(), "behavior" | "security") {
+        findings.push(format!("{label} known_failure is only allowed for behavior or security during EC-first/TD verification"));
+    }
 }
 
 fn validate_execution_contract(case: &PythonEcCase, label: &str, findings: &mut Vec<String>) {
@@ -313,9 +345,9 @@ fn validate_artifact_id(value: &str, label: &str, findings: &mut Vec<String>) {
             !bytes.is_empty()
                 && bytes[0].is_ascii_lowercase()
                 && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
-                && bytes.iter().all(|byte| {
-                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-'
-                })
+                && bytes
+                    .iter()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
         });
     if !valid {
         findings.push(format!(

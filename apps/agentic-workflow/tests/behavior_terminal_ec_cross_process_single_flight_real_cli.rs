@@ -12,7 +12,7 @@
 
 // Contract: the first aw process owns the project lock while its EC command runs
 // Contract: the second same-slug aw process returns terminal_ec_single_flight promptly
-// Contract: both refusal envelopes point to exact aw td code-check slug retry commands
+// Contract: both refusal envelopes point to exact aw cb check slug retry commands
 // Contract: the append-only EC launch marker contains exactly one line
 // Contract: the work item remains open in cb_filled and no terminal commit is created
 #[test]
@@ -22,10 +22,10 @@ fn terminal_ec_cross_process_single_flight_real_cli() {
         "cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture";
     let id = "terminal-ec-cross-process-single-flight-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

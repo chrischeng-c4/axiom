@@ -955,7 +955,7 @@ fn run_apply_inner(
                     }
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::AnchorMissing) => {
                         return Err(crate::generate::GenerateError::InvalidValue(format!(
-                            "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                            "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                             entry.path, anchor,
                         )));
                     }
@@ -965,7 +965,7 @@ fn run_apply_inner(
                 }
             } else {
                 return Err(crate::generate::GenerateError::InvalidValue(format!(
-                    "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                    "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                     entry.path,
                 )));
             }
@@ -2576,7 +2576,7 @@ fn validate_ambiguous_generation_plan(
     exact_target: Option<&Path>,
     rerun_command: Option<&str>,
 ) -> crate::generate::Result<()> {
-    let next_command = rerun_command.unwrap_or("aw td gen");
+    let next_command = rerun_command.unwrap_or("aw cb gen");
     validate_generated_unit_ownership_syntax(spec_content, next_command)?;
 
     // A canonical owner must resolve to one generated section and must itself
@@ -2682,9 +2682,9 @@ fn validate_ambiguous_generation_plan(
                     "add an exhaustive canonical `generates: [{section}:<unit>, ...]` list to every `{section}` CODEGEN target (or keep exactly one CODEGEN target and mark siblings hand-written), then rerun {}",
                     rerun_command
                         .map(|command| format!("`{command}`"))
-                        .unwrap_or_else(|| "the same `aw td gen` command".to_string())
+                        .unwrap_or_else(|| "the same `aw cb gen` command".to_string())
                 ),
-                next_command: rerun_command.unwrap_or("aw td gen").to_string(),
+                next_command: rerun_command.unwrap_or("aw cb gen").to_string(),
             });
         }
 
@@ -2965,7 +2965,7 @@ fn validate_handwrite_anchors_before_write(
 
         let Some(anchor) = entry.handwrite_anchor.as_deref() else {
             return Err(crate::generate::GenerateError::InvalidValue(format!(
-                "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                 entry.path,
             )));
         };
@@ -2973,7 +2973,7 @@ fn validate_handwrite_anchors_before_write(
             .map_err(crate::generate::GenerateError::Io)?;
         if !found {
             return Err(crate::generate::GenerateError::InvalidValue(format!(
-                "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                 entry.path, anchor,
             )));
         }
@@ -7213,7 +7213,7 @@ changes:
         let error = run_apply(&spec_path, root, false).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("requires `anchor:`"), "{message}");
-        assert!(message.contains("aw td gen"), "{message}");
+        assert!(message.contains("aw cb gen"), "{message}");
 
         let after = std::fs::read_to_string(&target).unwrap();
         assert_eq!(before, after, "hand-written entry leaves file untouched");
@@ -10373,7 +10373,7 @@ pub(crate) fn generate_code_for_entry(
                 "the validated owned partition produced no code; record a concrete generator gap and make `{}` hand-written, or implement the missing generator before rerunning `aw td gen`",
                 entry.path
             ),
-            next_command: "aw td gen".to_string(),
+            next_command: "aw cb gen".to_string(),
         });
     }
 

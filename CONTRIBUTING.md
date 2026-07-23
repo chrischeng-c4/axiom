@@ -766,7 +766,7 @@ named so `ls` tells you what is enforced before you open anything:
   `external-contracts/security-hardening/`.
 
 A breach is a non-zero-exit finding that blocks the terminal
-`aw td code-check <slug>` gate. Keep these files `SPEC-MANAGED` — regenerate
+`aw cb check <slug>` gate. Keep these files `SPEC-MANAGED` — regenerate
 them from their contract; do not hand-edit the `AW-EC-TOOL` block.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `issue`

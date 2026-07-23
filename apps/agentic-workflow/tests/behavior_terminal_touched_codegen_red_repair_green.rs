@@ -12,7 +12,7 @@
 
 // Contract: committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged
 // Contract: the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted
-// Contract: the emitted aw td gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command
+// Contract: the emitted aw cb gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command
 // Contract: restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
@@ -21,10 +21,10 @@ fn terminal_touched_codegen_red_repair_green() {
         "cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture";
     let id = "terminal-touched-codegen-red-repair-green";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

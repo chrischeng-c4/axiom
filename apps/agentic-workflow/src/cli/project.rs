@@ -111,6 +111,9 @@ pub enum ProjectHealthSection {
     Gates,
     Tests,
     Ec,
+    /// Python Spec production view: EC -> TD -> CB evidence rather than
+    /// legacy source-marker coverage.
+    Spec,
     Cb,
     Cold,
     Traceability,
@@ -145,7 +148,8 @@ pub struct ProjectHealthReport {
     pub capability: CapabilityHealthReport,
     pub test_gates: ProjectTestGateReport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub python_artifact: Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
+    pub python_artifact:
+        Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
     pub ec: ProjectEcGateReport,
     pub claim_closure: ProjectClaimClosureReport,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -2020,6 +2024,11 @@ pub fn project_health_section_summary(
         }),
         ProjectHealthSection::Tests => project_test_gate_summary(&report.test_gates),
         ProjectHealthSection::Ec => project_ec_gate_summary(&report.ec),
+        ProjectHealthSection::Spec => serde_json::json!({
+            "python_spec": &report.python_artifact,
+            "production_ready": report.production_ready,
+            "production_blockers": &report.production_blockers,
+        }),
         ProjectHealthSection::Claims => project_claim_closure_detail(&report.claim_closure),
         ProjectHealthSection::Cb => serde_json::json!({
             "cb_verify_evaluated": report.cb_verify_evaluated,
@@ -2794,7 +2803,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if report.production_ready || (!caps_ec_only && report.workflow_lock_count > 0) {
         return None;
     }
-    if !caps_ec_only && !report.td_lock.clean {
+    if report.python_artifact.is_none() && !caps_ec_only && !report.td_lock.clean {
         return Some(
             if report.td_lock.status == crate::cli::td_lock::TdLockState::Missing {
                 format!("aw td lock --project {}", report.project)
@@ -2803,7 +2812,11 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             },
         );
     }
-    if let Some(readiness) = report.python_artifact.as_ref().filter(|readiness| !readiness.ready) {
+    if let Some(readiness) = report
+        .python_artifact
+        .as_ref()
+        .filter(|readiness| !readiness.ready)
+    {
         return readiness.next_command.clone();
     }
     if !report.ec.lock_clean {
@@ -2819,7 +2832,15 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         );
     }
     if !report.ec.check_clean {
+        if report.python_artifact.is_some() {
+            return Some(format!("aw ec check --project {}", report.project));
+        }
         return Some(format!("aw ec gen --project {} --verify", report.project));
+    }
+    if report.python_artifact.is_some()
+        && matches!(report.ec.status, ProjectEcGateStatus::NotVerified)
+    {
+        return Some(format!("aw ec review --project {}", report.project));
     }
     if matches!(report.ec.status, ProjectEcGateStatus::NotConfigured)
         && (report.ec.expected_case_count > 0 || report.ec.expected_tool_manifest_count > 0)
@@ -2932,7 +2953,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
                 "workflow lock requires current owner or HITL resolution".to_string()
             });
     }
-    if !caps_ec_only && !report.td_lock.clean {
+    if report.python_artifact.is_none() && !caps_ec_only && !report.td_lock.clean {
         return report.td_lock.message.clone();
     }
     if !report.ec.lock_clean {
@@ -3113,7 +3134,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
         match section {
             ProjectHealthSection::Full => HealthVerificationFlags::all(),
             ProjectHealthSection::Tests => HealthVerificationFlags::tests(),
-            ProjectHealthSection::Ec => HealthVerificationFlags::ec(),
+            ProjectHealthSection::Ec | ProjectHealthSection::Spec => HealthVerificationFlags::ec(),
             ProjectHealthSection::Cb | ProjectHealthSection::Api => HealthVerificationFlags::cb(),
             ProjectHealthSection::Cold => HealthVerificationFlags::cold(),
             ProjectHealthSection::Claims => HealthVerificationFlags {
@@ -3290,7 +3311,25 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     }
 
     if verify_ec {
-        if ec_report.case_count == 0 && ec_report.tool_manifest_count == 0 {
+        let project_root = crate::find_project_root()?;
+        let is_python_spec = crate::services::project_registry::resolve_project_config_row(
+            &project_root,
+            &report.project,
+        )
+        .map(|row| {
+            row.effective_artifact_model() == crate::models::project::ProjectArtifactModel::PythonV1
+        })
+        .unwrap_or(false);
+        if is_python_spec {
+            // Python EC is source-authored under external-contracts/, not
+            // generated into aw.toml's legacy command inventory. The EC
+            // lifecycle owns semantic review and staged execution directly.
+            ec_report.status = ProjectEcGateStatus::NotVerified;
+            ec_report.note = Some(format!(
+                "Python Spec EC is hand-authored; run `aw ec review --project {}` and staged `aw ec verify`",
+                report.project
+            ));
+        } else if ec_report.case_count == 0 && ec_report.tool_manifest_count == 0 {
             let finding = "EC inventory has no cases; add external-contract e2e-test sections and run `aw ec gen --project <project>`"
                 .to_string();
             ec_report.findings.push(finding.clone());
@@ -3317,7 +3356,6 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 report.refresh_takeover_readiness();
                 return Ok(());
             };
-            let project_root = crate::find_project_root()?;
             // aw.toml case commands are authoritative for generated EC
             // inventory. Legacy category bindings remain as fallback for old
             // inventories that have not materialized per-case commands yet.
@@ -3439,11 +3477,48 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
     report: &mut ProjectHealthReport,
 ) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let readiness = crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
+    let readiness =
+        crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
     if let Some(readiness) = &readiness {
-        for blocker in &readiness.blockers {
-            block_health_report(report, format!("python artifact: {blocker}"));
+        // Python Spec projects are assessed on the artifact graph, not on
+        // legacy managed/HANDWRITE/source-traceability coverage. Preserve the
+        // legacy findings as advisory global diagnostics while replacing the
+        // production decision with EC -> TD -> CB evidence.
+        let mut advisory = report.blockers.clone();
+        advisory.extend(report.production_blockers.clone());
+        advisory.sort();
+        advisory.dedup();
+
+        let mut spec_blockers = readiness
+            .blockers
+            .iter()
+            .map(|blocker| format!("python spec: {blocker}"))
+            .collect::<Vec<_>>();
+        if !report.ec.lock_clean {
+            spec_blockers.push(format!("EC lock is not clean: {}", report.ec.lock_path));
         }
+        if !matches!(report.ec.status, ProjectEcGateStatus::Passed) {
+            spec_blockers
+                .push("EC verification/review is not green for the current digest".to_string());
+        }
+        spec_blockers.sort();
+        spec_blockers.dedup();
+
+        report.production_blockers = spec_blockers.clone();
+        report.blockers = spec_blockers;
+        report.global_blockers = advisory;
+        report.production_ready = report.production_blockers.is_empty();
+        report.production_status = if report.production_ready {
+            ProductionStatus::Ready
+        } else {
+            ProductionStatus::Blocked
+        };
+        report.status = if report.production_ready {
+            ProjectHealthStatus::Healthy
+        } else {
+            ProjectHealthStatus::Blocked
+        };
+        report.next_gap = report.production_blockers.first().cloned();
     }
     report.python_artifact = readiness;
     report.refresh_takeover_readiness();

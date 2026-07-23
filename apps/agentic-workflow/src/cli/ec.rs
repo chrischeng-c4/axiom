@@ -259,9 +259,10 @@ pub struct EcVerifyArgs {
     /// terminal EC gate's filter); default runs every configured case.
     #[arg(long)]
     pub required_only: bool,
-    /// Select the EC lifecycle stage. `core` runs behavior/security; `operational`
-    /// runs stability/efficiency after generation/build. Omit for legacy all-case verification.
-    #[arg(long, value_parser = ["core", "operational"])]
+    /// Select the EC lifecycle stage. Python Spec uses `td` for behavior and
+    /// security against the reference design, then `cb` for all four
+    /// dimensions against the codebase. Legacy retains `core`/`operational`.
+    #[arg(long, value_parser = ["td", "cb", "core", "operational"])]
     pub stage: Option<String>,
     /// Local lifecycle work-item that receives this verifier verdict. A green
     /// result advances to terminal code-check; a red result returns to bounded
@@ -760,7 +761,7 @@ impl TerminalEcGateSession {
                 "terminal-ec-runner-error",
                 EcVerifyFailureKind::RunnerError,
                 &format!(
-                    "terminal EC inventory evaluation failed after lock acquisition: {error}; retry `aw td code-check <slug>`"
+                    "terminal EC inventory evaluation failed after lock acquisition: {error}; retry `aw cb check <slug>`"
                 ),
             )
         })
@@ -1733,6 +1734,13 @@ fn parse_ec_annotation(line: &str) -> Option<EcSectionAnnotation> {
 fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        bail!(
+            "Python Spec EC is hand-authored; `aw ec gen` will not overwrite it. Run `aw ec check --project {}` and `aw ec review --project {}` instead.",
+            ctx.project,
+            ctx.project
+        );
+    }
     ensure_ec_lock_clean_for_gen(&ctx)?;
     let manifest = build_expected_manifest(&ctx)?;
     if !args.dry_run {
@@ -1951,7 +1959,12 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
         );
     }
     if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
-        if let Some(wi) = args.wi.as_deref().map(str::trim).filter(|wi| !wi.is_empty()) {
+        if let Some(wi) = args
+            .wi
+            .as_deref()
+            .map(str::trim)
+            .filter(|wi| !wi.is_empty())
+        {
             persist_ec_first_next_action(
                 &project_root,
                 wi,
@@ -2883,7 +2896,10 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let inventory_check = check_ec_context(&ctx)?;
     if inventory_check.stale {
         let next = if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
-            command_with_wi(format!("aw ec check --project {}", ctx.project), args.wi.as_deref())
+            command_with_wi(
+                format!("aw ec check --project {}", ctx.project),
+                args.wi.as_deref(),
+            )
         } else {
             command_with_wi(
                 format!("aw ec review --project {}", ctx.project),
@@ -2926,14 +2942,22 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let semantic_review_required = ec_verify_requires_semantic_review(&summary);
     let mut routed_next = None;
     let lifecycle_state = if let Some(wi) = args.wi.as_deref() {
-        if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1
+            && semantic_review_required
+        {
+            let next = command_with_wi(format!("aw ec review --project {}", ctx.project), Some(wi));
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+            routed_next = Some(next);
+            None
+        } else if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             let next = if summary.clean {
                 match args.stage.as_deref() {
-                    Some("core") => format!(
-                        "aw ec verify --project {} --required-only --stage operational --wi {wi}",
+                    Some("td") => format!("aw cb gen --project {} --wi {wi}", ctx.project),
+                    Some("cb") | None => format!("aw goal wi {wi}"),
+                    Some("core") | Some("operational") => format!(
+                        "aw ec verify --project {} --required-only --stage cb --wi {wi}",
                         ctx.project
                     ),
-                    Some("operational") | None => format!("aw td code-check {wi}"),
                     Some(_) => unreachable!("clap validates EC stage"),
                 }
             } else {
@@ -2943,7 +2967,10 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
                     .find(|result| result.status != "passed" && result.status != "skipped")
                     .map(|result| result.category.as_str())
                     .filter(|dimension| {
-                        matches!(*dimension, "behavior" | "security" | "stability" | "efficiency")
+                        matches!(
+                            *dimension,
+                            "behavior" | "security" | "stability" | "efficiency"
+                        )
                     })
                     .unwrap_or("behavior");
                 crate::cli::run::python_artifact_lifecycle_step(
@@ -3060,8 +3087,10 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
             }
         }
     }
-    if let Some(next) = &next_action {
-        println!("next: {next}");
+    if !args.json {
+        if let Some(next) = &next_action {
+            println!("next: {next}");
+        }
     }
     if !summary.clean && args.wi.is_none() {
         std::process::exit(1);
@@ -3893,7 +3922,19 @@ fn python_ec_assertions(case: &crate::services::python_ec::PythonEcCase) -> Vec<
         assertions.push(format!("threshold: {threshold}"));
     }
     assertions.push(format!("target: {}", case.target));
+    if let Some(failure) = case.known_failure.as_ref() {
+        assertions.push(format!(
+            "known-failure: reason={}; expected={}",
+            failure.reason, failure.expected
+        ));
+    }
     assertions
+}
+
+fn python_ec_case_has_known_failure(case: &EcManifestCase) -> bool {
+    case.assertions
+        .iter()
+        .any(|assertion| assertion.starts_with("known-failure:"))
 }
 
 fn canonicalize_ec_cases(mut cases: Vec<EcManifestCase>) -> Vec<EcManifestCase> {
@@ -5834,10 +5875,20 @@ fn verify_ec_context_with_stage(
     let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
         if let Some(stage) = stage {
-            let in_stage = match stage {
-                "core" => matches!(case.category.as_str(), "behavior" | "security"),
-                "operational" => matches!(case.category.as_str(), "stability" | "efficiency"),
-                _ => unreachable!("clap validates stage"),
+            let in_stage = match (ctx.artifact_model, stage) {
+                (crate::models::project::ProjectArtifactModel::PythonV1, "td") => {
+                    matches!(case.category.as_str(), "behavior" | "security")
+                }
+                (crate::models::project::ProjectArtifactModel::PythonV1, "cb") => true,
+                (crate::models::project::ProjectArtifactModel::Legacy, "core") => {
+                    matches!(case.category.as_str(), "behavior" | "security")
+                }
+                (crate::models::project::ProjectArtifactModel::Legacy, "operational") => {
+                    matches!(case.category.as_str(), "stability" | "efficiency")
+                }
+                _ => anyhow::bail!(
+                    "EC stage `{stage}` is not valid for this project's specification model"
+                ),
             };
             if !in_stage {
                 results.push(skipped_ec_case(case, format!("skipped ({stage} stage)")));
@@ -5862,6 +5913,18 @@ fn verify_ec_context_with_stage(
         );
         if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             validate_python_ec_result_evidence(ctx, case, &mut result);
+            if stage == Some("td")
+                && result.status == "failed"
+                && python_ec_case_has_known_failure(case)
+            {
+                result.status = "known_failure".to_string();
+                result.failure_kind = None;
+            }
+            if stage == Some("cb") && python_ec_case_has_known_failure(case) {
+                result.status = "failed".to_string();
+                result.failure_kind = Some(EcVerifyFailureKind::CommandFailed);
+                result.stderr_tail = "known_failure remains declared at CB stage; resolve it before production readiness".to_string();
+            }
         }
         results.push(result);
     }
@@ -5874,7 +5937,12 @@ fn verify_ec_context_with_stage(
     }
     let executed_count = results
         .iter()
-        .filter(|result| result.status != "skipped" && result.status != "deferred")
+        .filter(|result| {
+            !matches!(
+                result.status.as_str(),
+                "skipped" | "deferred" | "known_failure"
+            )
+        })
         .count();
     let passed_count = results
         .iter()
@@ -5970,7 +6038,7 @@ pub(crate) fn acquire_terminal_ec_gate(
                 &ctx,
                 "terminal-ec-single-flight",
                 EcVerifyFailureKind::SingleFlight,
-                "another terminal EC evaluation is already running; wait for it to finish, then retry the same `aw td code-check <slug>` command",
+                "another terminal EC evaluation is already running; wait for it to finish, then retry the same `aw cb check <slug>` command",
                 ),
             ));
         }
@@ -5981,7 +6049,7 @@ pub(crate) fn acquire_terminal_ec_gate(
                 "terminal-ec-lock-error",
                 EcVerifyFailureKind::RunnerError,
                 &format!(
-                    "could not acquire the terminal EC single-flight lock: {err}; retry `aw td code-check <slug>`"
+                    "could not acquire the terminal EC single-flight lock: {err}; retry `aw cb check <slug>`"
                 ),
                 ),
             ));
@@ -6620,9 +6688,7 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
     for entry in WalkDir::new(&ctx.tests_root)
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry.file_type().is_file() && is_generated_ec_test_candidate(entry.path())
-        })
+        .filter(|entry| entry.file_type().is_file() && is_generated_ec_test_candidate(entry.path()))
     {
         let path = entry.path();
         if path == ctx.legacy_manifest_path {
@@ -7530,7 +7596,7 @@ e2e_tests:
         .unwrap();
         assert_eq!(
             red.next_action.as_deref(),
-            Some("aw td gen ec-first-fixture")
+            Some("aw cb gen ec-first-fixture")
         );
 
         let green = record_ec_first_verification(
@@ -7542,7 +7608,7 @@ e2e_tests:
         .unwrap();
         assert_eq!(
             green.next_action.as_deref(),
-            Some("aw td code-check ec-first-fixture")
+            Some("aw cb check ec-first-fixture")
         );
     }
 

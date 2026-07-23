@@ -221,11 +221,9 @@ fn compiled_cli_builds_one_deterministic_two_stage_project_plan() {
     let split = plan["proposed_epics"].as_array().unwrap();
     assert_eq!(split.len(), 2, "{plan:#}");
     assert!(split.iter().all(|epic| epic["source_epic"] == "100"));
-    assert!(
-        split
-            .iter()
-            .any(|epic| epic["horizon"] == "deferred" && epic["priority"] == "p3")
-    );
+    assert!(split
+        .iter()
+        .any(|epic| epic["horizon"] == "deferred" && epic["priority"] == "p3"));
 
     let changes = plan["changes"].as_array().unwrap();
     let duplicate = changes.iter().find(|change| change["id"] == "102").unwrap();
@@ -236,11 +234,9 @@ fn compiled_cli_builds_one_deterministic_two_stage_project_plan() {
     assert_eq!(oversized["replacement_ids"].as_array().unwrap().len(), 2);
     let blocked = changes.iter().find(|change| change["id"] == "201").unwrap();
     assert_eq!(blocked["lane"], "blocked_by_dependency");
-    assert!(
-        changes
-            .iter()
-            .all(|change| change["owner_epic"].is_string())
-    );
+    assert!(changes
+        .iter()
+        .all(|change| change["owner_epic"].is_string()));
 
     let proposals = plan["proposed_changes"].as_array().unwrap();
     let replacements = proposals
@@ -248,38 +244,32 @@ fn compiled_cli_builds_one_deterministic_two_stage_project_plan() {
         .filter(|change| change["source_change"] == "103")
         .collect::<Vec<_>>();
     assert_eq!(replacements.len(), 2);
-    assert!(
-        replacements
-            .iter()
-            .all(|change| change["owner_epic"] == "proposal:epic:100:active")
-    );
+    assert!(replacements
+        .iter()
+        .all(|change| change["owner_epic"] == "proposal:epic:100:active"));
     let mixed = plan["epics"]
         .as_array()
         .unwrap()
         .iter()
         .find(|epic| epic["id"] == "100")
         .unwrap();
-    assert!(
-        mixed["requirements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|requirement| {
-                requirement["text"] == "Rewrite the entire platform."
-                    && requirement["status"] == "planned"
-            })
-    );
+    assert!(mixed["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|requirement| {
+            requirement["text"] == "Rewrite the entire platform."
+                && requirement["status"] == "planned"
+        }));
     assert!(!proposals.iter().any(|change| {
         change["reason"] == "missing_requirement_coverage"
             && change["title"]
                 .as_str()
                 .is_some_and(|title| title.contains("Rewrite the entire platform"))
     }));
-    assert!(
-        proposals
-            .iter()
-            .all(|change| change["owner_epic"].is_string())
-    );
+    assert!(proposals
+        .iter()
+        .all(|change| change["owner_epic"].is_string()));
 
     for verb in ["epicize", "atomize", "prioritize"] {
         let rerun = run_aw(root.path(), &["wi", verb, "--project", "demo", "--json"]);
@@ -370,13 +360,11 @@ fn project_plan_still_fails_closed_on_multiple_owners() {
     assert!(!output.status.success());
     let output = stdout_json(&output);
     assert_eq!(output["action"], "blocked");
-    assert!(
-        output["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|diagnostic| diagnostic["code"] == "multiple_epic_owners")
-    );
+    assert!(output["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "multiple_epic_owners"));
     let (_, plan, _) = read_plan(&output);
     assert_eq!(plan["action"], "blocked");
     assert_eq!(plan["valid"], false);

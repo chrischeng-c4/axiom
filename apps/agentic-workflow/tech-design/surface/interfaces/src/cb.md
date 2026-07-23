@@ -35,12 +35,12 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/cli/cb.rs` generated from AST during Score force-regeneration standardization.
 
-For `aw td gen-source`, this interface invokes the exact source-unit apply API
+For `aw cb gen-source`, this interface invokes the exact source-unit apply API
 with normalized `--spec` and `--target` paths. Every invocation emits exactly
 one terminal JSON envelope: success reports processed/written files with an
 explicit terminal `next.kind=done`, ordinary command failures return a non-HITL
 error, non-zero status, and runnable remediation, and root-resolution failures
-route to `aw td gen-source --help`. `aw td create --from-source` emits one
+route to `aw cb gen-source --help`. `aw td create --from-source` emits one
 structured dispatch next or HITL envelope for explicit files; tracker creation
 is performed through the silent internal WI create path so nested tracker
 output cannot corrupt stdout.
@@ -52,7 +52,7 @@ third state while TD create reuses the same query for rebase recovery.
 
 Fresh terminal code-check also intersects that baseline with CODEGEN rows in
 the WI's accepted TDs and compares only their exact target/spec-section claims
-through the shared path-mode audit primitive. Drift emits `aw td gen <slug>`;
+through the shared path-mode audit primitive. Drift emits `aw cb gen <slug>`;
 at a terminal phase that command preflights, regenerates, formats, and commits
 only those target files without advancing phase or running project-wide
 post-passes, then emits the exact code-check retry.
@@ -85,7 +85,7 @@ post-passes, then emits the exact code-check retry.
 `````rust
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/cb.md#source
 // CODEGEN-BEGIN
-//! Code-artifact workflow verb implementations inherited by `aw td`.
+//! `aw cb` CLI — codebase materialization lifecycle.
 //!
 //! `cb` is the canonical namespace for code generation, code checks, and
 //! HANDWRITE marker fill/review flows. The lifecycle phase written by `td gen`
@@ -94,9 +94,7 @@ post-passes, then emits the exact code-check retry.
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 
 use anyhow::{Context, Result};
-use clap::Args;
-#[cfg(test)]
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -104,15 +102,18 @@ use crate::cli::td::{self, AuditArgs, AuditGroupBy, GenCodeArgs};
 
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
-// Kept test-only (issue #860 cleanup): the production `CbArgs`/`run`
-// dispatcher this enum backed had zero callers (no `aw cb` CLI surface
-// remains; `aw td` mounts `run_gen`/`run_gen_source`/`run_check`/`run_claim`/
-// `cb_fill::run` directly) and was deleted. This enum is retained only as
-// the `#[command(subcommand)]` type for the `TestCbCli` clap-parsing test
-// harness below (see `cb_gen_force_regen_parses_without_slug` and friends).
-#[cfg(test)]
+/// Codebase materialization: generate, fill, check, and promote target code.
+#[derive(Debug, Args)]
+pub struct CbArgs {
+    /// Project name for project-scoped codebase actions.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
+    #[command(subcommand)]
+    pub command: CbCommand,
+}
+
 #[derive(Debug, Subcommand)]
-enum CbCommand {
+pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
     // Forward-generate a target source file from a per-file rust-source-unit
@@ -121,11 +122,52 @@ enum CbCommand {
     // Audit code-space files for CODEGEN drift, MarkerGap, Uncovered,
     // and Handwrite items.
     Check(CbCheckArgs),
-    // Adopt existing code into score by generating a TD spec via the
-    // fillback pipeline.
-    Claim(CbClaimArgs),
     // Fill handwrite marker blocks in generated code (Phase 3).
     Fill(CbFillArgs),
+    /// Promote a HANDWRITE marker block to CODEGEN after its generator gap closes.
+    Promote(td::PromoteArgs),
+}
+
+/// Dispatch `aw cb`. TD remains authoring-only; all codebase changes route
+/// through this namespace so the visible lifecycle is EC -> TD -> CB -> EC.
+pub async fn run(args: CbArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    match &args.command {
+        CbCommand::Check(args) => {
+            if let Some(target) = args.target.as_deref() {
+                if code_check_target_is_slug(&project_root, target) {
+                    super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", target))).await?;
+                }
+            }
+        }
+        CbCommand::Gen(args) => {
+            if args.target.is_none() {
+                super::workflow_guard::guard_issue_mutation(
+                    &project_root,
+                    args.slug.as_deref().map(|slug| ("td", slug)),
+                ).await?;
+            }
+        }
+        CbCommand::GenSource(args) => {
+            if !args.dry_run {
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            }
+        }
+        CbCommand::Fill(args) => {
+            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &args.slug))).await?;
+        }
+        CbCommand::Promote(_) => {
+            super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+        }
+    }
+    let project = args.project.as_deref();
+    match args.command {
+        CbCommand::Gen(args) => run_gen(args).await,
+        CbCommand::GenSource(args) => run_gen_source(args),
+        CbCommand::Check(args) => run_check(args, project).await,
+        CbCommand::Fill(args) => super::cb_fill::run(args).await,
+        CbCommand::Promote(args) => td::run_promote(args),
+    }
 }
 
 // Args for `aw td fill <slug>` — Phase 3 marker-fill workflow.
@@ -196,8 +238,8 @@ pub struct CbClaimArgs {
     pub project: Option<String>,
 }
 
-// Args for `aw td gen <slug>` or
-// `aw td gen --force-regen --project <project>`.
+// Args for `aw cb gen <slug>` or
+// `aw cb gen --force-regen --project <project>`.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Args)]
@@ -215,7 +257,7 @@ pub struct CbGenArgs {
     #[arg(long)]
     pub output_dir: Option<String>,
     /// Root-owned Python-artifact lifecycle WI. Target-native generation
-    /// records the core EC handoff only when this explicit owner is present.
+    /// records the CB fill handoff only when this explicit owner is present.
     #[arg(long)]
     pub wi: Option<String>,
     // Path to the spec file (relative to the current checkout root).
@@ -277,7 +319,7 @@ pub struct CbCheckArgs {
     pub allow_empty_impl: bool,
 }
 
-// Args for `aw td gen-source --spec <td> --target <source-file>`.
+// Args for `aw cb gen-source --spec <td> --target <source-file>`.
 #[derive(Debug, Args)]
 pub struct CbGenSourceArgs {
     // Repo-relative path to the per-file source TD (with a lossless
@@ -307,7 +349,7 @@ pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
                 false,
                 &message,
                 None,
-                Some("aw td gen-source --help"),
+                Some("aw cb gen-source --help"),
             )?;
             anyhow::bail!(message);
         }
@@ -323,7 +365,7 @@ pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
                 false,
                 &message,
                 None,
-                Some("aw td gen-source --help"),
+                Some("aw cb gen-source --help"),
             )?;
             anyhow::bail!(message);
         }
@@ -412,7 +454,7 @@ fn print_gen_source_terminal(
         } else if validate_gen_source_cli_path("spec", &args.spec).is_ok() {
             format!("aw td check {}", shell_quote_cli_arg(&args.spec))
         } else {
-            "aw td gen-source --help".to_string()
+            "aw cb gen-source --help".to_string()
         }
     });
     let env = serde_json::json!({
@@ -447,7 +489,7 @@ fn print_gen_source_terminal(
     Ok(())
 }
 
-// Implementation of `aw td gen`.
+// Implementation of `aw cb gen`.
 ///
 // Slug mode delegates to the approved-TD lifecycle pipeline. `--force-regen`
 // replays canonical source TD entries for codegen-owned files under a
@@ -580,24 +622,21 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         _ => unreachable!("validated target"),
     };
     if let Some(wi) = args.wi.as_deref() {
-        let project = args
-            .project
+        args.project
             .as_deref()
             .context("--target --wi requires --project <project>")?;
         let project_root = crate::find_project_root()?;
         crate::cli::ec::persist_ec_first_next_action(
             &project_root,
             wi,
-            format!(
-                "aw ec verify --project {project} --required-only --stage core --wi {wi}"
-            ),
+            format!("aw cb fill {wi}"),
         )?;
     }
     println!("{}", serde_json::to_string_pretty(&manifest)?);
     Ok(())
 }
 
-/// Re-run only the accepted TD's touched CODEGEN targets when `aw td gen`
+/// Re-run only the accepted TD's touched CODEGEN targets when `aw cb gen`
 /// is invoked from a fresh terminal phase. Normal authoring still delegates
 /// to `td::run_gen_code`; this branch is the executable remediation emitted
 /// by terminal drift detection and deliberately leaves WI phase/state alone.
@@ -679,7 +718,7 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
     let committed = crate::git::commit_scoped_paths(&project_root, &changed_paths, &message)?;
     if !committed {
         anyhow::bail!(
-            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw td code-check {slug}`"
+            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw cb check {slug}`"
         );
     }
 
@@ -697,7 +736,7 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
         "slug": slug,
         "artifacts": artifacts,
         "message": "touched CODEGEN targets regenerated and committed; rerun terminal code-check",
-        "next": { "command": format!("aw td code-check {slug}") },
+        "next": { "command": format!("aw cb check {slug}") },
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)
@@ -4656,7 +4695,7 @@ pub fn signature_only() -> Result<()>
 
     #[test]
     fn fillback_next_envelopes_are_chain_followable() {
-        let command = "aw td gen-source --spec spec.md --target src/lib.rs --dry-run";
+        let command = "aw cb gen-source --spec spec.md --target src/lib.rs --dry-run";
         let dispatch = fillback_dispatch_next(command);
         assert_eq!(dispatch["kind"], "dispatch");
         assert_eq!(dispatch["command"], command);
@@ -5050,7 +5089,7 @@ fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
     serde_json::json!({
         "action": "guidance",
         "message": format!(
-            "`aw td code-check` requires a slug or target path. Whole-project CODEGEN drift \
+            "`aw cb check` requires a slug or target path. Whole-project CODEGEN drift \
              and HANDWRITE marker-gap reporting now lives in `aw health --project {project}` \
              (see the `drift_marker` axis; add `-v/--verbose` or `drift-marker` section for \
              per-file detail)."
@@ -5118,7 +5157,7 @@ fn terminal_ec_failure_envelope(
     let remediation = if semantic_review_required {
         format!("aw ec review --project {}", summary.project)
     } else {
-        format!("aw td code-check {slug}")
+        format!("aw cb check {slug}")
     };
     serde_json::json!({
         "action": if semantic_review_required { "hitl" } else { "error" },
@@ -5263,8 +5302,8 @@ async fn run_check_lifecycle_terminal(
             format!(
                 "no local work-item '{slug}' found (the local issue cache is ephemeral and may \
                  have been cleared); this slug has prior lifecycle commits in this worktree — \
-                 re-run `aw td gen {slug}` (or `aw td create {slug}` if gen was never reached) \
-                 to rehydrate the local issue before retrying `aw td code-check {slug}`"
+                 re-run `aw cb gen {slug}` (or `aw td create {slug}` if generation was never reached) \
+                 to rehydrate the local issue before retrying `aw cb check {slug}`"
             )
         } else {
             format!(
@@ -5327,9 +5366,9 @@ async fn run_check_lifecycle_terminal(
                         "error_kind": "terminal_ec_stale_work_item",
                         "slug": slug,
                         "message": format!(
-                            "td code-check refused: work-item `{slug}` disappeared after the terminal EC lease was acquired; rehydrate it, then retry `aw td code-check {slug}`"
+                            "cb check refused: work-item `{slug}` disappeared after the terminal EC lease was acquired; rehydrate it, then retry `aw cb check {slug}`"
                         ),
-                        "next": { "command": format!("aw td code-check {slug}") },
+                        "next": { "command": format!("aw cb check {slug}") },
                     });
                     println!("{}", serde_json::to_string(&env)?);
                     return Ok(true);
@@ -5347,7 +5386,7 @@ async fn run_check_lifecycle_terminal(
             "action": "error",
             "slug": slug,
             "message": format!(
-                "cannot complete code-check after terminal EC lease acquisition: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'; retry `aw td code-check {}`",
+                "cannot complete code-check after terminal EC lease acquisition: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'; retry `aw cb check {}`",
                 phase,
                 td_phase::CB_FILLED,
                 td_phase::CB_GENNED,
@@ -5355,7 +5394,7 @@ async fn run_check_lifecycle_terminal(
                 td_phase::TD_MERGED,
                 slug,
             ),
-            "next": { "command": format!("aw td code-check {slug}") },
+            "next": { "command": format!("aw cb check {slug}") },
         });
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
@@ -5475,7 +5514,7 @@ async fn run_check_lifecycle_terminal(
                     "message": format!(
                         "td code-check refused because touched CODEGEN parity could not be verified: {error:#}"
                     ),
-                    "next": { "command": format!("aw td gen {slug}") },
+                    "next": { "command": format!("aw cb gen {slug}") },
                 });
                 println!("{}", serde_json::to_string(&env)?);
                 return Ok(true);
@@ -5493,12 +5532,12 @@ async fn run_check_lifecycle_terminal(
                 "error_kind": "terminal_touched_codegen_drift",
                 "slug": slug,
                 "message": format!(
-                    "td code-check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw td gen {slug}`, then follow its emitted retry command",
+                    "cb check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw cb gen {slug}`, then follow its emitted retry command",
                     codegen_findings.len(),
                 ),
                 "files": files,
                 "findings": codegen_findings,
-                "next": { "command": format!("aw td gen {slug}") },
+                "next": { "command": format!("aw cb gen {slug}") },
             });
             println!("{}", serde_json::to_string(&env)?);
             return Ok(true);
@@ -5596,8 +5635,8 @@ async fn run_check_lifecycle_terminal(
                 project,
             ) {
                 Ok(Some(report)) if !report.clean => {
-                    let next = if report.next_command.starts_with("aw td gen --project ") {
-                        format!("aw td gen {slug}")
+                    let next = if report.next_command.starts_with("aw cb gen --project ") {
+                        format!("aw cb gen {slug}")
                     } else {
                         report.next_command.clone()
                     };
@@ -5619,7 +5658,7 @@ async fn run_check_lifecycle_terminal(
                         "error_kind": "python_artifact_code_check_unverifiable",
                         "slug": slug,
                         "message": format!("td code-check refused because the Python artifact graph could not be verified: {error:#}"),
-                        "next": { "command": format!("aw td gen {slug}") },
+                        "next": { "command": format!("aw cb gen {slug}") },
                     });
                     println!("{}", serde_json::to_string(&env)?);
                     return Ok(true);
@@ -5741,7 +5780,7 @@ async fn run_check_lifecycle_terminal(
                 "action": "error",
                 "slug": slug,
                 "message": format!(
-                    "td code-check landing failed: {}; resolve and re-run `aw td code-check {}`",
+                    "cb check landing failed: {}; resolve and re-run `aw cb check {}`",
                     e, slug
                 ),
             });
@@ -6040,7 +6079,7 @@ fn dirty_touched_scope_gate_message(
     Some(format!(
         "td code-check refused: {} touched file(s) have uncommitted changes in git and must be \
          committed or restored before '{slug}' can close: {}; run `git add <path> && git commit` \
-         (or `git restore <path>` to discard) for each, then re-run `aw td code-check {slug}`",
+         (or `git restore <path>` to discard) for each, then re-run `aw cb check {slug}`",
         dirty.len(),
         dirty.join(", "),
     ))
@@ -6123,7 +6162,7 @@ fn touched_scope_standardization_gate_message(
     for path in &verdict.attr_gap {
         lines.push(format!(
             "  - {path}: HANDWRITE marker missing required gap/tracker attrs — fill them in, \
-             or `aw td promote` once the gap-blocker is closed"
+             or `aw cb promote` once the gap-blocker is closed"
         ));
     }
     let message = format!(
@@ -6200,7 +6239,7 @@ fn empty_implementation_gate_message(
     if block {
         Some(format!(
             "refusing to complete code-check: spec lists {} file(s) but {} are missing on disk \
-             (codegen likely skipped; run `aw td gen {}` then implement, \
+             (codegen likely skipped; run `aw cb gen {}` then implement, \
              or pass --allow-empty-impl for spec-only completions).\n{}",
             entries_total,
             total_missing,
@@ -6548,7 +6587,7 @@ fn hand_written_implementation_gate_message(
     Some(format!(
         "refusing to complete code-check: {} of {} hand-written create/modify path(s) lack \
          required implementation evidence: {}; create, implement, and commit every listed path, \
-         then re-run `aw td code-check {slug}` (or pass --allow-empty-impl for an intentional \
+         then re-run `aw cb check {slug}` (or pass --allow-empty-impl for an intentional \
          spec-only completion)",
         incomplete.len(),
         promised.len(),

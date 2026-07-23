@@ -20,10 +20,10 @@ fn ec_artifact_producer_cli_fixture() {
         "cargo test -p agentic-workflow --test artifact_producer_cli_test ec_draft_emits_cli_owned_skeleton_and_structured_slots -- --nocapture";
     let id = "ec-artifact-producer-cli-fixture";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

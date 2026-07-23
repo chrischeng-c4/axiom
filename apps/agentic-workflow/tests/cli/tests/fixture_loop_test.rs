@@ -27,7 +27,7 @@
 //! `aw wi run <slug>` and follows the runner envelope chain to a literal
 //! `completion.workflow_complete=true` — the practical completion signal
 //! used by the rest of this suite (terminal `action:"done"` from
-//! `aw td fill` -> `aw td code-check`) is still exercised by
+//! `aw cb fill` -> `aw cb check`) is still exercised by
 //! `fixture_loop_drives_cb_genned_wi_to_terminal_done` below, matching
 //! `chain_liveness_test.rs`'s own convention for that internal segment.
 
@@ -55,7 +55,7 @@ fn skip_unless_binaries() -> Option<(std::path::PathBuf, String)> {
 /// (`should_use_td_branch` in td.rs); a real project branch runs the
 /// internal lifecycle verbs in place instead (matches
 /// `cb_fill_test.rs::test_apply_marker_replaces_block`'s real-binary
-/// round trip, the closest existing precedent for driving `aw td fill` for
+/// round trip, the closest existing precedent for driving `aw cb fill` for
 /// real).
 fn init_seed_repo(git: &Path, root: &Path) {
     Command::new(git)
@@ -95,8 +95,8 @@ fn init_seed_repo(git: &Path, root: &Path) {
 
 /// Commit every current working-tree change. Matches
 /// `chain_liveness_test.rs`/`td_no_merge_test.rs`'s `commit_all`: real
-/// `aw td gen`/`aw td fill` already commit generated/filled files before
-/// terminal `aw td code-check` runs, so a fixture that hand-writes a WI's
+/// `aw cb gen`/`aw cb fill` already commit generated/filled files before
+/// terminal `aw cb check` runs, so a fixture that hand-writes a WI's
 /// touched-scope files directly must do the same to satisfy the #807/#1275
 /// clean-touched-scope precondition.
 fn commit_all(git: &Path, root: &Path) {
@@ -119,7 +119,7 @@ fn commit_all(git: &Path, root: &Path) {
 /// `aw td create` writes. Issue #1383's hand-written-implementation gate
 /// (`cb.rs::committed_paths_since_td_init`) requires this commit to exist
 /// and precede a slug's real implementation commit before terminal
-/// `aw td code-check` will accept hand-written create/modify evidence — this
+/// `aw cb check` will accept hand-written create/modify evidence — this
 /// fixture writes that implementation directly (bypassing `aw td create`),
 /// so it must seed the trailer itself. Matches
 /// `td_no_merge_test.rs::commit_td_init`, the sibling fixture landed
@@ -168,6 +168,134 @@ fn write_fixture_aw_toml(root: &Path, project: &str) {
              [[projects.workspaces]]\nname = \"{project}\"\npaths = [\"**\"]\ntarget = \"rust\"\n\n\
              [agentic_workflow.issue_platform]\ntype = \"local\"\n"
         ),
+    )
+    .unwrap();
+}
+
+/// The same offline fixture project shape as [`write_fixture_aw_toml`], but
+/// with one required behavior EC case. `command` is intentionally supplied by
+/// each test (`true` for green, `false` for red) so the fixture proves that the
+/// terminal gate both refuses and admits the exact same lifecycle state.
+fn write_required_ec_fixture_aw_toml(
+    root: &Path,
+    project: &str,
+    case_id: &str,
+    command: &str,
+    digest: &str,
+) {
+    std::fs::write(
+        root.join("aw.toml"),
+        format!(
+            "[[projects]]\nname = \"{project}\"\npath = \".\"\nec_review_mode = \"deferred\"\n\n\
+             [[projects.workspaces]]\nname = \"{project}\"\npaths = [\"**\"]\ntarget = \"rust\"\n\n\
+             [aw.ec.generated]\nversion = 1\nproject = \"{project}\"\n\
+             generated_from_td_digest = \"{digest}\"\n\n\
+             [agentic_workflow.issue_platform]\ntype = \"local\"\n\n\
+             [[aw.ec.generated.cases]]\n\
+             id = \"{case_id}\"\n\
+             capability_id = \"demo-capability\"\n\
+             claim_id = \"demo-claim\"\n\
+             contract_id = \"demo-claim\"\n\
+             category = \"behavior\"\n\
+             td_ref = \".aw/tech-design/specs/demo.md#{case_id}\"\n\
+             test_path = \"tests/behavior_{case_id}.rs\"\n\
+             command = \"{command}\"\n\
+             required_for_production = true\n\
+             assertions = [\"the required fixture case controls terminal completion\"]\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn append_required_ec_case_to_fixture_spec(root: &Path, case_id: &str, command: &str) {
+    let path = root.join(DEMO_SPEC_REL);
+    let mut content = std::fs::read_to_string(&path).expect("read fixture TD");
+    content.push_str(&format!(
+        "\n## E2E Test\n<!-- type: e2e-test lang: yaml -->\n\n```yaml\n\
+         e2e_tests:\n\
+           - id: {case_id}\n\
+             capability_id: demo-capability\n\
+             claim_id: demo-claim\n\
+             command: \"{command}\"\n\
+             assertions:\n\
+               - the required fixture case controls terminal completion\n\
+         ```\n"
+    ));
+    std::fs::write(path, content).unwrap();
+}
+
+fn current_required_ec_digest(aw_bin: &str, root: &Path, project: &str) -> String {
+    let lock = Command::new(aw_bin)
+        .current_dir(root)
+        .env(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .args(["ec", "lock", "--project", project])
+        .output()
+        .expect("run EC lock");
+    assert!(
+        lock.status.success(),
+        "fixture EC lock failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr)
+    );
+
+    let dry_run = Command::new(aw_bin)
+        .current_dir(root)
+        .env(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .args(["ec", "gen", "--project", project, "--dry-run", "--json"])
+        .output()
+        .expect("run EC gen dry-run");
+    assert!(
+        dry_run.status.success(),
+        "fixture EC dry-run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&dry_run.stdout),
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&dry_run.stdout).expect("parse EC dry-run JSON");
+    payload["generated_from_td_digest"]
+        .as_str()
+        .expect("EC dry-run digest")
+        .to_string()
+}
+
+fn write_fixture_accepted_ec_review(root: &Path, project: &str, digest: &str) {
+    let ec_root = root.join("external-contracts");
+    std::fs::create_dir_all(&ec_root).unwrap();
+    let author = serde_json::json!({
+        "version": 1,
+        "project": project,
+        "source_digest": digest,
+        "author": "fixture-ec-author",
+        "recorded_at": "2026-01-01T00:00:00Z"
+    });
+    std::fs::write(
+        ec_root.join("ec-author.json"),
+        format!("{}\n", serde_json::to_string_pretty(&author).unwrap()),
+    )
+    .unwrap();
+    let review = serde_json::json!({
+        "version": 1,
+        "project": project,
+        "source_digest": digest,
+        "decision": "accepted",
+        "reviewer_kind": "human",
+        "reviewed_by": "fixture-independent-reviewer",
+        "reviewed_at": "2026-01-01T00:00:01Z",
+        "summary": "Fixture evidence accepts the bounded terminal-gate contract.",
+        "checklist": {
+            "capability_claim_coverage": true,
+            "required_dimensions": true,
+            "assertions_specific": true,
+            "oracle_independent": true,
+            "loopholes_checked": true,
+            "false_green_risk_checked": true
+        },
+        "findings": [],
+        "target_path": ""
+    });
+    std::fs::write(
+        ec_root.join("ec-review.json"),
+        format!("{}\n", serde_json::to_string_pretty(&review).unwrap()),
     )
     .unwrap();
 }
@@ -488,6 +616,9 @@ fn canned_content_for_marker(marker_id: &str) -> String {
 /// by `chain.rs`'s `EMIT_REGISTRY` for envelope shapes without a `next`
 /// field (e.g. `td.rs`'s `TdEnvelope::Dispatch`).
 fn extract_next_command(envelope: &serde_json::Value) -> Option<String> {
+    if let Some(cmd) = envelope.get("next").and_then(|next| next.as_str()) {
+        return Some(cmd.to_string());
+    }
     if let Some(cmd) = envelope
         .get("next")
         .and_then(|n| n.get("command"))
@@ -561,14 +692,17 @@ fn follow_envelopes(
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         // #1348: `aw wi run` / `aw capability run` emit NDJSON progress events
         // (`"event":"progress"`) ahead of the final envelope line on stdout,
-        // unlike the single-envelope-per-invocation `aw td fill`/`aw td
+        // unlike the single-envelope-per-invocation `aw cb fill`/`aw td
         // code-check` commands this follower originally targeted. The final
         // envelope is always the last non-empty line; parse that one.
-        let parsed: Option<serde_json::Value> = stdout
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .and_then(|line| serde_json::from_str(line.trim()).ok());
+        let parsed: Option<serde_json::Value> =
+            serde_json::from_str(stdout.trim()).ok().or_else(|| {
+                stdout
+                    .lines()
+                    .rev()
+                    .find(|line| !line.trim().is_empty())
+                    .and_then(|line| serde_json::from_str(line.trim()).ok())
+            });
 
         if !output.status.success() {
             return Err(FollowFailure {
@@ -589,12 +723,21 @@ fn follow_envelopes(
             reason: format!("stdout is not a single JSON envelope:\nstdout:\n{stdout}"),
         })?;
 
-        if envelope.get("action").and_then(|a| a.as_str()) == Some("error") {
+        let action_error = envelope.get("action").and_then(|a| a.as_str()) == Some("error");
+        let terminal_ec_refusal = envelope
+            .get("error_kind")
+            .and_then(|kind| kind.as_str())
+            .is_some_and(|kind| kind.starts_with("terminal_ec_"));
+        if action_error || terminal_ec_refusal {
             return Err(FollowFailure {
                 hop_index: index,
                 command: command.clone(),
                 envelope: Some(envelope),
-                reason: "envelope reported action=\"error\"".to_string(),
+                reason: if terminal_ec_refusal {
+                    "envelope reported a terminal EC refusal".to_string()
+                } else {
+                    "envelope reported action=\"error\"".to_string()
+                },
             });
         }
 
@@ -611,7 +754,7 @@ fn follow_envelopes(
         let action_done = envelope.get("action").and_then(|a| a.as_str()) == Some("done");
         let next_command = extract_next_command(&envelope);
         // #1348: a `"done"` action with no further runnable command is
-        // genuinely terminal (e.g. `aw td code-check`'s closing envelope,
+        // genuinely terminal (e.g. `aw cb check`'s closing envelope,
         // still the case this whitelist-guards below). A `"done"` action
         // that DOES carry a `next.command` (e.g. `closed_wi_envelope`'s
         // "inspect the parent root" rollup hop) is a mid-chain hop, not a
@@ -686,7 +829,7 @@ fn follow_envelopes(
 /// AC1 (internal-lifecycle-layer scope, see module doc): a bounded-tick,
 /// self-contained fixture (tmp git repo, local issue backend, a `cb_genned`
 /// WI whose TD spec names two trivially fillable HANDWRITE targets) driven
-/// purely by following emitted envelopes — starting at `aw td fill <slug>`
+/// purely by following emitted envelopes — starting at `aw cb fill <slug>`
 /// — reaches terminal `"action":"done"` with the EC-advisory marker
 /// (no EC inventory configured), lands both canned fills, and advances the
 /// WI to `td_merged`.
@@ -715,7 +858,7 @@ async fn fixture_loop_drives_cb_genned_wi_to_terminal_done() {
         .await;
 
     let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
-    let hops = follow_envelopes(&aw_bin, root, &["td", "fill", slug], extra_envs)
+    let hops = follow_envelopes(&aw_bin, root, &["cb", "fill", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
 
     // Real trace: fill(brief) -> fill --apply marker-a -> fill --apply
@@ -766,13 +909,178 @@ async fn fixture_loop_drives_cb_genned_wi_to_terminal_done() {
     }
 }
 
+/// A configured required EC is a real terminal gate, not an advisory marker:
+/// the same `cb_filled` WorkItem is refused while its required case is red,
+/// stays open without phase mutation, then closes only after that case turns
+/// green. The success envelope must name the consulted case.
+#[tokio::test]
+async fn fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion() {
+    let Some((git, aw_bin)) = skip_unless_binaries() else {
+        eprintln!("skipping: git binary or CARGO_BIN_EXE_aw not available");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let slug = "fixture-loop-required-ec-terminal";
+    let case_id = "fixture-required-terminal-case";
+    init_seed_repo(&git, root);
+    write_fixture_aw_toml(root, "demo");
+    write_fixture_changes_spec(root, &[(MARKER_A_PATH, "create")]);
+    let command = "sh ec-gate.sh";
+    append_required_ec_case_to_fixture_spec(root, case_id, command);
+    let digest = current_required_ec_digest(&aw_bin, root, "demo");
+    write_required_ec_fixture_aw_toml(root, "demo", case_id, command, &digest);
+    write_fixture_accepted_ec_review(root, "demo", &digest);
+    commit_td_init(&git, root, slug);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(MARKER_A_PATH),
+        "// required EC fixture implemented\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("ec-gate.sh"), "#!/bin/sh\nexit 1\n").unwrap();
+    commit_all(&git, root);
+    seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo")
+        .await;
+
+    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let red = follow_envelopes(&aw_bin, root, &["cb", "check", slug], extra_envs)
+        .expect_err("a red required EC case must refuse terminal completion");
+    let red_envelope = red
+        .envelope
+        .clone()
+        .unwrap_or_else(|| panic!("red EC refusal must carry an envelope: {red}"));
+    assert_eq!(
+        red_envelope["action"], "error",
+        "expected the required EC command failure, got: {red_envelope:#?}"
+    );
+    assert!(
+        red_envelope.to_string().contains(case_id),
+        "red refusal must name the failing required case: {red_envelope:#?}"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let still_open = backend
+        .get(slug)
+        .await
+        .expect("read refused issue")
+        .expect("issue remains present");
+    assert_eq!(
+        still_open.state,
+        IssueState::Draft,
+        "the local-only fixture remains an actionable draft after refusal"
+    );
+    assert_eq!(still_open.phase.as_deref(), Some(td_phase::CB_FILLED));
+
+    std::fs::write(root.join("ec-gate.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    commit_all(&git, root);
+    let green = follow_envelopes(&aw_bin, root, &["cb", "check", slug], extra_envs)
+        .unwrap_or_else(|failure| panic!("{failure}"));
+    let terminal = green.last().expect("green terminal envelope");
+    assert_eq!(terminal.envelope["action"], "done");
+    assert_eq!(terminal.envelope["ec_gate"]["status"], "passed");
+    assert_eq!(terminal.envelope["ec_gate"]["commands_consulted"], 1);
+    assert!(
+        terminal.envelope["ec_gate"]["cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case == case_id)),
+        "green completion must record the consulted required case: {:#?}",
+        terminal.envelope
+    );
+}
+
+/// The goal runner follows a generated CB through fill and terminal check,
+/// stops at the required EC gate while it is red, and resumes the same
+/// WorkItem to terminal completion once green. This proves convergence at the
+/// public goal seam rather than merely testing a pre-CB phase error.
+#[tokio::test]
+async fn fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal() {
+    let Some((git, aw_bin)) = skip_unless_binaries() else {
+        eprintln!("skipping: git binary or CARGO_BIN_EXE_aw not available");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let slug = "fixture-loop-required-ec-goal";
+    let case_id = "fixture-required-goal-case";
+    init_seed_repo(&git, root);
+    write_fixture_aw_toml(root, "demo");
+    write_fixture_changes_spec(
+        root,
+        &[(MARKER_A_PATH, "create"), (MARKER_B_PATH, "create")],
+    );
+    let command = "sh ec-gate.sh";
+    append_required_ec_case_to_fixture_spec(root, case_id, command);
+    let digest = current_required_ec_digest(&aw_bin, root, "demo");
+    write_required_ec_fixture_aw_toml(root, "demo", case_id, command, &digest);
+    write_fixture_accepted_ec_review(root, "demo", &digest);
+    commit_td_init(&git, root, slug);
+    write_handwrite_marker_file(root, MARKER_A_PATH, MARKER_A_ID);
+    write_handwrite_marker_file(root, MARKER_B_PATH, MARKER_B_ID);
+    std::fs::write(root.join("ec-gate.sh"), "#!/bin/sh\nexit 1\n").unwrap();
+    commit_all(&git, root);
+    seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo")
+        .await;
+
+    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let red = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
+        .expect_err("the goal must stop when terminal required EC is red");
+    let red_envelope = red
+        .envelope
+        .clone()
+        .unwrap_or_else(|| panic!("red goal refusal must carry an envelope: {red}"));
+    assert_eq!(red_envelope["action"], "error");
+    assert!(
+        red_envelope.to_string().contains(case_id),
+        "goal refusal must name the required case: {red_envelope:#?}"
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after_fill = backend
+        .get(slug)
+        .await
+        .expect("read red-gated issue")
+        .expect("issue remains present");
+    assert_eq!(
+        after_fill.state,
+        IssueState::Draft,
+        "the local-only goal fixture remains actionable after the red EC gate"
+    );
+    assert_eq!(after_fill.phase.as_deref(), Some(td_phase::CB_FILLED));
+
+    std::fs::write(root.join("ec-gate.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    commit_all(&git, root);
+    let green = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
+        .unwrap_or_else(|failure| panic!("{failure}"));
+    let terminal = green.last().expect("green goal terminal envelope");
+    assert_eq!(terminal.envelope["action"], "done");
+    assert_eq!(terminal.envelope["ec_gate"]["status"], "passed");
+    assert!(
+        terminal.envelope["ec_gate"]["cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case == case_id)),
+        "goal completion must record the required EC case: {:#?}",
+        terminal.envelope
+    );
+
+    let closed = backend
+        .get(slug)
+        .await
+        .expect("read completed issue")
+        .expect("issue remains present");
+    assert_eq!(closed.state, IssueState::Closed);
+    assert_eq!(closed.phase.as_deref(), Some(td_phase::TD_MERGED));
+}
+
 /// AC1 (#1348): the same fixture, but driven end to end from `aw wi run
 /// <slug>` under the fixture-only `AW_FIXTURE_LOCAL_BACKEND=1` escape hatch
 /// (`issues::AW_FIXTURE_LOCAL_BACKEND_ENV`) instead of starting mid-chain at
-/// `aw td fill`. Two `follow_envelopes` calls, both starting at `aw wi run`:
+/// `aw cb fill`. Two `follow_envelopes` calls, both starting at `aw wi run`:
 ///
 /// 1. Open (`cb_genned`) -> `aw wi run` dispatches into the same internal
-///    `aw td fill` -> ... -> `aw td code-check` chain
+///    `aw cb fill` -> ... -> `aw cb check` chain
 ///    `fixture_loop_drives_cb_genned_wi_to_terminal_done` exercises,
 ///    terminating at that terminal `action:"done"` envelope (closes the WI).
 /// 2. Re-run `aw wi run` on the now-closed child WI: `closed_wi_envelope`
@@ -856,7 +1164,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
 }
 
 /// AC2 companion: an induced breakage (a WI parked at a phase terminal
-/// `aw td code-check` cannot complete from) must name the first broken hop
+/// `aw cb check` cannot complete from) must name the first broken hop
 /// — hop index, the exact command executed, and the envelope JSON that
 /// produced it — not fail generically or hang to the hop budget.
 #[tokio::test]
@@ -874,14 +1182,14 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
 
     // `td_created` is not one of the terminal-code-checkable phases
     // (`cb_filled`, `cb_genned`, legacy `td_gen_coded`) and not the
-    // `td_merged` retry phase either — `aw td code-check` must refuse with
+    // `td_merged` retry phase either — `aw cb check` must refuse with
     // an explicit `action:"error"` envelope instead of silently completing.
     let slug = "fixture-loop-broken-phase";
     seed_open_issue_at_phase_with_project(root, slug, td_phase::TD_CREATED, DEMO_SPEC_REL, "demo")
         .await;
 
     let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
-    let err = follow_envelopes(&aw_bin, root, &["td", "code-check", slug], extra_envs)
+    let err = follow_envelopes(&aw_bin, root, &["cb", "check", slug], extra_envs)
         .expect_err("an unresolvable start phase must break the very first hop, not succeed");
 
     assert_eq!(

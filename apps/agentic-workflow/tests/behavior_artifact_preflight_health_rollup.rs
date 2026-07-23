@@ -19,10 +19,10 @@ fn artifact_preflight_health_rollup() {
     let command = "cargo test -p agentic-workflow --test cli_tests preflight_ -- --nocapture";
     let id = "artifact-preflight-health-rollup";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

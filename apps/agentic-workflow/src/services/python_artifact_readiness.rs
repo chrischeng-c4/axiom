@@ -50,7 +50,15 @@ pub fn evaluate(project_root: &Path, project: &str) -> Result<Option<PythonArtif
     }
 
     let artifact_root = project_root.join(&row.path);
-    let td_root = artifact_root.join("tech-design");
+    let td_root = project_registry::resolve_td_root_from_config(project_root, &row.name)
+        .map(|resolved| resolved.root)
+        .unwrap_or_else(|_| {
+            artifact_root
+                .join("tech-design")
+                .to_string_lossy()
+                .into_owned()
+        });
+    let td_root = std::path::PathBuf::from(td_root);
     let ec_root = artifact_root.join("external-contracts");
     let mut readiness = PythonArtifactReadiness {
         enabled: true,
@@ -119,26 +127,22 @@ pub fn evaluate(project_root: &Path, project: &str) -> Result<Option<PythonArtif
 
     readiness.blockers.sort();
     readiness.blockers.dedup();
-    readiness.cases.sort_by(|left, right| left.id.cmp(&right.id));
+    readiness
+        .cases
+        .sort_by(|left, right| left.id.cmp(&right.id));
     readiness.td_module_ids.sort();
     readiness.ready = readiness.blockers.is_empty();
     readiness.next_command = (!readiness.ready).then(|| {
         if readiness.ec_inventory_path.is_none() {
             format!("aw ec check --project {}", row.name)
         } else if readiness.td_semantic_digest.is_none() {
-            format!(
-                "aw td check {} --project {}",
-                td_root.display(),
-                row.name
-            )
-        } else if readiness
-            .cases
-            .iter()
-            .any(|case| case.required_for_production && !case.evidence_ready && case.applicability == "td")
-        {
-            format!("aw ec verify --project {} --stage core", row.name)
+            format!("aw td check {} --project {}", td_root.display(), row.name)
+        } else if readiness.cases.iter().any(|case| {
+            case.required_for_production && !case.evidence_ready && case.applicability == "td"
+        }) {
+            format!("aw ec verify --project {} --stage td", row.name)
         } else {
-            format!("aw ec verify --project {} --stage operational", row.name)
+            format!("aw ec verify --project {} --stage cb", row.name)
         }
     });
     Ok(Some(readiness))

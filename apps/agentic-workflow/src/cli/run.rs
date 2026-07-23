@@ -547,7 +547,7 @@ pub(crate) fn ec_draft_command(project: &str, wi: &str) -> String {
 /// same production-required filter as terminal code-check; an unscoped manual
 /// `aw ec verify` remains available for explicitly exercising advisory cases.
 pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
-    format!("aw ec verify --project {project} --required-only --wi {wi}")
+    format!("aw ec verify --project {project} --required-only --wi {wi} --json")
 }
 
 /// The artifact/gate phases used by the opt-in `python-v1` lifecycle.
@@ -563,11 +563,11 @@ pub(crate) enum PythonArtifactPhase {
     EcAuthoring,
     EcReview,
     TdAuthoring,
-    TdGenerate,
-    UnitTest,
-    EcCore,
-    EcOperational,
-    CodeCheck,
+    EcTdVerify,
+    CbGenerate,
+    CbFill,
+    CbCheck,
+    EcCbVerify,
     Close,
     BehaviorOrSecurityRed,
     StabilityRed,
@@ -605,7 +605,7 @@ fn python_target_gen_command(
     let source_root = project_root.join(&row.path).join("tech-design");
     let output_dir = project_root.join(&row.path);
     Ok(format!(
-        "aw td gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
+        "aw cb gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
         shell_quote_goal_arg(&source_root.display().to_string()),
         shell_quote_goal_arg(&output_dir.display().to_string()),
         row.name,
@@ -644,12 +644,17 @@ pub(crate) fn python_artifact_lifecycle_step(
         None | Some("ec_missing" | "ec_authoring") => PythonArtifactPhase::EcAuthoring,
         Some("ec_checked" | "ec_review_pending") => PythonArtifactPhase::EcReview,
         Some("ec_reviewed" | "td_authoring") => PythonArtifactPhase::TdAuthoring,
-        Some("td_compiled") => PythonArtifactPhase::TdGenerate,
-        Some("td_generated") => PythonArtifactPhase::UnitTest,
-        Some("unit_green") => PythonArtifactPhase::EcCore,
-        Some("ec_core_green") => PythonArtifactPhase::EcOperational,
-        Some("ec_operational_green") => PythonArtifactPhase::CodeCheck,
-        Some("code_checked") => PythonArtifactPhase::Close,
+        Some("td_compiled") => PythonArtifactPhase::EcTdVerify,
+        Some("ec_td_green") => PythonArtifactPhase::CbGenerate,
+        Some("cb_generated") => PythonArtifactPhase::CbFill,
+        Some("cb_filled" | "unit_green") => PythonArtifactPhase::CbCheck,
+        Some("cb_checked") => PythonArtifactPhase::EcCbVerify,
+        Some("ec_cb_green" | "code_checked") => PythonArtifactPhase::Close,
+        // Compatibility for tracker labels written by the pre-TD/CB stage
+        // model. Resume at a safe point without making them canonical.
+        Some("td_generated") => PythonArtifactPhase::CbFill,
+        Some("ec_core_green") => PythonArtifactPhase::EcCbVerify,
+        Some("ec_operational_green") => PythonArtifactPhase::CbCheck,
         Some("ec_behavior_red" | "ec_security_red") => PythonArtifactPhase::BehaviorOrSecurityRed,
         Some("ec_stability_red") => PythonArtifactPhase::StabilityRed,
         Some("ec_efficiency_red") => PythonArtifactPhase::EfficiencyRed,
@@ -681,34 +686,40 @@ pub(crate) fn python_artifact_lifecycle_step(
             reason: "accepted EC admits direct Python tech-design authoring; compile/check the TD project before target generation".to_string(),
             requires_hitl: false,
         },
-        PythonArtifactPhase::TdGenerate => PythonArtifactLifecycleStep {
+        PythonArtifactPhase::EcTdVerify => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen("python")?,
-            reason: "typed Python TD is compiled; emit the native Python DDD target and its unit-test inventory".to_string(),
+            command: format!(
+                "aw ec verify --project {} --required-only --stage td --wi {wi} --json",
+                row.name
+            ),
+            reason: "the Python TD reference is ready; behavior and security must pass before codebase materialization".to_string(),
             requires_hitl: false,
         },
-        PythonArtifactPhase::UnitTest => PythonArtifactLifecycleStep {
+        PythonArtifactPhase::CbGenerate => PythonArtifactLifecycleStep {
             phase,
-            command: format!("aw td fill {wi}"),
+            command: target_gen("python")?,
+            reason: "TD behavior and security are green; materialize the native DDD codebase and its unit-test inventory".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::CbFill => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw cb fill {wi}"),
             reason: "generated source may contain explicit HANDWRITE gaps; resolve them before the target-native unit-test gate".to_string(),
             requires_hitl: false,
         },
-        PythonArtifactPhase::EcCore => PythonArtifactLifecycleStep {
+        PythonArtifactPhase::CbCheck => PythonArtifactLifecycleStep {
             phase,
-            command: format!("aw ec verify --project {} --required-only --stage core --wi {wi}", row.name),
-            reason: "target-native unit tests are green; behavior and security are the minimum TD-completion EC gate".to_string(),
+            command: format!("aw cb check {wi}"),
+            reason: "codebase materialization is complete; run native checks before terminal EC verification".to_string(),
             requires_hitl: false,
         },
-        PythonArtifactPhase::EcOperational => PythonArtifactLifecycleStep {
+        PythonArtifactPhase::EcCbVerify => PythonArtifactLifecycleStep {
             phase,
-            command: format!("aw ec verify --project {} --required-only --stage operational --wi {wi}", row.name),
-            reason: "core EC is green; execute required stability and efficiency evidence after generation/build".to_string(),
-            requires_hitl: false,
-        },
-        PythonArtifactPhase::CodeCheck => PythonArtifactLifecycleStep {
-            phase,
-            command: format!("aw td code-check {wi}"),
-            reason: "all applicable EC dimensions are green; run the terminal digest and source-ownership gate".to_string(),
+            command: format!(
+                "aw ec verify --project {} --required-only --stage cb --wi {wi} --json",
+                row.name
+            ),
+            reason: "the codebase is built and checked; behavior, security, stability, and efficiency are now production gates".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::Close => PythonArtifactLifecycleStep {
@@ -2225,11 +2236,11 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
     let normalized_phase = issue.phase.as_deref().map(td_phase::normalize);
     match normalized_phase {
         Some(td_phase::TD_CREATED) => (
-            format!("aw td gen {wi_id}"),
+            format!("aw cb gen {wi_id}"),
             "active WI has created TD; continue CB generation".to_string(),
         ),
         Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
-            format!("aw td fill {wi_id}"),
+            format!("aw cb fill {wi_id}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
         Some(td_phase::CB_FILLED) => match project_from_labels(issue) {
@@ -2239,13 +2250,13 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
                     .to_string(),
             ),
             None => (
-                format!("aw td code-check {wi_id}"),
+                format!("aw cb check {wi_id}"),
                 "active WI has no project label for EC verification; retry terminal code-check"
                     .to_string(),
             ),
         },
         Some(td_phase::TD_MERGED) => (
-            format!("aw td code-check {wi_id}"),
+            format!("aw cb check {wi_id}"),
             "active WI's terminal code-check is resumable; retry terminal code-check".to_string(),
         ),
         None => match project_from_labels(issue) {
@@ -2281,8 +2292,7 @@ fn phase_routed_stale_loop_next_action(raw_command: &str, issue: &Issue) -> Opti
             | td_phase::CB_FILLED
             | td_phase::TD_MERGED
     );
-    let stale_td_create =
-        raw_command.trim() == format!("aw td create {}", issue_cli_ref(issue));
+    let stale_td_create = raw_command.trim() == format!("aw td create {}", issue_cli_ref(issue));
     (advanced_phase && stale_td_create).then(|| wi_change_lifecycle_step(issue).0)
 }
 
@@ -3864,19 +3874,19 @@ workspaces = []
             (Some("ec_reviewed"), "aw td check "),
             (
                 Some("td_compiled"),
-                "aw td gen --target python --source-root",
-            ),
-            (Some("td_generated"), "aw td fill 42"),
-            (
-                Some("unit_green"),
-                "aw ec verify --project demo --required-only --stage core --wi 42",
+                "aw ec verify --project demo --required-only --stage td --wi 42",
             ),
             (
-                Some("ec_core_green"),
-                "aw ec verify --project demo --required-only --stage operational --wi 42",
+                Some("ec_td_green"),
+                "aw cb gen --target python --source-root",
             ),
-            (Some("ec_operational_green"), "aw td code-check 42"),
-            (Some("code_checked"), "aw wi close 42 --push"),
+            (Some("cb_generated"), "aw cb fill 42"),
+            (Some("cb_filled"), "aw cb check 42"),
+            (
+                Some("cb_checked"),
+                "aw ec verify --project demo --required-only --stage cb --wi 42",
+            ),
+            (Some("ec_cb_green"), "aw wi close 42 --push"),
         ];
 
         for (label, expected_command) in cases {
@@ -3899,58 +3909,36 @@ workspaces = []
     #[test]
     fn python_artifact_goal_routing_separates_red_dimensions_and_contract_repairs() {
         let root = python_v1_project_root();
-        let behavior = python_artifact_lifecycle_step(
-            root.path(),
-            "demo",
-            "42",
-            Some("ec_behavior_red"),
-        )
-        .unwrap()
-        .unwrap();
+        let behavior =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_behavior_red"))
+                .unwrap()
+                .unwrap();
         assert!(behavior.command.contains("--target python"));
         assert!(behavior.reason.contains("behavior/security"));
 
-        let stability = python_artifact_lifecycle_step(
-            root.path(),
-            "demo",
-            "42",
-            Some("ec_stability_red"),
-        )
-        .unwrap()
-        .unwrap();
+        let stability =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stability_red"))
+                .unwrap()
+                .unwrap();
         assert!(stability.command.contains("--target python"));
         assert!(stability.reason.contains("stability"));
 
-        let efficiency = python_artifact_lifecycle_step(
-            root.path(),
-            "demo",
-            "42",
-            Some("ec_efficiency_red"),
-        )
-        .unwrap()
-        .unwrap();
+        let efficiency =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_efficiency_red"))
+                .unwrap()
+                .unwrap();
         assert!(efficiency.command.contains("--target rust"));
         assert!(efficiency.reason.contains("Rust"));
 
-        let stale = python_artifact_lifecycle_step(
-            root.path(),
-            "demo",
-            "42",
-            Some("ec_stale"),
-        )
-        .unwrap()
-        .unwrap();
+        let stale = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stale"))
+            .unwrap()
+            .unwrap();
         assert_eq!(stale.command, "aw ec check --project demo --wi 42");
         assert!(stale.reason.contains("instead of changing product code"));
 
-        let hitl = python_artifact_lifecycle_step(
-            root.path(),
-            "demo",
-            "42",
-            Some("ec_hitl"),
-        )
-        .unwrap()
-        .unwrap();
+        let hitl = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_hitl"))
+            .unwrap()
+            .unwrap();
         assert!(hitl.requires_hitl);
         assert_eq!(hitl.command, "aw ec review --project demo --wi 42");
     }
@@ -3968,9 +3956,11 @@ workspaces = []
 "#,
         )
         .unwrap();
-        assert!(python_artifact_lifecycle_step(root.path(), "demo", "42", None)
-            .unwrap()
-            .is_none());
+        assert!(
+            python_artifact_lifecycle_step(root.path(), "demo", "42", None)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -4022,21 +4012,21 @@ workspaces = []
                 dimension: "behavior".to_string(),
                 why: "fixture failed".to_string(),
             },
-            next_action: Some("aw td gen 1500".to_string()),
+            next_action: Some("aw cb gen 1500".to_string()),
             ..Default::default()
         };
         let red_envelope = loop_state_envelope(root.clone(), &issue, &red);
-        assert_eq!(red_envelope.next.command, "aw td gen 1500");
+        assert_eq!(red_envelope.next.command, "aw cb gen 1500");
 
         let green = LoopState {
             issue_id: "1500".to_string(),
             status: LoopStatus::Converged,
             last_result: LastResult::Green,
-            next_action: Some("aw td code-check 1500".to_string()),
+            next_action: Some("aw cb check 1500".to_string()),
             ..Default::default()
         };
         let green_envelope = loop_state_envelope(root, &issue, &green);
-        assert_eq!(green_envelope.next.command, "aw td code-check 1500");
+        assert_eq!(green_envelope.next.command, "aw cb check 1500");
     }
 
     #[test]
@@ -4051,13 +4041,13 @@ workspaces = []
         // Iterating with a command -> the loop engine dispatches the act.
         let s = LoopState {
             status: LoopStatus::Iterating,
-            next_action: Some("aw td gen".to_string()),
+            next_action: Some("aw cb gen".to_string()),
             ..Default::default()
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td gen");
-        assert_eq!(e.invoke.command, "aw td gen");
+        assert_eq!(e.next.command, "aw cb gen");
+        assert_eq!(e.invoke.command, "aw cb gen");
         assert!(!e.completion.workflow_complete);
         assert!(!e.requires_hitl);
 
@@ -4092,8 +4082,8 @@ workspaces = []
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td code-check 188");
-        assert_eq!(e.invoke.command, "aw td code-check 188");
+        assert_eq!(e.next.command, "aw cb check 188");
+        assert_eq!(e.invoke.command, "aw cb check 188");
 
         // #845: `aw td merge` was removed from the LINEAR lifecycle; a stale
         // persisted string must repair to the current terminal step.
@@ -4104,7 +4094,7 @@ workspaces = []
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td code-check 188");
+        assert_eq!(e.next.command, "aw cb check 188");
 
         // #2423: an old loop-state can still name `aw td create <wi>` after
         // the CB fill has advanced the tracker. The loop must route by the
@@ -4145,11 +4135,11 @@ workspaces = []
         let mut issue = open_issue(IssueType::Enhancement, 937);
         issue.phase = Some("td_created".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td gen 937");
+        assert_eq!(command, "aw cb gen 937");
 
         issue.phase = Some("cb_genned".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td fill 937");
+        assert_eq!(command, "aw cb fill 937");
 
         issue.phase = Some("cb_filled".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
@@ -4162,7 +4152,7 @@ workspaces = []
         // routing, same as the capability.rs router.
         issue.phase = Some("td_reviewed".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td gen 937");
+        assert_eq!(command, "aw cb gen 937");
 
         // No phase label at all means this bounded, project-labeled WI has no
         // verifier yet, so the shared root table starts its EC skeleton.
@@ -5239,7 +5229,7 @@ review_status: pending
     #[test]
     fn artifact_quality_gate_injects_frontend_profile_and_prompt() {
         let mut envelope = test_envelope(
-            "aw td gen --project jet frontend/src/App.tsx",
+            "aw cb gen --project jet frontend/src/App.tsx",
             "generate frontend page component under frontend/src/App.tsx",
         );
 

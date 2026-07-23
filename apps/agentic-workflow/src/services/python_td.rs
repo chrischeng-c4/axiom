@@ -176,9 +176,9 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         .to_string_lossy()
         .replace('\\', "/");
     let artifact_id = explicit_artifact_id(&source, path)?;
-    let id = artifact_id.clone().unwrap_or_else(|| {
-        format!("module:{}", rel.trim_end_matches(".py").replace('/', "."))
-    });
+    let id = artifact_id
+        .clone()
+        .unwrap_or_else(|| format!("module:{}", rel.trim_end_matches(".py").replace('/', ".")));
     let mut imports = Vec::new();
     let mut declarations = Vec::new();
     let mut cursor = tree.root_node().walk();

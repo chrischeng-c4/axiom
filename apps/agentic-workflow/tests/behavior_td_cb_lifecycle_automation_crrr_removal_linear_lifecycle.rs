@@ -18,10 +18,10 @@ fn td_cb_lifecycle_automation_crrr_removal_linear_lifecycle() {
         "cargo test -p agentic-workflow --lib td_created_dispatches_to_gen -- --nocapture";
     let id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

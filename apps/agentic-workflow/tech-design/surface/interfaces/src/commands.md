@@ -100,8 +100,11 @@ pub enum Commands {
     #[command(name = "report-issue")]
     ReportIssue(standard_cli::ReportIssueArgs),
 
-    /// Tech-design and generated-code lifecycle
+    /// Tech-design authoring and validation lifecycle.
     Td(crate::cli::td::TdArgs),
+
+    /// Codebase materialization lifecycle: generate, fill, check, and promote.
+    Cb(crate::cli::cb::CbArgs),
 
     /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
     Ec(ec::EcArgs),
@@ -160,6 +163,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
+        }
+        Commands::Cb(args) => {
+            crate::cli::cb::run(args).await?;
         }
         Commands::Ec(args) => {
             ec::run(args)?;

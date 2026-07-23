@@ -47,7 +47,10 @@ pub struct PythonArtifactCodeCheck {
 /// owned by the emitter manifest. Unrelated product files are intentionally
 /// outside this comparison and cannot create either a false red or a false
 /// green for generated output.
-pub fn verify_python_target_build(td_root: &Path, output_root: &Path) -> Result<PythonTargetBuildCheck> {
+pub fn verify_python_target_build(
+    td_root: &Path,
+    output_root: &Path,
+) -> Result<PythonTargetBuildCheck> {
     let ir = compile_python_td_project(td_root)?;
     let cold = tempfile::tempdir().context("create Python TD cold output directory")?;
     let target = emit_python_td_target(&ir, cold.path())?;
@@ -92,7 +95,8 @@ pub fn verify_python_artifact_code_check(
     let target = verify_python_target_build(&td_root, &artifact_root)?;
     let td_lock = crate::cli::td_lock::check_project_td_lock_at_root(project_root, &row.name)?;
     let ec_lock = crate::cli::ec::project_ec_lock_status_at_root(project_root, &row.name)?;
-    let inventory = python_ec::discover_python_ec_inventory(&artifact_root.join("external-contracts"))?;
+    let inventory =
+        python_ec::discover_python_ec_inventory(&artifact_root.join("external-contracts"))?;
     let workspace_targets = project_registry::load_projects(project_root)?
         .into_iter()
         .find(|configured| configured.name == row.name)
@@ -109,7 +113,12 @@ pub fn verify_python_artifact_code_check(
                 })
                 .collect::<BTreeSet<_>>()
         })
-        .ok_or_else(|| anyhow::anyhow!("project `{}` disappeared from the project registry", row.name))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "project `{}` disappeared from the project registry",
+                row.name
+            )
+        })?;
 
     let inventory_clean = inventory.findings.is_empty();
     let mut findings = inventory.findings.clone();
@@ -128,12 +137,16 @@ pub fn verify_python_artifact_code_check(
         match run_native_unit_inventory(&artifact_root) {
             Ok(()) => true,
             Err(error) => {
-                findings.push(format!("generated Python native unit test failed: {error:#}"));
+                findings.push(format!(
+                    "generated Python native unit test failed: {error:#}"
+                ));
                 false
             }
         }
     } else {
-        findings.push("generated Python native unit test was not run because the target is stale".to_string());
+        findings.push(
+            "generated Python native unit test was not run because the target is stale".to_string(),
+        );
         false
     };
 
@@ -147,7 +160,7 @@ pub fn verify_python_artifact_code_check(
     } else {
         // Identity, TD-lock, target, and native-unit failures are repaired by
         // the TD/generation side. `cb` substitutes its root WI slug here.
-        format!("aw td gen --project {}", row.name)
+        format!("aw cb gen --project {}", row.name)
     };
     Ok(Some(PythonArtifactCodeCheck {
         project: row.name,
@@ -170,7 +183,11 @@ fn validate_identity_edges(
     findings: &mut Vec<String>,
 ) -> Vec<String> {
     let mut artifacts = BTreeSet::new();
-    for module in ir.modules.iter().filter(|module| module.path.starts_with("src/")) {
+    for module in ir
+        .modules
+        .iter()
+        .filter(|module| module.path.starts_with("src/"))
+    {
         match module.artifact_id.as_deref() {
             Some(id) => {
                 artifacts.insert(id.to_string());
@@ -349,14 +366,16 @@ evidence_paths = ["evidence/efficiency.json"]
         .unwrap();
         for name in ["runner", "behavior", "security", "stability", "efficiency"] {
             fs::write(
-                root.join("projects/demo/external-contracts/src").join(format!("{name}.py")),
+                root.join("projects/demo/external-contracts/src")
+                    .join(format!("{name}.py")),
                 "def contract() -> None:\n    pass\n",
             )
             .unwrap();
         }
         for name in ["behavior", "security", "stability", "efficiency"] {
             fs::write(
-                root.join("projects/demo/external-contracts/evidence").join(format!("{name}.json")),
+                root.join("projects/demo/external-contracts/evidence")
+                    .join(format!("{name}.json")),
                 "{\"ok\":true}\n",
             )
             .unwrap();
@@ -365,12 +384,16 @@ evidence_paths = ["evidence/efficiency.json"]
         let artifact_root = root.join("projects/demo");
         let ir = compile_python_td_project(&td_root).unwrap();
         emit_python_td_target(&ir, &artifact_root).unwrap();
-        assert!(crate::cli::td_lock::write_project_td_lock_snapshot_at_root(root, "demo")
-            .unwrap()
-            .clean);
-        assert!(crate::cli::ec::write_project_ec_lock_snapshot_at_root(root, "demo")
-            .unwrap()
-            .clean);
+        assert!(
+            crate::cli::td_lock::write_project_td_lock_snapshot_at_root(root, "demo")
+                .unwrap()
+                .clean
+        );
+        assert!(
+            crate::cli::ec::write_project_ec_lock_snapshot_at_root(root, "demo")
+                .unwrap()
+                .clean
+        );
     }
 
     #[test]
@@ -392,7 +415,11 @@ evidence_paths = ["evidence/efficiency.json"]
         assert!(clean.clean, "{clean:#?}");
         assert!(clean.drifted_paths.is_empty());
 
-        fs::write(output.path().join("src/demo/domain/invoice.py"), "changed\n").unwrap();
+        fs::write(
+            output.path().join("src/demo/domain/invoice.py"),
+            "changed\n",
+        )
+        .unwrap();
         let drifted = verify_python_target_build(td.path(), output.path()).unwrap();
         assert!(!drifted.clean);
         assert_eq!(drifted.drifted_paths, vec!["src/demo/domain/invoice.py"]);
@@ -410,7 +437,11 @@ evidence_paths = ["evidence/efficiency.json"]
         assert_eq!(clean.artifact_ids, vec!["artifact:orders/create-order"]);
         assert!(clean.td_lock_clean && clean.ec_lock_clean && clean.native_unit_clean);
 
-        fs::write(root.path().join("projects/demo/src/demo/domain/order.py"), "stale\n").unwrap();
+        fs::write(
+            root.path().join("projects/demo/src/demo/domain/order.py"),
+            "stale\n",
+        )
+        .unwrap();
         let stale = verify_python_artifact_code_check(root.path(), "demo")
             .unwrap()
             .unwrap();
@@ -418,7 +449,8 @@ evidence_paths = ["evidence/efficiency.json"]
         assert!(stale
             .findings
             .iter()
-            .any(|finding| finding.contains("generated Python target drifted: src/demo/domain/order.py")));
+            .any(|finding| finding
+                .contains("generated Python target drifted: src/demo/domain/order.py")));
     }
 
     #[test]
@@ -450,7 +482,9 @@ evidence_paths = ["evidence/efficiency.json"]
     fn python_artifact_code_check_rejects_missing_required_dimension_and_target() {
         let root = tempfile::tempdir().unwrap();
         write_graph_fixture(root.path());
-        let inventory = root.path().join("projects/demo/external-contracts/pyproject.toml");
+        let inventory = root
+            .path()
+            .join("projects/demo/external-contracts/pyproject.toml");
         let source = fs::read_to_string(&inventory).unwrap();
         let missing_security_and_bad_target = source
             .replace("dimension = \"security\"", "dimension = \"behavior\"")
@@ -467,7 +501,8 @@ evidence_paths = ["evidence/efficiency.json"]
         assert!(report
             .findings
             .iter()
-            .any(|finding| finding.contains("targets `rust`, which has no configured project workspace")));
+            .any(|finding| finding
+                .contains("targets `rust`, which has no configured project workspace")));
         assert!(report
             .findings
             .iter()

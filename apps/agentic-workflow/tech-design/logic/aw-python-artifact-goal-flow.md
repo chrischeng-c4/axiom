@@ -25,10 +25,11 @@ nodes:
   legacy: { kind: terminal, label: "use unchanged legacy lifecycle table" }
   ec_check: { kind: process, label: "author direct EC Python then aw ec check" }
   review: { kind: process, label: "independent digest-bound EC review" }
-  td: { kind: process, label: "author/check Python TD then generate target" }
-  core: { kind: process, label: "unit tests then behavior/security EC" }
-  operational: { kind: process, label: "stability/efficiency EC after generation" }
-  terminal: { kind: terminal, label: "code-check then close change" }
+  td: { kind: process, label: "author/check Python TD" }
+  ec_td: { kind: process, label: "behavior/security EC against TD" }
+  cb: { kind: process, label: "generate fill and check codebase" }
+  ec_cb: { kind: process, label: "all four EC dimensions against CB" }
+  terminal: { kind: terminal, label: "close change" }
   contract: { kind: process, label: "stale oracle/evidence returns to EC check" }
   efficiency: { kind: process, label: "efficiency red routes to Rust production target" }
 edges:
@@ -36,9 +37,10 @@ edges:
   - { from: resolve, to: ec_check, label: "python-v1 ec_missing" }
   - { from: ec_check, to: review }
   - { from: review, to: td }
-  - { from: td, to: core }
-  - { from: core, to: operational }
-  - { from: operational, to: terminal }
+  - { from: td, to: ec_td }
+  - { from: ec_td, to: cb }
+  - { from: cb, to: ec_cb }
+  - { from: ec_cb, to: terminal }
   - { from: resolve, to: contract, label: "stale contract or invalid oracle" }
   - { from: resolve, to: efficiency, label: "efficiency red" }
 ---
@@ -46,10 +48,11 @@ flowchart TD
   resolve([resolve model plus phase]) -->|legacy| legacy([legacy table])
   resolve -->|python-v1| ec_check[EC check]
   ec_check --> review[independent EC review]
-  review --> td[TD check and target generation]
-  td --> core[unit tests then behavior/security]
-  core --> operational[stability/efficiency]
-  operational --> terminal([code-check then close])
+  review --> td[TD author and check]
+  td --> ec_td[behavior/security against TD]
+  ec_td --> cb[CB gen fill and check]
+  cb --> ec_cb[all four dimensions against CB]
+  ec_cb --> terminal([close change])
   resolve -->|stale/oracle invalid| contract[repair EC]
   resolve -->|efficiency red| efficiency[Rust target remediation]
 ```
@@ -63,11 +66,13 @@ persists `aw td check <td-root> --project <project> --wi <wi>`, so a root cannot
 loop forever on a project-global lock operation.
 
 The canonical progression is `ec_missing` → `ec_checked` → `ec_reviewed` →
-`td_compiled` → `td_generated` → `unit_green` → `ec_core_green` →
-`ec_operational_green` → `code_checked`. Behavior/security red, stability red,
-and efficiency red are separate recovery branches. A stale contract or invalid
-oracle always routes to EC check/review rather than product adaptation. EC
-review HITL is surfaced as a HITL envelope, not a false terminal action.
+`td_compiled` → `ec_td_green` → `cb_generated` → `cb_filled` → `cb_checked`
+→ `ec_cb_green`. Behavior/security red, stability red, and efficiency red are
+separate recovery branches. The older `td_generated`, `ec_core_green`, and
+`ec_operational_green` labels remain read-compatible migration input only. A
+stale contract or invalid oracle always routes to EC check/review rather than
+product adaptation. EC review HITL is surfaced as a HITL envelope, not a false
+terminal action.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -113,12 +118,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Persist direct Python EC checks and staged core/operational verdict transitions on the owning WI."
+    description: "Persist direct Python EC checks and staged TD/CB verdict transitions on the owning WI."
   - path: apps/agentic-workflow/src/cli/cb.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Persist the core EC handoff after target-native Python generation when an owning WI is supplied."
+    description: "Persist the CB fill handoff after target-native Python generation when an owning WI is supplied."
   - path: apps/agentic-workflow/src/cli/td.rs
     action: modify
     section: logic

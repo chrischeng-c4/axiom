@@ -18,10 +18,10 @@ fn aw_core_client_agent_orientation_surface() {
         "cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands -- --nocapture";
     let id = "aw-core-client-agent-orientation-surface";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

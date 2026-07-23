@@ -17,10 +17,10 @@ fn project_local_td_and_ec_gates_ec_evidence_documentation() {
     let command = "cargo test -p agentic-workflow --lib ec_doc -- --nocapture";
     let id = "project-local-td-and-ec-gates-ec-evidence-documentation";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

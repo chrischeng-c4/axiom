@@ -20,10 +20,10 @@ fn reviewed_graph_root_parity() {
         "cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture";
     let id = "reviewed-graph-root-parity";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

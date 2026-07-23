@@ -69,9 +69,15 @@ fn python_td_compiler_keeps_explicit_artifact_identity_across_a_projection_move(
     let after = compile_python_td_project(temporary.path()).unwrap();
 
     assert_eq!(before.modules[0].id, "artifact:billing/issue-invoice");
-    assert_eq!(before.modules[0].artifact_id.as_deref(), Some("artifact:billing/issue-invoice"));
+    assert_eq!(
+        before.modules[0].artifact_id.as_deref(),
+        Some("artifact:billing/issue-invoice")
+    );
     assert_eq!(before.modules[0].id, after.modules[0].id);
-    assert_eq!(before.modules[0].declarations[0].id, after.modules[0].declarations[0].id);
+    assert_eq!(
+        before.modules[0].declarations[0].id,
+        after.modules[0].declarations[0].id
+    );
     assert_eq!(before.semantic_digest, after.semantic_digest);
     assert_ne!(before.modules[0].path, after.modules[0].path);
 }
@@ -81,7 +87,11 @@ fn python_td_compiler_rejects_invalid_explicit_artifact_identity() {
     let temporary = tempfile::tempdir().unwrap();
     let source = temporary.path().join("src/demo/domain/model.py");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
-    fs::write(&source, "__aw_artifact_id__ = \"src/demo/domain/model.py\"\n").unwrap();
+    fs::write(
+        &source,
+        "__aw_artifact_id__ = \"src/demo/domain/model.py\"\n",
+    )
+    .unwrap();
 
     let error = compile_python_td_project(temporary.path())
         .unwrap_err()

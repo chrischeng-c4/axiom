@@ -68,19 +68,18 @@ mod tests {
     #[test]
     fn contributing_review_rule_table_matches_live_registry() {
         let contributing_path = repository_root().join("CONTRIBUTING.md");
-        let contributing = std::fs::read_to_string(&contributing_path).unwrap_or_else(|e| {
-            panic!(
-                "failed to read {}: {e}",
-                contributing_path.display()
-            )
-        });
+        let contributing = std::fs::read_to_string(&contributing_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", contributing_path.display()));
 
-        let start = contributing.find(REVIEW_RULE_TABLE_START).unwrap_or_else(|| {
-            panic!(
-                "CONTRIBUTING.md is missing the {} marker",
-                REVIEW_RULE_TABLE_START
-            )
-        }) + REVIEW_RULE_TABLE_START.len();
+        let start = contributing
+            .find(REVIEW_RULE_TABLE_START)
+            .unwrap_or_else(|| {
+                panic!(
+                    "CONTRIBUTING.md is missing the {} marker",
+                    REVIEW_RULE_TABLE_START
+                )
+            })
+            + REVIEW_RULE_TABLE_START.len();
         let end = contributing.find(REVIEW_RULE_TABLE_END).unwrap_or_else(|| {
             panic!(
                 "CONTRIBUTING.md is missing the {} marker",

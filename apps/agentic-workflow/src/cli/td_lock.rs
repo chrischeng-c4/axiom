@@ -796,11 +796,9 @@ fn resolve_td_lock_target(project_root: &Path, requested: &str) -> Result<TdLock
     }
     let lock_path = td_path.join("td.lock");
     let lock_path_display = format!("{}/td.lock", td_path_display.trim_end_matches('/'));
-    let artifact_model = crate::services::project_registry::resolve_project_config_row(
-        project_root,
-        &project.name,
-    )?
-    .effective_artifact_model();
+    let artifact_model =
+        crate::services::project_registry::resolve_project_config_row(project_root, &project.name)?
+            .effective_artifact_model();
     Ok(TdLockTarget {
         project: project.name,
         artifact_model,
@@ -841,8 +839,8 @@ fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
 fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
     let mut snapshot = snapshot_td_root(&target.td_path)?;
     if target.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
-        snapshot.ir_digest = crate::services::python_td::compile_python_td_project(&target.td_path)?
-            .semantic_digest;
+        snapshot.ir_digest =
+            crate::services::python_td::compile_python_td_project(&target.td_path)?.semantic_digest;
         // Python-v1 has one compiler-owned semantic root digest. Markdown
         // per-file AST parse failures are not meaningful for this adapter.
         for entry in &mut snapshot.files {
@@ -1354,7 +1352,9 @@ path = "projects/demo"
             &root.path().join("aw.toml"),
             "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\nartifact_model = \"python-v1\"\n",
         );
-        let td_root = root.path().join("projects/demo/tech-design/src/demo/domain");
+        let td_root = root
+            .path()
+            .join("projects/demo/tech-design/src/demo/domain");
         std::fs::create_dir_all(&td_root).unwrap();
         write(
             &td_root.join("invoice.py"),
@@ -1363,10 +1363,14 @@ path = "projects/demo"
 
         let target = resolve_td_lock_target(root.path(), "demo").unwrap();
         let snapshot = snapshot_td_lock_target(&target).unwrap();
-        let compiled = crate::services::python_td::compile_python_td_project(&target.td_path).unwrap();
+        let compiled =
+            crate::services::python_td::compile_python_td_project(&target.td_path).unwrap();
 
         assert_eq!(snapshot.ir_digest, compiled.semantic_digest);
-        assert!(snapshot.files.iter().all(|entry| entry.parse_error.is_none()));
+        assert!(snapshot
+            .files
+            .iter()
+            .all(|entry| entry.parse_error.is_none()));
         assert!(snapshot.files.iter().all(|entry| entry.ir_digest.is_none()));
     }
 

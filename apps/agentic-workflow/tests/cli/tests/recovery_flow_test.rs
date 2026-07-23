@@ -61,7 +61,7 @@ fn flow_b1_e2e_wi_inventory_adoption() {
 }
 
 /// B2 e2e: `aw td claim --from-path <spec.md>` advances phase to
-/// td_created and emits a dispatch envelope to `aw td gen`.
+/// td_created and emits a dispatch envelope to `aw cb gen`.
 /// Requires a temp git repo with the spec on disk.
 #[test]
 #[ignore = "requires temp git repo + git binary; run manually with --ignored"]

@@ -7,20 +7,21 @@
 // @contract td-cb-lifecycle-automation-chain-liveness-proof
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture
+// @command cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture
 // AW-EC-END
 
-// Contract: a driven chain never lands on a deadlock phase and code-check terminates and retries within its tick budget (#914, refs
+// Contract: the exact driven chain reaches a terminal action within its bounded hop budget without landing on a deadlock phase (#914, refs #921)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn td_cb_lifecycle_automation_chain_liveness_proof() {
-    let command = "cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture";
+    let command =
+        "cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture";
     let id = "td-cb-lifecycle-automation-chain-liveness-proof";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

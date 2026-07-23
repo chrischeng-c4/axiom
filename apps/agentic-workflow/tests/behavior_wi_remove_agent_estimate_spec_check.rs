@@ -7,21 +7,21 @@
 // @contract wi-remove-agent-estimate-spec-check
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md
+// @command cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture
 // AW-EC-END
 
-// Contract: the canonical contract remains parseable by td check
+// Contract: legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn wi_remove_agent_estimate_spec_check() {
     let command =
-        "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md";
+        "cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture";
     let id = "wi-remove-agent-estimate-spec-check";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

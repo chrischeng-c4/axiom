@@ -36,7 +36,7 @@ CLI commands and deprecated `aw td` aliases.
 | `deprecated_td_aliases_are_removed` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 228 | deprecated_td_aliases_are_removed() |
 | `test_td_merge_subcommand_is_removed` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 240 | test_td_merge_subcommand_is_removed() |
 | `test_td_merge_parse_fails` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 250 | test_td_merge_parse_fails() |
-| `code_artifact_commands_are_inherited_by_td` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 262 | code_artifact_commands_are_inherited_by_td() |
+| `code_artifact_commands_are_owned_by_cb` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 262 | code_artifact_commands_are_owned_by_cb() |
 | `public_aggregation_points_remain_registered` | apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 281 | public_aggregation_points_remain_registered() |
 
 ## Source

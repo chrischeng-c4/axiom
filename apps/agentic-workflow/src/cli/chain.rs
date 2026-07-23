@@ -116,7 +116,7 @@ struct ChainRequiredPositional {
 /// audit instead of the terminal check for the WI that emitted the command.
 /// Every EMIT_REGISTRY producer must substitute a real target/slug here.
 const CHAIN_REQUIRED_POSITIONALS: &[ChainRequiredPositional] = &[ChainRequiredPositional {
-    path: &["td", "code-check"],
+    path: &["cb", "check"],
     arg_id: "target",
     note: "clap-optional (CbCheckArgs.target: Option<String>) but chain-required: a bare \
            `aw td code-check` runs a whole-tree audit instead of the terminal check for the \
@@ -265,7 +265,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "run.rs:loop_state_envelope (converged)",
-        sample: "aw td code-check 915",
+        sample: "aw cb check 915",
         note: "loop engine's terminal act, sourced from LoopState.next_action \
                (see loop_state.rs:decide_next_action) — this is the #844 site",
     },
@@ -309,12 +309,12 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "capability.rs:lifecycle_action_for_work_item (terminal check)",
-        sample: "aw td code-check 915",
+        sample: "aw cb check 915",
         note: "capability lifecycle driver's terminal-check command for a cb_filled/cb_reviewed WI",
     },
     EmitSite {
         source: "fillback.rs:run (explicit source-file dispatch envelope)",
-        sample: "aw td gen-source --spec apps/agentic-workflow/tech-design/example.md --target apps/agentic-workflow/src/example.rs --dry-run",
+        sample: "aw cb gen-source --spec apps/agentic-workflow/tech-design/example.md --target apps/agentic-workflow/src/example.rs --dry-run",
         note: "lossless explicit source adoption emits the concrete per-file gen-source \
                verification command with both authoritative artifact paths",
     },
@@ -326,7 +326,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "cb_fill.rs:td_code_check_command",
-        sample: "aw td code-check 915",
+        sample: "aw cb check 915",
         note: "fill loop's terminal-check follow-up command, always built with a slug",
     },
     EmitSite {
@@ -843,40 +843,41 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
-    VerbLifecycle {
-        path: "td.gen",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.gen-source",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.code-check",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.fill",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "td.promote",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
     // #1278 (epic #1270 R7): `aw standardize audit record` rehomed here,
     // mirroring the `td.promote` fold-in above.
     VerbLifecycle {
         path: "td.audit-record",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    // -- cb (codebase materialization lifecycle) -----------------------
+    VerbLifecycle {
+        path: "cb.gen",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "cb.gen-source",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "cb.check",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "cb.fill",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "cb.promote",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: true,
         sunset_criterion: "",
@@ -1145,12 +1146,12 @@ struct LegacyNextActionRule {
 const LEGACY_NEXT_ACTION_RULES: &[LegacyNextActionRule] = &[
     LegacyNextActionRule {
         exact: "aw td merge",
-        replacement_template: "aw td code-check {slug}",
+        replacement_template: "aw cb check {slug}",
         note: "#845: `aw td merge` was removed; `code-check` is now the terminal step",
     },
     LegacyNextActionRule {
         exact: "aw td code-check",
-        replacement_template: "aw td code-check {slug}",
+        replacement_template: "aw cb check {slug}",
         note: "#844: bare code-check audits the whole tree instead of this WI",
     },
 ];
@@ -1462,6 +1463,20 @@ pub fn normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> {
             .ok()
             .map(|_| rewritten);
     }
+    for (legacy, canonical) in [
+        ("aw td gen-source", "aw cb gen-source"),
+        ("aw td code-check", "aw cb check"),
+        ("aw td promote", "aw cb promote"),
+        ("aw td fill", "aw cb fill"),
+        ("aw td gen", "aw cb gen"),
+    ] {
+        if let Some(rest) = trimmed.strip_prefix(legacy) {
+            let candidate = format!("{canonical}{rest}");
+            return validate_aw_command_string(&candidate)
+                .ok()
+                .map(|_| candidate);
+        }
+    }
     if validate_aw_command_string(trimmed).is_ok() {
         return Some(trimmed.to_string());
     }
@@ -1695,13 +1710,13 @@ mod tests {
     // chain-invalid (missing the chain-required `target`).
     #[test]
     fn bare_code_check_is_chain_invalid() {
-        let err = validate_aw_command_string("aw td code-check").unwrap_err();
+        let err = validate_aw_command_string("aw cb check").unwrap_err();
         assert_eq!(err.kind, ChainBlockerKind::MissingChainRequiredPositional);
     }
 
     #[test]
     fn code_check_with_target_is_chain_valid() {
-        assert!(validate_aw_command_string("aw td code-check 915").is_ok());
+        assert!(validate_aw_command_string("aw cb check 915").is_ok());
     }
 
     // #1276 AC2/AC3c: no cataloged emit site's sample is the bare, slug-less
@@ -1716,8 +1731,8 @@ mod tests {
     fn no_emit_site_produces_slugless_code_check() {
         for site in EMIT_REGISTRY {
             assert_ne!(
-                site.sample, "aw td code-check",
-                "emit site `{}` produces the bare, slug-less `aw td code-check` form",
+                site.sample, "aw cb check",
+                "emit site `{}` produces the bare, slug-less `aw cb check` form",
                 site.source
             );
         }
@@ -1756,7 +1771,7 @@ mod tests {
     fn legacy_td_merge_normalizes_to_code_check() {
         assert_eq!(
             normalize_legacy_next_action("aw td merge", "915"),
-            Some("aw td code-check 915".to_string())
+            Some("aw cb check 915".to_string())
         );
     }
 
@@ -1765,7 +1780,7 @@ mod tests {
     fn legacy_bare_code_check_normalizes_to_slugged_form() {
         assert_eq!(
             normalize_legacy_next_action("aw td code-check", "915"),
-            Some("aw td code-check 915".to_string())
+            Some("aw cb check 915".to_string())
         );
     }
 
@@ -1773,7 +1788,7 @@ mod tests {
     fn already_valid_command_passes_through_unchanged() {
         assert_eq!(
             normalize_legacy_next_action("aw td gen 915", "915"),
-            Some("aw td gen 915".to_string())
+            Some("aw cb gen 915".to_string())
         );
     }
 

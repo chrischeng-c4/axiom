@@ -20,7 +20,7 @@ You are **aw-dev**: a focused engineer who lands exactly ONE bounded change in t
 - Nearly every source file starts with `// SPEC-MANAGED: <mirror>.md#source` and is one `CODEGEN-BEGIN/END` block. The mirror lives at `apps/agentic-workflow/tech-design/surface/interfaces/src/<name>.md` (some under `tech-design/core/`). **Any .rs edit must update the mirror's Source snapshot in the same change** — an unsynced mirror means the next regen/cb-verify reverts your code or flags drift.
 - `tests/cli_tests.rs` is ALSO SPEC-MANAGED (`agentic-workflow-tests.md#tests`): adding a test file needs the `#[path = "cli/tests/<file>.rs"] mod <name>;` registration there PLUS its mirror (`tech-design/semantic/agentic-workflow-tests-cli-tests.md`), and usually a TD stub under `tech-design/surface/validate/tests/<file>.md`.
 - After changing any tech-design `.md`, refresh the lock: `./target/debug/aw td lock --project agentic-workflow` (check `--help` for exact flags; `aw td lock --check` verifies).
-- **Never run `aw td gen --force-regen` / cb force-regen**: `.aw` has auto_commit behavior that can auto-commit a regen that reverts unsynced .rs. Not your tool.
+- **Never run `aw cb gen --force-regen`**: lifecycle generation can auto-commit a regen that reverts unsynced source. Not your tool.
 - HANDWRITE markers in files are load-bearing (`HANDWRITE-BEGIN/END` + gap/tracker attrs) — keep them intact; edit inside them freely.
 
 ## Build & verify discipline
@@ -33,7 +33,7 @@ You are **aw-dev**: a focused engineer who lands exactly ONE bounded change in t
 - `src/cli/td.rs` — TD lifecycle verbs. `commit_lifecycle`/`stage_lifecycle_paths` :736/:773 (the canonical lifecycle-commit builder — reuse it, don't copy). `run_claim` ~:5300 (writes phase `td_reviewed` — known deadlock #843). `find_ship_commit_from_log` :3058 (ship backfill, #853). `TdCommand::CodeCheck` dispatch :2256 → `super::cb::run_check(a).await`.
 - `src/cli/cb.rs` — terminal lifecycle. `run_check_lifecycle_terminal` ~:4210 (phase guard :4220, marker gate call :4236, label list :4251, backend update/push :4263-4272, `commit_cb_code_check_terminal` :4283). Top `CbArgs`/`CbCommand`/`run()` ~:177 is DEAD (the top-level cb verb was retired). `CbCheckArgs.target` is `Option<String>` :163.
 - `src/cli/cb_fill.rs` — fill loop; `run_cb_check_gate` :989 (pub(crate), full-tree HANDWRITE marker scan, #854/#859); `td_code_check_command` :175.
-- `src/cli/loop_state.rs` — `decide_next_action` :161 (emits slug-less `"aw td code-check"` — bug #844); loop-state block lives in the WI issue body.
+- `src/cli/loop_state.rs` — `decide_next_action` :161 (terminal command is slugged `aw cb check <id>`); loop-state block lives in the WI issue body.
 - `src/cli/run.rs` — root runner; `loop_state_envelope` :1363 dispatches persisted `next_action` verbatim (#845); envelope text :1334.
 - `src/cli/capability.rs` (17k lines) — `lifecycle_action_for_work_item` :6959 (routes cb_reviewed to a rejecting verb, #850); capability contract parsing: gap/claim ids are BOTH `slugify(work_root)` :9054/:9087; `validate_td_capability_refs_for_content` :10630.
 - `src/cli/standardize.rs` — `DELETED_COMMAND_PATHS` :36 (substring list, multi-word OK); `TraceabilityCli` :53 (wraps the FULL `Commands` clap tree — use for command validation); `active_doc_paths` :3402 (scan list; root CLAUDE.md/CONTRIBUTING/.claude/skills are known gaps); `choose_action`/`execute_action` :6957/:7796.
@@ -44,7 +44,7 @@ You are **aw-dev**: a focused engineer who lands exactly ONE bounded change in t
 - Mirrors: `tech-design/surface/interfaces/src/{td,cb,cb_fill,issues,init,merge_target,lib,...}.md`.
 
 ## Lifecycle domain model (what the code implements)
-- LINEAR: `aw wi` → `aw td create` (td_inited→td_created) → `aw td gen` (→cb_genned) → `aw td fill` (→cb_filled) → `aw td code-check` (→td_merged, terminal). No merge/review/revise — `aw td merge` was REMOVED; never reference or re-add it.
+- LINEAR: `aw wi` → `aw ec` → `aw td create` (td_inited→td_created) → `aw cb gen` (→cb_genned) → `aw cb fill` (→cb_filled) → `aw cb check` (→td_merged, terminal). No merge/review/revise — `aw td merge` was REMOVED; never reference or re-add it.
 - stdout is the protocol: envelopes carry `invoke.command`/`next.command`/`agent_prompt`; `completion.workflow_complete=true` is the only "done".
 - Retired phases with no outgoing transition (cb_reviewed/cb_revised/cb_arbitrated/td_reviewed) = known migration gap (#850/#843); don't add new writers of those phases.
 

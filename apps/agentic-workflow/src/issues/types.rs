@@ -424,9 +424,9 @@ pub mod td_phase {
     /// @spec apps/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md
     pub fn next_phase_command(phase: &str) -> Option<&'static str> {
         match normalize(phase) {
-            TD_CREATED => Some("aw td gen"),
-            CB_GENNED => Some("aw td fill"),
-            CB_FILLED => Some("aw td code-check"),
+            TD_CREATED => Some("aw cb gen"),
+            CB_GENNED => Some("aw cb fill"),
+            CB_FILLED => Some("aw cb check"),
             _ => None,
         }
     }
@@ -439,7 +439,7 @@ pub mod td_phase {
         #[test]
         fn td_created_dispatches_to_gen() {
             // After create, the linear lifecycle routes straight to gen — no review.
-            assert_eq!(next_phase_command(TD_CREATED), Some("aw td gen"));
+            assert_eq!(next_phase_command(TD_CREATED), Some("aw cb gen"));
         }
 
         // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R2
@@ -472,8 +472,8 @@ pub mod td_phase {
         // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R3
         #[test]
         fn next_phase_command_is_linear() {
-            assert_eq!(next_phase_command(CB_GENNED), Some("aw td fill"));
-            assert_eq!(next_phase_command(CB_FILLED), Some("aw td code-check"));
+            assert_eq!(next_phase_command(CB_GENNED), Some("aw cb fill"));
+            assert_eq!(next_phase_command(CB_FILLED), Some("aw cb check"));
             // Entry and terminal phases have no successor.
             assert_eq!(next_phase_command(TD_INITED), None);
             assert_eq!(next_phase_command(TD_MERGED), None);
@@ -485,7 +485,7 @@ pub mod td_phase {
         #[test]
         fn retired_pre_gen_phase_normalizes_to_td_created() {
             assert_eq!(normalize(TD_REVIEWED), TD_CREATED);
-            assert_eq!(next_phase_command(TD_REVIEWED), Some("aw td gen"));
+            assert_eq!(next_phase_command(TD_REVIEWED), Some("aw cb gen"));
         }
 
         // issue #850: cb_reviewed / cb_revised / cb_arbitrated are all
@@ -498,7 +498,7 @@ pub mod td_phase {
                 assert_eq!(normalize(phase), CB_FILLED, "phase: {phase}");
                 assert_eq!(
                     next_phase_command(phase),
-                    Some("aw td code-check"),
+                    Some("aw cb check"),
                     "phase: {phase}"
                 );
                 assert!(
@@ -530,7 +530,7 @@ pub mod td_phase {
                 LEGACY_TD_GEN_CODED,
             ];
             for phase in ALL_PHASES {
-                if next_phase_command(phase) == Some("aw td code-check") {
+                if next_phase_command(phase) == Some("aw cb check") {
                     assert!(
                         is_terminal_code_checkable(normalize(phase)),
                         "phase '{phase}' routes to code-check but normalized form '{}' fails the terminal guard",

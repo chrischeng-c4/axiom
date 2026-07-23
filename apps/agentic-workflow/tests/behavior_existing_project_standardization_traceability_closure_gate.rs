@@ -17,10 +17,10 @@ fn existing_project_standardization_traceability_closure_gate() {
     let command = "cargo test -p agentic-workflow --lib traceability -- --nocapture";
     let id = "existing-project-standardization-traceability-closure-gate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

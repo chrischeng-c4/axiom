@@ -1210,7 +1210,8 @@ pub struct CapabilityReport {
     pub status: String,
     pub test_gates: ProjectTestGateReport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub python_artifact: Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
+    pub python_artifact:
+        Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
     pub production_ready: bool,
     pub production_status: ProductionStatus,
     pub production_scope: Vec<String>,
@@ -5947,10 +5948,8 @@ async fn build_capability_report_inner(
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
     let mut warnings = Vec::new();
-    let python_artifact = crate::services::python_artifact_readiness::evaluate(
-        &project_root,
-        project,
-    )?;
+    let python_artifact =
+        crate::services::python_artifact_readiness::evaluate(&project_root, project)?;
     if let Some(readiness) = &python_artifact {
         blockers.extend(readiness.blockers.iter().cloned());
     }
@@ -6172,7 +6171,8 @@ async fn build_capability_report_inner(
                 claim_id: None,
                 target: project.to_string(),
                 command: command.clone(),
-                reason: "Python artifact inventory or digest-bound evidence is not ready".to_string(),
+                reason: "Python artifact inventory or digest-bound evidence is not ready"
+                    .to_string(),
                 requires_hitl: false,
                 hitl_question: None,
             };
@@ -7887,7 +7887,7 @@ fn lifecycle_action_for_work_item(
         ),
         Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
-            format!("aw td fill {work_item}"),
+            format!("aw cb fill {work_item}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
         // cb_reviewed / cb_revised / cb_arbitrated all normalize to
@@ -7933,10 +7933,7 @@ fn lifecycle_issue_evidence_unresolved(evidence: Option<&CapabilityWiEvidence>) 
 
 fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
     let command = command.trim();
-    if command.starts_with("aw td gen ")
-        || command.starts_with("aw td fill ")
-        || command.starts_with("aw td code-")
-    {
+    if command.starts_with("aw cb ") {
         CapabilityActionKind::RunCb
     } else if command.starts_with("aw ec verify")
         || command.starts_with("aw capability report")
@@ -7952,8 +7949,8 @@ fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
 
 fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
     match td_spec_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some(path) => format!("aw td gen {work_item} --spec-path {}", shell_quote(path)),
-        None => format!("aw td gen {work_item}"),
+        Some(path) => format!("aw cb gen {work_item} --spec-path {}", shell_quote(path)),
+        None => format!("aw cb gen {work_item}"),
     }
 }
 
@@ -19152,7 +19149,7 @@ capability_refs:
         assert_eq!(kind, CapabilityActionKind::RunCb);
         assert_eq!(
             command,
-            "aw td gen 57 --spec-path 'apps/agentic-workflow/tech-design/logic/manual.md'"
+            "aw cb gen 57 --spec-path 'apps/agentic-workflow/tech-design/logic/manual.md'"
         );
         assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
     }
@@ -19277,7 +19274,7 @@ capability_refs:
             issue_type: "enhancement".to_string(),
             state: "open".to_string(),
             phase: Some("td_reviewed".to_string()),
-            expected_command: Some("aw td fill 57".to_string()),
+            expected_command: Some("aw cb fill 57".to_string()),
             title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
         };
 
@@ -19292,7 +19289,7 @@ capability_refs:
         );
 
         assert_eq!(kind, CapabilityActionKind::RunCb);
-        assert_eq!(command, "aw td fill 57");
+        assert_eq!(command, "aw cb fill 57");
         assert_eq!(
             reason,
             "active WI has a workflow expected_command; follow lifecycle lock"

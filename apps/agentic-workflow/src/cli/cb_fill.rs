@@ -1,16 +1,16 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 // CODEGEN-BEGIN
-//! `aw td fill` — Phase 3 marker-fill workflow.
+//! `aw cb fill` — Phase 3 marker-fill workflow.
 //!
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
 //!   marker-list dispatch envelope for mainthread,
-//!   or fast-path-dispatch directly to `aw td code-check` when zero markers
+//!   or fast-path-dispatch directly to `aw cb check` when zero markers
 //!   are present (R11).
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
 //!   projection trailers, then lock the next marker or dispatch
-//!   `aw td code-check`.
+//!   `aw cb check`.
 //!
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md
 
@@ -266,11 +266,11 @@ fn cb_marker_payload_path(project_root: &Path, slug: &str, marker_id: &str) -> P
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
-    format!("aw td fill {} --apply --marker {}", slug, marker_id)
+    format!("aw cb fill {} --apply --marker {}", slug, marker_id)
 }
 
 fn td_code_check_command(slug: &str) -> String {
-    format!("aw td code-check {slug}")
+    format!("aw cb check {slug}")
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
@@ -554,7 +554,8 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
                 .await?;
             let issue_path = backend.issue_path(issue);
             let issue_path_s = issue_path.to_string_lossy().into_owned();
-            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s, None)
+            {
                 emit_error(&slug, &format!("git commit failed: {error}"))?;
                 std::process::exit(1);
             }
@@ -567,7 +568,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw td code-check",
+                "command": "aw cb check",
                 "args": { "target": slug },
             },
         });
@@ -622,7 +623,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         "next": next_for_marker(&slug, first, &first_payload),
         "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw td fill",
+            "command": "aw cb fill",
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -656,7 +657,7 @@ fn resolve_active_spec_path(
         return match paths.as_slice() {
             [path] => Ok(Some(path.clone())),
             _ => anyhow::bail!(
-                "issue '{}' owns multiple TD specs ({}); rerun aw td fill with --spec-path",
+                "issue '{}' owns multiple TD specs ({}); rerun aw cb fill with --spec-path",
                 args.slug,
                 paths.join(", ")
             ),
@@ -929,7 +930,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 &slug,
                 &format!(
                     "marker id '{}' is ambiguous — {} files match: {}. \
-                     Re-run `aw td fill` (no --apply) to get the disambiguated marker list.",
+                     Re-run `aw cb fill` (no --apply) to get the disambiguated marker list.",
                     marker_id,
                     many.len(),
                     paths.join(", "),
@@ -1018,7 +1019,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "next": next_for_marker(&slug, next, &next_payload),
             "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw td fill",
+                "command": "aw cb fill",
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -1052,7 +1053,12 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     let issue_path = backend.issue_path(&issue);
     let issue_path_s = issue_path.to_string_lossy().into_owned();
     maybe_push_remote(&worktree_abs, &issue_path, &slug).await?;
-    if let Err(e) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+    if let Err(e) = stage_and_commit_cb_fill(
+        &worktree_abs,
+        &slug,
+        &issue_path_s,
+        Some(&target.source_path),
+    ) {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
     }
@@ -1066,7 +1072,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         "slug": slug,
         "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw td code-check",
+            "command": "aw cb check",
             "args": { "target": slug },
         },
     });
@@ -1353,6 +1359,30 @@ pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String])
     scope
 }
 
+/// Resolve the marker-reconciliation scope for one active TD fill loop.
+///
+/// A non-empty `extra_scope` is the active TD's declared Changes plan and is
+/// therefore authoritative for marker ownership. Persistent app/lib branches
+/// can contain unrelated historical commits; adding their full branch diff
+/// would let a foreign HANDWRITE marker block an otherwise completed TD. The
+/// branch diff remains the compatibility fallback only when the TD has no
+/// concrete Changes paths.
+fn resolve_marker_gate_scope(worktree_abs: &Path, extra_scope: &[String]) -> Vec<String> {
+    if !extra_scope.is_empty() {
+        let mut scope = extra_scope.to_vec();
+        scope.sort();
+        scope.dedup();
+        return scope;
+    }
+
+    let base = resolve_base_branch();
+    let mut scope: Vec<String> = branch_changed_files(worktree_abs, &base)
+        .into_iter()
+        .collect();
+    scope.sort();
+    scope
+}
+
 // Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
@@ -1369,11 +1399,11 @@ pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String])
 // a wrapper that hard-codes `extra_scope: &[]` added no behavior
 // `run_cb_check_gate_scoped(w, &[])` doesn't already provide directly.
 ///
-// The gate's scope is the union of the branch diff (`changed`) and
-// `extra_scope`. When that union is empty — no branch diff AND no WI Changes
-// entries to check against — the gate passes vacuously: a docs-only WI (or
-// one whose branch diff is unresolvable) must not be blocked by markers
-// inherited from unrelated, unmerged work elsewhere in the tree.
+// The gate prefers concrete active-TD `extra_scope` paths. Only when a TD has
+// no Changes plan does it fall back to the branch diff. When that selected
+// scope is empty, the gate passes vacuously: a docs-only WI (or one whose
+// branch diff is unresolvable) must not be blocked by markers inherited from
+// unrelated, unmerged work elsewhere in the tree.
 ///
 // Issue #859 part a: the scope union is computed *before* any marker
 // enumeration, and when it's empty the gate returns without walking the
@@ -1387,7 +1417,7 @@ pub(crate) async fn run_cb_check_gate_scoped(
     worktree_abs: &Path,
     extra_scope: &[String],
 ) -> std::result::Result<(), String> {
-    let scope = resolve_touched_scope(worktree_abs, extra_scope);
+    let scope = resolve_marker_gate_scope(worktree_abs, extra_scope);
 
     if scope.is_empty() {
         // No branch diff against base and no WI-scope file list to check
@@ -1425,7 +1455,12 @@ fn should_stage_lifecycle_path(worktree: &Path, path: &str) -> bool {
 }
 
 // Stage files and create the `Lifecycle-Stage: Cb-Fill` commit.
-fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, issue_path: &str) -> Result<()> {
+fn stage_and_commit_cb_fill(
+    worktree: &Path,
+    slug: &str,
+    issue_path: &str,
+    final_source_path: Option<&str>,
+) -> Result<()> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
@@ -1440,6 +1475,21 @@ fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, issue_path: &str) -> Re
             anyhow::bail!(
                 "git add '{}' failed: {}",
                 issue_path,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
+    }
+    if let Some(source_path) = final_source_path {
+        let add = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(worktree)
+            .args(["add", "--", source_path])
+            .output()
+            .context("git add final Cb-Fill source path")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                source_path,
                 String::from_utf8_lossy(&add.stderr).trim()
             );
         }
@@ -1501,7 +1551,7 @@ fn stage_and_commit_cb_marker(
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
          CB-Marker: {marker_id}\n\
-         Next-Command: aw td fill {slug} --apply --marker {next_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1547,7 +1597,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Stage: Cb-Fill-Start\n\
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
-         Next-Command: aw td fill {slug} --apply --marker {first_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1645,8 +1695,16 @@ mod tests {
             );
         }
 
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/final.rs"), "pub fn filled() {}\n").unwrap();
         std::fs::write(root.join("ec-review.json"), "{}\n").unwrap();
-        stage_and_commit_cb_fill(root, "2179", "/tmp/aw/outside-issue.json").unwrap();
+        stage_and_commit_cb_fill(
+            root,
+            "2179",
+            "/tmp/aw/outside-issue.json",
+            Some("src/final.rs"),
+        )
+        .unwrap();
 
         let status = std::process::Command::new("git")
             .args(["status", "--porcelain"])
@@ -1654,6 +1712,10 @@ mod tests {
             .output()
             .unwrap();
         assert!(String::from_utf8_lossy(&status.stdout).contains("ec-review.json"));
+        assert!(
+            !String::from_utf8_lossy(&status.stdout).contains("src/final.rs"),
+            "the final filled source must be included in the bounded lifecycle commit"
+        );
         let message = std::process::Command::new("git")
             .args(["log", "-1", "--format=%B"])
             .current_dir(root)
@@ -1988,7 +2050,7 @@ pub fn existing() { 42; }\n\
 
         assert_eq!(
             next["command"],
-            "aw td fill 4124 --apply --marker missing-generator-cli"
+            "aw cb fill 4124 --apply --marker missing-generator-cli"
         );
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(
@@ -2020,7 +2082,7 @@ pub fn existing() { 42; }\n\
 
     #[test]
     fn td_code_check_next_command_uses_positional_slug() {
-        assert_eq!(td_code_check_command("4124"), "aw td code-check 4124");
+        assert_eq!(td_code_check_command("4124"), "aw cb check 4124");
         assert!(!td_code_check_command("4124").contains("--json"));
     }
 
@@ -2080,7 +2142,7 @@ pub fn before() {}\n\
     fn gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source() {
         // Issue #1898 end-to-end: drive the real `aw td gen` scaffold
         // (`crate::generate::handwrite_scaffold::scaffold_handwrite`) over a
-        // pre-existing function, then confirm `aw td fill`'s enumerator
+        // pre-existing function, then confirm `aw cb fill`'s enumerator
         // offers it (AC1), its payload adopts the existing body (AC1), and
         // applying that payload resolves the pending tracker and drops the
         // marker out of the next enumeration (AC4 in the issue's R4 sense).
@@ -2408,6 +2470,54 @@ pub fn before() {}\n\
             !changed.contains("unrelated.rs"),
             "already-landed main-side work from an unrelated branch must not \
              be attributed to this branch after rebase-landing, got: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn marker_gate_scope_prefers_active_td_changes_over_persistent_branch_history() {
+        let Some(git) = crate::git::find_git_bin() else {
+            eprintln!("skipping: git binary not on PATH");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&git)
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .output()
+                .unwrap_or_else(|error| panic!("git {args:?} failed to spawn: {error}"));
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "test@test"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.path().join("README.md"), "seed\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-qm", "seed"]);
+        run(&["checkout", "-qb", "persistent-app-branch"]);
+        let foreign = "apps/agentic-workflow/tests/fixtures/foreign.yaml";
+        let foreign_path = tmp.path().join(foreign);
+        std::fs::create_dir_all(foreign_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &foreign_path,
+            "# HANDWRITE-BEGIN gap=\"foreign\" reason=\"unrelated fixture\"\n",
+        )
+        .unwrap();
+        run(&["add", foreign]);
+        run(&["commit", "-qm", "foreign historical fixture"]);
+
+        assert!(branch_changed_files(tmp.path(), "main").contains(foreign));
+        let declared = vec!["apps/loom/src/main.rs".to_string()];
+        assert_eq!(
+            resolve_marker_gate_scope(tmp.path(), &declared),
+            declared,
+            "a current TD must not inherit persistent-branch marker ownership"
         );
     }
 }
