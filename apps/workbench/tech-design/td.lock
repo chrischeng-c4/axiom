@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T12:33:12.864620+00:00"
-digest = "sha256:c9c87f1d4d5880e964b37fbc96c5fdfacf3e560d6462ff3c859f16ca045cd82c"
-source_digest = "sha256:c9c87f1d4d5880e964b37fbc96c5fdfacf3e560d6462ff3c859f16ca045cd82c"
-ir_digest = "sha256:37ae6891100c8fc571bd5f8bbcd11b476c2d13d6853acedc9ae41afef3d261fe"
+generated_at = "2026-07-23T12:48:36.400650+00:00"
+digest = "sha256:6b3ebde28272d00097d5bed9a15ff8bd0c0006e19aea09e13043e009dbcd26fa"
+source_digest = "sha256:6b3ebde28272d00097d5bed9a15ff8bd0c0006e19aea09e13043e009dbcd26fa"
+ir_digest = "sha256:0c24ec08726daf2a3045d60ded4b13d50b8c7821ff14d2e53fd4938a11787ede"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -101,6 +101,12 @@ section_count = 3
 path = "logic/preserve-project-and-terminal-renderer-state-while-switching.md"
 digest = "sha256:b4e206f59c39704ebb9b55b6b9302e6485b1665091ac851be0efb72428191462"
 ir_digest = "sha256:b76c07f7faafb72f1ce7055364644ba58248b430e53a4ff0109fc76e2d9a5b39"
+section_count = 3
+
+[[files]]
+path = "logic/preserve-visible-terminal-tabs-after-titlebar-layout-attempt.md"
+digest = "sha256:65de6c2f2b986b76f5c594fa6beaaf71fae17681365dd4bb1d799980afa4cabe"
+ir_digest = "sha256:fc901448a930a3022c48d92683dc8aab73a42292d9d479c83d60d5bb052a8f05"
 section_count = 3
 
 [[files]]
