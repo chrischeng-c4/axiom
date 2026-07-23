@@ -1,6 +1,6 @@
 ---
 id: aw-llm-offline-agent-orientation-command
-summary: Add `aw llm`, an offline binary-emitted agent-orientation surface (outline + model/capability/td/ec/wi topics) that complements aw's aw.cli.v1 machine-schema envelope without invoking any model.
+summary: Add `aw llm`, an offline binary-emitted agent-orientation surface (outline + model/capability/td/ec/wi/goal/prompt topics) that complements aw's aw.cli.v1 machine-schema envelope without invoking any model.
 fill_sections: [logic, unit-test]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -9,6 +9,12 @@ capability_refs:
     claim: agent-orientation-surface
     coverage: partial
     rationale: "Adds a binary-owned orientation entrypoint for the single agent-first CLI workflow surfaced by aw wi/ec/td and the root runners."
+  - id: aw-core-client-model-workitem-first-artifact-lifecycle
+    role: supporting
+    gap: typed-agent-prompt-contract
+    claim: typed-agent-prompt-contract
+    coverage: partial
+    rationale: "The prompt topic teaches the vocabulary and symbolic projection consumed by typed lifecycle prompts."
 ---
 
 # TD: aw llm offline agent-orientation command
@@ -29,6 +35,7 @@ nodes:
   td: { kind: process, label: "td_md(): spec-is-truth + td->gen + regenerable + CODEGEN/HANDWRITE" }
   ec: { kind: process, label: "ec_md(): external contract 4 dims + generated gates + config opt-in" }
   looptopic: { kind: process, label: "loop_md(): aw.cli.v1 envelope + wi->td->code-check + HITL" }
+  prompt: { kind: process, label: "prompt_md(): aw.prompt.v1 vocabulary + ASCII grammar + authority boundary" }
   fmt: { kind: decision, label: "args.format" }
   md: { kind: terminal, label: "print markdown to stdout" }
   json: { kind: terminal, label: "print {topic, markdown} JSON to stdout" }
@@ -40,12 +47,14 @@ edges:
   - { from: topic, to: td, label: "td" }
   - { from: topic, to: ec, label: "ec" }
   - { from: topic, to: looptopic, label: "loop" }
+  - { from: topic, to: prompt, label: "prompt" }
   - { from: outline, to: fmt }
   - { from: model, to: fmt }
   - { from: capability, to: fmt }
   - { from: td, to: fmt }
   - { from: ec, to: fmt }
   - { from: looptopic, to: fmt }
+  - { from: prompt, to: fmt }
   - { from: fmt, to: md, label: "md (default)" }
   - { from: fmt, to: json, label: "json" }
 ---
@@ -57,12 +66,14 @@ flowchart TD
   topic -->|td| td[td_md]
   topic -->|ec| ec[ec_md]
   topic -->|loop| looptopic[loop_md]
+  topic -->|prompt| prompt[prompt_md]
   outline --> fmt{format}
   model --> fmt
   capability --> fmt
   td --> fmt
   ec --> fmt
   looptopic --> fmt
+  prompt --> fmt
   fmt -->|md| md([print markdown])
   fmt -->|json| json([print json])
 ```
@@ -81,7 +92,7 @@ requirements:
     verify: test
   every_topic_emits:
     id: R2
-    text: "each topic (outline, model, capability, td, ec, wi) emits non-empty orientation markdown."
+    text: "each topic (outline, model, capability, td, ec, wi, goal, prompt) emits non-empty orientation markdown."
     kind: functional
     risk: high
     verify: test
@@ -103,6 +114,12 @@ requirements:
     kind: functional
     risk: high
     verify: test
+  prompt_language_contract:
+    id: R6
+    text: "the prompt topic contains the closed aw.prompt.v1 vocabulary, ASCII operators, Python Spec pipeline, and sole-authority boundary."
+    kind: contract
+    risk: high
+    verify: test
 elements:
   llm_outline_lists_registered_verbs:
     kind: test
@@ -119,12 +136,16 @@ elements:
   agent_first_product_contracts_reject_removed_architecture:
     kind: test
     type: "rs/#[test]"
+  prompt_topic_defines_closed_language:
+    kind: test
+    type: "rs/#[test]"
 relations:
   - { from: llm_outline_lists_registered_verbs, verifies: outline_lists_verbs }
   - { from: llm_every_topic_emits_markdown, verifies: every_topic_emits }
   - { from: llm_format_json_wraps_markdown, verifies: json_wraps_markdown }
   - { from: llm_topics_are_deterministic, verifies: offline_deterministic }
   - { from: agent_first_product_contracts_reject_removed_architecture, verifies: agent_first_product_contract }
+  - { from: prompt_topic_defines_closed_language, verifies: prompt_language_contract }
 ---
 requirementDiagram
     requirement R1 {
@@ -157,6 +178,12 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement R6 {
+      id: R6
+      text: "prompt vocabulary and grammar are closed"
+      risk: high
+      verifymethod: test
+    }
     element llm_outline_lists_registered_verbs {
       type: "rs/#[test]"
     }
@@ -170,6 +197,9 @@ requirementDiagram
       type: "rs/#[test]"
     }
     element agent_first_product_contracts_reject_removed_architecture {
+      type: "rs/#[test]"
+    }
+    element prompt_topic_defines_closed_language {
       type: "rs/#[test]"
     }
 ```
