@@ -44,7 +44,6 @@ flowchart LR
     completion --> jsonl[axiom.service.log.v1 JSONL]
     jsonl --> boundary([stdout to external collector])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
