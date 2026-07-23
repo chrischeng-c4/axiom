@@ -44,3 +44,23 @@ flowchart LR
     completion --> jsonl[axiom.service.log.v1 JSONL]
     jsonl --> boundary([stdout to external collector])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: "libs/service-http/src/transport.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "pub fn trace_layer"
+  - path: "libs/service-http/Cargo.toml"
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+  - path: "libs/service-http/tests/request_completion_event.rs"
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
