@@ -255,3 +255,24 @@ async fn append_replay_checkpoint_round_trip_over_http() {
         .unwrap();
     assert_eq!(fetched["checkpoint"]["offset"], 1);
 }
+
+/// #2484: an append body over the shared data-plane body cap is rejected
+/// with 413 rather than buffered/accepted, guarding against unbounded
+/// request bodies on the data plane (probes stay exempt/unbounded).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_append_body_is_rejected_with_413() {
+    let (addr, _state) = start_server().await;
+    let client = reqwest::Client::new();
+
+    // One byte over the 8 MiB data-plane cap (`DEFAULT_BODY_LIMIT_BYTES` in
+    // `src/server.rs`).
+    let oversized_payload = "a".repeat(8 * 1024 * 1024 + 1);
+    let resp = client
+        .post(url(addr, "/topics/orders/append"))
+        .header("content-type", "application/json")
+        .body(format!(r#"{{"payload":"{oversized_payload}"}}"#))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 413);
+}

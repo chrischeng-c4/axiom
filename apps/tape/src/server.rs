@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, State};
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
@@ -37,6 +37,17 @@ use crate::{
     ConsumerCheckpoint, PullSubscriptionBatch, RetentionPolicy, Subscription, SubscriptionAckError,
     SubscriptionError, TapeError, TapeEvent, TapeJournal,
 };
+
+/// Data-plane request body cap. `libs/service-http::HttpConfig` documents
+/// `body_limit_bytes` as the max request body size (bytes) for the data
+/// plane, with no exported default constant (`HttpConfig::new` takes it as a
+/// required, service-supplied argument) and no size limit on the probe
+/// routes; this mirrors the 8 MiB literal `HttpConfig`'s own tests use as
+/// that field's value (`libs/service-http/src/config.rs`), the same
+/// local-constant pattern `apps/keep/src/http/mod.rs::DEFAULT_BODY_LIMIT`
+/// uses for its own data plane. Probes are exempt (unbounded), matching
+/// `service_http`'s documented probe behavior.
+const DEFAULT_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Shared application state: the journal (behind a `std::sync::Mutex` — an
 /// in-memory `BTreeMap` core with no async internal awaits), the per-op
@@ -246,7 +257,10 @@ pub fn router_with_admission(
         // after (= outside) the auth layer so rejected requests are still
         // counted.
         .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // Data-plane-only request body cap (#2484); probes below stay
+        // unbounded, matching `service_http`'s documented probe behavior.
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT_BYTES));
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {
