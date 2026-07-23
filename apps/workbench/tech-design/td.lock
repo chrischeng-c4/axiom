@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T13:26:16.824459+00:00"
-digest = "sha256:5c40d0f94088aa645fadde4392d57ac0cb948b390ee4e77bb760ca3f53fbd545"
-source_digest = "sha256:5c40d0f94088aa645fadde4392d57ac0cb948b390ee4e77bb760ca3f53fbd545"
-ir_digest = "sha256:2987ea94ae23d765df9eefa643e98a94efab75088a13d3b3ab045ca2f374d66a"
+generated_at = "2026-07-23T13:46:28.734401+00:00"
+digest = "sha256:0f522d86831f69e4b7e6e444b506e8229bb338b9a2332a12f07495448eb6cac0"
+source_digest = "sha256:0f522d86831f69e4b7e6e444b506e8229bb338b9a2332a12f07495448eb6cac0"
+ir_digest = "sha256:c2e9e86379019b0b9e957e154006ca7e5418e292e99805eb0e0511949748610c"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -74,6 +74,12 @@ ir_digest = "sha256:726a0091a4f85d8c8a3e2b8c9097d159a182a1cd783912920b3992d1bd71
 section_count = 3
 
 [[files]]
+path = "logic/adopt-compact-app-owned-terminal-chrome.md"
+digest = "sha256:f1b41971ccd8fcd2926a5777b57f6dea24fc23299f19deda3e794bf0088ad409"
+ir_digest = "sha256:43042cb73d2e6361b92a851d1b3d637d4535f8903f1b6371475af40dcd3f1625"
+section_count = 3
+
+[[files]]
 path = "logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md"
 digest = "sha256:2bced89ba286d5745ae1e8a6b51e660a90fade5f9fee0fb4db6d5e34786ab29e"
 ir_digest = "sha256:ac50011a041ab830a5e2b6f5fba10bd7b98ace668c59cb5c2d4416f0c962a6c6"
@@ -84,6 +90,12 @@ path = "logic/host-terminal-tabs-in-native-macos-titlebar.md"
 digest = "sha256:99d05cbc4156864f724f82e6c664713a5bb34c4a19fc26689989a2cb95e5a0cc"
 ir_digest = "sha256:de311b006c81c7461b9aa4e6d00ed9668ee39050b0ac91cf911ecfd6bf834e36"
 section_count = 3
+
+[[files]]
+path = "logic/keep-terminal-tabs-visible-in-fullscreen.md"
+digest = "sha256:d3968d1677f6701ce36fdadaf537744e4e7f8515564633423aadd370558f9c54"
+ir_digest = "sha256:c0db69d282cbb4fbc90dcbe777d37c60c8a4cffcf0d064ed1b4bc7e8fc87ced3"
+section_count = 0
 
 [[files]]
 path = "logic/lift-terminal-tabs-into-titlebar.md"
