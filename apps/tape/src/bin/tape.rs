@@ -81,7 +81,9 @@ struct ReplayArgs {
     /// First event timestamp to include.
     #[arg(long)]
     from_timestamp_ms: Option<u64>,
-    /// Maximum number of events to return.
+    /// Maximum number of events to return. Omitted returns at most 1000
+    /// oldest-first events (#2484); page with `--from-offset`/`--limit` to
+    /// read past that window.
     #[arg(long)]
     limit: Option<usize>,
     /// Journal file. Defaults to `.tape/journal.json`.

@@ -179,6 +179,12 @@ impl TapeJournal {
         event
     }
 
+    /// Replay events oldest-first from `from_offset`/`from_timestamp_ms`.
+    /// #2484: an omitted `limit` is bounded to [`MAX_PULL_BATCH`] rather than
+    /// returning the whole matching set, matching the pull-subscription cap
+    /// so a single limit-less replay can't return an unbounded window; page
+    /// with `from_offset`/`limit` to read past the first `MAX_PULL_BATCH`
+    /// events.
     pub fn replay(
         &self,
         topic: &str,
@@ -192,6 +198,8 @@ impl TapeJournal {
             .collect()
     }
 
+    /// Borrowing form of [`Self::replay`] — same `limit`-omitted bound to
+    /// [`MAX_PULL_BATCH`] (#2484).
     pub fn replay_refs(
         &self,
         topic: &str,
@@ -213,7 +221,7 @@ impl TapeJournal {
             });
         match limit {
             Some(limit) => events.take(limit).collect(),
-            None => events.collect(),
+            None => events.take(MAX_PULL_BATCH).collect(),
         }
     }
 
