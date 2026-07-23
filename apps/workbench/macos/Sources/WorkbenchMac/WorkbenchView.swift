@@ -28,10 +28,6 @@ struct WorkbenchView: View {
             .accessibilityIdentifier("workbench.detail")
         }
         .navigationTitle("Workbench")
-        .background(
-            NativeTitlebarTabAccessory(content: AnyView(terminalTabStrip))
-                .frame(width: 0, height: 0)
-        )
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
         // inside controls still belongs to the control's click action.
         .textSelection(.enabled)
@@ -148,6 +144,8 @@ struct WorkbenchView: View {
 
     private var terminalWorkspace: some View {
         VStack(spacing: 0) {
+            terminalTabStrip
+            Divider()
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -510,76 +508,4 @@ struct WorkbenchView: View {
     }
 }
 
-/// Hosts SwiftUI terminal chrome in the native AppKit titlebar instead of
-/// drawing through a content safe area. The accessory is owned by the window,
-/// while traffic lights and drag behavior remain native.
-private struct NativeTitlebarTabAccessory: NSViewRepresentable {
-    let content: AnyView
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        let anchor = NSView(frame: .zero)
-        context.coordinator.update(content)
-        DispatchQueue.main.async {
-            context.coordinator.install(in: anchor.window)
-        }
-        return anchor
-    }
-
-    func updateNSView(_ anchor: NSView, context: Context) {
-        context.coordinator.update(content)
-        DispatchQueue.main.async {
-            context.coordinator.install(in: anchor.window)
-        }
-    }
-
-    static func dismantleNSView(_ anchor: NSView, coordinator: Coordinator) {
-        coordinator.uninstall()
-    }
-
-    final class Coordinator {
-        private var rootView = AnyView(EmptyView())
-        private weak var window: NSWindow?
-        private var accessory: NSTitlebarAccessoryViewController?
-        private var host: NSHostingView<AnyView>?
-
-        func update(_ content: AnyView) {
-            rootView = content
-            host?.rootView = content
-        }
-
-        func install(in candidate: NSWindow?) {
-            guard let candidate else { return }
-            guard window !== candidate else { return }
-            uninstall()
-
-            let host = NSHostingView(rootView: rootView)
-            host.frame = NSRect(x: 0, y: 0, width: candidate.contentLayoutRect.width, height: 42)
-            host.autoresizingMask = [.width]
-
-            let accessory = NSTitlebarAccessoryViewController()
-            accessory.view = host
-            accessory.layoutAttribute = .bottom
-            candidate.addTitlebarAccessoryViewController(accessory)
-
-            self.window = candidate
-            self.accessory = accessory
-            self.host = host
-        }
-
-        func uninstall() {
-            if let accessory,
-               let index = window?.titlebarAccessoryViewControllers.firstIndex(where: { $0 === accessory })
-            {
-                window?.removeTitlebarAccessoryViewController(at: index)
-            }
-            accessory = nil
-            host = nil
-            window = nil
-        }
-    }
-}
 // HANDWRITE-END

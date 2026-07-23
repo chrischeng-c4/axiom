@@ -3,7 +3,7 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
-    func testTerminalTabsUseFullWidthTitlebarAccessory() throws {
+    func testTerminalTabsRemainVisibleInContent() throws {
         continueAfterFailure = false
 
         let fixtureFolder = FileManager.default.temporaryDirectory
@@ -24,10 +24,10 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
         XCTAssertTrue(terminalWorkspace.waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["terminal.titlebar-tabs"].exists)
-        XCTAssertLessThan(
+        XCTAssertGreaterThanOrEqual(
             terminalTab.frame.minY,
             terminalWorkspace.frame.minY,
-            "Terminal tabs must be hosted above terminal content in the native titlebar accessory."
+            "Terminal tabs must stay in app content instead of fullscreen-auto-hidden titlebar chrome."
         )
     }
 
