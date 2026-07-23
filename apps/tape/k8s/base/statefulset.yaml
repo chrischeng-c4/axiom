@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tape
-          image: tape:0.4.7
+          image: ghcr.io/chrischeng-c4/tape:0.4.10
           imagePullPolicy: IfNotPresent
           command: ["tape", "serve"]
           ports:
