@@ -40,7 +40,8 @@ pub fn routes_json() -> String {
             {"method": "POST", "path": "/topics/{topic}/subscriptions/{subscription}/ack", "purpose": "advance a pull subscription cursor"},
             {"method": "PUT", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "advance a durable consumer cursor"},
             {"method": "GET", "path": "/topics/{topic}/consumers/{consumer}/checkpoint", "purpose": "read a durable consumer cursor"},
-            {"method": "PUT", "path": "/topics/{topic}/retention", "purpose": "configure retention windows"}
+            {"method": "PUT", "path": "/topics/{topic}/retention", "purpose": "configure retention windows"},
+            {"method": "GET", "path": "/topics/{topic}/retention", "purpose": "read the current retention window"}
         ]
     }))
     .expect("Tape route list serializes")
@@ -226,6 +227,11 @@ fn openapi() -> Value {
                 }
             },
             "/topics/{topic}/retention": {
+                "get": {
+                    "summary": "Read a topic's current retention window",
+                    "parameters": [topic_param()],
+                    "responses": ok_schema("RetentionPolicy")
+                },
                 "put": {
                     "summary": "Configure a topic retention window",
                     "parameters": [topic_param()],
