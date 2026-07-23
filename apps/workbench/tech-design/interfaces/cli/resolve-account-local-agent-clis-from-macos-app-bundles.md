@@ -15,7 +15,7 @@ nodes:
   request: { kind: start, label: "agent launch request" }
   inherited: { kind: process, label: "search inherited PATH in order" }
   resolved: { kind: decision, label: "executable found?" }
-  fallback: { kind: process, label: "append bounded account-local CLI paths" }
+  fallback: { kind: process, label: "append account-local CLI paths" }
   spawn: { kind: terminal, label: "spawn resolved agent through PTY" }
   missing: { kind: terminal, label: "recoverable unavailable error" }
 edges:
@@ -36,10 +36,9 @@ flowchart LR
     resolved -->|no| missing([Recoverable error])
 ```
 
-PtyRuntime retains inherited PATH lookup order. On macOS only, if that lookup does not find a bare agent program, it appends a bounded account-local fallback list derived from HOME: .local/bin, .cargo/bin, and /opt/homebrew/bin. Duplicate directories are ignored; an explicit absolute or relative program path never uses fallback search.
+PtyRuntime searches inherited PATH first. On macOS only, a failed bare-program lookup appends the bounded account-local locations HOME/.local/bin, HOME/.cargo/bin, and /opt/homebrew/bin. Duplicates are removed. Absolute or relative program paths never use fallback search.
 
-The resolver accepts an injected home directory and search path in tests. It validates executable regular files exactly as today and returns the same UnavailableBinary error when no candidate exists. The sidecar does not execute shell startup files, parse user configuration, install a tool, or mutate PATH globally. Stable and Beta bundle the same Rust sidecar, so both receive this resolver behavior.
-
+Tests inject the path and HOME boundary to prove fallback, inherited precedence, and recoverable misses. The shared Rust workbench-core is embedded by both Stable and Beta, so both products receive identical agent discovery without parsing shell startup files or modifying global process environment.
 ## Changes
 <!-- type: changes lang: yaml -->
 
