@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T07:21:08.396542+00:00"
-digest = "sha256:d35fc98ed177038d0595ecfa02ff21c19d313cd5dfc2245972ee2ffa81ea3fbd"
-source_digest = "sha256:d35fc98ed177038d0595ecfa02ff21c19d313cd5dfc2245972ee2ffa81ea3fbd"
-ir_digest = "sha256:5f64467854ba40aa6706c10b8762c8054b9c0015f722a4dbe2ae46724d7896fd"
+generated_at = "2026-07-23T08:24:07.864456+00:00"
+digest = "sha256:d0d3d0395dfda8781973ff9813428098c912c159204ec923d518a906b9b709d1"
+source_digest = "sha256:d0d3d0395dfda8781973ff9813428098c912c159204ec923d518a906b9b709d1"
+ir_digest = "sha256:dcaca81e58a24e9e21351b52f7b15d95fe540b1ec15d6f5ca8c24c1047b83447"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -18,6 +18,12 @@ path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-re
 digest = "sha256:935dbcd0d32b80391cb37ffcda3a5b967765e395979d4c1683e5278ddddc837e"
 ir_digest = "sha256:a01de635c001098932d26dd6be4662314c4c52a6fee0527a918fbef7f91942de"
 section_count = 3
+
+[[files]]
+path = "interfaces/cli/prove-native-snapshot-and-diagnostics-cli-end-to-end.md"
+digest = "sha256:e1124613b7ef89f4e3228257348f0ef276335d00da0a9126183b3211580b0342"
+ir_digest = "sha256:e7c5b46934e1fa69c3a1f0df069bc6813ef5610a585eecb9b0366f0b3d6eb7aa"
+section_count = 1
 
 [[files]]
 path = "interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md"
@@ -77,6 +83,12 @@ section_count = 3
 path = "logic/render-aw-typed-artifacts-as-optional-read-only-workbench-contex.md"
 digest = "sha256:91a7cfdee6d5192fab7d40f0a0dd363002817b259ac151aaf4af08fdb301ccd1"
 ir_digest = "sha256:00a388debbf5cbdc90563daebb2a08412de2b3bdf89b01143fd988fe0b22aabb"
+section_count = 3
+
+[[files]]
+path = "logic/separate-stable-and-dev-app-channels-with-axiom-branding.md"
+digest = "sha256:fe608dbf6d9a1ca7feb5d5b0fc50453a7287d14832cc99bd16dce86f4f5bc384"
+ir_digest = "sha256:d42eeee38d32c1ae11321f45f08b2f01e3af154813e7ae69d7af84ac2f59cea5"
 section_count = 3
 
 [[files]]
