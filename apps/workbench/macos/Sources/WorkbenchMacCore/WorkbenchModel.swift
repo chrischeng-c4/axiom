@@ -73,6 +73,25 @@ public struct SelectedProjectWorkspace: Equatable, Sendable {
     }
 }
 
+/// Tab presentation belongs to one registered project. `id` is qualified for
+/// SwiftUI so two projects' default `claude` tabs never share a renderer.
+public struct ProjectTerminalTab: Identifiable, Equatable, Sendable {
+    public let projectId: String
+    public let tab: TerminalTab
+
+    public var id: String { "\(projectId)::\(tab.id)" }
+}
+
+private struct ProjectTerminalWorkspace: Equatable, Sendable {
+    var tabs: [TerminalTab]
+    var activeTabId: String
+
+    init(tabs: [TerminalTab], activeTabId: String) {
+        self.tabs = tabs
+        self.activeTabId = activeTabId
+    }
+}
+
 /// Native presentation state; every process action is delegated to the Rust core.
 ///
 /// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#logic
@@ -95,6 +114,7 @@ public final class WorkbenchModel: ObservableObject {
     private let projectStore: ProjectStore
     private let fileListing: ProjectFileListing
     private var pollTask: Task<Void, Never>?
+    private var projectTerminalWorkspaces: [String: ProjectTerminalWorkspace] = [:]
 
     public init(
         client: any CoreClientProtocol = RustCoreClient(),
@@ -131,15 +151,41 @@ public final class WorkbenchModel: ObservableObject {
         selectedWorkspace?.fileListing ?? .noProject
     }
 
+    /// Every running renderer stays mounted while its project is registered.
+    /// Only the selected project is interactive and visible, but retaining its
+    /// AppKit view prevents transcript replay when a user returns to a tab.
+    public var mountedTerminalTabs: [ProjectTerminalTab] {
+        projectTerminalWorkspaces.flatMap { projectId, workspace in
+            let visibleTabs = projectId == selectedProjectId ? tabs : workspace.tabs
+            return visibleTabs.map { ProjectTerminalTab(projectId: projectId, tab: $0) }
+        }
+    }
+
     public func registerProject(_ url: URL) {
+        let hadSelectedProject = selectedProjectId != nil
         let project = projectStore.register(url: url)
         projects = projectStore.load()
+        if !hadSelectedProject {
+            projectTerminalWorkspaces[project.id] = ProjectTerminalWorkspace(
+                tabs: tabs,
+                activeTabId: activeTabId
+            )
+        }
         selectProject(project.id)
         statusMessage = "Added \(project.displayName). New terminals will start in \(project.rootPath)."
     }
 
     public func selectProject(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }) else { return }
+        if selectedProjectId == id { return }
+        saveSelectedProjectTerminalWorkspace()
+        let terminalWorkspace = projectTerminalWorkspaces[id] ?? ProjectTerminalWorkspace(
+            tabs: Self.defaultTabs,
+            activeTabId: Self.defaultTabs[0].id
+        )
+        projectTerminalWorkspaces[id] = terminalWorkspace
+        tabs = terminalWorkspace.tabs
+        activeTabId = terminalWorkspace.activeTabId
         let launchFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
         selectedWorkspace = SelectedProjectWorkspace(
             project: project,
@@ -152,6 +198,7 @@ public final class WorkbenchModel: ObservableObject {
         projectStore.remove(id: id)
         projects = projectStore.load()
         if selectedProjectId == id {
+            saveSelectedProjectTerminalWorkspace()
             selectedWorkspace = nil
             if let next = projects.first {
                 selectProject(next.id)
@@ -185,7 +232,7 @@ public final class WorkbenchModel: ObservableObject {
             do {
                 _ = try await client.send(
                     method: .terminate,
-                    params: CoreParams(tabId: id)
+                    params: CoreParams(tabId: coreTabId(id))
                 )
             } catch {
                 // Ignore termination errors during close
@@ -216,14 +263,14 @@ public final class WorkbenchModel: ObservableObject {
             let response = try await client.send(
                 method: .launch,
                 params: CoreParams(
-                    tabId: tab.id,
+                    tabId: coreTabId(tab.id),
                     profile: tab.profile,
                     cwd: folder.path,
                     rows: 28,
                     cols: 100
                 )
             )
-            try apply(response, expectedTabId: tab.id)
+            try apply(response, expectedTabId: tab.id, expectedCoreTabId: coreTabId(tab.id))
             statusMessage = "\(tab.title) started in \(folder.path)."
         } catch {
             markFailed(tab.id, error: error)
@@ -237,9 +284,9 @@ public final class WorkbenchModel: ObservableObject {
         do {
             let response = try await client.send(
                 method: .input,
-                params: CoreParams(tabId: tabId, dataBase64: data.base64EncodedString())
+                params: CoreParams(tabId: coreTabId(tabId), dataBase64: data.base64EncodedString())
             )
-            try apply(response, expectedTabId: tabId)
+            try apply(response, expectedTabId: tabId, expectedCoreTabId: coreTabId(tabId))
         } catch {
             markFailed(tabId, error: error)
         }
@@ -252,9 +299,9 @@ public final class WorkbenchModel: ObservableObject {
         do {
             let response = try await client.send(
                 method: .resize,
-                params: CoreParams(tabId: tabId, rows: rows, cols: cols)
+                params: CoreParams(tabId: coreTabId(tabId), rows: rows, cols: cols)
             )
-            try apply(response, expectedTabId: tabId)
+            try apply(response, expectedTabId: tabId, expectedCoreTabId: coreTabId(tabId))
         } catch {
             markFailed(tabId, error: error)
         }
@@ -289,10 +336,10 @@ public final class WorkbenchModel: ObservableObject {
         for tabId in runningIds {
             do {
                 let response = try await client.send(
-                    method: .poll,
-                    params: CoreParams(tabId: tabId)
+                method: .poll,
+                    params: CoreParams(tabId: coreTabId(tabId))
                 )
-                try apply(response, expectedTabId: tabId)
+                try apply(response, expectedTabId: tabId, expectedCoreTabId: coreTabId(tabId))
             } catch {
                 markFailed(tabId, error: error)
             }
@@ -304,25 +351,29 @@ public final class WorkbenchModel: ObservableObject {
         do {
             let response = try await client.send(
                 method: method,
-                params: CoreParams(tabId: tab.id)
+                params: CoreParams(tabId: coreTabId(tab.id))
             )
-            try apply(response, expectedTabId: tab.id)
+            try apply(response, expectedTabId: tab.id, expectedCoreTabId: coreTabId(tab.id))
             statusMessage = method == .terminate ? "\(tab.title) stopped." : "Interrupted \(tab.title)."
         } catch {
             markFailed(tab.id, error: error)
         }
     }
 
-    private func apply(_ response: CoreResponse, expectedTabId: String) throws {
+    private func apply(
+        _ response: CoreResponse,
+        expectedTabId: String,
+        expectedCoreTabId: String
+    ) throws {
         guard response.protocolVersion == workbenchCoreProtocolVersion else {
             throw CoreClientError.protocolMismatch(response.protocolVersion)
         }
         guard let frame = response.result?.frame else {
             throw CoreClientError.transport("workbench-core returned no terminal frame")
         }
-        guard frame.snapshot.tabId == expectedTabId else {
+        guard frame.snapshot.tabId == expectedCoreTabId else {
             throw CoreClientError.transport(
-                "workbench-core routed tab \(frame.snapshot.tabId) to \(expectedTabId)"
+                "workbench-core routed tab \(frame.snapshot.tabId) to \(expectedCoreTabId)"
             )
         }
         guard let index = tabIndex(expectedTabId) else { return }
@@ -355,6 +406,19 @@ public final class WorkbenchModel: ObservableObject {
 
     private func tabIndex(_ id: String) -> Int? {
         tabs.firstIndex { $0.id == id }
+    }
+
+    private func saveSelectedProjectTerminalWorkspace() {
+        guard let selectedProjectId else { return }
+        projectTerminalWorkspaces[selectedProjectId] = ProjectTerminalWorkspace(
+            tabs: tabs,
+            activeTabId: activeTabId
+        )
+    }
+
+    private func coreTabId(_ tabId: String) -> String {
+        guard let selectedProjectId else { return tabId }
+        return "\(selectedProjectId)::\(tabId)"
     }
 }
 // HANDWRITE-END

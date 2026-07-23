@@ -357,23 +357,30 @@ struct WorkbenchView: View {
 
     private var terminalLayers: some View {
         ZStack {
-            ForEach(model.tabs) { tab in
+            ForEach(model.mountedTerminalTabs) { scopedTab in
+                let tab = scopedTab.tab
+                let isActive = scopedTab.projectId == model.selectedProjectId
+                    && model.activeTabId == tab.id
                 if tab.lifecycle != .idle, !tab.lifecycle.isFailed {
-                    terminalSurface(tab)
-                        .opacity(model.activeTabId == tab.id ? 1 : 0)
-                        .allowsHitTesting(model.activeTabId == tab.id)
-                        .accessibilityHidden(model.activeTabId != tab.id)
-                        .zIndex(model.activeTabId == tab.id ? 1 : 0)
+                    terminalSurface(tab, surfaceId: scopedTab.id, isActive: isActive)
+                        .opacity(isActive ? 1 : 0)
+                        .allowsHitTesting(isActive)
+                        .accessibilityHidden(!isActive)
+                        .zIndex(isActive ? 1 : 0)
                 }
             }
         }
     }
 
-    private func terminalSurface(_ tab: TerminalTab) -> some View {
+    private func terminalSurface(
+        _ tab: TerminalTab,
+        surfaceId: String,
+        isActive: Bool
+    ) -> some View {
         TerminalSurface(
-            tabId: tab.id,
+            tabId: surfaceId,
             output: tab.output,
-            acceptsInput: tab.lifecycle == .running && model.activeTabId == tab.id,
+            acceptsInput: tab.lifecycle == .running && isActive,
             onInput: { data in
                 Task { await model.sendInput(tabId: tab.id, data: data) }
             },
@@ -381,9 +388,11 @@ struct WorkbenchView: View {
                 Task { await model.resize(tabId: tab.id, rows: rows, cols: cols) }
             }
         )
-        .id(tab.id)
+        .id(surfaceId)
         .padding(4)
         .background(Color(nsColor: .black))
+        // The AppKit terminal itself carries `surfaceId`; keep the public UI
+        // query stable for the currently visible logical tab.
         .accessibilityIdentifier("terminal.surface.\(tab.id)")
         .accessibilityLabel("\(tab.title) terminal, \(tab.lifecycle.label)")
     }

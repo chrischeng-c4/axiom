@@ -57,8 +57,8 @@ final class WorkbenchModelTests: XCTestCase {
         await projectsPersistIndependentlyAndRemoveOnlyMetadata()
     }
 
-    func testProjectsSwitchWorkspaceStateWithoutTouchingTerminals() async {
-        await projectsSwitchWorkspaceStateWithoutTouchingTerminals()
+    func testProjectsKeepIndependentTerminalWorkspaces() async {
+        await projectsKeepIndependentTerminalWorkspaces()
     }
 
     func closingTabRemovesTabAndSelectsAdjacent() async {
@@ -105,7 +105,7 @@ final class WorkbenchModelTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
-    func projectsSwitchWorkspaceStateWithoutTouchingTerminals() async {
+    func projectsKeepIndependentTerminalWorkspaces() async {
         let client = MockCoreClient()
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let firstProject = tempDir.appendingPathComponent("first", isDirectory: true)
@@ -128,7 +128,7 @@ final class WorkbenchModelTests: XCTestCase {
         model.selectProject(first.id)
         await client.enqueue(
             response(
-                tabId: "claude",
+                tabId: "\(first.id)::claude",
                 profile: .claude,
                 running: true,
                 cwd: firstProject.path,
@@ -147,10 +147,18 @@ final class WorkbenchModelTests: XCTestCase {
         } else {
             XCTFail("selected project should expose its Files listing")
         }
-        XCTAssertEqual(model.activeTab?.activeCwd, firstProject.path)
-        XCTAssertEqual(model.activeTab?.lifecycle, .running)
+        XCTAssertEqual(model.activeTab?.lifecycle, .idle)
+        XCTAssertEqual(model.activeTab?.output, Data())
+        let retainedA = model.mountedTerminalTabs.first {
+            $0.projectId == first.id && $0.tab.id == "claude"
+        }
+        XCTAssertEqual(retainedA?.tab.lifecycle, .running)
         let requestsAfterSwitch = await client.requests()
         XCTAssertEqual(requestsAfterSwitch, requestsBeforeSwitch)
+
+        model.selectProject(first.id)
+        XCTAssertEqual(model.activeTab?.activeCwd, firstProject.path)
+        XCTAssertEqual(model.activeTab?.lifecycle, .running)
 
         try? FileManager.default.removeItem(at: tempDir)
     }
@@ -174,7 +182,9 @@ final class WorkbenchModelTests: XCTestCase {
 
     func addingShellTabSelectsWithoutLaunching() async {
         let client = MockCoreClient()
-        let model = WorkbenchModel(client: client)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = WorkbenchModel(client: client, projectStore: ProjectStore(storageDirectory: tempDir))
+        defer { try? FileManager.default.removeItem(at: tempDir) }
         model.addShellTab()
 
         XCTAssertEqual(model.tabs.last?.id, "shell-2")
@@ -188,7 +198,7 @@ final class WorkbenchModelTests: XCTestCase {
         model.registerProject(folder)
         await client.enqueue(
             response(
-                tabId: "shell-2",
+                tabId: "\(model.selectedProjectId!)::shell-2",
                 profile: .shell,
                 running: true,
                 cwd: folder.resolvingSymlinksInPath().path,
@@ -200,7 +210,7 @@ final class WorkbenchModelTests: XCTestCase {
         let requests = await client.requests()
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].method, .launch)
-        XCTAssertEqual(requests[0].params.tabId, "shell-2")
+        XCTAssertEqual(requests[0].params.tabId, "\(model.selectedProjectId!)::shell-2")
         XCTAssertEqual(requests[0].params.profile, .shell)
         XCTAssertEqual(requests[0].params.cwd, folder.resolvingSymlinksInPath().path)
         XCTAssertEqual(model.activeTab?.lifecycle, .running)
@@ -213,7 +223,7 @@ final class WorkbenchModelTests: XCTestCase {
         model.registerProject(folder)
         await client.enqueue(
             response(
-                tabId: "claude",
+                tabId: "\(model.selectedProjectId!)::claude",
                 profile: .claude,
                 running: true,
                 cwd: folder.path,
@@ -227,7 +237,7 @@ final class WorkbenchModelTests: XCTestCase {
 
         await client.enqueue(
             response(
-                tabId: "codex",
+                tabId: "\(model.selectedProjectId!)::codex",
                 profile: .codex,
                 running: false,
                 cwd: folder.path,
@@ -240,7 +250,7 @@ final class WorkbenchModelTests: XCTestCase {
         guard case let .failed(message) = model.tabs[0].lifecycle else {
             return XCTFail("mismatched response must fail the addressed tab")
         }
-        XCTAssertTrue(message.contains("routed tab codex to claude"))
+        XCTAssertTrue(message.contains("routed tab"))
         XCTAssertEqual(model.tabs[1].lifecycle, .idle)
         XCTAssertEqual(model.tabs[1].output, Data())
         XCTAssertEqual(model.tabs[0].accessibilityLabel, "Claude Code, Needs attention")
