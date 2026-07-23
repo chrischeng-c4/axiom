@@ -94,7 +94,10 @@ wait_for_split() {
     sleep 5
   done
   echo "Lumen did not converge 1-to-2 split with two ready pods and two PVCs" >&2
-  kubectl -n lumen get lumen/lumen,statefulset/lumen,pvc -o yaml >&2 || true
+  # Two calls: kubectl rejects mixing resource/name form with a bare resource
+  # type in one argument list (the tape campaign hit this exact silent dump).
+  kubectl -n lumen get lumen/lumen statefulset/lumen -o yaml >&2 || true
+  kubectl -n lumen get pvc -o yaml >&2 || true
   return 1
 }
 
@@ -140,8 +143,27 @@ wait_for_split
 
 stop_forward
 start_forward
-search_probe > "$EVIDENCE_DIR/kubernetes/lumen-search-after-split.json"
-jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-search-after-split.json" >/dev/null
+# Run 0723160506 (lumen@0.4.24): a single probe immediately after the fence
+# converged still hit "collection not found" on the Service-pinned new-shard
+# pod. Poll with a bound and RECORD how long readability lagged convergence —
+# a nonzero lag is fence-gap evidence for the product (tracked as an
+# app:lumen finding), while a never-readable split stays a hard failure.
+split_read_started=$SECONDS
+split_read_deadline=$((SECONDS + 180))
+until search_probe > "$EVIDENCE_DIR/kubernetes/lumen-search-after-split.json" 2>/dev/null \
+  && jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-search-after-split.json" >/dev/null 2>&1; do
+  if (( SECONDS >= split_read_deadline )); then
+    echo "post-split search never became readable through the converged fence" >&2
+    cat "$EVIDENCE_DIR/kubernetes/lumen-search-after-split.json" >&2 || true
+    kubectl -n lumen get lumen/lumen -o yaml >&2 || true
+    kubectl -n lumen describe pods >&2 || true
+    exit 1
+  fi
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
+printf '%s\n' "$((SECONDS - split_read_started))" \
+  > "$EVIDENCE_DIR/kubernetes/lumen-split-readable-after-seconds.txt"
 kubectl -n lumen get lumen/lumen -o json > "$EVIDENCE_DIR/kubernetes/lumen-after-split.json"
 kubectl get deployment,statefulset,cronjob,job,pod,pvc,serviceaccount -A -o json \
   > "$EVIDENCE_DIR/kubernetes/workloads-after-lumen-phase.json"
