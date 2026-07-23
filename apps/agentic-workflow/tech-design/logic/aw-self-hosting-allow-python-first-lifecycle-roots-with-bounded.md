@@ -89,3 +89,35 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: python-first-self-hosting-admission-verification
+requirements:
+  admitted_capability_backlog:
+    id: R2
+    text: "Agentic Workflow capability and backlog roots enter their ordinary verifiers and preserve their normal blocked or dispatch envelopes."
+    kind: regression
+    risk: high
+    verify: python_first_self_hosting_capability_and_backlog_enter_normal_verifiers
+  admitted_wi:
+    id: R1
+    text: "An Agentic Workflow change root enters the ordinary EC-first lifecycle instead of being rejected only because the project is Agentic Workflow."
+    kind: functional
+    risk: high
+    verify: python_first_self_hosting_wi_enters_ec_first_lifecycle
+  bounded_fallback:
+    id: R3
+    text: "Health reports direct repair as a non-default fallback restricted to the current change when the selected worker verb is broken."
+    kind: regression
+    risk: high
+    verify: python_first_self_hosting_health_reports_bounded_fallback
+---
+flowchart TD
+    r1[R1 admitted wi] --> python_first_self_hosting_wi_enters_ec_first_lifecycle[python_first_self_hosting_wi_enters_ec_first_lifecycle]
+    r2[R2 admitted capability backlog] --> python_first_self_hosting_capability_and_backlog_enter_normal_verifiers[python_first_self_hosting_capability_and_backlog_enter_normal_verifiers]
+    r3[R3 bounded fallback] --> python_first_self_hosting_health_reports_bounded_fallback[python_first_self_hosting_health_reports_bounded_fallback]
+```
