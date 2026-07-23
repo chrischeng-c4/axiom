@@ -10,7 +10,7 @@
     "license": {
       "name": "MIT"
     },
-    "version": "0.4.22"
+    "version": "0.4.24"
   },
   "servers": [
     {
@@ -647,6 +647,8 @@
         "tags": [
           "Index"
         ],
+        "summary": "At most [`MAX_INDEX_BATCH_SIZE`] items per request; a longer batch is",
+        "description": "rejected with 400 before any item runs.",
         "operationId": "index",
         "parameters": [
           {
@@ -676,6 +678,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/IndexResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch size over the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1582,7 +1594,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IndexItem"
-            }
+            },
+            "description": "At most [`MAX_INDEX_BATCH_SIZE`] items; a longer batch is rejected\nwith 400 before any item runs."
           },
           "request_id": {
             "type": "string",
