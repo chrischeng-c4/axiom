@@ -20,7 +20,7 @@ resource "google_storage_bucket" "backups" {
 resource "google_service_account" "backup" {
   project      = var.project_id
   account_id   = "${local.prefix}-backup"
-  display_name = "Disposable Lumen and Sift backup writer"
+  display_name = "Disposable acceptance backup writer"
 }
 
 resource "google_storage_bucket_iam_member" "backup_writer" {
@@ -30,10 +30,10 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
 }
 
 resource "google_service_account_iam_member" "backup_workload_identity" {
-  for_each = toset([
-    "lumen/lumen-backup",
-    "sift/sift-backup",
-  ])
+  for_each = toset(concat(
+    ["lumen/lumen-backup"],
+    var.lumen_only ? [] : ["sift/sift-backup"],
+  ))
 
   service_account_id = google_service_account.backup.name
   role               = "roles/iam.workloadIdentityUser"

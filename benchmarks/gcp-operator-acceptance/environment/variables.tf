@@ -79,3 +79,9 @@ variable "image_tag" {
   description = "Run-unique image tag; workloads use the resolved immutable digest."
   type        = string
 }
+
+variable "lumen_only" {
+  description = "When true, provision only the Lumen backup workload-identity binding."
+  type        = bool
+  default     = false
+}
