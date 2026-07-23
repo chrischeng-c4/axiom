@@ -796,18 +796,16 @@ pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> Stri
     format!("aw goal capability {capability_id} --project {project}")
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal capability <capability-id>` -- drive that
-/// capability's next work-root tick via the shared root loop.
+/// capability's next work-root tick via the shared root loop. Agentic
+/// Workflow follows the same verifier as every other project.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_capability_root(
     project: &str,
     capability_id: &str,
     print: RunPrintOptions,
 ) -> Result<()> {
-    if is_self_hosting_project(project) {
-        return emit_self_hosting_policy_error(project, "capability", capability_id, print);
-    }
     let root = ResolvedRunRoot::Capability {
         project: project.to_string(),
         capability_id: capability_id.to_string(),
