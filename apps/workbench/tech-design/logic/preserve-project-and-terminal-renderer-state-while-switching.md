@@ -56,29 +56,22 @@ changes:
 
 ```mermaid
 ---
-id: workbench-switching-state-verification
+id: workbench-native-switch-contract-verification
 requirements:
-  project_workspace_state:
+  project_transition:
     id: R1
-    text: "Selecting a registered project updates selected project, launch root, and Files listing together."
+    text: "Project selection exposes a coherent workspace and does not invoke terminal lifecycle operations."
     kind: functional
     risk: medium
     verify: WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals
-  pty_cwd_preservation:
-    id: R3
-    text: "Project selection does not alter existing PTY cwd or lifecycle."
-    kind: regression
-    risk: high
-    verify: WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals
-  terminal_renderer_retention:
+  tab_transition:
     id: R2
-    text: "A running terminal retains its native renderer and does not replay its transcript after tab selection changes."
+    text: "Tab selection restores the existing terminal renderer and transcript without a restart or replay."
     kind: regression
     risk: high
     verify: WorkbenchMacUITests.testNativeShellJourney
 ---
 flowchart TD
-    r1[R1 project workspace state] --> workbenchmodeltests_projectsswitchworkspacestatewithouttouchingterminals[WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals]
-    r3[R3 pty cwd preservation] --> workbenchmodeltests_projectsswitchworkspacestatewithouttouchingterminals
-    r2[R2 terminal renderer retention] --> workbenchmacuitests_testnativeshelljourney[WorkbenchMacUITests.testNativeShellJourney]
+    r1[R1 project transition] --> workbenchmodeltests_projectsswitchworkspacestatewithouttouchingterminals[WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals]
+    r2[R2 tab transition] --> workbenchmacuitests_testnativeshelljourney[WorkbenchMacUITests.testNativeShellJourney]
 ```
