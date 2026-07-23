@@ -2,7 +2,7 @@
 set -euo pipefail
 
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
-app="${1:?usage: verify-operator-cell.sh lumen|sift}"
+app="${1:?usage: verify-operator-cell.sh lumen|sift|tape}"
 
 case "$app" in
   lumen)
@@ -19,8 +19,15 @@ case "$app" in
     app_namespace="sift"
     statefulset="sift"
     ;;
+  tape)
+    operator_namespace="tape-system"
+    service_account="tape-operator"
+    lease="tape-operator"
+    app_namespace="tape"
+    statefulset="tape"
+    ;;
   *)
-    echo "unknown app '$app'; expected lumen or sift" >&2
+    echo "unknown app '$app'; expected lumen, sift, or tape" >&2
     exit 2
     ;;
 esac
@@ -105,7 +112,12 @@ tamper_and_require_reconcile() {
 }
 
 assert_can_i get leases.coordination.k8s.io "$operator_namespace"
-assert_can_i create cronjobs.batch "$app_namespace"
+if [[ "$app" != "tape" ]]; then
+  # Tape's operator RBAC (apps/tape/k8s/operator/rbac.yaml) does not grant
+  # cronjobs.batch: its backup CronJob is a handcrafted acceptance-harness
+  # resource, not something the operator reconciles from the CR.
+  assert_can_i create cronjobs.batch "$app_namespace"
+fi
 if [[ "$app" == "lumen" ]]; then
   assert_can_i get secrets "$app_namespace"
 fi

@@ -28,6 +28,8 @@ capture_failure_evidence() {
     > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
   kubectl logs -n sift-system deployment/sift-operator --tail=500 \
     > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
+  kubectl logs -n tape-system deployment/tape-operator --tail=500 \
+    > "$EVIDENCE_DIR/kubernetes/tape-operator.log" 2>&1 || true
 }
 
 delete_run_image() {
@@ -66,7 +68,7 @@ delete_run_image() {
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
-  namespaces=(lumen lumen-system sift sift-system)
+  namespaces=(lumen lumen-system sift sift-system tape tape-system)
   for namespace in "${namespaces[@]}"; do
     kubectl delete namespace "$namespace" --ignore-not-found --wait=false \
       >/dev/null 2>&1 || true
@@ -89,7 +91,7 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     fi
     sleep 5
   done
-  kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
+  kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev tapes.tape.dev \
     --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
 fi
 
@@ -131,6 +133,7 @@ fi
 
 delete_run_image lumen
 delete_run_image sift
+delete_run_image tape
 gcloud storage rm --recursive "${GCS_SOURCE_PREFIX}/**" >/dev/null 2>&1 || true
 
 PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" \

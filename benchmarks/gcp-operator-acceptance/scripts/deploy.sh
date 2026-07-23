@@ -4,7 +4,7 @@ set -euo pipefail
 : "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 
-app="${1:?usage: deploy.sh lumen|sift}"
+app="${1:?usage: deploy.sh lumen|sift|tape}"
 case "$app" in
   lumen)
     crd="lumens.lumen.dev"
@@ -22,8 +22,16 @@ case "$app" in
     operator_deployment="sift-operator"
     statefulset="sift"
     ;;
+  tape)
+    crd="tapes.tape.dev"
+    cr_namespace="tape"
+    cr_resource="tape/tape"
+    operator_namespace="tape-system"
+    operator_deployment="tape-operator"
+    statefulset="tape"
+    ;;
   *)
-    echo "unknown app '$app'; expected lumen or sift" >&2
+    echo "unknown app '$app'; expected lumen, sift, or tape" >&2
     exit 2
     ;;
 esac

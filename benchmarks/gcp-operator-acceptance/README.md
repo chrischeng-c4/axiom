@@ -1,10 +1,19 @@
-# GCP operator acceptance: Lumen, then Sift
+# GCP operator acceptance: Lumen+Sift, or Tape
 
 This harness is a low-cost GKE proof for the shared service
-operator shape. It completes an independent Lumen acceptance phase first; only
-then does it install Sift and its node-level collector to collect Lumen's real
-structured stdout. The image, Terraform, manifest-rendering, evidence, and
-cleanup boundaries remain reusable for Tape, Relay, and Defer.
+operator shape. It has two mutually exclusive acceptance modes, selected by
+`ACCEPTANCE_APPS`:
+
+- **default** (`ACCEPTANCE_APPS` unset or `"lumen sift"`): completes an
+  independent Lumen acceptance phase first; only then does it install Sift and
+  its node-level collector to collect Lumen's real structured stdout.
+- **`ACCEPTANCE_APPS=tape`**: a single-phase Tape-only mode that proves Tape's
+  operator lifecycle, append/replay/subscription data plane, GCS backup, and a
+  cold restore into a 1-to-3 Raft topology with a leader-failover proof. It
+  does not install Lumen or Sift.
+
+The image, Terraform, manifest-rendering, evidence, and cleanup boundaries
+remain reusable for Relay and Defer.
 
 It keeps one named Standard GKE test cluster between runs, then creates these
 short-lived resources tagged with one `RUN_ID`:
@@ -13,8 +22,10 @@ short-lived resources tagged with one `RUN_ID`:
   public-access prevention, and a one-day object lifecycle;
 - one shared backup GSA;
 - bucket-scoped `roles/storage.objectAdmin` for that backup GSA;
-- Workload Identity bindings for `lumen/lumen-backup` and
-  `sift/sift-backup`.
+- Workload Identity bindings for `lumen/lumen-backup` and `sift/sift-backup`
+  (default mode), or `tape/tape-backup` (Tape mode). The Terraform binding set
+  itself is static and includes all three; only the mode-selected namespace's
+  resources are actually created and used in a given run.
 
 It does **not** create Pub/Sub, Cloud Tasks, Cloud Run, a LoadBalancer, a NAT,
 or an Artifact Registry repository. `courier` is the default existing Docker
@@ -46,6 +57,45 @@ The test is deliberately narrower than a production or competitor benchmark:
 
 These exclusions are also written into `acceptance.json`, so a passing run
 cannot be mistaken for broader scaling evidence.
+
+### Tape acceptance boundary
+
+`ACCEPTANCE_APPS=tape` runs a single-phase acceptance of Tape alone; Lumen and
+Sift are not installed and their exclusions above do not apply to this mode.
+
+- Proves Tape's 1x1 operator reconcile, leader takeover, and drift repair —
+  the same operator-cell test as Lumen/Sift.
+- Proves the append/replay/subscription data plane end to end: append three
+  events, replay them, create a pull subscription, pull before ack, ack the
+  offset, and pull again to confirm the cursor advanced and no events remain.
+- Proves data retention across a serving-pod restart (replay and checkpoint
+  read back unchanged after `kubectl delete pod/tape-0`).
+- Proves the handcrafted `tape-backup` CronJob writes a real GCS JSON
+  snapshot, and that the snapshot's `journal.topics` actually contains the
+  appended events (not just a well-formed JSON object).
+- Proves a **cold** restore from that GCS backup: the CR, StatefulSet, and
+  PVCs are explicitly deleted (Tape's operator sets no owner references and
+  registers no deletion finalizer, so CR deletion alone does not cascade),
+  then a fresh instance is applied with `bootstrapSeedUri` pointing at the
+  backup object and `replicasPerShard`/`voterCount` raised from 1 to 3 in the
+  same patch. This is a cold reseed, not a live scale-up: `tape`'s
+  `bootstrapSeedUri` env var applies uniformly to the whole StatefulSet pod
+  template, and seeding hard-fails against any non-empty data directory, so a
+  live in-place scale while keeping the original ordinal-0 PVC would crash
+  that pod on its next rolling-update restart.
+- Proves Raft leader failover on the restored 3-replica topology: find the
+  current leader via each pod's unauthenticated `/raftz` status, delete that
+  pod, confirm a different pod becomes leader, then perform and commit a
+  post-failover append/replay.
+- Tape's operator RBAC does not grant `cronjobs.batch`: the backup CronJob is
+  a handcrafted acceptance-harness resource, not something the operator
+  reconciles from the CR, so `verify-operator-cell.sh` only asserts that
+  RBAC capability for Lumen and Sift.
+- shardCount is pinned to 1; only `replicasPerShard`/`voterCount` vary. No
+  multi-shard topology is claimed.
+- Tape's dev-profile default auth is off (no bearer token required for any
+  HTTP call this harness makes); production auth posture is not exercised
+  here.
 
 ## Prerequisites
 
@@ -98,6 +148,26 @@ SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
+Run Tape-only acceptance instead by setting `ACCEPTANCE_APPS=tape`. This mode
+never accepts `LUMEN_PRIOR_ACCEPTANCE` and only reads/builds the Tape image:
+
+```bash
+PROJECT_ID=axiom-502607 \
+REGION=asia-east1 \
+GKE_ZONE=asia-east1-a \
+ACCEPTANCE_APPS=tape \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
+or with an immutable release digest, skipping Cloud Build entirely:
+
+```bash
+PROJECT_ID=axiom-502607 \
+ACCEPTANCE_APPS=tape \
+TAPE_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/tape@sha256:<digest> \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
 The first run bootstraps `axiom-operator-acceptance`; later runs reuse it. To
 create it explicitly (or select a different persistent name), run:
 
@@ -129,6 +199,16 @@ benchmarks/gcp-operator-acceptance/scripts/bootstrap-cluster.sh
    destroy only run-scoped Terraform resources, remove only run-tagged image
    tags/digests and the exact Cloud Build source prefix, and independently
    verify cleanup. The persistent cluster stays available for the next run.
+
+Steps 1, 6, and 7 describe the default Lumen-then-Sift mode. In
+`ACCEPTANCE_APPS=tape` mode, step 1 builds only the Tape CLI, and steps 6-7
+collapse into one single-phase step: apply Tape's CLI-rendered CRD/operator/
+instance and the handcrafted backup CronJob/identity manifests, require status
+generation, run the same operator drift/takeover cell test, then run
+`verify-tape.sh` (append/replay/subscription lifecycle, pod-restart retention,
+GCS backup, cold restore into a 1-to-3 topology, and Raft leader failover).
+Step 8's cleanup and step 5's Terraform edges are unconditional and already
+cover Tape's namespaces, CRD, and Workload Identity binding.
 
 The cloud portion has a hard maximum of 2,700 seconds (45 minutes). `EXIT`,
 `INT`, `TERM`, failures, and the watchdog all enter the same cleanup trap. A
@@ -184,9 +264,43 @@ Default evidence root:
     └── sift-first-object.json
 ```
 
+`ACCEPTANCE_APPS=tape` mode writes the same top-level `run.json`/`run.log`/
+`images.json`/`cloud-build-*.json`/`terraform-output.json`/`acceptance.json`/
+`cleanup.json`, plus an additional `tape-acceptance.json` (the source
+`acceptance.tape` object, before it is nested into `acceptance.json`) and:
+
+```text
+/tmp/axiom-gcp-operator-evidence/<run-id>/
+├── tape-acceptance.json
+├── kubernetes/
+│   ├── tape-operator-rbac.tsv
+│   ├── tape-lease-holder-{initial,before,after,settled}.txt
+│   ├── tape-crs.json
+│   ├── tape-append.jsonl
+│   ├── tape-subscription-create.json
+│   ├── tape-pull-before-ack.json
+│   ├── tape-ack.json
+│   ├── tape-pull-after-ack.json
+│   ├── tape-replay-{initial,after-restart,after-restore,after-failover}.json
+│   ├── tape-checkpoint-after-{restart,restore}.json
+│   ├── tape-backup.log
+│   ├── tape-after-restore.json
+│   ├── tape-raft-leader-{initial,after-failover}.txt
+│   ├── tape-raftz-{initial,after-failover}.json
+│   ├── tape-append-after-failover.json
+│   ├── tape-final.json
+│   └── workloads-after-tape-phase.json
+└── gcs/
+    ├── tape-objects.txt
+    ├── tape-first-object.json
+    └── tape-first-object-bytes.txt
+```
+
 [`evidence/schema.json`](evidence/schema.json) defines the terminal
-`acceptance.json` contract. `cleanup.json` is separate and mandatory: a green
-functional result without a green cleanup result is a failed run.
+`acceptance.json` contract; its `acceptance` field is an `anyOf` of the
+default `{lumen, sift}` shape or the Tape-mode `{tape}` shape. `cleanup.json`
+is separate and mandatory: a green functional result without a green cleanup
+result is a failed run.
 
 ## Extension rule
 
@@ -194,4 +308,8 @@ Add a service by extending the shared builder with one runtime target, adding
 its CLI-rendered layers to `render-manifests.sh`, and adding a namespace-scoped
 Workload Identity member plus explicit acceptance/exclusion fields. Do not add
 app manifests to Terraform, copy operator YAML into this harness, or broaden
-the GSA to project-wide storage permissions.
+the GSA to project-wide storage permissions. Tape was added this way as a
+second, mutually exclusive `ACCEPTANCE_APPS=tape` mode rather than a third
+phase of the default Lumen-then-Sift chain, because Tape's acceptance targets
+are independent of Lumen/Sift and run against a disposable single-service
+topology instead. Relay and Defer remain unadded.
