@@ -82,43 +82,36 @@ changes:
 
 ```mermaid
 ---
-id: loom-sift-agnostic-telemetry-verification
+id: loom-telemetry-contract-verification
 requirements:
-  collector_boundary:
-    id: R3
-    text: "Loom adds neither a Sift dependency nor Sift endpoint, token, header, route, or collector configuration; collection remains external."
+  fallback_contract:
+    id: R2
+    text: "Missing and malformed traceparent values do not crash Loom and produce independent valid local correlation roots."
     kind: negative
     risk: medium
-    verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic
-  existing_controller_surface:
-    id: R5
-    text: "The existing shared standard endpoint surface remains available after tracing initialization is moved to the process boundary."
-    kind: regression
-    risk: medium
-    verify: apps/loom/src/controller.rs::tests::standard_endpoints_served
-  real_controller_jsonl:
-    id: R2
-    text: "A real Loom controller under LOOM_LOG_FORMAT=json emits a nonzero service.name=loom JSONL completion record for valid, missing, and malformed traceparent requests."
+    verify: apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout
+  jsonl_contract:
+    id: R1
+    text: "A valid W3C request to a real Loom controller produces a schema-valid completion record with Loom identity, inherited trace id, parent span id, flags, and a distinct local span."
     kind: functional
     risk: high
     verify: apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout
-  shared_completion:
-    id: R1
-    text: "The shared HTTP trace layer emits exactly one axiom.service.log.v1 http_request_complete event with method, URI, response status, latency, and inherited W3C context."
-    kind: functional
-    risk: high
-    verify: libs/service-http/tests/request_completion_event.rs::completion_event_is_schema_valid_and_w3c_correlated
-  workload_configuration:
+  rendered_json_contract:
     id: R4
-    text: "Both checked-in and operator-rendered controller workloads request JSON service logging without changing replica or workflow semantics."
+    text: "The controller's static and operator-rendered workloads select JSON logging without modifying scale or state inputs."
     kind: regression
     risk: medium
     verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging
+  sift_boundary_contract:
+    id: R3
+    text: "The producer does not acquire a direct Sift linkage while the future external collector can consume stdout unchanged."
+    kind: negative
+    risk: high
+    verify: apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic
 ---
 flowchart TD
-    r1[R1 shared completion] --> libs_service_http_tests_request_completion_event_rs_completion_event_is_schema_valid_and_w3c_correlated[libs/service-http/tests/request_completion_event.rs::completion_event_is_schema_valid_and_w3c_correlated]
-    r2[R2 real controller jsonl] --> apps_loom_tests_structured_stdout_traceparent_rs_real_loom_controller_correlates_structured_stdout[apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout]
-    r3[R3 collector boundary] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_remains_sift_agnostic[apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic]
-    r4[R4 workload configuration] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_workloads_request_json_logging[apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging]
-    r5[R5 existing controller surface] --> apps_loom_src_controller_rs_tests_standard_endpoints_served[apps/loom/src/controller.rs::tests::standard_endpoints_served]
+    r1[R1 jsonl contract] --> apps_loom_tests_structured_stdout_traceparent_rs_real_loom_controller_correlates_structured_stdout[apps/loom/tests/structured_stdout_traceparent.rs::real_loom_controller_correlates_structured_stdout]
+    r2[R2 fallback contract] --> apps_loom_tests_structured_stdout_traceparent_rs_real_loom_controller_correlates_structured_stdout
+    r3[R3 sift boundary contract] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_remains_sift_agnostic[apps/loom/tests/structured_stdout_traceparent.rs::loom_remains_sift_agnostic]
+    r4[R4 rendered json contract] --> apps_loom_tests_structured_stdout_traceparent_rs_loom_workloads_request_json_logging[apps/loom/tests/structured_stdout_traceparent.rs::loom_workloads_request_json_logging]
 ```
