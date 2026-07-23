@@ -176,6 +176,7 @@ jobs:
             ```
 
             Or pick a target tarball below and extract it manually.
+            macOS is Apple Silicon only; for Linux choose x86_64 or aarch64.
 
   # #2462: durable, digest-pinned container images per release. Runs after
   # `release` because `Dockerfile.release` downloads the published tarballs;
@@ -252,4 +253,3 @@ jobs:
           fi
           printf '%s\n\n## Container image\n\n```text\n%s\n```\n' "$body" "$image" \
             | gh release edit "$tag" --repo "${{ github.repository }}" --notes-file -
-            macOS is Apple Silicon only; for Linux choose x86_64 or aarch64.
