@@ -236,7 +236,8 @@ EC Dimensions: behavior: `cargo test -p tape` - append ordering plus replay rang
 Required Verification: smoke, conformance
 Promise:
 Tape provides a durable append-only topic journal for replay/backfill workloads
-without becoming the online broker.
+without becoming the online broker. When `limit` is omitted, replay returns
+at most 1000 oldest-first events; page with offset+limit.
 Gate Inventory:
 - apps/tape/src/lib.rs
 - apps/tape/tests/cli_contract.rs
