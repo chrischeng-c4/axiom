@@ -23,6 +23,7 @@ fn lumen_with_backup() -> Lumen {
         auth: AuthMode::Off,
         tokens_secret: None,
         tokens_secret_provider_class: None,
+        tokens_secret_csi_driver: None,
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
