@@ -13124,7 +13124,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tape"
-version = "0.4.9"
+version = "0.4.10"
 dependencies = [
  "anyhow",
  "async-nats",

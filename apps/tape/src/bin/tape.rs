@@ -1326,13 +1326,13 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
         K8sInstanceProfile::Staging => (
             "tape",
             "staging",
-            format!("tape:{default_version}"),
+            format!("ghcr.io/chrischeng-c4/tape:{default_version}"),
             InstanceBody::Staging,
         ),
         K8sInstanceProfile::Prod => (
             "tape",
             "production",
-            format!("registry.example.com/tape:{default_version}"),
+            format!("ghcr.io/chrischeng-c4/tape:{default_version}"),
             InstanceBody::Prod,
         ),
         K8sInstanceProfile::Template => (
