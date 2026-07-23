@@ -71,3 +71,35 @@ changes:
     anchor: WorkbenchMacUITests
     description: Prove a running shell tab retains terminal content after switching to another tab and back.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-switching-state-verification
+requirements:
+  project_workspace_state:
+    id: R1
+    text: "Selecting a registered project updates selected project, launch root, and Files listing together."
+    kind: functional
+    risk: medium
+    verify: WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals
+  pty_cwd_preservation:
+    id: R3
+    text: "Project selection does not alter existing PTY cwd or lifecycle."
+    kind: regression
+    risk: high
+    verify: WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals
+  terminal_renderer_retention:
+    id: R2
+    text: "A running terminal retains its native renderer and does not replay its transcript after tab selection changes."
+    kind: regression
+    risk: high
+    verify: WorkbenchMacUITests.testNativeShellJourney
+---
+flowchart TD
+    r1[R1 project workspace state] --> workbenchmodeltests_projectsswitchworkspacestatewithouttouchingterminals[WorkbenchModelTests.projectsSwitchWorkspaceStateWithoutTouchingTerminals]
+    r3[R3 pty cwd preservation] --> workbenchmodeltests_projectsswitchworkspacestatewithouttouchingterminals
+    r2[R2 terminal renderer retention] --> workbenchmacuitests_testnativeshelljourney[WorkbenchMacUITests.testNativeShellJourney]
+```
