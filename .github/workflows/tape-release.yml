@@ -1,27 +1,21 @@
-# Build `tape` binaries for its supported targets.
+# Build `tape` binaries and the GHCR release image.
 #
 # Triggers:
-#   - push of a tag matching `tape@*`   → build + attach to GitHub release
-#                                         (e.g. tape@0.4.10, tape@1.2.3)
-#   - workflow_dispatch                 → build artifacts only (manual smoke)
+#   - push of a tag matching `tape@*`  → build + attach to GitHub release,
+#                                        then publish the container image
+#   - workflow_dispatch               → build artifacts only (manual smoke),
+#                                       or containerize an EXISTING release
+#                                       via the image_version input (#2462)
 #
-# Targets — 3, not the 5-target lumen matrix: tape's own release-asset
-# consumers only understand these three. `apps/tape/install.sh` maps
-# `uname -s`/`uname -m` to exactly `aarch64-apple-darwin` (rejecting Intel
-# macOS outright), `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu`
-# — no musl legs. `apps/tape/Dockerfile.release`'s fetch stage matches: its
-# TARGETARCH case only has `amd64 → x86_64-unknown-linux-gnu` and
-# `arm64 → aarch64-unknown-linux-gnu`, and its runtime base is
-# `gcr.io/distroless/cc-debian12` (glibc-based), not the musl-only
-# `static-debian12` lumen uses. Adding musl targets here would produce
-# tarballs neither consumer downloads. (`cargo tree -p tape --features
-# "operator self-update issue otel backup"` confirms tape's whole dependency
-# graph is rustls-based with no openssl-sys, so this is a target-convention
-# choice, not a musl-vs-openssl compatibility constraint.)
-#
+# Targets (tape's release image is distroless/cc consuming the gnu tarballs,
+# so no musl legs are needed):
 #   - aarch64-apple-darwin        (Apple Silicon,      macos-14 native)
 #   - x86_64-unknown-linux-gnu    (most Linux servers, ubuntu-latest native)
 #   - aarch64-unknown-linux-gnu   (Linux on ARM,       ubuntu-latest cross)
+#
+# The released binary is the SERVING binary: it must carry the operator and
+# backup features (the GKE image runs `tape serve` / `tape k8s operator run`
+# / `tape backup`) plus the standard self-update/issue CLI surface.
 name: tape-release
 
 on:
@@ -38,8 +32,8 @@ on:
         default: ""
 
 permissions:
-  contents: write  # needed to create / upload release assets
-  packages: write  # needed to push the GHCR image (#2462)
+  contents: write  # create / upload release assets
+  packages: write  # push the GHCR image (#2462)
 
 jobs:
   build:
@@ -82,15 +76,7 @@ jobs:
           shared-key: tape-${{ matrix.target }}
 
       - name: Build tape binary
-        # --bin tape: only the serving/CLI binary (skip tape-bench).
-        # Features mirror lumen-release.yml's non-backup subset: `operator`
-        # (k8s CRD/controller, matches apps/tape/Dockerfile's source-build
-        # feature set) plus `self-update`/`issue`/`otel` for the published
-        # CLI-convention trio and OTLP export. `backup` is deliberately
-        # excluded, same as lumen's release build (apps/lumen/Cargo.toml
-        # ships a `backup` feature that lumen-release.yml also does not
-        # enable).
-        run: cargo build --release --locked -p tape --bin tape --features "operator self-update issue otel" --target ${{ matrix.target }}
+        run: cargo build --release --locked -p tape --bin tape --features "operator backup self-update issue" --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
@@ -98,16 +84,10 @@ jobs:
         run: |
           set -euo pipefail
           name="tape-${{ matrix.target }}"
-          # Build inside a `pkg/` staging dir, then tar with -C so the
-          # archive layout is `tape-<target>/{tape,README.md}` — matches
-          # what install.sh expects on extract.
           stage="pkg/${name}"
           mkdir -p "${stage}"
           cp "target/${{ matrix.target }}/release/tape" "${stage}/tape"
           cp apps/tape/README.md "${stage}/README.md"
-          # Emit the tarball + sha256 into `out/` (workspace root) so
-          # upload-artifact's preserved `out/` prefix is shallow and
-          # the release glob below is predictable.
           mkdir -p out
           tarball="out/${name}.tar.gz"
           tar -C pkg -czf "${tarball}" "${name}"
@@ -141,10 +121,6 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # upload-artifact@v4 preserves the source path (`out/...`) inside
-      # the artifact, so after merge-multiple the layout is
-      # `dist/out/tape-*.tar.gz`. Glob with `**` so the release picks
-      # them up regardless of nesting depth.
       - name: List artifacts (debug)
         run: find dist -type f -maxdepth 4 -print
 
@@ -165,14 +141,11 @@ jobs:
             ```
 
             Or pick a target tarball below and extract it manually.
-            macOS is Apple Silicon only; for Linux choose x86_64 or aarch64
-            (glibc, not musl).
 
   # #2462: durable, digest-pinned container images per release. Runs after
-  # `release` because `Dockerfile.release` downloads the published tarballs;
+  # `release` because Dockerfile.release downloads the published tarballs;
   # also runnable retroactively for an EXISTING release via workflow_dispatch
-  # with `image_version` (that path pays an unused smoke build — acceptable
-  # for a rare retro fill).
+  # with `image_version`.
   ghcr-image:
     name: publish ghcr image
     needs: release
@@ -197,8 +170,6 @@ jobs:
           }
           semver="${raw#tape@}"
           tags="ghcr.io/${{ github.repository_owner }}/tape:${semver}"
-          # `latest` only when cutting a NEW release; a retro fill of an old
-          # version must not steal the floating tag.
           if [[ "${{ github.event_name }}" == "push" ]]; then
             tags="${tags},ghcr.io/${{ github.repository_owner }}/tape:latest"
           fi
