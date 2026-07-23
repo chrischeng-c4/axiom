@@ -13,3 +13,5 @@ data:
   KEEP_SHARDS: "256"
   # trace|debug|info|warn|error (RUST_LOG overrides). Overridden per overlay.
   KEEP_LOG_LEVEL: "info"
+  # JSONL is the cluster default; local development can select pretty output.
+  KEEP_LOG_FORMAT: "json"

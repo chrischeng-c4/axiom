@@ -360,8 +360,16 @@ KEEP_HOST=0.0.0.0 KEEP_PORT=7117 keep   # all config via KEEP_* env or --flags
 ```
 
 Config: `--host/--port/--shards/--data-dir/--disable-persistence/--fsync-ms/
---snapshot-secs/--snapshot-ops/--body-limit/--grace-secs`, each with a `KEEP_*`
-env fallback. `RUST_LOG` overrides `--log-level`.
+--snapshot-secs/--snapshot-ops/--body-limit/--grace-secs/--log-format/
+--otlp-endpoint`, each with a `KEEP_*` env fallback. `RUST_LOG` overrides
+`--log-level`. `--log-format json` emits the shared `axiom.service.log.v1`
+JSONL contract, including W3C request correlation; `--otlp-endpoint` is opt-in
+and requires the `otel` feature.
+
+Keep never configures Sift directly. In Kubernetes, Keep emits JSONL to stdout
+and the Sift Collector DaemonSet owns collection, routing, credentials, and
+retention; an optional OTLP endpoint targets a standard collector, not Sift
+application configuration.
 
 ## Kubernetes
 

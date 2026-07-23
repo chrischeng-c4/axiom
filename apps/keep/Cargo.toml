@@ -125,6 +125,9 @@ operator = [
     "dep:service-k8s",
     "rustls-provider",
 ]
+# Optional shared OTLP trace export. Runtime export remains inactive unless
+# KEEP_OTLP_ENDPOINT is set; the deployment collector owns Sift routing.
+otel = ["service-http/otlp"]
 # Private: link rustls + install its process-level crypto provider at startup.
 # Enabled by every feature that links a rustls path (operator/raft/client/online
 # CLI ops), so the default build pays nothing.
