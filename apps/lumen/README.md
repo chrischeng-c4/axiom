@@ -501,7 +501,11 @@ Scale storage by moving virtual buckets between physical shards under an
 operator-autonomous workflow end to end — threshold detection, topology
 change, data migration, durable checkpoint, and cutover all execute without
 a human step — while keeping replica HA and HPA-driven query capacity
-separate from data ownership.
+separate from data ownership. Boundary: today the workflow only grows shard
+count (`PrepareSplit -> Splitting -> CatchingUp -> Complete` splits one shard
+into two); there is no merge/contraction path, and
+`spec.reshardPolicy.maxShards` bounds how far the topology can grow, not
+shrink.
 Gate Inventory:
 - #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; #1319 autonomous reshard workflow epic; #1398 cross-pod shard routing for operator/k8s serving pods; apps/lumen/src/routing.rs; apps/lumen/src/reshard.rs; apps/lumen/src/operator; apps/lumen/src/operator/reshard_driver.rs; apps/lumen/src/routing_remote.rs; apps/lumen/tests/operator_render.rs; apps/lumen/tests/reshard_driver_e2e.rs; apps/lumen/tests/reshard_admin_e2e.rs; apps/lumen/scripts/kind-e2e.sh
 
