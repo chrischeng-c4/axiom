@@ -52,3 +52,35 @@ flowchart TD
   shared_fix --> preflight
   classify -->|Lumen domain| domain_issue[Bounded issue and tracked skip]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: benchmarks/gcp-operator-acceptance/scripts/run.sh
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: top-level run harness configuration and phase dispatch
+  - path: benchmarks/gcp-operator-acceptance/scripts/check.sh
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: offline harness validation sequence
+  - path: benchmarks/gcp-operator-acceptance/tests/lumen_only_mode.sh
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    anchor: shell regression for Lumen-only phase selection
+  - path: benchmarks/gcp-operator-acceptance/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: acceptance boundary and exact lifecycle
+  - path: apps/lumen/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: cross-service delivery verification work-root evidence
+```
