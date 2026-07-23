@@ -228,26 +228,50 @@ impl<B> MakeSpan<B> for CorrelatingMakeSpan {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in transport.rs is hand-written pending codegen support">
-/// The standard request-tracing layer: one INFO-level span per HTTP request.
+// <HANDWRITE gap="missing-generator:logic" tracker="#2420" reason="logic section in transport.rs is hand-written pending codegen support">
+/// Emits the collector-neutral terminal record for every HTTP response.
 ///
-/// INFO so the default `info` `EnvFilter` keeps it, and so the spans the OTLP
-/// layer (when wired) would export are produced. Attach it to the **outer**
-/// router so it spans probe and data-plane requests alike:
+/// `tower_http::trace` calls this while the request span is entered, so the
+/// JSON formatter inherits method, URI, and W3C fields from
+/// [`CorrelatingMakeSpan`]. The event itself adds only the response facts that
+/// are not known when the span is created.
+#[derive(Debug, Clone, Copy)]
+struct RequestCompletionEvent;
+
+impl<B> tower_http::trace::OnResponse<B> for RequestCompletionEvent {
+    fn on_response(
+        self,
+        response: &axum::http::Response<B>,
+        latency: std::time::Duration,
+        span: &tracing::Span,
+    ) {
+        tracing::info!(
+            parent: span,
+            event = "http_request_complete",
+            status = response.status().as_u16(),
+            latency_ms = latency.as_secs_f64() * 1_000.0,
+            "HTTP request completed"
+        );
+    }
+}
+
+/// The standard request-tracing layer: one INFO-level span and one completion
+/// event per HTTP request.
 ///
-/// ```ignore
-/// let app = service_http::standard_probe_routes(readiness, metrics, openapi)
-///     .merge(data_plane)
-///     .layer(service_http::trace_layer())
-///     .with_state(state);
-/// ```
+/// Attach it to the outer router so probe and data-plane routes have the same
+/// W3C correlation and completion record. The layer takes no collector
+/// configuration: services write standard JSONL and the collector owns routing.
 ///
-/// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
-/// different classifier/make-span, build `TraceLayer::new_for_http()` inline
-/// instead.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
-pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, CorrelatingMakeSpan> {
-    TraceLayer::new_for_http().make_span_with(CorrelatingMakeSpan)
+/// @spec libs/service-http/tech-design/logic/emit-w3c-correlated-request-completion-events.md#logic
+pub fn trace_layer() -> TraceLayer<
+    SharedClassifier<ServerErrorsAsFailures>,
+    CorrelatingMakeSpan,
+    tower_http::trace::DefaultOnRequest,
+    RequestCompletionEvent,
+> {
+    TraceLayer::new_for_http()
+        .make_span_with(CorrelatingMakeSpan)
+        .on_response(RequestCompletionEvent)
 }
 // </HANDWRITE>
 // </HANDWRITE>
