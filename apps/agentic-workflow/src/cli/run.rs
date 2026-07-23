@@ -773,21 +773,12 @@ pub(crate) fn python_artifact_lifecycle_step(
     Ok(Some(step))
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
-/// via the shared root loop.
+/// via the shared root loop. Project identity never changes root admission:
+/// Agentic Workflow dogfoods this same EC-first path.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
-    // Resolve the owning project before the shared runner can load loop state
-    // or dispatch a lifecycle command. A failed read falls through to the
-    // existing runner diagnostics unchanged.
-    if let Ok(project_root) = crate::find_project_root() {
-        if let Ok(Some(issue)) = resolve_issue(id, &project_root).await {
-            if issue_is_self_hosting(&issue) {
-                return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
-            }
-        }
-    }
     let root = ResolvedRunRoot::Wi {
         wi: id.to_string(),
         command: wi_run_command(id),
