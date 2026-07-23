@@ -53,41 +53,30 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: pub fn trace_layer
-    description: Emit one W3C-correlated http_request_complete JSONL event through the shared response hook so all shared HTTP services have the same generic request evidence.
-  - path: libs/service-http/Cargo.toml
-    action: modify
-    section: unit-test
-    impl_mode: hand-written
-    description: Add the existing formatter test dependency needed to decode the shared completion event contract.
-  - path: libs/service-http/tests/request_completion_event.rs
-    action: create
-    section: unit-test
-    impl_mode: hand-written
-    description: Exercise the shared router and JSON formatter for valid, absent, and malformed W3C request context.
+    description: Specify the response-completion event as the shared HTTP contract used by Loom.
   - path: apps/loom/src/main.rs
     action: modify
     section: logic
     impl_mode: hand-written
     anchor: fn main
-    description: Initialize shared service tracing only for long-running Loom roles from LOOM_LOG_FORMAT, LOOM_LOG_LEVEL, and optional LOOM_OTLP_ENDPOINT.
+    description: Enforce logging configuration validation and shared identity initialization at long-running role entry.
   - path: apps/loom/src/operator/render.rs
     action: modify
     section: logic
     impl_mode: hand-written
     anchor: fn extra_env
-    description: Set collector-ready LOOM_LOG_FORMAT=json in the operator-rendered service workload environment.
+    description: Preserve the production JSON logging contract in rendered workloads.
   - path: apps/loom/k8s/base/statefulset.yaml
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Set LOOM_LOG_FORMAT=json in the checked-in controller workload base.
+    description: Preserve the production JSON logging contract in checked-in workloads.
   - path: apps/loom/tests/structured_stdout_traceparent.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Spawn the real controller, exercise valid invalid and absent traceparent requests, and assert schema identity W3C correlation and no direct Sift linkage.
+    description: Verify response JSONL schema, W3C handling, no-Sift boundary, and workload configuration from a real process.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
