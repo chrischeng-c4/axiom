@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-23T15:27:49.903544+00:00"
-digest = "sha256:aa58a52ac2f7ea2f611ef9587440bb3251a068492e7252ec61a15c004b9f56fe"
-source_digest = "sha256:aa58a52ac2f7ea2f611ef9587440bb3251a068492e7252ec61a15c004b9f56fe"
-ir_digest = "sha256:71a46dc8c0bf04db8eb6a61f1ff666f687f918880c88eec38ea47ef0674b667d"
+generated_at = "2026-07-23T15:40:27.347370+00:00"
+digest = "sha256:98fcb2b1228203530b023ded80531e22475436e9a3467746c5924d260d51b888"
+source_digest = "sha256:98fcb2b1228203530b023ded80531e22475436e9a3467746c5924d260d51b888"
+ir_digest = "sha256:c64228b1d183560de14c761f41149c90a4397213e9b9623ee0e98dcb0159f0b8"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -309,8 +309,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-template.md"
-digest = "sha256:38de238df7ceab6ab3a1cc9d50a3f9060f96a33b694d89e62174d5cafd6c196a"
-ir_digest = "sha256:fa3d65b4833d96825f8996e552e2b86eb9691b9405d564548ee10d30461aafe1"
+digest = "sha256:3a3377781ff3689c426889b1691b20c59a28adb77906e5289bac5fa8b3cf0c9c"
+ir_digest = "sha256:dff0370e89c01f9365711b31ca0c9f502b0225ef604a648380398f4ff1c20bda"
 section_count = 2
 
 [[files]]
@@ -393,8 +393,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-bin-lumen-rs.md"
-digest = "sha256:a3785a067cf4ce01a37c87d2e577197d0cef79bda27f8ad1ce476a96ec86919e"
-ir_digest = "sha256:88e9fd6aad471206d9e5f247d7233b4f82073063e4ac75ce4f1255ef1cc0413b"
+digest = "sha256:432c933d16a3e85eea1fa0b862d2526026ccde7c1586f16252cbb6ee01115f0f"
+ir_digest = "sha256:ff7b6b19383a95ce68eb5e31ae9279656c4297d1ce814b9555218e1cc9601c3d"
 section_count = 3
 
 [[files]]
