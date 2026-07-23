@@ -21,6 +21,23 @@ contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
 lands. Harness: `benchmarks/gcp-operator-acceptance` (Lumen-only mode).
 
+### GKE retest runs 0723160506 / 0723163748 (2026-07-23, FAILED — post-split read visibility, #2489)
+
+Retest with the released `lumen@0.4.24` GHCR image
+(`ghcr.io/chrischeng-c4/lumen@sha256:f460c6cf…493e90`, pulled anonymously —
+the GHCR distribution path itself works). Passed on both runs: 1x1
+reconcile, operator cell, index/search, Workload-Identity GCS backup,
+pod-restart retention, and the 1→2 split convergence with a fully converged
+post-cutover fence. FAILED both runs at post-split read visibility:
+searching the pre-split collection through the client Service returns
+`collection not found` and stays unreadable through a bounded 180-second
+poll while `phase: Complete` and `convergedShardMapVersion ==
+shardMap.version` — tracked as #2489. The prior run `0723041614`'s
+post-split pass asserted a single probe and cannot stand as disproof;
+treat the Dynamic Shard Topology GKE claim as NOT proven until #2489
+closes. Default 1-shard deployments (no reshardPolicy) are unaffected.
+Evidence: `axiom-gcp-run-backup/evidence/<run>/`.
+
 ### GKE acceptance run 0723041614 (2026-07-23, PASSED)
 
 - Cluster: persistent Standard GKE `axiom-operator-acceptance`
