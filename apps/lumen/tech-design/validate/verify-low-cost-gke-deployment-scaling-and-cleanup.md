@@ -66,36 +66,29 @@ changes:
 
 ```mermaid
 ---
-id: lumen-gke-deployment-scaling-cleanup-verification
+id: lumen-gke-lumen-only-contract-verification
 requirements:
-  capability_evidence:
-    id: R4
-    text: "A successful current Lumen run is recorded with command, commit, evidence path, and exclusions in the Lumen capability contract."
-    kind: regression
-    risk: medium
-    verify: aw capability check --project lumen --skip-issue-inventory
-  lumen_gke_acceptance:
+  evidence_contract:
     id: R2
-    text: "The live low-cost GKE journey proves Lumen reconcile, restart persistence, GCS upload/readback, disk-driven 1-to-2 split, and cleanup with non-zero work."
-    kind: functional
-    risk: high
-    verify: LUMEN_ONLY=1 benchmarks/gcp-operator-acceptance/scripts/run.sh
-  lumen_only_static_contract:
-    id: R1
-    text: "The reusable harness can select a Lumen-only phase without requiring or deploying Sift."
+    text: "A Lumen-only terminal record includes mode, current immutable image, Lumen acceptance, exclusions, and mandatory cleanup outcome."
     kind: regression
     risk: medium
     verify: benchmarks/gcp-operator-acceptance/tests/lumen_only_mode.sh
-  offline_harness_gate:
+  live_contract:
+    id: R2
+    text: "The live command proves Lumen work and cleanup under the stated cloud cap without starting the deferred Sift phase."
+    kind: functional
+    risk: high
+    verify: LUMEN_ONLY=1 PROJECT_ID=<project> LUMEN_IMAGE=<immutable-digest> benchmarks/gcp-operator-acceptance/scripts/run.sh
+  lumen_only_contract:
     id: R1
-    text: "Shell syntax and Terraform static validation remain reproducible without contacting GCP."
+    text: "LUMEN_ONLY=1 rejects missing or non-immutable Lumen input and never requires a Sift image, Sift build, or Sift manifest."
     kind: regression
-    risk: medium
-    verify: benchmarks/gcp-operator-acceptance/scripts/check.sh
+    risk: high
+    verify: benchmarks/gcp-operator-acceptance/tests/lumen_only_mode.sh
 ---
 flowchart TD
-    r1[R1 lumen only static contract] --> benchmarks_gcp_operator_acceptance_tests_lumen_only_mode_sh[benchmarks/gcp-operator-acceptance/tests/lumen_only_mode.sh]
-    r1[R1 offline harness gate] --> benchmarks_gcp_operator_acceptance_scripts_check_sh[benchmarks/gcp-operator-acceptance/scripts/check.sh]
-    r2[R2 lumen gke acceptance] --> lumen_only_1_benchmarks_gcp_operator_acceptance_scripts_run_sh[LUMEN_ONLY=1 benchmarks/gcp-operator-acceptance/scripts/run.sh]
-    r4[R4 capability evidence] --> aw_capability_check_project_lumen_skip_issue_inventory[aw capability check --project lumen --skip-issue-inventory]
+    r1[R1 lumen only contract] --> benchmarks_gcp_operator_acceptance_tests_lumen_only_mode_sh[benchmarks/gcp-operator-acceptance/tests/lumen_only_mode.sh]
+    r2[R2 evidence contract] --> benchmarks_gcp_operator_acceptance_tests_lumen_only_mode_sh
+    r2[R2 live contract] --> lumen_only_1_project_id_project_lumen_image_immutable_digest_benchmarks_gcp_operator_acceptance_scripts_run_sh[LUMEN_ONLY=1 PROJECT_ID=<project> LUMEN_IMAGE=<immutable-digest> benchmarks/gcp-operator-acceptance/scripts/run.sh]
 ```
