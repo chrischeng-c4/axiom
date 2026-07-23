@@ -248,6 +248,7 @@ fn marker_body_is_unfilled(content: &str, start_line: usize, end_line: usize) ->
     let lower = body.to_ascii_lowercase();
     lower.contains("todo: hand-write content")
         || lower.contains("todo hand-write content")
+        || lower.contains("todo: implement (missing-generator:")
         || lower == "(fill)"
 }
 
@@ -1718,6 +1719,37 @@ mod tests {
         let markers = enumerate_worktree_markers(tmp.path());
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, "missing-generator:component");
+    }
+
+    #[test]
+    fn generated_todo_implement_marker_is_queued_and_fillable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_path = tmp.path().join("apps/demo/tests/structured_stdout.rs");
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        let source = format!(
+            "{}\n// TODO: implement (missing-generator:unit-test:demo)\n{}\n",
+            handwrite_begin(
+                "gap=\"missing-generator:unit-test:demo\" tracker=\"pending-tracker\" reason=\"generated test\""
+            ),
+            handwrite_end(),
+        );
+        std::fs::write(&source_path, &source).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        let marker = &markers[0];
+        assert_eq!(marker.id, "missing-generator:unit-test:demo");
+
+        let payload = marker_payload_template(marker).replacen(
+            "(fill)",
+            "#[test]\nfn generated_contract() {}",
+            1,
+        );
+        let filled = apply_marker_payload(&source, marker, &payload, "2419").unwrap();
+        assert!(filled.contains("fn generated_contract() {}"));
+        assert!(filled.contains("tracker=\"#2419\""));
+        std::fs::write(&source_path, filled).unwrap();
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
     }
 
     #[test]
