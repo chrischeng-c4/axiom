@@ -32,3 +32,20 @@ This change applies only to the central terminal workspace in the native macOS `
 `WorkbenchView` remains the split-layout owner. It applies top-edge safe-area expansion only to `terminalWorkspace`; it does not alter `folderSidebar` or `auxiliaryColumn`. Existing tab controls, identifiers, lifecycle composition, and renderer identity remain unchanged. The tab strip stays the first visual and keyboard-focusable element in the terminal workspace.
 
 The Projects sidebar titlebar controls remain outside this expansion. No terminal process, tab identity, renderer, project selection, or PTY cwd changes as part of this layout update.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
