@@ -7,9 +7,12 @@
 #   docker build -f apps/tape/Dockerfile.release -t tape:0.4.10 \
 #     --build-arg TAPE_VERSION=tape@0.4.10 .
 #
-# The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
-#   --platform linux/amd64 → x86_64-unknown-linux-gnu
-#   --platform linux/arm64 → aarch64-unknown-linux-gnu
+# The image arch (BuildKit TARGETARCH) selects the matching MUSL tarball —
+# the runtime stage is glibc-free distroless/static (lumen's #1195 pattern),
+# so a static binary is required; a gnu binary built on a newer-glibc runner
+# cannot even load in the bookworm fetch stage (GLIBC_2.38+):
+#   --platform linux/amd64 → x86_64-unknown-linux-musl
+#   --platform linux/arm64 → aarch64-unknown-linux-musl
 
 # ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
 FROM debian:bookworm-slim AS fetch
@@ -20,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) t=x86_64-unknown-linux-gnu ;; \
-      arm64) t=aarch64-unknown-linux-gnu ;; \
+      amd64) t=x86_64-unknown-linux-musl ;; \
+      arm64) t=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     base="https://github.com/${TAPE_REPO}/releases/download/${TAPE_VERSION}"; \
@@ -32,7 +35,7 @@ RUN set -eux; \
     /tmp/tape --version
 
 # ---- stage 2: distroless runtime — only the binary + CA certs, nonroot -------
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --chown=65532:65532 --from=fetch /tmp/tape /usr/local/bin/tape
 EXPOSE 7137
 ENTRYPOINT ["/usr/local/bin/tape"]

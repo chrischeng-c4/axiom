@@ -7,11 +7,15 @@
 #                                       or containerize an EXISTING release
 #                                       via the image_version input (#2462)
 #
-# Targets (tape's release image is distroless/cc consuming the gnu tarballs,
-# so no musl legs are needed):
+# Targets: the release image is glibc-free distroless/static consuming the
+# MUSL tarballs (lumen's #1195 pattern — a gnu binary built on ubuntu-latest
+# links GLIBC_2.38+ and cannot load in the bookworm fetch stage, proven by
+# run 30020408023):
 #   - aarch64-apple-darwin        (Apple Silicon,      macos-14 native)
-#   - x86_64-unknown-linux-gnu    (most Linux servers, ubuntu-latest native)
-#   - aarch64-unknown-linux-gnu   (Linux on ARM,       ubuntu-latest cross)
+#   - x86_64-unknown-linux-gnu    (glibc servers,      ubuntu-latest native)
+#   - aarch64-unknown-linux-gnu   (glibc ARM servers,  ubuntu-latest cross)
+#   - x86_64-unknown-linux-musl   (static + image,     ubuntu-latest native)
+#   - aarch64-unknown-linux-musl  (static + image ARM, ubuntu-24.04-arm native)
 #
 # The released binary is the SERVING binary: it must carry the operator and
 # backup features (the GKE image runs `tape serve` / `tape k8s operator run`
@@ -52,6 +56,14 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: false
+            musl: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            cross: false
+            musl: true
 
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +82,14 @@ jobs:
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
           EOF
+
+      - name: Install musl toolchain (Linux musl targets)
+        # Both musl legs build native (same CPU arch as the runner), so
+        # musl-tools' musl-gcc is sufficient — no cross linker needed.
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - uses: Swatinem/rust-cache@v2
         with:
