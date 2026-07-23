@@ -433,6 +433,25 @@ test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
+
+# App namespaces are fixed names on the shared persistent cluster, so two
+# concurrent acceptance runs of the same mode would drive the SAME operator
+# cell and destroy each other's expected state (runs 0723094538/0723095701
+# raced exactly this way — both tampered one StatefulSet, then one run's
+# cleanup deleted the other's live namespaces). Refuse to start, and do so
+# BEFORE kube-context-ready.txt exists so this run's cleanup does not touch
+# the other run's namespaces either.
+if [[ "$acceptance_mode" == "tape" ]]; then
+  mode_namespaces=(tape tape-system)
+else
+  mode_namespaces=(lumen lumen-system sift sift-system)
+fi
+for namespace in "${mode_namespaces[@]}"; do
+  if kubectl get namespace "$namespace" --no-headers >/dev/null 2>&1; then
+    echo "namespace $namespace already exists on $cluster; another acceptance run appears active — refusing to race it" >&2
+    exit 1
+  fi
+done
 printf '%s\n' "$cluster" > "$STATE_DIR/kube-context-ready.txt"
 
 export EVIDENCE_DIR
