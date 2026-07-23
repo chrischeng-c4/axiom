@@ -6,6 +6,10 @@
 //! parse and redirect here via an error envelope rather than calling
 //! straight into the run engine).
 
+use crate::cli::agent_prompt::{
+    AgentPromptSpec, PromptArtifact, PromptBlocker, PromptBlockerKind, PromptScope, PromptTerminal,
+    PromptTerminalLevel, PromptTransition, PromptVerifier, PROMPT_SCHEMA_VERSION,
+};
 #[cfg(test)]
 use crate::cli::capability::HitlInteractionKind;
 use crate::cli::capability::{
@@ -163,7 +167,13 @@ impl Serialize for WorkflowEnvelope {
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_struct("WorkflowEnvelope", 15)?;
+        let prompt_contract = workflow_prompt_contract(self, None, vec![self.agent_prompt.clone()]);
+        let rendered_prompt = prompt_contract
+            .as_ref()
+            .ok()
+            .and_then(|contract| contract.render().ok())
+            .unwrap_or_else(|| self.agent_prompt.clone());
+        let mut state = serializer.serialize_struct("WorkflowEnvelope", 16)?;
         state.serialize_field("schema_version", "aw.cli.v1")?;
         state.serialize_field("status", workflow_status(self))?;
         state.serialize_field("action", &self.action)?;
@@ -186,7 +196,10 @@ impl Serialize for WorkflowEnvelope {
         if let Some(payload_path) = self.next.payload_path.as_deref() {
             state.serialize_field("payload_path", payload_path)?;
         }
-        state.serialize_field("agent_prompt", &self.agent_prompt)?;
+        state.serialize_field("agent_prompt", &rendered_prompt)?;
+        if let Ok(prompt_contract) = prompt_contract {
+            state.serialize_field("prompt_contract", &prompt_contract)?;
+        }
         if let Some(profile) = &self.artifact_quality_profile {
             state.serialize_field("artifact_quality_profile", profile)?;
         }
@@ -307,6 +320,7 @@ struct WorkflowGoalEnvelope {
     inline_limit_bytes: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     goal_prompt: Option<String>,
+    prompt_contract: AgentPromptSpec,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1374,11 +1388,103 @@ where
     future.await
 }
 
+fn workflow_prompt_contract(
+    envelope: &WorkflowEnvelope,
+    root_command: Option<&str>,
+    guidance: Vec<String>,
+) -> Result<AgentPromptSpec, String> {
+    let root_command = root_command.unwrap_or_default().trim();
+    let next_command = envelope.next.command.trim();
+    let transition_command = if next_command.is_empty() {
+        if envelope.completion.workflow_complete {
+            ""
+        } else {
+            root_command
+        }
+    } else {
+        next_command
+    };
+    let verifier_command = if root_command.is_empty() {
+        transition_command
+    } else {
+        root_command
+    };
+    let blocker_kind = if envelope.requires_hitl {
+        Some(PromptBlockerKind::Approval)
+    } else if envelope.action == "blocked" {
+        let reason = envelope.next.reason.to_ascii_lowercase();
+        Some(if reason.contains("evidence") {
+            PromptBlockerKind::MissingEvidence
+        } else if reason.contains("red") || reason.contains("failed") {
+            PromptBlockerKind::RedGate
+        } else {
+            PromptBlockerKind::Environment
+        })
+    } else {
+        None
+    };
+    let scopes = envelope
+        .persistence
+        .as_ref()
+        .map(|persistence| persistence.scopes.clone())
+        .unwrap_or_default();
+    let contract = AgentPromptSpec {
+        schema_version: PROMPT_SCHEMA_VERSION.to_string(),
+        state: if envelope.completion.workflow_complete {
+            format!("{}.terminal", envelope.action)
+        } else {
+            envelope.action.clone()
+        },
+        artifact: PromptArtifact {
+            kind: envelope.current.kind.clone(),
+            id: envelope.current.id.clone(),
+        },
+        scope: PromptScope {
+            writable: scopes,
+            readonly: Vec::new(),
+        },
+        transition: PromptTransition {
+            command: transition_command.to_string(),
+            next_state: envelope.next.kind.clone(),
+        },
+        verifier: PromptVerifier {
+            command: verifier_command.to_string(),
+            predicate: "completion.workflow_complete == true".to_string(),
+        },
+        terminal: PromptTerminal {
+            level: PromptTerminalLevel::Root,
+            predicate: "completion.workflow_complete == true".to_string(),
+        },
+        guards: vec![
+            "action == done != completion.workflow_complete".to_string(),
+            "next.command in envelope".to_string(),
+        ],
+        blocker: blocker_kind.map(|kind| PromptBlocker {
+            kind,
+            reason: envelope.next.reason.clone(),
+        }),
+        resume_command: blocker_kind.map(|_| {
+            if root_command.is_empty() {
+                transition_command.to_string()
+            } else {
+                root_command.to_string()
+            }
+        }),
+        guidance,
+    };
+    contract.validate()?;
+    Ok(contract)
+}
+
 fn workflow_goal_envelope(
     envelope: &WorkflowEnvelope,
     root_command: &str,
 ) -> Result<WorkflowGoalEnvelope> {
-    let prompt = workflow_goal_prompt(envelope, root_command);
+    let guidance = workflow_goal_prompt(envelope, root_command);
+    let prompt_contract =
+        workflow_prompt_contract(envelope, Some(root_command), vec![guidance.clone()])
+            .map_err(anyhow::Error::msg)?;
+    let prompt = prompt_contract.render().map_err(anyhow::Error::msg)?;
     let payload_path = workflow_goal_payload_path(envelope);
     write_goal_payload(&payload_path, &prompt)?;
     let prompt_size_bytes = prompt.len();
@@ -1395,6 +1501,7 @@ fn workflow_goal_envelope(
         prompt_size_bytes,
         inline_limit_bytes: GOAL_INLINE_LIMIT_BYTES,
         goal_prompt,
+        prompt_contract,
     })
 }
 
@@ -4200,6 +4307,14 @@ workspaces = []
         assert_eq!(json["completion"]["requires_hitl"], false);
         assert_eq!(json["first_next"]["kind"], "run_command");
         assert_eq!(json["first_next"]["command"], "aw td create 3903");
+        assert_eq!(
+            json["prompt_contract"]["schema_version"],
+            PROMPT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            json["prompt_contract"]["transition"]["command"],
+            "aw td create 3903"
+        );
         assert!(json.get("first_invoke").is_none());
         assert!(json.get("requires_hitl").is_none());
         assert_eq!(goal.payload_path, "/tmp/aw/goals/aw-run-project-demo.md");
@@ -5324,6 +5439,15 @@ review_status: pending
         assert_eq!(json["completion"]["requires_hitl"], false);
         assert_eq!(json["next"]["kind"], "run_command");
         assert_eq!(json["next"]["command"], "aw td create 3903");
+        assert_eq!(
+            json["prompt_contract"]["schema_version"],
+            PROMPT_SCHEMA_VERSION
+        );
+        assert_eq!(json["prompt_contract"]["artifact"]["kind"], "td");
+        assert!(json["agent_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("completion.workflow_complete == true"));
         assert!(json.get("artifact_quality_profile").is_some());
         assert_eq!(
             json["artifact_quality_profile"]["artifact_kind"],

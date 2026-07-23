@@ -80,6 +80,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 //! programmatic consumers and for the binary itself.
 
 pub(crate) mod artifact_producer;
+pub(crate) mod agent_prompt;
 pub mod capability;
 pub mod capability_type;
 pub mod cb;

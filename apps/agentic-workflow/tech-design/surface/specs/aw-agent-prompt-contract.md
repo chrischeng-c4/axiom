@@ -53,6 +53,41 @@ contract never evaluates expressions, invokes Python, or authorizes a command
 that is absent from the envelope's existing `next.command` /
 `invoke.command`.
 
+The additive `aw.cli.v1` projection is:
+
+```json
+{
+  "agent_prompt": "state := td.authored\n...",
+  "prompt_contract": {
+    "schema_version": "aw.prompt.v1",
+    "state": "td.authored",
+    "artifact": {"kind": "td", "id": "#2440"},
+    "scope": {
+      "writable": ["tech-design/2440"],
+      "readonly": ["external-contracts/2440"]
+    },
+    "transition": {
+      "command": "aw ec verify --stage td --wi 2440",
+      "next_state": "ec_td_verifying"
+    },
+    "verifier": {
+      "command": "aw ec verify --stage td --wi 2440",
+      "predicate": "EC[TD].behavior == green"
+    },
+    "terminal": {
+      "level": "root",
+      "predicate": "completion.workflow_complete == true"
+    },
+    "guards": ["action == done != completion.workflow_complete"],
+    "resume_command": null
+  }
+}
+```
+
+`prompt_contract` is additive. Existing clients may ignore it and continue to
+read `agent_prompt`, `next`, `completion`, payload, and HITL fields. Both
+representations are rendered from the same Rust IR.
+
 ## Symbolic Logic
 <!-- type: doc lang: markdown -->
 

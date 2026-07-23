@@ -6,6 +6,7 @@
 //! this library exposes the `Commands` enum and `run_command` dispatch for
 //! programmatic consumers and for the binary itself.
 
+pub(crate) mod agent_prompt;
 pub(crate) mod artifact_producer;
 pub mod capability;
 pub mod capability_type;

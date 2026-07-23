@@ -43,7 +43,8 @@ the caller surface, not a rewrite of the engine.
 Envelope semantics carry over unchanged between the retired verbs and their
 `aw goal` replacements on the same root:
 
-- `aw.cli.v1` schema version, `invoke.command`, `agent_prompt`,
+- `aw.cli.v1` schema version, `invoke.command`, `agent_prompt`, additive
+  `prompt_contract` (`aw.prompt.v1`),
   `completion.workflow_complete`, `completion.requires_hitl`,
   `hitl_question`, progress JSONL, and the re-run-same-root convention are
   byte-identical except for the command strings themselves (`aw wi run ...`
