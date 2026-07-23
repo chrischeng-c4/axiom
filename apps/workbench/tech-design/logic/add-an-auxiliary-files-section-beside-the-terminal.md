@@ -17,7 +17,7 @@ nodes:
   enumerate: { kind: process, label: "read bounded root entries" }
   state: { kind: decision, label: "entries available?" }
   files: { kind: process, label: "render read-only Files section" }
-  notice: { kind: process, label: "render empty/unavailable/truncated state" }
+  notice: { kind: process, label: "render explicit Files state" }
   terminal: { kind: terminal, label: "terminal workspace remains unchanged" }
 edges:
   - { from: selection, to: profile }
@@ -40,14 +40,11 @@ flowchart LR
     notice --> terminal
 ```
 
-This change is applicable to the macOS-native Workbench host. The current Beta product needs a third, read-only auxiliary column between the registered-project navigation and the terminal workspace; Stable retains its existing two-column layout.
+The macOS SwiftUI shell resolves WorkbenchRuntimeProfile once and mounts AuxiliaryColumnView only when it is beta. Stable retains its current two-column project-and-terminal composition.
 
-WorkbenchRuntimeProfile is resolved once at the SwiftUI view boundary. Only beta renders AuxiliaryColumnView; the Stable hierarchy remains the existing project sidebar plus terminal workspace. The column observes the selected registered project but never changes project selection, terminal tabs, current working directories, or PTY lifecycle.
+ProjectFileListing performs Foundation-only metadata enumeration over the selected registered root. It reads immediate non-hidden children, avoids recursion and content reads, does not follow external symlink targets, groups directories before files, localized-case-insensitively sorts both groups, and returns an immutable at-most-200 record snapshot with an explicit truncation flag. A no-project, missing/unreadable root, or empty listing is an explicit state.
 
-ProjectFileListing accepts the selected project root and uses Foundation directory enumeration limited to immediate children. It omits hidden paths, does not recurse, identifies directory versus regular file through resource values without following a symlink outside the root, and returns immutable records with display name, absolute path, and kind. It groups directories before files, sorts both groups localized-case-insensitively, and returns at most 200 records plus a truncation flag. A missing root, read failure, no project, or empty root is an explicit presentation state.
-
-The compact FILES section shows the selected root label and a scrollable read-only row for each result. Rows have distinct folder/file symbols, readable names, selection-copyable paths, and accessibility identifiers/labels. This slice deliberately has no recursion, editor, file opener, rename/delete, Git command, GitHub/GitLab request, process start, or repository mutation; future auxiliary sections occupy the same column without changing this contract.
-
+The Files UI is a compact 240-to-320-point read-only auxiliary column between Projects and Terminal. It renders the selected root and accessible folder/file rows with copyable path text. It never opens, writes, renames, deletes, invokes Git/GitHub/GitLab, starts a process, changes project selection, changes PTY cwd, or changes terminal state.
 ## Changes
 <!-- type: changes lang: yaml -->
 
