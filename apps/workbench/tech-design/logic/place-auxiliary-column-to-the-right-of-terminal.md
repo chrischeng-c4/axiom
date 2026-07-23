@@ -57,22 +57,22 @@ changes:
 
 ```mermaid
 ---
-id: workbench-auxiliary-right-order-verification
+id: workbench-auxiliary-right-contract-verification
 requirements:
-  beta_column_order:
+  beta_layout_order:
     id: R1
-    text: "Beta renders Projects, then the primary terminal workspace, then the Auxiliary Files column."
+    text: "The Beta detail hierarchy places terminal controls before the accessible Auxiliary Files column."
     kind: e2e
     risk: medium
     verify: WorkbenchMacUITests.testFilesAuxiliaryColumnFollowsTerminalWorkspace
-  stable_unchanged:
+  stable_no_auxiliary:
     id: R2
-    text: "Stable keeps the two-column Projects and Terminal workspace without Auxiliary Files."
+    text: "The Stable profile does not mount the Beta-only Auxiliary column."
     kind: regression
     risk: medium
     verify: WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct
 ---
 flowchart TD
-    r1[R1 beta column order] --> workbenchmacuitests_testfilesauxiliarycolumnfollowsterminalworkspace[WorkbenchMacUITests.testFilesAuxiliaryColumnFollowsTerminalWorkspace]
-    r2[R2 stable unchanged] --> workbenchruntimeprofiletests_teststableandbetaproductsaredistinct[WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct]
+    r1[R1 beta layout order] --> workbenchmacuitests_testfilesauxiliarycolumnfollowsterminalworkspace[WorkbenchMacUITests.testFilesAuxiliaryColumnFollowsTerminalWorkspace]
+    r2[R2 stable no auxiliary] --> workbenchruntimeprofiletests_teststableandbetaproductsaredistinct[WorkbenchRuntimeProfileTests.testStableAndBetaProductsAreDistinct]
 ```
