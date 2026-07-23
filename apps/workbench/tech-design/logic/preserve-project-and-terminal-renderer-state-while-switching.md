@@ -40,3 +40,34 @@ flowchart LR
 Project selection updates the selected project id, launch root, and file listing together on the main actor. This selection is for future terminal launches; it never sends a lifecycle request or rewrites an existing tab's cwd.
 
 Every non-idle and non-failed tab owns a mounted `TerminalSurface` keyed by tab id. Inactive layers are visually hidden and non-interactive instead of destroyed. Their coordinators retain both the SwiftTerm terminal buffer and fed-byte cursor, so a tab switch only exposes its existing renderer; polling supplies subsequent incremental bytes.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchModel.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchModel
+    description: Publish one selected project workspace value so project id, launch root, and Files listing change together without changing existing PTY tabs.
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+    description: Keep launched terminal surfaces mounted in tab-keyed layers and expose only the selected layer.
+  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchModelTests
+    description: Prove project selection changes launch and files state without issuing terminal lifecycle requests or modifying existing tabs.
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+    description: Prove a running shell tab retains terminal content after switching to another tab and back.
+```
