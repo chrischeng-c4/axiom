@@ -149,9 +149,6 @@ struct WorkbenchView: View {
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        // The central terminal owns its compact chrome. Let its tab strip use
-        // the hidden-titlebar region without moving the sidebar controls.
-        .ignoresSafeArea(.container, edges: .top)
         .accessibilityIdentifier("terminal.workspace")
     }
 

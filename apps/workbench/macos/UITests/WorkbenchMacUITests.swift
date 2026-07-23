@@ -3,11 +3,11 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
-    func testTerminalTabsUseTopContentEdge() throws {
+    func testTerminalTabsRemainVisibleBelowTitlebar() throws {
         continueAfterFailure = false
 
         let fixtureFolder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("workbench-titlebar-tabs-ui-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("workbench-visible-tabs-ui-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: fixtureFolder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: fixtureFolder) }
 
@@ -23,10 +23,10 @@ final class WorkbenchMacUITests: XCTestCase {
         let detail = app.descendants(matching: .any)["workbench.detail"]
         XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
         XCTAssertTrue(detail.waitForExistence(timeout: 5))
-        XCTAssertLessThan(
+        XCTAssertGreaterThanOrEqual(
             terminalTab.frame.minY,
             detail.frame.minY,
-            "Terminal tabs should extend into the titlebar rather than leaving a blank central strip."
+            "Terminal tabs must remain in the visible detail content region, below the native titlebar."
         )
     }
 
