@@ -53,7 +53,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "pub fn trace_layer"
+    anchor: "trace_layer"
   - path: "libs/service-http/Cargo.toml"
     action: modify
     section: unit-test
