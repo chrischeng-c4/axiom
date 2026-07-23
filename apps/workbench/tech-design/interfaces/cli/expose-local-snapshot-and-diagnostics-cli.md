@@ -111,43 +111,36 @@ changes:
 
 ```mermaid
 ---
-id: workbench-local-observability-verification
+id: workbench-local-observability-contract-verification
 requirements:
-  logs_are_local_and_bounded:
-    id: R1
-    text: "workbench logs tails only the local diagnostic file, clamps the requested line count, preserves whole lines, and works while Workbench.app is not running."
-    kind: functional
-    risk: medium
-    verify: tests/observability_cli.rs::logs_tail_is_local_line_bounded_and_runtime_independent
-  native_capture_uses_own_content_view:
-    id: R5
-    text: "The native endpoint captures its own AppKit content view on the main actor and returns a PNG response within the configured bound, independent of macOS screen-capture permission or an external UI automation agent."
-    kind: integration
-    risk: high
-    verify: macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testContentViewCaptureReturnsBoundedPNG
-  native_runtime_is_singleton_and_clean:
+  native_contract_checks_identity_and_lease:
     id: R4
-    text: "The native host holds one user-scoped lease, publishes one 0600 registry with a fresh token, rejects an invalid token, and removes its registry on orderly shutdown while only reclaiming stale state after PID and endpoint checks."
+    text: "The native server publishes a 0600 versioned registry only while its lease is held; it accepts snapshot or uiState only after an exact token check and echoes request and instance identity in every response."
     kind: lifecycle
     risk: high
-    verify: macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testRegistryLeaseAuthenticationAndCleanup
-  snapshot_requires_live_authenticated_runtime:
-    id: R2
-    text: "workbench snapshot discovers only the owner-readable runtime registry, sends the registry token on its local request, and returns a typed unavailable error for missing, malformed, stale, or unreachable runtime state without launching Workbench.app."
-    kind: failure-recovery
+    verify: macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testProtocolIdentityAuthenticationAndLeaseContract
+  public_argv_and_envelopes_are_exact:
+    id: R1
+    text: "Only snapshot --out and logs with optional --tail are accepted, and success or failure emits one newline-terminated JSON envelope with stable result fields, error codes, and next command."
+    kind: contract
     risk: high
-    verify: tests/observability_cli.rs::snapshot_registry_and_authentication_fail_closed_without_launching_gui
-  snapshot_writes_only_requested_png:
+    verify: tests/observability_cli.rs::public_argv_and_json_envelopes_are_exact
+  registry_protocol_fails_closed:
+    id: R2
+    text: "Malformed registry fields, non-loopback ports, invalid protocol version, stale pid or endpoint, incorrect token, zero or mismatched request id, and an unexpected response method fail closed with the corresponding typed CLI error."
+    kind: security
+    risk: high
+    verify: tests/observability_cli.rs::registry_and_response_validation_fail_closed
+  snapshot_payload_is_png_and_bounded:
     id: R3
-    text: "A successful snapshot response is accepted only as a bounded PNG payload and is atomically written to the explicit caller-selected output path; no screen recording, accessibility traversal, or terminal interaction occurs."
+    text: "The CLI accepts only a matching image/png response below the protocol bound, validates the PNG signature before atomically replacing the explicit output path, and does not pass a filesystem destination to the app."
     kind: boundary
     risk: high
-    verify: tests/observability_cli.rs::snapshot_accepts_bounded_png_and_writes_only_explicit_output
+    verify: tests/observability_cli.rs::snapshot_png_contract_is_bounded_and_caller_owned
 ---
 flowchart TD
-    r1[R1 logs are local and bounded] --> tests_observability_cli_rs_logs_tail_is_local_line_bounded_and_runtime_independent[tests/observability_cli.rs::logs_tail_is_local_line_bounded_and_runtime_independent]
-    r2[R2 snapshot requires live authenticated runtime] --> tests_observability_cli_rs_snapshot_registry_and_authentication_fail_closed_without_launching_gui[tests/observability_cli.rs::snapshot_registry_and_authentication_fail_closed_without_launching_gui]
-    r3[R3 snapshot writes only requested png] --> tests_observability_cli_rs_snapshot_accepts_bounded_png_and_writes_only_explicit_output[tests/observability_cli.rs::snapshot_accepts_bounded_png_and_writes_only_explicit_output]
-    r4[R4 native runtime is singleton and clean] --> macos_tests_workbenchmaccoretests_localruntimeservertests_swift_testregistryleaseauthenticationandcleanup[macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testRegistryLeaseAuthenticationAndCleanup]
-    r5[R5 native capture uses own content view] --> macos_tests_workbenchmaccoretests_localruntimeservertests_swift_testcontentviewcapturereturnsboundedpng[macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testContentViewCaptureReturnsBoundedPNG]
+    r1[R1 public argv and envelopes are exact] --> tests_observability_cli_rs_public_argv_and_json_envelopes_are_exact[tests/observability_cli.rs::public_argv_and_json_envelopes_are_exact]
+    r2[R2 registry protocol fails closed] --> tests_observability_cli_rs_registry_and_response_validation_fail_closed[tests/observability_cli.rs::registry_and_response_validation_fail_closed]
+    r3[R3 snapshot payload is png and bounded] --> tests_observability_cli_rs_snapshot_png_contract_is_bounded_and_caller_owned[tests/observability_cli.rs::snapshot_png_contract_is_bounded_and_caller_owned]
+    r4[R4 native contract checks identity and lease] --> macos_tests_workbenchmaccoretests_localruntimeservertests_swift_testprotocolidentityauthenticationandleasecontract[macos/Tests/WorkbenchMacCoreTests/LocalRuntimeServerTests.swift::testProtocolIdentityAuthenticationAndLeaseContract]
 ```
