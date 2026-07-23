@@ -48,7 +48,6 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
