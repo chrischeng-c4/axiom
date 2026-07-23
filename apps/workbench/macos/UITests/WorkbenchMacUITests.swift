@@ -3,7 +3,7 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
-    func testTerminalTabsRemainVisibleBelowTitlebar() throws {
+    func testTerminalTabsAppearInNativeToolbar() throws {
         continueAfterFailure = false
 
         let fixtureFolder = FileManager.default.temporaryDirectory
@@ -20,13 +20,14 @@ final class WorkbenchMacUITests: XCTestCase {
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         let terminalTab = app.buttons["terminal.tab.claude"]
-        let detail = app.descendants(matching: .any)["workbench.detail"]
+        let terminalWorkspace = app.descendants(matching: .any)["terminal.workspace"]
         XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
-        XCTAssertTrue(detail.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(
+        XCTAssertTrue(terminalWorkspace.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["terminal.titlebar-tabs"].exists)
+        XCTAssertLessThan(
             terminalTab.frame.minY,
-            detail.frame.minY,
-            "Terminal tabs must remain in the visible detail content region, below the native titlebar."
+            terminalWorkspace.frame.minY,
+            "Terminal tabs must be hosted above terminal content in the native toolbar."
         )
     }
 

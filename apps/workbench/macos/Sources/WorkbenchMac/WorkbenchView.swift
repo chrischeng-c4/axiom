@@ -28,6 +28,13 @@ struct WorkbenchView: View {
             .accessibilityIdentifier("workbench.detail")
         }
         .navigationTitle("Workbench")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                terminalTabStrip
+                    .frame(minWidth: 420, idealWidth: 560, maxWidth: 720)
+                    .accessibilityIdentifier("terminal.titlebar-tabs")
+            }
+        }
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
         // inside controls still belongs to the control's click action.
         .textSelection(.enabled)
@@ -144,8 +151,6 @@ struct WorkbenchView: View {
 
     private var terminalWorkspace: some View {
         VStack(spacing: 0) {
-            terminalTabStrip
-            Divider()
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
