@@ -134,29 +134,36 @@ changes:
 
 ```mermaid
 ---
-id: workbench-delivery-channels-verification
+id: workbench-channel-contract-verification
 requirements:
-  native_products_are_distinct:
-    id: R2
-    text: "The two Xcode products expose Axiom names, com.axiom bundle identities, and separate icon asset catalogs."
-    kind: integration
-    risk: high
-    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct
-  profile_paths_are_isolated:
-    id: R1
-    text: "Stable and Beta derive distinct bundle-owned state roots, registry paths, logs, and project metadata with no fallback between profiles."
-    kind: contract
+  cli_cannot_cross_profile:
+    id: R3
+    text: "Snapshot and logs parse only stable or beta and resolve exactly that profile path without fallback."
+    kind: failure-recovery
     risk: high
     verify: tests/observability_cli.rs::profiles_have_distinct_runtime_and_log_paths
-  skills_never_cross_terminate:
-    id: R3
-    text: "Stable and Beta build scripts target and terminate only their matching product executable."
+  profile_local_state:
+    id: R2
+    text: "Stable and Beta derive disjoint state roots for projects, logs, lock, and runtime registry."
+    kind: security
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testProfileRootsDoNotOverlap
+  skills_are_scoped:
+    id: R4
+    text: "Stable and Beta build skills select only their matching product and executable process target."
     kind: regression
     risk: high
     verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testBuildSkillsAreProductScoped
+  stable_beta_bundle_identity:
+    id: R1
+    text: "Stable and Beta products declare exact distinct Axiom names and com.axiom bundle identifiers."
+    kind: contract
+    risk: high
+    verify: macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct
 ---
 flowchart TD
-    r1[R1 profile paths are isolated] --> tests_observability_cli_rs_profiles_have_distinct_runtime_and_log_paths[tests/observability_cli.rs::profiles_have_distinct_runtime_and_log_paths]
-    r2[R2 native products are distinct] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_teststableandbetaproductsaredistinct[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct]
-    r3[R3 skills never cross terminate] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_testbuildskillsareproductscoped[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testBuildSkillsAreProductScoped]
+    r1[R1 stable beta bundle identity] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_teststableandbetaproductsaredistinct[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testStableAndBetaProductsAreDistinct]
+    r2[R2 profile local state] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_testprofilerootsdonotoverlap[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testProfileRootsDoNotOverlap]
+    r3[R3 cli cannot cross profile] --> tests_observability_cli_rs_profiles_have_distinct_runtime_and_log_paths[tests/observability_cli.rs::profiles_have_distinct_runtime_and_log_paths]
+    r4[R4 skills are scoped] --> macos_tests_workbenchmaccoretests_workbenchruntimeprofiletests_swift_testbuildskillsareproductscoped[macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift::testBuildSkillsAreProductScoped]
 ```
