@@ -73,7 +73,7 @@ agent integration remain first-class domain roots.
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
-| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
+| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator; current GKE Lumen-only operator acceptance is recorded below |
 | Stateful Service Workload | #2144 | implemented | verified | smoke | ready | mandatory stateful profile: active TD verification linkage #2144 composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots; original projection #1553 remains closed historical provenance |
 | Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
 | Agent Task Navigation | 1683 | verified | passing | conformance | ready | non-domain DX baseline: typed offline task manifest and runbooks generated from the DX contract, runtime field capabilities, and canonical OpenAPI surface |
@@ -609,7 +609,19 @@ that namespace; cluster-wide operation is an optional platform mode. HPA may
 scale stateless or near-stateless query/read workers, but never changes shard
 ownership.
 Gate Inventory:
-- apps/lumen/k8s; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/scripts/kind-e2e.sh
+- apps/lumen/k8s; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/scripts/kind-e2e.sh; benchmarks/gcp-operator-acceptance/scripts/run.sh
+
+Verified GKE evidence (2026-07-23, run `0723041614`, source `f4762759d8`):
+the persistent Standard GKE cluster reconciled a fresh 1×1 Lumen instance,
+wrote and read back a nonempty run-scoped GCS snapshot (271 bytes), retained
+the indexed document across a Lumen pod restart, and autonomously converged a
+disk-pressure 1→2 shard split with two serving pods and PVCs. The harness
+created only the run-scoped bucket, backup GSA, bucket writer binding, and
+`lumen/lumen-backup` Workload Identity binding; all four were destroyed and
+the cleanup verifier reported `clean`. Reproduce with an immutable Lumen image:
+`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash benchmarks/gcp-operator-acceptance/scripts/run.sh`.
+This proof deliberately excludes Sift collection, CPU/memory actuation, live
+replica membership, and cold restore from GCS; each has its own gate.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
