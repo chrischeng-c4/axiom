@@ -1,25 +1,24 @@
-// SPEC-MANAGED: libs/service-http/external-contracts/behavior/shared-http-service-scaffold-contract.md#shared-http-service-scaffold-contract
+// SPEC-MANAGED: libs/service-http/external-contracts/behavior/2420.md#shared-w3c-request-completion-event
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec shared-http-service-scaffold-contract
+// @ec shared-w3c-request-completion-event
 // @capability shared-http-service-scaffold
 // @claim shared-http-service-scaffold-contract
-// @contract shared-http-service-scaffold-contract
+// @contract service-http-request-completion-event
 // @category behavior
 // @required_for_production true
-// @command cargo test -p service-http && cargo test -p service-http --features otlp --test otlp_tracing
+// @command cargo test -p service-http --test request_completion_event
 // AW-EC-END
 
-// Contract: Shared HTTP Service Scaffold public Rust API behavior remains covered by the configured library test suite.
-// Contract: The library contract stays usable through its documented README capability surface.
-// Contract: Optional OTLP export uses stable service identity and falls back to structured logging when unavailable.
-// Contract: The shared request trace layer propagates valid W3C parent context without changing logging-only startup.
+// Contract: One completed HTTP request produces exactly one decoded axiom.service.log.v1 INFO record whose event is http_request_complete and whose attributes contain method, uri, status, and non-negative latency_ms.
+// Contract: The same decoded completion record preserves a valid inbound W3C trace_id, parent_span_id, and trace_flags while using a distinct non-zero local span_id.
+// Contract: A missing or malformed traceparent produces a fresh valid trace_id and span_id with no parent_span_id, while still emitting one completion record.
+// Contract: The public trace_layer API takes no collector endpoint, credential, routing, storage, or Sift-specific configuration; collector ownership remains outside service-http.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn shared_http_service_scaffold_contract() {
-    let command =
-        "cargo test -p service-http && cargo test -p service-http --features otlp --test otlp_tracing";
-    let id = "shared-http-service-scaffold-contract";
+fn shared_w3c_request_completion_event() {
+    let command = "cargo test -p service-http --test request_completion_event";
+    let id = "shared-w3c-request-completion-event";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join("aw.toml").is_file() {
         assert!(
