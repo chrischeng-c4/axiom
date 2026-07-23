@@ -64,3 +64,42 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: service-http-request-completion-verification
+requirements:
+  collector_boundary:
+    id: R4
+    text: "The request trace layer exposes no collector endpoint, credential, routing, storage, or Sift-specific argument; it emits only standard tracing events."
+    kind: functional
+    risk: medium
+    verify: request_completion_event::trace_layer_has_no_collector_configuration_surface
+  completion_record:
+    id: R1
+    text: "A completed HTTP request emits exactly one decoded INFO axiom.service.log.v1 record named http_request_complete with method, uri, status, and non-negative latency_ms attributes."
+    kind: functional
+    risk: high
+    verify: request_completion_event::completion_record_is_schema_valid_and_complete
+  fallback_context:
+    id: R3
+    text: "Missing and malformed traceparent inputs each produce exactly one completion record with a fresh valid root context and no parent span id."
+    kind: regression
+    risk: high
+    verify: request_completion_event::missing_or_malformed_parent_falls_back_without_losing_completion_event
+  valid_parent:
+    id: R2
+    text: "A valid W3C traceparent is preserved on the same completion record with a distinct local span id and the original trace flags."
+    kind: regression
+    risk: high
+    verify: request_completion_event::valid_w3c_parent_is_preserved_on_completion_record
+---
+flowchart TD
+    r1[R1 completion record] --> request_completion_event_completion_record_is_schema_valid_and_complete[request_completion_event::completion_record_is_schema_valid_and_complete]
+    r2[R2 valid parent] --> request_completion_event_valid_w3c_parent_is_preserved_on_completion_record[request_completion_event::valid_w3c_parent_is_preserved_on_completion_record]
+    r3[R3 fallback context] --> request_completion_event_missing_or_malformed_parent_falls_back_without_losing_completion_event[request_completion_event::missing_or_malformed_parent_falls_back_without_losing_completion_event]
+    r4[R4 collector boundary] --> request_completion_event_trace_layer_has_no_collector_configuration_surface[request_completion_event::trace_layer_has_no_collector_configuration_surface]
+```
