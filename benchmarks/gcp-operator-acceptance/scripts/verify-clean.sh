@@ -36,8 +36,11 @@ check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
 check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
 check_empty "Sift namespace" kubectl get namespace sift --no-headers
 check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
+check_empty "Tape namespace" kubectl get namespace tape --no-headers
+check_empty "Tape operator namespace" kubectl get namespace tape-system --no-headers
 check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
 check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers
+check_empty "Tape CRD" kubectl get customresourcedefinition tapes.tape.dev --no-headers
 check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
   --filter="name=${bucket}" --format='value(name)'
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
@@ -50,6 +53,8 @@ check_empty "Lumen image tag" gcloud artifacts docker images describe \
   "$REGISTRY/lumen:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 check_empty "Sift image tag" gcloud artifacts docker images describe \
   "$REGISTRY/sift:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
+check_empty "Tape image tag" gcloud artifacts docker images describe \
+  "$REGISTRY/tape:$IMAGE_TAG" --project="$PROJECT_ID" --format='value(image_summary.digest)'
 check_empty "Cloud Build source" gcloud storage ls --recursive "${GCS_SOURCE_PREFIX}/**"
 
 # The repository and APIs predate this run and are deliberately not Terraform
@@ -80,4 +85,4 @@ jq -n \
   --arg verified_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{schema:$schema, project_id:$project_id, region:$region, gke_zone:$gke_zone, run_id:$run_id, verified_at:$verified_at, status:"clean", preserved:{artifact_registry:true, preexisting_apis:true}}' \
   > "$EVIDENCE_DIR/cleanup.json"
-echo "verified: no run-tagged Lumen/Sift operator acceptance resources remain"
+echo "verified: no run-tagged Lumen/Sift/Tape operator acceptance resources remain"
