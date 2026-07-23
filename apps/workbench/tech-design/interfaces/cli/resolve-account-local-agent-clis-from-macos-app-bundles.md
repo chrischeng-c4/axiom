@@ -64,19 +64,19 @@ id: workbench-macos-agent-path-verification
 requirements:
   failure:
     id: R3
-    text: "Missing executable remains a recoverable unavailable error."
+    text: "Missing agents preserve recoverable unavailable behavior."
     kind: regression
     risk: medium
     verify: pty_agent_adapters::unavailable_agent_is_recoverable
   fallback:
     id: R1
-    text: "A macOS account-local executable resolves after an inherited PATH miss."
+    text: "A macOS account-local executable resolves after inherited PATH misses."
     kind: functional
     risk: high
     verify: pty_agent_adapters::resolver_accepts_account_local_macos_fallback_paths
   precedence:
     id: R2
-    text: "An inherited executable keeps precedence over fallback locations."
+    text: "Inherited executable locations retain resolution precedence."
     kind: regression
     risk: medium
     verify: pty_agent_adapters::inherited_path_precedes_account_local_fallback
