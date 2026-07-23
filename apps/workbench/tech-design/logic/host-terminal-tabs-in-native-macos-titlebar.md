@@ -30,7 +30,6 @@ flowchart LR
 The terminal tab strip is a SwiftUI `ToolbarItem` in the native `.principal` toolbar placement. AppKit owns traffic lights and unused titlebar space; the tab strip owns only normal interactive controls. The terminal body begins below the toolbar and no content view ignores its safe area.
 
 This layout cannot change project selection, terminal tab identity, PTY lifecycle, terminal renderer retention, or auxiliary-column ordering.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
