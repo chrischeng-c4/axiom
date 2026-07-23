@@ -54,3 +54,35 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-app-owned-terminal-chrome-verification
+requirements:
+  beta_snapshot:
+    id: R3
+    text: "The beta runtime exposes a local content snapshot with the visible terminal tab strip."
+    kind: e2e
+    risk: medium
+    verify: workbench snapshot --out /private/tmp/workbench-beta.png
+  fullscreen_visible_tabs:
+    id: R1
+    text: "Terminal tabs remain in the app content region and are visible without native titlebar reveal."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testTerminalTabsRemainInContentChrome
+  package_builds:
+    id: R2
+    text: "The native macOS package compiles and its test suite passes with the app-owned terminal chrome."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+---
+flowchart TD
+    r1[R1 fullscreen visible tabs] --> workbenchmacuitests_testterminaltabsremainincontentchrome[WorkbenchMacUITests.testTerminalTabsRemainInContentChrome]
+    r2[R2 package builds] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+    r3[R3 beta snapshot] --> workbench_snapshot_out_private_tmp_workbench_beta_png[workbench snapshot --out /private/tmp/workbench-beta.png]
+```
