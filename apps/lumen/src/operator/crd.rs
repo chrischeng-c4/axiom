@@ -103,12 +103,14 @@ pub struct LumenSpec {
     /// Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by
     /// precedence, not schema enforcement: if `tokensSecret` is also set, it
     /// wins (backward compatible) and this field is ignored. Rotation
-    /// caveat: a CSI-mounted file only refreshes on the underlying value's
-    /// rotation if the cluster's CSI driver has secret rotation enabled
-    /// (e.g. GKE's managed add-on defaults it off); either way, lumen reads
-    /// the registry once at serve startup, so picking up a rotated value
-    /// requires a rolling restart regardless of the CSI driver's rotation
-    /// setting.
+    /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
+    /// the live verifier on change — no rolling restart needed on lumen's
+    /// side. The remaining caveat is entirely at the CSI layer: a
+    /// CSI-mounted file only refreshes on the underlying value's rotation if
+    /// the cluster's CSI driver has secret rotation enabled (e.g. GKE's
+    /// managed add-on defaults it off); with rotation disabled, the mounted
+    /// file itself never changes, so there is nothing for lumen's watcher to
+    /// pick up.
     #[serde(default)]
     pub tokens_secret_provider_class: Option<String>,
 
