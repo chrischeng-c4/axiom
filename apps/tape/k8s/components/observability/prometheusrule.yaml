@@ -36,4 +36,5 @@ spec:
           labels: { severity: warning, app: tape, role: server }
           annotations:
             summary: "tape pod restarting repeatedly"
+            runbook: "#2468: a common crash-loop shape is a stale spec.bootstrapSeedUri left set on the CR after a cold restore — bootstrapSeedUri is one-shot and every replacement pod refuses to start against a non-empty PVC while it stays set. Check `kubectl get tape/<name> -o jsonpath={.spec.bootstrapSeedUri}`; if set and the seeded topology already converged, clear it: kubectl patch tape/<name> --type=json -p '[{\"op\":\"remove\",\"path\":\"/spec/bootstrapSeedUri\"}]' (see docs/deployment-handoff.md Cold restore runbook)."
 # HANDWRITE-END
