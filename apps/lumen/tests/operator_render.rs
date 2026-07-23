@@ -481,6 +481,44 @@ fn prod_wires_auth_and_observability() {
     assert!(has(&objs, "PrometheusRule", "lumen"));
 }
 
+/// #2475: the rendered PrometheusRule covers more than just the
+/// zero-ready-pods case — backup CronJob failure and pod crash-looping,
+/// scoped to this Lumen's namespace/name, are alerted on too.
+#[test]
+fn prometheus_rule_covers_backup_failure_and_crash_looping() {
+    let l = lumen("lumen", prod_spec());
+    let objs = render(&l);
+    let rule = find(&objs, "PrometheusRule", "lumen");
+    let rules = rule["spec"]["groups"][0]["rules"].as_array().unwrap();
+    let alert_names: Vec<&str> = rules.iter().map(|r| r["alert"].as_str().unwrap()).collect();
+    assert_eq!(
+        alert_names,
+        vec![
+            "LumenNoReadyServingPods",
+            "LumenBackupCronJobFailed",
+            "LumenPodCrashLooping",
+        ]
+    );
+
+    let backup = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenBackupCronJobFailed")
+        .unwrap();
+    let backup_expr = backup["expr"].as_str().unwrap();
+    assert!(backup_expr.contains("kube_job_status_failed"));
+    assert!(backup_expr.contains("namespace=\"acme\""));
+    assert!(backup_expr.contains("job_name=~\"^lumen-backup-.*\""));
+
+    let crash_loop = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenPodCrashLooping")
+        .unwrap();
+    let crash_loop_expr = crash_loop["expr"].as_str().unwrap();
+    assert!(crash_loop_expr.contains("kube_pod_container_status_restarts_total"));
+    assert!(crash_loop_expr.contains("namespace=\"acme\""));
+    assert!(crash_loop_expr.contains("pod=~\"^lumen-[0-9]+$\""));
+}
+
 #[test]
 fn prod_wires_auth_via_csi_secret_provider_class() {
     let mut spec = prod_spec();

@@ -1561,6 +1561,9 @@ semantic_domain:
           - name: "admission_spec_absent_renders_no_admission_env"
             kind: "function"
             public: false
+          - name: "prometheus_rule_covers_backup_failure_and_crash_looping"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
