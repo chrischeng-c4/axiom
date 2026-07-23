@@ -97,6 +97,7 @@ fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in self_hosting_runner_policy_cli_test.rs is hand-written pending codegen support">
 #[test]
 fn self_hosting_project_and_capability_roots_are_rejected_before_mutation() {
     let temp = tempfile::tempdir().unwrap();
@@ -128,6 +129,7 @@ fn self_hosting_project_and_capability_roots_are_rejected_before_mutation() {
     assert_policy_envelope(&json_output(&capability, &capability_args), "capability");
     assert_eq!(tree_snapshot(temp.path()), before);
 }
+// </HANDWRITE>
 
 #[tokio::test]
 async fn self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch() {

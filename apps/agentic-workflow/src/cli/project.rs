@@ -2161,6 +2161,7 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
     )
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in project.rs is hand-written pending codegen support">
 /// Self-AW health is a read-only policy report. Expose its gate partition in
 /// the compact and full envelopes so an agent cannot mistake advisory
 /// implementation coverage for an admission requirement to run AW itself.
@@ -2188,6 +2189,7 @@ fn add_self_hosting_policy_fields(
     );
     summary
 }
+// </HANDWRITE>
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_summary_with_payload_path(

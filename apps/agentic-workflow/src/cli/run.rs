@@ -773,6 +773,7 @@ pub(crate) fn python_artifact_lifecycle_step(
     Ok(Some(step))
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
 /// via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -793,6 +794,7 @@ pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> 
     };
     run_resolved_root(root, print).await
 }
+// </HANDWRITE>
 
 /// Command string `aw goal capability <capability-id> --project <project>`
 /// would print (#1899: canonical goal-namespace form; retired `aw
@@ -803,6 +805,7 @@ pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> Stri
     format!("aw goal capability {capability_id} --project {project}")
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal capability <capability-id>` -- drive that
 /// capability's next work-root tick via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -821,7 +824,9 @@ pub(crate) async fn run_capability_root(
     };
     run_resolved_root(root, print).await
 }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
 /// Command string for the project-scoped capability completion loop that
 /// subsumes a project root.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -831,6 +836,7 @@ pub(crate) fn project_capability_rollup_command(project: &str) -> String {
     }
     format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
 }
+// </HANDWRITE>
 
 // ---------------------------------------------------------------------------
 // `aw goal backlog --project <p>` (#1899 R7): tracker-driven drain of every
@@ -1019,6 +1025,7 @@ async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
     envelope
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
 /// `aw goal backlog --project <p>` -- drain ready change leaves from the
 /// accepted and completely published project graph (#1899 R7, #2389).
 /// Epic priority chooses project direction before dependency readiness and
@@ -1247,6 +1254,7 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
     };
     emit_workflow_envelope(&envelope, print)
 }
+// </HANDWRITE>
 
 struct RunProgressSink {
     root_kind: String,
