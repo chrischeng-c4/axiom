@@ -84,6 +84,9 @@ target/
 # cross-build target dir (Linux), same regenerable build output as target/
 /target-linux/
 
+# Swift Package Manager local build products for the native Workbench host.
+apps/workbench/macos/.build/
+
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
