@@ -1,10 +1,12 @@
 //! #2436 GKE runs 0723113842/0723120246: a fresh 3-replica group where every
 //! member consumed the SAME `bootstrapSeedUri` object came up Ready with an
-//! EMPTY journal — replay returned no events although the seed object
-//! provably carried them. This reproduces that cloud shape in-process:
-//! all-fresh data dirs, each seeded with identical `/admin/backup` bytes,
-//! then a 3-voter group bootstraps. The seed contract (#1585) must make the
-//! seeded events replayable once the group elects and applies.
+//! EMPTY journal. Root cause (#2465): a single-node tape's `/admin/backup`
+//! snapshot carries `up_to: 0` (no raft applied index exists there), and raft
+//! treats an index-0 snapshot as nonexistent, so the seed silently
+//! evaporated. These tests bootstrap an all-fresh 3-voter group from
+//! identical seed bytes for BOTH origins — a replica-source snapshot
+//! (`up_to > 0`) and the single-node-origin shape (`up_to == 0`) — and
+//! require the seeded events to replay once the group elects and applies.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -14,8 +16,7 @@ use raft_runtime::Membership;
 use tape::raft::{prepare_bootstrap_seed, snapshot_bytes, TapeRaft};
 use tape::TapeJournal;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn identical_seeds_bootstrap_a_fresh_three_voter_group_with_data() {
+async fn seeded_group_surfaces_data(up_to: u64) {
     let source = Arc::new(Mutex::new(TapeJournal::default()));
     for n in 1..=3 {
         source.lock().unwrap().append(
@@ -25,7 +26,7 @@ async fn identical_seeds_bootstrap_a_fresh_three_voter_group_with_data() {
             Some(100),
         );
     }
-    let bytes = snapshot_bytes(&source, 3).unwrap();
+    let bytes = snapshot_bytes(&source, up_to).unwrap();
 
     let mut urls = HashMap::new();
     let mut listeners = Vec::new();
@@ -70,8 +71,9 @@ async fn identical_seeds_bootstrap_a_fresh_three_voter_group_with_data() {
     }
 
     // The seed must surface once the fresh group elects and applies: every
-    // member's applied index reaches the seeded `up_to` and the journal
-    // replays the seeded events.
+    // member's applied index reaches at least the seeded index and the
+    // journal replays the seeded events.
+    let want_applied = up_to.max(1);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         let applied: Vec<u64> = rafts.iter().map(|r| r.applied_index()).collect();
@@ -79,14 +81,28 @@ async fn identical_seeds_bootstrap_a_fresh_three_voter_group_with_data() {
             .iter()
             .map(|j| j.lock().unwrap().replay("acceptance", None, None, None).len())
             .collect();
-        if applied.iter().all(|&a| a >= 3) && replayed.iter().all(|&n| n == 3) {
+        if applied.iter().all(|&a| a >= want_applied) && replayed.iter().all(|&n| n == 3) {
             return;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(
-                "seeded 3-voter group never surfaced the seed: applied={applied:?} replayed={replayed:?}"
+                "seeded 3-voter group (up_to={up_to}) never surfaced the seed: applied={applied:?} replayed={replayed:?}"
             );
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+}
+
+/// A replica-origin seed (`up_to > 0`) bootstraps a fresh 3-voter group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn replica_origin_seed_bootstraps_a_fresh_three_voter_group() {
+    seeded_group_surfaces_data(3).await;
+}
+
+/// #2465: the single-node-origin seed shape (`up_to == 0`, exactly what a
+/// 1x1 deployment's `/admin/backup` emits) must also bootstrap the group —
+/// this is the documented DR path from a default deployment into HA.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn single_node_origin_seed_bootstraps_a_fresh_three_voter_group() {
+    seeded_group_surfaces_data(0).await;
 }
