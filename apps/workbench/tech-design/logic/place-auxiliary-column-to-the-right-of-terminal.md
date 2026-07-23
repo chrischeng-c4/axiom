@@ -33,3 +33,20 @@ flowchart LR
 `WorkbenchView.body` remains a `NavigationSplitView` with the registered Projects sidebar as its leading column. Within the detail `HStack`, `terminalWorkspace` is always rendered first and remains the only flexible workspace. When `WorkbenchRuntimeProfile` is `beta`, a divider and the existing bounded `auxiliaryColumn` follow it, yielding the visible order Projects | Terminal | Auxiliary. Stable does not render the divider or Auxiliary column and therefore remains Projects | Terminal.
 
 The implementation changes only detail-child ordering and the terminal workspace sizing priority. It does not change file listing, project selection, tab lifecycle, PTY launch, or the native sidebar toggle. Native UI coverage asserts that terminal controls appear horizontally before the Auxiliary Files element in Beta, while the Stable profile has no Auxiliary element.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
