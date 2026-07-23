@@ -345,6 +345,7 @@ struct WorkbenchView: View {
                     }
                 )
                 .id(tab.id)
+                .padding(4)
                 .background(Color(nsColor: .black))
                 .accessibilityIdentifier("terminal.surface.\(tab.id)")
                 .accessibilityLabel("\(tab.title) terminal, \(tab.lifecycle.label)")

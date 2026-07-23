@@ -51,6 +51,7 @@ struct WorkbenchMacApp: App {
         }
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandMenu("Terminal") {
                 Button("New Shell Tab") { model.addShellTab() }
