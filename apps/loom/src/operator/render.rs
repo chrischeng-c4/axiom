@@ -230,6 +230,12 @@ mod tests {
         for want in ["POD_NAME", "REPLICAS_PER_SHARD", "VOTER_COUNT", "LOOM_HEADLESS_SERVICE"] {
             assert!(names.contains(&want), "missing env {want}");
         }
+        assert!(
+            env.iter().any(|entry| {
+                entry["name"] == "LOOM_LOG_FORMAT" && entry["value"] == "json"
+            }),
+            "operator-rendered controller must emit collector-ready JSONL"
+        );
         // Archetype probes are wired.
         let c = &sts["spec"]["template"]["spec"]["containers"][0];
         assert_eq!(c["readinessProbe"]["httpGet"]["path"], "/readyz");

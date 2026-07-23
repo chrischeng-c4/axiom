@@ -72,6 +72,8 @@ spec:
               value: "1"
             - name: LOOM_ADDR
               value: "0.0.0.0:7474"
+            - name: LOOM_LOG_FORMAT
+              value: "json"
             - name: LOOM_RAFT_DIR
               value: "/data/raft"
             - name: LOOM_DRAIN_GRACE_SECS
