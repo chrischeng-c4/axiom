@@ -53,83 +53,82 @@ Each app icon asset catalog names its own `AppIcon` and includes a generated 102
 changes:
   - path: apps/workbench/macos/WorkbenchMac.xcodeproj/project.pbxproj
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Define isolated Stable and Beta products, bundle identities, display names, build settings, and icon asset catalogs.
+    description: Define stable and beta product configurations with separate name, bundle identifier, runtime profile, and asset catalog.
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchRuntimeProfile.swift
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Derive explicit stable or beta local state roots and bundle-owned runtime identity from application configuration.
+    description: Own the closed profile enum and state-root derivation contract.
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/ProjectStore.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Scope project metadata persistence to the selected runtime profile root.
+    description: Accept the profile-owned storage root.
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/DiagnosticLog.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Scope bounded diagnostics to the selected runtime profile root.
+    description: Write only the active profile diagnostic log.
   - path: apps/workbench/macos/Sources/WorkbenchMacCore/LocalRuntimeServer.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Scope singleton lease and registry publication to the selected runtime profile.
+    description: Scope singleton runtime files to the active profile root.
   - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchMacApp.swift
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Initialize model, diagnostics, and runtime server from the bundle-owned profile.
+    description: Read profile identity from bundle configuration.
   - path: apps/workbench/src/observability_cli.rs
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
     anchor: run_if_requested
-    description: Parse --profile stable|beta and derive log and runtime paths without cross-profile fallback.
+    description: Parse profile and enforce profile-scoped runtime and log discovery.
   - path: apps/workbench/tests/observability_cli.rs
     action: modify
-    section: unit-test
+    section: contract
     impl_mode: hand-written
     anchor: logs_tail_is_local_line_bounded_and_runtime_independent
-    description: Prove profile parsing and stable/beta path isolation.
+    description: Verify profile argv and isolated paths.
   - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift
     action: create
-    section: unit-test
+    section: contract
     impl_mode: hand-written
-    description: Prove distinct stable/beta state roots, bundle identities, and no cross-profile singleton collision.
+    description: Verify native identities and profile roots.
   - path: apps/workbench/macos/Assets/Stable/AppIcon.appiconset/Contents.json
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Register the approved cobalt and amber Stable icon asset.
+    description: Register stable app icon.
   - path: apps/workbench/macos/Assets/Beta/AppIcon.appiconset/Contents.json
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Register the approved ultraviolet and mint Beta icon asset.
+    description: Register beta app icon.
   - path: .agents/skills/workbench-build-stable/SKILL.md
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Document the explicit Stable-only build and launch workflow.
+    description: Stable-only skill contract.
   - path: .agents/skills/workbench-build-stable/scripts/build.sh
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Build and launch only the Stable product.
+    description: Stable product build dispatcher.
   - path: .agents/skills/workbench-build-beta/SKILL.md
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Document the Beta-only build and launch workflow.
+    description: Beta-only skill contract.
   - path: .agents/skills/workbench-build-beta/scripts/build.sh
     action: create
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Build and launch only the Beta product.
+    description: Beta product build dispatcher.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
