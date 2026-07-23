@@ -331,15 +331,36 @@ wait_for_topology 3
 kubectl -n tape get tape/tape -o json > "$EVIDENCE_DIR/kubernetes/tape-after-restore.json"
 
 start_forward
-replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-restore.json"
-# No re-append happens in this step: 3 events at offsets 0-2 proves the fresh
-# 3-node cluster's data came from the GCS seed, not from a live source.
-jq -e '
-  (.events | length) == 3
-  and ([.events[].offset] | sort) == [0,1,2]
-' "$EVIDENCE_DIR/kubernetes/tape-replay-after-restore.json" >/dev/null
+# Pod readiness does NOT mean the raft group has elected and applied the
+# seed snapshot yet: runs 0723113842/0723120246 replayed an empty journal by
+# probing the instant readiness flipped, and the identical in-process
+# 3-voter seed bootstrap (apps/tape/tests/seed_ha_bootstrap.rs) proves the
+# data surfaces once the group applies. Poll with a bound instead of
+# asserting a single racy read. No re-append happens in this step: 3 events
+# at offsets 0-2 proves the fresh cluster's data came from the GCS seed.
+restore_deadline=$((SECONDS + 240))
+until replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-restore.json" 2>/dev/null \
+  && jq -e '
+       (.events | length) == 3
+       and ([.events[].offset] | sort) == [0,1,2]
+     ' "$EVIDENCE_DIR/kubernetes/tape-replay-after-restore.json" >/dev/null 2>&1; do
+  if (( SECONDS >= restore_deadline )); then
+    echo "restored 3-replica group never surfaced the seeded events" >&2
+    cat "$EVIDENCE_DIR/kubernetes/tape-replay-after-restore.json" >&2 || true
+    capture_topology_diagnostics
+    exit 1
+  fi
+  # A dead port-forward must not masquerade as an empty replay.
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
 get_checkpoint > "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-restore.json"
-jq -e '.checkpoint.offset == 3' "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-restore.json" >/dev/null
+jq -e '.checkpoint.offset == 3' "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-restore.json" >/dev/null || {
+  echo "restored checkpoint did not carry the seeded consumer offset" >&2
+  cat "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-restore.json" >&2 || true
+  capture_topology_diagnostics
+  exit 1
+}
 stop_forward
 
 # Failover proof, adapted from apps/relay/scripts/kind-failover-smoke.sh:
@@ -359,11 +380,36 @@ raftz_ordinal "$new_leader" > "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failove
 stop_pod_forwards
 
 start_forward
-append_event '{"marker":"post-failover"}' \
-  | tee "$EVIDENCE_DIR/kubernetes/tape-append-after-failover.json" \
-  | jq -e '.offset == 3' >/dev/null
-replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-failover.json"
-jq -e '(.events | length) == 4' "$EVIDENCE_DIR/kubernetes/tape-replay-after-failover.json" >/dev/null
+# The replacement leader needs a beat before writes commit again (election +
+# leader-forward re-establishment); bound the retry instead of asserting one
+# racy attempt, and fail loudly with the observed payloads.
+failover_deadline=$((SECONDS + 120))
+until append_event '{"marker":"post-failover"}' \
+    > "$EVIDENCE_DIR/kubernetes/tape-append-after-failover.json" 2>/dev/null \
+  && jq -e '.offset == 3' \
+    "$EVIDENCE_DIR/kubernetes/tape-append-after-failover.json" >/dev/null 2>&1; do
+  if (( SECONDS >= failover_deadline )); then
+    echo "post-failover append never committed at the expected offset" >&2
+    cat "$EVIDENCE_DIR/kubernetes/tape-append-after-failover.json" >&2 || true
+    capture_topology_diagnostics
+    exit 1
+  fi
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
+replay_deadline=$((SECONDS + 60))
+until replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-failover.json" 2>/dev/null \
+  && jq -e '(.events | length) == 4' \
+    "$EVIDENCE_DIR/kubernetes/tape-replay-after-failover.json" >/dev/null 2>&1; do
+  if (( SECONDS >= replay_deadline )); then
+    echo "post-failover replay never showed the committed fourth event" >&2
+    cat "$EVIDENCE_DIR/kubernetes/tape-replay-after-failover.json" >&2 || true
+    capture_topology_diagnostics
+    exit 1
+  fi
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
 stop_forward
 
 kubectl -n tape get tape/tape -o json > "$EVIDENCE_DIR/kubernetes/tape-final.json"
