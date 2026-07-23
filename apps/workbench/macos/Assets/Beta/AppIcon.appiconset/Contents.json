@@ -1,3 +1,16 @@
-// HANDWRITE-BEGIN gap="missing-generator:contract:cd463328" tracker="pending-tracker" reason="Register beta app icon."
-// TODO: hand-write content for `apps/workbench/macos/Assets/Beta/AppIcon.appiconset/Contents.json`.
-// HANDWRITE-END
+{
+  "images" : [
+    {
+      "filename" : "app-icon-1024.png",
+      "idiom" : "universal",
+      "platform" : "macos",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+
+<!-- marker: missing-generator:contract:cd463328 path: apps/workbench/macos/Assets/Beta/AppIcon.appiconset/Contents.json reason: Register beta app icon. -->
