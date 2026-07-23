@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T09:05:39.393996+00:00"
-digest = "sha256:dbf9f6ee126da9679514d69924ae4f1c4019be8e14545f85bc6217b81664b45c"
-source_digest = "sha256:dbf9f6ee126da9679514d69924ae4f1c4019be8e14545f85bc6217b81664b45c"
-ir_digest = "sha256:e0acde9b9e565124207e159e7c22b074e2ed4d0eedd39b685b0e53768e0d6704"
+generated_at = "2026-07-23T09:24:15.603408+00:00"
+digest = "sha256:2c8aec3d45f1fe4b9f6d733d722c04087c25aaaf664d00258a2dd250c04657c8"
+source_digest = "sha256:2c8aec3d45f1fe4b9f6d733d722c04087c25aaaf664d00258a2dd250c04657c8"
+ir_digest = "sha256:b9e5b5fa5717664ee701eff48673b9f2611904ffff89d598df100917b6c1f32b"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -29,6 +29,12 @@ section_count = 1
 path = "interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md"
 digest = "sha256:d475b5df18fff468dbc9448222164d131d6f673fb4b8942ff42630a4eb924043"
 ir_digest = "sha256:a0c330b75d3fdaf619dc0216534518aff347ade4da60083b6168b506217e43f7"
+section_count = 3
+
+[[files]]
+path = "interfaces/cli/resolve-account-local-agent-clis-from-macos-app-bundles.md"
+digest = "sha256:ae1608659f4efa7125baa9640e8adee55d77a408ad25f05dc2a2b91ce68de5b2"
+ir_digest = "sha256:c6adb835478bd0c2fb18ebb88990e171dd17aa9b225132b40a5afab5c75084b6"
 section_count = 3
 
 [[files]]
