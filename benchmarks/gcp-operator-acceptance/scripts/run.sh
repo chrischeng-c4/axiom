@@ -407,6 +407,11 @@ export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
 "$SCRIPT_DIR/render-manifests.sh"
 
 echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+[[ "$PROJECT_NUMBER" =~ ^[0-9]+$ ]] || {
+  echo "could not resolve the numeric project number for $PROJECT_ID" >&2
+  exit 1
+}
 mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
 cp "$ACCEPTANCE_ROOT/environment"/*.tf "$TERRAFORM_ENVIRONMENT_DIR/"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
@@ -421,7 +426,8 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="cluster_name=$PERSISTENT_CLUSTER_NAME" \
   -var="run_id=$RUN_ID" \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
-  -var="image_tag=$IMAGE_TAG"
+  -var="image_tag=$IMAGE_TAG" \
+  -var="project_number=$PROJECT_NUMBER"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" output \
   -state="$STATE_DIR/environment.tfstate" -json > "$EVIDENCE_DIR/terraform-output.json"
