@@ -47,3 +47,28 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-native-titlebar-terminal-tabs-verification
+requirements:
+  native_package_builds:
+    id: R2
+    text: "The native macOS package compiles and its test suite passes with the toolbar-hosted tab strip."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+  native_titlebar_tabs:
+    id: R1
+    text: "Terminal tabs render in the native toolbar and remain discoverable to accessibility automation."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testTerminalTabsAppearInNativeToolbar
+---
+flowchart TD
+    r1[R1 native titlebar tabs] --> workbenchmacuitests_testterminaltabsappearinnativetoolbar[WorkbenchMacUITests.testTerminalTabsAppearInNativeToolbar]
+    r2[R2 native package builds] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
