@@ -365,6 +365,33 @@ jq -e '.checkpoint.offset == 3' "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-
 }
 stop_forward
 
+# bootstrapSeedUri is one-shot by the documented contract (#2468): every pod
+# env still carries it, and a replacement pod restarting onto its existing
+# non-empty PVC refuses the seed and crash-loops — run 0723131223's
+# leader-kill proved it. Clear the field once the restore has converged and
+# let the resulting rolling update settle BEFORE any pod-replacement
+# exercise. The settled group also re-proves data retention across a full
+# no-seed rolling restart below.
+kubectl -n tape patch tape/tape --type=json \
+  --patch '[{"op":"remove","path":"/spec/bootstrapSeedUri"}]'
+kubectl -n tape rollout status statefulset/tape --timeout=600s
+wait_for_topology 3
+start_forward
+retention_deadline=$((SECONDS + 120))
+until replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-clear.json" 2>/dev/null \
+  && jq -e '(.events | length) == 3' \
+    "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-clear.json" >/dev/null 2>&1; do
+  if (( SECONDS >= retention_deadline )); then
+    echo "seed-cleared rolling restart lost the restored events" >&2
+    cat "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-clear.json" >&2 || true
+    capture_topology_diagnostics
+    exit 1
+  fi
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
+stop_forward
+
 # Failover proof, adapted from apps/relay/scripts/kind-failover-smoke.sh:
 # per-pod /raftz polling to find the leader, kill it, confirm re-election to
 # a distinct node, then confirm a post-failover write commits and replays.
