@@ -73,7 +73,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: lumen
-          image: lumen:latest
+          image: ghcr.io/chrischeng-c4/lumen:0.4.24
           imagePullPolicy: IfNotPresent
           command: ["lumen", "serve"]
           ports:
