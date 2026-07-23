@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:c02e15c61c839c74092c8080444057f3129a4e15fefeca251b58168c7249310a"
+generated_from_td_digest = "sha256:f297767e0ed16d63869024d4bcf5d5fdcbd57d1ce636b1c4e82f974c4dfdd860"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -469,9 +469,9 @@ contract_id = "ec-claim-closure-evidence"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-claim-closure-evidence"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_claim_closure_evidence.rs"
-command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture"
+command = "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture"
 required_for_production = true
-assertions = ["The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands."]
+assertions = ["The production claim-closure document maps every authored case to an existing README capability and work-root claim without recursively dispatching generated claim suites."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-ec-generated-inventory-dispatch"
@@ -481,9 +481,9 @@ contract_id = "ec-generated-inventory-dispatch"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-generated-inventory-dispatch"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_generated_inventory_dispatch.rs"
-command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience"
+command = "cargo test -p lumen --test ec_claim_closure_consistency generated_inventory_matches_claim_commands_and_test_dispatch -- --exact --nocapture"
 required_for_production = true
-assertions = ["The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence."]
+assertions = ["The generated AW EC inventory matches the authored claim commands, wrapper metadata, production requirement, and source references without recursively executing generated wrappers."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-ec-vat-managed-runners"
@@ -493,9 +493,9 @@ contract_id = "ec-vat-managed-runners"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-vat-managed-runners"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_vat_managed_runners.rs"
-command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter"
+command = "cargo test -p lumen --test ec_claim_closure_consistency vat_managed_runner_bindings_resolve_to_declared_runners -- --exact --nocapture"
 required_for_production = true
-assertions = ["The vat-managed meter runner remains executable for Lumen efficiency EC dispatch."]
+assertions = ["Every vat runner referenced by the generated production EC inventory resolves to a declared lumen vat.toml runner, while the independent efficiency and resilience cases retain the heavy runner executions."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-elastic-disk-tier"
@@ -1161,7 +1161,7 @@ td_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-r
 test_path = "apps/lumen/tests/stability_lumen_long_running_stability_latency_drift.rs"
 command = "cd apps/lumen && ../../target/debug/vat run rig-endurance"
 required_for_production = true
-assertions = ["(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."]
+assertions = ["soak_p99_drift warms a bounded keyspace, records p99_w1/p99_w2/p99_w3 over three 500-search windows with zero failures, and requires each adjacent window plus window 3 versus window 1 to stay <= 1.10x + 6ms."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-long-running-stability-meta-api"
@@ -1205,7 +1205,7 @@ td_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-r
 test_path = "apps/lumen/tests/stability_lumen_long_running_stability_overload_backpressure.rs"
 command = "cd apps/lumen && ../../target/debug/vat run rig-load"
 required_for_production = true
-assertions = ["(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."]
+assertions = ["backpressure_overload drives the live service at 600 offered QPS with 16 workers for 30s after warmup (3x the 200-QPS steady baseline), measures error_rate/p99_ms/achieved_qps, enforces error_rate <= 0.05 and p99_ms <= 250ms, and uses Rig's >=95% load-honesty gate so a crash, OOM, or collapsed request schedule cannot pass."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-long-running-stability-query-resilience"
@@ -1218,9 +1218,8 @@ test_path = "apps/lumen/tests/stability_lumen_long_running_stability_query_resil
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 required_for_production = true
 assertions = [
-    "FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms.",
-    "ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms.",
-    "RSS plateau: over the bounded-keyspace soak, window-2 RSS <= 1.10x window-1 RSS (no leak).",
+    "packet_loss_p99 routes baseline and fault search samples through toxiproxy with downstream timeout toxicity 0.05, requires 0 < loss_fail <= 30 and loss_p99 <= 2 * baseline_p99 + 20ms, then removes the toxic, records loss_recovered_recovered_secs <= 10, requires loss_recovery_fail == 0, and requires loss_recovery_p99 <= 2 * baseline_p99 + 1ms.",
+    "partition_recovery applies a full downstream partition, requires partition_fail > 0, records recovered_recovered_secs <= 10, and requires recovery_p99 <= 2 * baseline_p99 + 1ms after the toxic is removed.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -1231,11 +1230,11 @@ contract_id = "search-p99-survives-fault-and-recovers"
 category = "stability"
 td_ref = "apps/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-long-running-stability-resilience-survival"
 test_path = "apps/lumen/tests/stability_lumen_long_running_stability_resilience_survival.rs"
-command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
+command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 required_for_production = true
 assertions = [
-    "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).",
-    "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.",
+    "packet_loss_p99 applies downstream toxiproxy timeout toxicity 0.05, requires 0 < loss_fail <= 30 and loss_p99 <= 2 * baseline_p99 + 20ms, then removes the toxic, records loss_recovered_recovered_secs <= 10, requires loss_recovery_fail == 0, and requires loss_recovery_p99 <= 2 * baseline_p99 + 1ms.",
+    "partition_recovery requires partition_fail > 0 under a full downstream partition, records recovered_recovered_secs <= 10 after toxic removal, and requires recovery_p99 <= 2 * baseline_p99 + 1ms.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -1248,7 +1247,10 @@ td_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-r
 test_path = "apps/lumen/tests/stability_lumen_long_running_stability_resource_leak.rs"
 command = "cd apps/lumen && ../../target/debug/vat run rig-endurance"
 required_for_production = true
-assertions = ["(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."]
+assertions = [
+    "fd_leak resolves the unique Lumen listener PID, runs sustained bounded-keyspace index and search work, records independent fd/socket/thread counts before and after, requires zero request failures, and gates every after count at <= 1.20 * before + 16.",
+    "soak_rss_plateau warms a bounded keyspace, runs two mixed workload windows with zero request failures, measures rss_w1/rss_w2 from the live Lumen PID, and requires rss_w2 <= 1.10 * rss_w1.",
+]
 
 [[aw.ec.generated.cases]]
 id = "lumen-security-hardening-access-control"
@@ -1334,7 +1336,7 @@ tool = "guard"
 path = "apps/lumen/guard.toml"
 td_ref = "apps/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
 content_digest = "sha256:3aafdadcbeae06215cc83b5f60c1cd05f68a8ea5c6993be366854dc3e327ef58"
-command = "target/debug/guard scan apps/lumen --compact --no-persist"
+command = "cargo run --quiet -p guard-cli --bin guard -- scan apps/lumen --compact --no-persist"
 category = "security"
 
 [[aw.ec.generated.tool_manifests]]
@@ -1343,7 +1345,7 @@ tool = "guard"
 path = "apps/lumen/guard-search.toml"
 td_ref = "apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security"
 content_digest = "sha256:71a40fb9a7d8d9baa52917eddef22d16d9bb9d83337ce9829b93f9157ccff086"
-command = "target/debug/guard scan apps/lumen --compact --no-persist"
+command = "cargo run --quiet -p guard-cli --bin guard -- scan apps/lumen --compact --no-persist"
 category = "security"
 
 [[aw.ec.generated.tool_manifests]]

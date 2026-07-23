@@ -10,7 +10,7 @@
 // @command cd apps/lumen && ../../target/debug/vat run rig-load
 // AW-EC-END
 
-// Contract: (d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen).
+// Contract: backpressure_overload drives the live service at 600 offered QPS with 16 workers for 30s after warmup (3x the 200-QPS steady baseline), measures error_rate/p99_ms/achieved_qps, enforces error_rate <= 0.05 and p99_ms <= 250ms, and uses Rig's >=95% load-honesty gate so a crash, OOM, or collapsed request schedule cannot pass.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_overload_backpressure() {

@@ -7,16 +7,15 @@
 // @contract search-p99-survives-fault-and-recovers
 // @category stability
 // @required_for_production true
-// @command cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture
+// @command cd apps/lumen && ../../target/debug/vat run rig-resilience
 // AW-EC-END
 
-// Contract: Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).
-// Contract: Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.
+// Contract: packet_loss_p99 applies downstream toxiproxy timeout toxicity 0.05, requires 0 < loss_fail <= 30 and loss_p99 <= 2 * baseline_p99 + 20ms, then removes the toxic, records loss_recovered_recovered_secs <= 10, requires loss_recovery_fail == 0, and requires loss_recovery_p99 <= 2 * baseline_p99 + 1ms.
+// Contract: partition_recovery requires partition_fail > 0 under a full downstream partition, records recovered_recovered_secs <= 10 after toxic removal, and requires recovery_p99 <= 2 * baseline_p99 + 1ms.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_resilience_survival() {
-    let command =
-        "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture";
+    let command = "cd apps/lumen && ../../target/debug/vat run rig-resilience";
     let id = "lumen-long-running-stability-resilience-survival";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

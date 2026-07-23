@@ -10,9 +10,8 @@
 // @command cd apps/lumen && ../../target/debug/vat run rig-resilience
 // AW-EC-END
 
-// Contract: FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms.
-// Contract: ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms.
-// Contract: RSS plateau: over the bounded-keyspace soak, window-2 RSS <= 1.10x window-1 RSS (no leak).
+// Contract: packet_loss_p99 routes baseline and fault search samples through toxiproxy with downstream timeout toxicity 0.05, requires 0 < loss_fail <= 30 and loss_p99 <= 2 * baseline_p99 + 20ms, then removes the toxic, records loss_recovered_recovered_secs <= 10, requires loss_recovery_fail == 0, and requires loss_recovery_p99 <= 2 * baseline_p99 + 1ms.
+// Contract: partition_recovery applies a full downstream partition, requires partition_fail > 0, records recovered_recovered_secs <= 10, and requires recovery_p99 <= 2 * baseline_p99 + 1ms after the toxic is removed.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_query_resilience() {

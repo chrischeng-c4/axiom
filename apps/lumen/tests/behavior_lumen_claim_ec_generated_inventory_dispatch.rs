@@ -7,15 +7,15 @@
 // @contract ec-generated-inventory-dispatch
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience
+// @command cargo test -p lumen --test ec_claim_closure_consistency generated_inventory_matches_claim_commands_and_test_dispatch -- --exact --nocapture
 // AW-EC-END
 
-// Contract: The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence.
+// Contract: The generated AW EC inventory matches the authored claim commands, wrapper metadata, production requirement, and source references without recursively executing generated wrappers.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_ec_generated_inventory_dispatch() {
     let command =
-        "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience";
+        "cargo test -p lumen --test ec_claim_closure_consistency generated_inventory_matches_claim_commands_and_test_dispatch -- --exact --nocapture";
     let id = "lumen-claim-ec-generated-inventory-dispatch";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
