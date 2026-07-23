@@ -3,6 +3,34 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
+    func testFilesAuxiliaryColumnFollowsTerminalWorkspace() throws {
+        continueAfterFailure = false
+
+        let fixtureFolder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workbench-files-order-ui-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureFolder) }
+
+        let app = XCUIApplication()
+        app.terminate()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchEnvironment["WORKBENCH_UI_TEST_FOLDER"] = fixtureFolder.path
+        app.launch()
+        defer { app.terminate() }
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let terminalTab = app.buttons["terminal.tab.claude"]
+        let auxiliary = app.descendants(matching: .any)["auxiliary.column"]
+        XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(auxiliary.waitForExistence(timeout: 5))
+        XCTAssertLessThan(
+            terminalTab.frame.midX,
+            auxiliary.frame.minX,
+            "The primary terminal workspace must be left of the trailing Auxiliary column."
+        )
+    }
+
+    @MainActor
     func testFilesAuxiliaryColumnShowsFixtureEntries() throws {
         continueAfterFailure = false
 

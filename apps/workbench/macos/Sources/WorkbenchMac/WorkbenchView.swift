@@ -17,12 +17,12 @@ struct WorkbenchView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
             HStack(spacing: 0) {
+                terminalWorkspace
                 if runtimeProfile == .beta {
+                    Divider()
                     auxiliaryColumn
                         .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
-                    Divider()
                 }
-                terminalWorkspace
             }
         }
         .navigationTitle("Workbench")
@@ -174,6 +174,7 @@ struct WorkbenchView: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("auxiliary.column")
         .accessibilityLabel("Auxiliary Files")
     }
