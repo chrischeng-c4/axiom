@@ -28,13 +28,10 @@ struct WorkbenchView: View {
             .accessibilityIdentifier("workbench.detail")
         }
         .navigationTitle("Workbench")
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                terminalTabStrip
-                    .frame(minWidth: 420, idealWidth: 560, maxWidth: 720)
-                    .accessibilityIdentifier("terminal.titlebar-tabs")
-            }
-        }
+        .background(
+            NativeTitlebarTabAccessory(content: AnyView(terminalTabStrip))
+                .frame(width: 0, height: 0)
+        )
         // Keep read-only diagnostics, paths, and lifecycle text copyable. Text
         // inside controls still belongs to the control's click action.
         .textSelection(.enabled)
@@ -271,7 +268,7 @@ struct WorkbenchView: View {
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 8)
-                                .frame(minHeight: 32)
+                                .frame(minHeight: 40)
                                 .contentShape(RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(.plain)
@@ -289,7 +286,7 @@ struct WorkbenchView: View {
                                     Image(systemName: "xmark")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundStyle(.secondary)
-                                        .frame(width: 26, height: 32)
+                                        .frame(width: 30, height: 40)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -297,7 +294,7 @@ struct WorkbenchView: View {
                                 .accessibilityLabel("Close \(tab.title)")
                             }
                         }
-                        .frame(minHeight: 32)
+                        .frame(minHeight: 40)
                         .background(
                             model.activeTabId == tab.id
                                 ? Color.accentColor.opacity(0.16)
@@ -314,7 +311,7 @@ struct WorkbenchView: View {
                         }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 1)
             }
 
             Button {
@@ -322,7 +319,7 @@ struct WorkbenchView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.subheadline.weight(.semibold))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 36, height: 40)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -330,7 +327,9 @@ struct WorkbenchView: View {
             .accessibilityLabel("Add shell terminal tab")
             .accessibilityHint("Adds and selects an idle tab without starting a shell")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
+        .frame(height: 42)
+        .accessibilityIdentifier("terminal.titlebar-tabs")
     }
 
     @ViewBuilder
@@ -507,6 +506,79 @@ struct WorkbenchView: View {
         case .running: .green
         case .exited: .blue
         case .failed: .red
+        }
+    }
+}
+
+/// Hosts SwiftUI terminal chrome in the native AppKit titlebar instead of
+/// drawing through a content safe area. The accessory is owned by the window,
+/// while traffic lights and drag behavior remain native.
+private struct NativeTitlebarTabAccessory: NSViewRepresentable {
+    let content: AnyView
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let anchor = NSView(frame: .zero)
+        context.coordinator.update(content)
+        DispatchQueue.main.async {
+            context.coordinator.install(in: anchor.window)
+        }
+        return anchor
+    }
+
+    func updateNSView(_ anchor: NSView, context: Context) {
+        context.coordinator.update(content)
+        DispatchQueue.main.async {
+            context.coordinator.install(in: anchor.window)
+        }
+    }
+
+    static func dismantleNSView(_ anchor: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    final class Coordinator {
+        private var rootView = AnyView(EmptyView())
+        private weak var window: NSWindow?
+        private var accessory: NSTitlebarAccessoryViewController?
+        private var host: NSHostingView<AnyView>?
+
+        func update(_ content: AnyView) {
+            rootView = content
+            host?.rootView = content
+        }
+
+        func install(in candidate: NSWindow?) {
+            guard let candidate else { return }
+            guard window !== candidate else { return }
+            uninstall()
+
+            let host = NSHostingView(rootView: rootView)
+            host.frame = NSRect(x: 0, y: 0, width: candidate.contentLayoutRect.width, height: 42)
+            host.autoresizingMask = [.width]
+
+            let accessory = NSTitlebarAccessoryViewController()
+            accessory.view = host
+            accessory.layoutAttribute = .bottom
+            candidate.addTitlebarAccessoryViewController(accessory)
+
+            self.window = candidate
+            self.accessory = accessory
+            self.host = host
+        }
+
+        func uninstall() {
+            if let accessory,
+               let index = window?.titlebarAccessoryViewControllers.firstIndex(where: { $0 === accessory })
+            {
+                window?.removeTitlebarAccessoryViewController(at: index)
+            }
+            accessory = nil
+            host = nil
+            window = nil
         }
     }
 }

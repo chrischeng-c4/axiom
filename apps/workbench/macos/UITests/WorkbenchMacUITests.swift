@@ -3,7 +3,7 @@ import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
     @MainActor
-    func testTerminalTabsAppearInNativeToolbar() throws {
+    func testTerminalTabsUseFullWidthTitlebarAccessory() throws {
         continueAfterFailure = false
 
         let fixtureFolder = FileManager.default.temporaryDirectory
@@ -27,7 +27,7 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertLessThan(
             terminalTab.frame.minY,
             terminalWorkspace.frame.minY,
-            "Terminal tabs must be hosted above terminal content in the native toolbar."
+            "Terminal tabs must be hosted above terminal content in the native titlebar accessory."
         )
     }
 
