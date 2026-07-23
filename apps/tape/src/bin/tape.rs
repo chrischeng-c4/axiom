@@ -47,8 +47,9 @@ enum Command {
     Dockerfile(DockerfileArgs),
     /// Write a consistent snapshot of a RUNNING node's journal to a backup
     /// destination through the shared libs/service-backup runner (#1329):
-    /// fetches `GET /admin/backup` and ships the bytes to `--dest` (`file://`
-    /// always; `s3://` via the lib). Needs a build with `--features backup`.
+    /// fetches `GET /admin/backup` and ships the bytes to `--dest`
+    /// (`file://`, `s3://`, or `gs://`, workload-identity ADC in-cluster).
+    /// Needs a build with `--features backup`.
     Backup(BackupArgs),
 }
 
@@ -236,9 +237,10 @@ struct ServeArgs {
     /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    /// Exact `file://` (or backup-enabled `s3://`) journal snapshot used only
-    /// to seed a fresh replica PVC before Raft starts. Refuses non-empty
-    /// `TAPE_DATA_DIR`; this is cold recovery, not a live restore endpoint.
+    /// Exact `file://`, `s3://`, or `gs://` journal snapshot used only to
+    /// seed a fresh replica PVC before Raft starts (`gs://` authenticates via
+    /// workload-identity ADC in-cluster). Refuses non-empty `TAPE_DATA_DIR`;
+    /// this is cold recovery, not a live restore endpoint.
     #[arg(long, env = "TAPE_BOOTSTRAP_SEED_URI")]
     bootstrap_seed_uri: Option<String>,
     /// Headless service name peers are resolved against in replica/HA mode
@@ -325,9 +327,9 @@ struct BackupArgs {
     /// hoc use.
     #[arg(long)]
     url: String,
-    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only
-    /// `gs://bucket/prefix` (parses, but the runner supports `file://` and
-    /// `s3://` sinks today).
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix`. `gs://` uses workload-identity ADC in-cluster
+    /// (GKE-proven) and Vat's `STORAGE_EMULATOR_HOST` locally.
     #[arg(long)]
     dest: String,
     /// Bearer token for `/admin/backup` (needs `admin` on `*`). Falls back to
