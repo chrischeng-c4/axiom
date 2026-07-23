@@ -235,6 +235,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
             ..Default::default()
         },
         observability: false,
+        admission: None,
     };
     let mut lumen = Lumen::new(NAME, spec);
     lumen.metadata.namespace = Some(NAMESPACE.to_string());

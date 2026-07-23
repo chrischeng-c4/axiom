@@ -54,6 +54,7 @@ fn dev_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: false,
+        admission: None,
     }
 }
 
@@ -84,6 +85,7 @@ fn prod_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: true,
+        admission: None,
     }
 }
 
@@ -1063,5 +1065,68 @@ fn bootstrap_seed_policy_wires_serving_env() {
         .find(|e| e["name"] == "LUMEN_BOOTSTRAP_MAX_BYTES_PER_SEC")
         .expect("bootstrap throttle env");
     assert_eq!(limit["value"], "1048576");
+}
+
+/// #2477: `spec.admission` set renders the matching `LUMEN_ADMISSION_*` envs,
+/// one per configured field, with no envs for the fields left unset.
+#[test]
+fn admission_spec_wires_serving_env() {
+    let mut spec = dev_spec();
+    spec.admission = Some(lumen::operator::crd::AdmissionSpec {
+        read_capacity: Some(500),
+        write_capacity: Some(100),
+        admin_capacity: None,
+        refill_secs: Some(30),
+        max_keys: None,
+    });
+    let l = lumen("search", spec);
+    let objs = render(&l);
+    let sts = find(&objs, "StatefulSet", "search");
+    let env = sts["spec"]["template"]["spec"]["containers"][0]["env"]
+        .as_array()
+        .unwrap();
+    let value_of = |name: &str| {
+        env.iter()
+            .find(|e| e["name"] == name)
+            .and_then(|e| e["value"].as_str())
+            .unwrap_or_else(|| panic!("env {name} missing a literal value"))
+            .to_string()
+    };
+
+    assert_eq!(value_of("LUMEN_ADMISSION_READ_CAPACITY"), "500");
+    assert_eq!(value_of("LUMEN_ADMISSION_WRITE_CAPACITY"), "100");
+    assert_eq!(value_of("LUMEN_ADMISSION_REFILL_SECS"), "30");
+    let names = env_names(&sts["spec"]["template"]["spec"]["containers"][0]);
+    for absent in ["LUMEN_ADMISSION_ADMIN_CAPACITY", "LUMEN_ADMISSION_MAX_KEYS"] {
+        assert!(
+            !names.contains(&absent.to_string()),
+            "unset admission field must not render {absent}: {names:?}"
+        );
+    }
+}
+
+/// #2477: `spec.admission` absent (the `dev_spec`/`prod_spec` default) renders
+/// none of the `LUMEN_ADMISSION_*` envs — pure exposure, no default-on
+/// behavior change.
+#[test]
+fn admission_spec_absent_renders_no_admission_env() {
+    for spec in [dev_spec(), prod_spec()] {
+        let l = lumen("search", spec);
+        let objs = render(&l);
+        let sts = find(&objs, "StatefulSet", "search");
+        let names = env_names(&sts["spec"]["template"]["spec"]["containers"][0]);
+        for absent in [
+            "LUMEN_ADMISSION_READ_CAPACITY",
+            "LUMEN_ADMISSION_WRITE_CAPACITY",
+            "LUMEN_ADMISSION_ADMIN_CAPACITY",
+            "LUMEN_ADMISSION_REFILL_SECS",
+            "LUMEN_ADMISSION_MAX_KEYS",
+        ] {
+            assert!(
+                !names.contains(&absent.to_string()),
+                "no spec.admission must render no {absent}: {names:?}"
+            );
+        }
+    }
 }
 // CODEGEN-END
