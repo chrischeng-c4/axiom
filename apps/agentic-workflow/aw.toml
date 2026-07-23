@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:1294c1a81bc431cc4dc87cfa2d00cec064ea8e731d27b26576fe62d61bf4ff3a"
+generated_from_td_digest = "sha256:1e5c89914673167be6bd8538b1a5a5b7d3adea821bc802ee67caae816dd059cb"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -139,6 +139,72 @@ test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_mo
 command = "cargo test -p agentic-workflow --lib cli::run::tests::remote_wi_admission_seeds_the_local_ec_lifecycle_ledger -- --exact --nocapture"
 required_for_production = true
 assertions = ["admitting a remote WorkItem seeds the local EC-first lifecycle ledger before dispatching artifact work"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-lifecycle-prompt-blocker-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-blocker-conformance"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-blocker-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_blocker_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_routes_invalid_oracle_and_typed_blockers -- --exact --nocapture"
+required_for_production = true
+assertions = ["invalid oracle state routes to EC repair and decision, approval, environment, red-gate, and missing-evidence blockers remain typed with exact resume"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-lifecycle-prompt-rollup-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-rollup-conformance"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-rollup-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_rollup_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_distinguishes_child_parked_and_root_terminal -- --exact --nocapture"
+required_for_production = true
+assertions = ["child dispatch, parked backlog work, and root terminal completion are distinct prompt states"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-lifecycle-prompt-stage-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-stage-conformance"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-stage-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_stage_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard",
+    "a frontend CB transition projects the complete concrete artifact-quality guard id set",
+]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-prompt-vocabulary-and-grammar"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "prompt-vocabulary-and-grammar"
+contract_id = "aw-core-client-prompt-vocabulary-and-grammar"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-prompt-vocabulary-and-grammar"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_prompt_vocabulary_and_grammar.rs"
+command = "cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture"
+required_for_production = true
+assertions = ["the registered public Markdown and JSON renderers expose identical prompt content with the exact closed vocabulary, seven ASCII operators, complete EC-first Python Spec transition table, sole workflow-authority boundary, and no Unicode operator lookalikes"]
+
+[[aw.ec.generated.cases]]
+id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "typed-prompt-ir-and-envelope-projection"
+contract_id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-typed-prompt-ir-and-envelope-projection"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_typed_prompt_ir_and_envelope_projection.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::workflow_envelope_serializes_typed_prompt_contract_from_same_ir -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "a production WorkflowEnvelope pins every typed prompt JSON field and its rendered agent_prompt from the same decoded IR",
+    "an invalid typed contract makes WorkflowEnvelope serialization fail instead of falling back to prose",
+]
 
 [[aw.ec.generated.cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"

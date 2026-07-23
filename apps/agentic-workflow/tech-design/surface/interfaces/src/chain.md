@@ -1502,6 +1502,24 @@ pub fn normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> {
             .ok()
             .map(|_| rewritten);
     }
+    for (legacy, canonical) in [
+        ("aw td gen-source", "aw cb gen-source"),
+        ("aw td code-check", "aw cb check"),
+        ("aw td promote", "aw cb promote"),
+        ("aw td fill", "aw cb fill"),
+        ("aw td gen", "aw cb gen"),
+    ] {
+        if let Some(rest) = trimmed.strip_prefix(legacy) {
+            let candidate = if legacy == "aw td code-check" && rest.trim().is_empty() {
+                format!("{canonical} {slug}")
+            } else {
+                format!("{canonical}{rest}")
+            };
+            return validate_aw_command_string(&candidate)
+                .ok()
+                .map(|_| candidate);
+        }
+    }
     if validate_aw_command_string(trimmed).is_ok() {
         return Some(trimmed.to_string());
     }

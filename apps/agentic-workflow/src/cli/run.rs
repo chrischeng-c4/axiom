@@ -167,12 +167,11 @@ impl Serialize for WorkflowEnvelope {
     where
         S: serde::Serializer,
     {
-        let prompt_contract = workflow_prompt_contract(self, None, vec![self.agent_prompt.clone()]);
+        let prompt_contract = workflow_prompt_contract(self, None, vec![self.agent_prompt.clone()])
+            .map_err(serde::ser::Error::custom)?;
         let rendered_prompt = prompt_contract
-            .as_ref()
-            .ok()
-            .and_then(|contract| contract.render().ok())
-            .unwrap_or_else(|| self.agent_prompt.clone());
+            .render()
+            .map_err(serde::ser::Error::custom)?;
         let mut state = serializer.serialize_struct("WorkflowEnvelope", 16)?;
         state.serialize_field("schema_version", "aw.cli.v1")?;
         state.serialize_field("status", workflow_status(self))?;
@@ -197,9 +196,7 @@ impl Serialize for WorkflowEnvelope {
             state.serialize_field("payload_path", payload_path)?;
         }
         state.serialize_field("agent_prompt", &rendered_prompt)?;
-        if let Ok(prompt_contract) = prompt_contract {
-            state.serialize_field("prompt_contract", &prompt_contract)?;
-        }
+        state.serialize_field("prompt_contract", &prompt_contract)?;
         if let Some(profile) = &self.artifact_quality_profile {
             state.serialize_field("artifact_quality_profile", profile)?;
         }
@@ -561,7 +558,7 @@ pub(crate) fn ec_draft_command(project: &str, wi: &str) -> String {
 /// same production-required filter as terminal code-check; an unscoped manual
 /// `aw ec verify` remains available for explicitly exercising advisory cases.
 pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
-    format!("aw ec verify --project {project} --required-only --wi {wi} --json")
+    format!("aw ec verify --project {project} --required-only --wi {wi}")
 }
 
 /// The artifact/gate phases used by the opt-in `python-v1` lifecycle.
@@ -703,7 +700,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         PythonArtifactPhase::EcTdVerify => PythonArtifactLifecycleStep {
             phase,
             command: format!(
-                "aw ec verify --project {} --required-only --stage td --wi {wi} --json",
+                "aw ec verify --project {} --required-only --stage td --wi {wi}",
                 row.name
             ),
             reason: "the Python TD reference is ready; behavior and security must pass before codebase materialization".to_string(),
@@ -730,7 +727,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         PythonArtifactPhase::EcCbVerify => PythonArtifactLifecycleStep {
             phase,
             command: format!(
-                "aw ec verify --project {} --required-only --stage cb --wi {wi} --json",
+                "aw ec verify --project {} --required-only --stage cb --wi {wi}",
                 row.name
             ),
             reason: "the codebase is built and checked; behavior, security, stability, and efficiency are now production gates".to_string(),
@@ -1404,17 +1401,170 @@ fn workflow_prompt_contract(
     } else {
         next_command
     };
-    let verifier_command = if root_command.is_empty() {
-        transition_command
-    } else {
-        root_command
-    };
-    let blocker_kind = if envelope.requires_hitl {
-        Some(PromptBlockerKind::Approval)
-    } else if envelope.action == "blocked" {
-        let reason = envelope.next.reason.to_ascii_lowercase();
+    let reason = envelope.next.reason.to_ascii_lowercase();
+    let command = transition_command.to_ascii_lowercase();
+    let (state, artifact_kind, verifier_predicate, writable, readonly, guards) =
+        if command.contains("aw ec verify") && command.contains("--stage td") {
+            (
+                "ec_td.verifying",
+                "td",
+                "EC[TD].behavior == green",
+                Vec::new(),
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["EC[TD].security == green"],
+            )
+        } else if command.contains("aw ec verify") && command.contains("--stage cb") {
+            (
+                "ec_cb.verifying",
+                "cb",
+                "EC[CB].behavior == green",
+                Vec::new(),
+                vec!["external-contracts/**", "src/**"],
+                vec![
+                    "EC[CB].security == green",
+                    "EC[CB].stability == green",
+                    "EC[CB].efficiency in {green, not-applicable}",
+                ],
+            )
+        } else if command.contains("aw ec check") {
+            (
+                if reason.contains("stale") || reason.contains("oracle") {
+                    "ec.contract_repair"
+                } else {
+                    "ec.authoring"
+                },
+                "ec",
+                "EC.structure == green",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                if reason.contains("stale") || reason.contains("oracle") {
+                    vec!["invalid_oracle -> EC"]
+                } else {
+                    Vec::new()
+                },
+            )
+        } else if command.contains("aw ec review") {
+            (
+                "ec.review_pending",
+                "ec",
+                "EC.review == accepted",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                Vec::new(),
+            )
+        } else if command.contains("aw td check") || command.contains("aw td create") {
+            (
+                "td.authoring",
+                "td",
+                "TD.compile == green",
+                vec!["tech-design/**"],
+                vec!["external-contracts/**", "src/**"],
+                vec!["EC -> TD"],
+            )
+        } else if command.contains("aw cb gen") {
+            (
+                "cb.generating",
+                "cb",
+                "CB.generated == true",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["EC[TD].behavior == green", "EC[TD].security == green"],
+            )
+        } else if command.contains("aw cb fill") {
+            (
+                "cb.filling",
+                "cb",
+                "CB.HANDWRITE == resolved",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["CODEGEN != HANDWRITE"],
+            )
+        } else if command.contains("aw cb check") || command.contains("aw td code-check") {
+            (
+                "cb.checking",
+                "cb",
+                "CB.unit == green",
+                Vec::new(),
+                vec!["external-contracts/**", "tech-design/**", "src/**"],
+                vec!["CB.unit == green != completion.workflow_complete"],
+            )
+        } else if command.contains("aw wi close") {
+            (
+                "change.closing",
+                envelope.current.kind.as_str(),
+                "change.closed == true",
+                Vec::new(),
+                Vec::new(),
+                vec!["action == done != completion.workflow_complete"],
+            )
+        } else if command.contains("aw goal wi") && !reason.contains("parked") {
+            (
+                "rollup.child_dispatch",
+                envelope.current.kind.as_str(),
+                "child.change.closed == true",
+                Vec::new(),
+                Vec::new(),
+                vec!["child.done != root.complete"],
+            )
+        } else if envelope.completion.workflow_complete {
+            (
+                "root.terminal",
+                envelope.current.kind.as_str(),
+                "completion.workflow_complete == true",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if reason.contains("parked") {
+            (
+                "backlog.parked",
+                envelope.current.kind.as_str(),
+                "ready.change notin parked",
+                Vec::new(),
+                Vec::new(),
+                vec!["parked != closed"],
+            )
+        } else {
+            (
+                "lifecycle.dispatch",
+                envelope.current.kind.as_str(),
+                "next.command == green",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+    let mut writable = writable.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let mut readonly = readonly.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let mut guards = guards.into_iter().map(str::to_string).collect::<Vec<_>>();
+    writable.extend(
+        envelope
+            .persistence
+            .as_ref()
+            .map(|persistence| persistence.scopes.clone())
+            .unwrap_or_default(),
+    );
+    let writable_set = writable.iter().cloned().collect::<BTreeSet<_>>();
+    readonly.retain(|path| !writable_set.contains(path));
+    guards.extend([
+        "action == done != completion.workflow_complete".to_string(),
+        "completion.workflow_complete == true".to_string(),
+        "next.command in envelope".to_string(),
+    ]);
+    if let Some(profile) = &envelope.artifact_quality_profile {
+        guards.extend(
+            default_preflight_gates(profile.artifact_kind)
+                .into_iter()
+                .map(|gate| format!("artifact_quality.{} == green", gate.id)),
+        );
+    }
+    let blocker_kind = if envelope.requires_hitl || envelope.action == "blocked" {
         Some(if reason.contains("evidence") {
             PromptBlockerKind::MissingEvidence
+        } else if reason.contains("approval") || reason.contains("review") {
+            PromptBlockerKind::Approval
+        } else if reason.contains("decision") || envelope.hitl_question.is_some() {
+            PromptBlockerKind::Decision
         } else if reason.contains("red") || reason.contains("failed") {
             PromptBlockerKind::RedGate
         } else {
@@ -1423,51 +1573,56 @@ fn workflow_prompt_contract(
     } else {
         None
     };
-    let scopes = envelope
-        .persistence
-        .as_ref()
-        .map(|persistence| persistence.scopes.clone())
-        .unwrap_or_default();
+    let terminal_level = if envelope.completion.workflow_complete {
+        PromptTerminalLevel::Root
+    } else if command.contains("aw wi close") {
+        PromptTerminalLevel::Change
+    } else {
+        PromptTerminalLevel::Stage
+    };
+    let terminal_predicate = match terminal_level {
+        PromptTerminalLevel::Root => "completion.workflow_complete == true".to_string(),
+        PromptTerminalLevel::Change => "change.closed == true".to_string(),
+        PromptTerminalLevel::Stage => verifier_predicate.to_string(),
+    };
     let contract = AgentPromptSpec {
         schema_version: PROMPT_SCHEMA_VERSION.to_string(),
         state: if envelope.completion.workflow_complete {
-            format!("{}.terminal", envelope.action)
+            "root.terminal".to_string()
+        } else if transition_command.is_empty() && blocker_kind.is_some() {
+            "blocked.terminal".to_string()
         } else {
-            envelope.action.clone()
+            state.to_string()
         },
         artifact: PromptArtifact {
-            kind: envelope.current.kind.clone(),
+            kind: artifact_kind.to_string(),
             id: envelope.current.id.clone(),
         },
-        scope: PromptScope {
-            writable: scopes,
-            readonly: Vec::new(),
-        },
+        scope: PromptScope { writable, readonly },
         transition: PromptTransition {
             command: transition_command.to_string(),
             next_state: envelope.next.kind.clone(),
         },
         verifier: PromptVerifier {
-            command: verifier_command.to_string(),
-            predicate: "completion.workflow_complete == true".to_string(),
+            command: transition_command.to_string(),
+            predicate: verifier_predicate.to_string(),
         },
         terminal: PromptTerminal {
-            level: PromptTerminalLevel::Root,
-            predicate: "completion.workflow_complete == true".to_string(),
+            level: terminal_level,
+            predicate: terminal_predicate,
         },
-        guards: vec![
-            "action == done != completion.workflow_complete".to_string(),
-            "next.command in envelope".to_string(),
-        ],
+        guards,
         blocker: blocker_kind.map(|kind| PromptBlocker {
             kind,
             reason: envelope.next.reason.clone(),
         }),
-        resume_command: blocker_kind.map(|_| {
-            if root_command.is_empty() {
-                transition_command.to_string()
+        resume_command: blocker_kind.and_then(|_| {
+            if let Some(question) = &envelope.hitl_question {
+                Some(question.resume_command.clone())
+            } else if root_command.is_empty() {
+                (!transition_command.is_empty()).then(|| transition_command.to_string())
             } else {
-                root_command.to_string()
+                Some(root_command.to_string())
             }
         }),
         guidance,
@@ -4051,6 +4206,241 @@ workspaces = []
     }
 
     #[test]
+    fn python_artifact_prompt_contracts_preserve_stage_owner_and_gate() {
+        let root = python_v1_project_root();
+        let cases = [
+            (
+                None,
+                "ec.authoring",
+                "ec",
+                "EC.structure == green",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                None,
+            ),
+            (
+                Some("ec_checked"),
+                "ec.review_pending",
+                "ec",
+                "EC.review == accepted",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                None,
+            ),
+            (
+                Some("ec_reviewed"),
+                "td.authoring",
+                "td",
+                "TD.compile == green",
+                vec!["tech-design/**"],
+                vec!["external-contracts/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC -> TD"),
+            ),
+            (
+                Some("td_compiled"),
+                "ec_td.verifying",
+                "td",
+                "EC[TD].behavior == green",
+                vec![],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[TD].security == green"),
+            ),
+            (
+                Some("ec_td_green"),
+                "cb.generating",
+                "cb",
+                "CB.generated == true",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[TD].behavior == green"),
+            ),
+            (
+                Some("cb_generated"),
+                "cb.filling",
+                "cb",
+                "CB.HANDWRITE == resolved",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("CODEGEN != HANDWRITE"),
+            ),
+            (
+                Some("cb_filled"),
+                "cb.checking",
+                "cb",
+                "CB.unit == green",
+                vec![],
+                vec!["external-contracts/**", "tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("CB.unit == green != completion.workflow_complete"),
+            ),
+            (
+                Some("cb_checked"),
+                "ec_cb.verifying",
+                "cb",
+                "EC[CB].behavior == green",
+                vec![],
+                vec!["external-contracts/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[CB].stability == green"),
+            ),
+            (
+                Some("ec_cb_green"),
+                "change.closing",
+                "change",
+                "change.closed == true",
+                vec![],
+                vec![],
+                PromptTerminalLevel::Change,
+                Some("action == done != completion.workflow_complete"),
+            ),
+        ];
+
+        for (phase, state, artifact, predicate, writable, readonly, terminal, guard) in cases {
+            let step = python_artifact_lifecycle_step(root.path(), "demo", "42", phase)
+                .unwrap()
+                .unwrap();
+            let mut envelope = test_envelope(&step.command, &step.reason);
+            envelope.current = WorkflowNode {
+                kind: "change".to_string(),
+                id: "#42".to_string(),
+            };
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.state, state, "phase {phase:?}");
+            assert_eq!(contract.artifact.kind, artifact, "phase {phase:?}");
+            assert_eq!(contract.scope.writable, writable, "phase {phase:?}");
+            assert_eq!(contract.scope.readonly, readonly, "phase {phase:?}");
+            assert_eq!(contract.verifier.predicate, predicate, "phase {phase:?}");
+            assert_eq!(contract.terminal.level, terminal, "phase {phase:?}");
+            if let Some(guard) = guard {
+                assert!(
+                    contract.guards.iter().any(|item| item == guard),
+                    "phase {phase:?} missing guard `{guard}`: {:?}",
+                    contract.guards
+                );
+            }
+            assert!(contract.validate().is_ok(), "phase {phase:?}");
+        }
+
+        let mut frontend = test_envelope(
+            "aw cb gen --project demo frontend/src/App.tsx",
+            "generate frontend page component under frontend/src/App.tsx",
+        );
+        apply_artifact_quality_gate(&mut frontend);
+        let contract = workflow_prompt_contract(&frontend, None, Vec::new()).unwrap();
+        let quality_guards = contract
+            .guards
+            .iter()
+            .filter(|guard| guard.starts_with("artifact_quality."))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            quality_guards,
+            [
+                "artifact_quality.frontend-page-viewport-screenshots == green",
+                "artifact_quality.frontend-page-interaction-smoke == green",
+                "artifact_quality.frontend-page-accessibility-readability == green",
+                "artifact_quality.frontend-page-placeholder-free == green",
+                "artifact_quality.frontend-page-ux-review == green",
+            ]
+        );
+    }
+
+    #[test]
+    fn prompt_contract_routes_invalid_oracle_and_typed_blockers() {
+        let mut envelope = test_envelope(
+            "aw ec check --project demo --wi 42",
+            "EC evidence is stale or its oracle is invalid",
+        );
+        let contract =
+            workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+        assert_eq!(contract.state, "ec.contract_repair");
+        assert_eq!(contract.scope.writable, vec!["external-contracts/**"]);
+        assert!(contract
+            .guards
+            .iter()
+            .any(|guard| guard == "invalid_oracle -> EC"));
+
+        for (reason, requires_hitl, expected) in [
+            (
+                "human decision is required",
+                true,
+                PromptBlockerKind::Decision,
+            ),
+            (
+                "independent approval review is required",
+                true,
+                PromptBlockerKind::Approval,
+            ),
+            (
+                "required evidence is missing",
+                false,
+                PromptBlockerKind::MissingEvidence,
+            ),
+            ("EC gate is red", false, PromptBlockerKind::RedGate),
+            (
+                "runtime environment is unavailable",
+                false,
+                PromptBlockerKind::Environment,
+            ),
+        ] {
+            envelope.action = "blocked".to_string();
+            envelope.requires_hitl = requires_hitl;
+            envelope.next.reason = reason.to_string();
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.blocker.as_ref().unwrap().kind, expected);
+            assert_eq!(contract.resume_command.as_deref(), Some("aw goal wi 42"));
+        }
+    }
+
+    #[test]
+    fn prompt_contract_distinguishes_child_parked_and_root_terminal() {
+        let child = test_envelope(
+            "aw goal wi 43",
+            "selected child change after prior child completed",
+        );
+        let child_contract =
+            workflow_prompt_contract(&child, Some("aw goal wi 42"), Vec::new()).unwrap();
+        assert_eq!(child_contract.state, "rollup.child_dispatch");
+        assert!(child_contract
+            .guards
+            .iter()
+            .any(|guard| guard == "child.done != root.complete"));
+
+        let parked = test_envelope(
+            "aw goal wi 44",
+            "change 43 is parked; continue with the next ready change",
+        );
+        let parked_contract =
+            workflow_prompt_contract(&parked, Some("aw goal backlog --project demo"), Vec::new())
+                .unwrap();
+        assert_eq!(parked_contract.state, "backlog.parked");
+        assert!(parked_contract
+            .guards
+            .iter()
+            .any(|guard| guard == "parked != closed"));
+
+        let terminal = project_done_envelope(
+            WorkflowNode {
+                kind: "project".to_string(),
+                id: "demo".to_string(),
+            },
+            Vec::new(),
+        );
+        let terminal_contract = workflow_prompt_contract(&terminal, None, Vec::new()).unwrap();
+        assert_eq!(terminal_contract.state, "root.terminal");
+        assert_eq!(terminal_contract.terminal.level, PromptTerminalLevel::Root);
+        assert!(terminal_contract.transition.command.is_empty());
+    }
+
+    #[test]
     fn python_artifact_goal_routing_keeps_legacy_projects_on_the_legacy_table() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -5363,6 +5753,11 @@ review_status: pending
             .completion
             .criteria
             .contains(&"artifact quality hard preflight gates are satisfied".to_string()));
+        let contract = workflow_prompt_contract(&envelope, None, Vec::new()).unwrap();
+        assert!(contract
+            .guards
+            .iter()
+            .any(|guard| guard.starts_with("artifact_quality.")));
     }
 
     #[test]
@@ -5397,7 +5792,7 @@ review_status: pending
     }
 
     #[test]
-    fn workflow_envelope_serializes_optional_artifact_quality_profile() {
+    fn workflow_envelope_serializes_typed_prompt_contract_from_same_ir() {
         let envelope = WorkflowEnvelope {
             action: "dispatch".to_string(),
             root: WorkflowNode {
@@ -5426,9 +5821,7 @@ review_status: pending
             },
             agent_prompt: "test".to_string(),
             requires_hitl: false,
-            artifact_quality_profile: Some(ArtifactQualityProfile::default_for_kind(
-                crate::models::ArtifactKind::CliSurface,
-            )),
+            artifact_quality_profile: None,
             hitl_question: None,
             persistence: None,
         };
@@ -5443,16 +5836,39 @@ review_status: pending
             json["prompt_contract"]["schema_version"],
             PROMPT_SCHEMA_VERSION
         );
-        assert_eq!(json["prompt_contract"]["artifact"]["kind"], "td");
-        assert!(json["agent_prompt"]
-            .as_str()
-            .unwrap()
-            .contains("completion.workflow_complete == true"));
-        assert!(json.get("artifact_quality_profile").is_some());
         assert_eq!(
-            json["artifact_quality_profile"]["artifact_kind"],
-            "cli_surface"
+            json["prompt_contract"],
+            serde_json::json!({
+                "schema_version": "aw.prompt.v1",
+                "state": "td.authoring",
+                "artifact": {"kind": "td", "id": "3903"},
+                "scope": {
+                    "writable": ["tech-design/**"],
+                    "readonly": ["external-contracts/**", "src/**"]
+                },
+                "transition": {"command": "aw td create 3903", "next_state": "td"},
+                "verifier": {
+                    "command": "aw td create 3903",
+                    "predicate": "TD.compile == green"
+                },
+                "terminal": {"level": "stage", "predicate": "TD.compile == green"},
+                "guards": [
+                    "EC -> TD",
+                    "action == done != completion.workflow_complete",
+                    "completion.workflow_complete == true",
+                    "next.command in envelope"
+                ],
+                "guidance": ["test"]
+            })
         );
+        let projected: AgentPromptSpec =
+            serde_json::from_value(json["prompt_contract"].clone()).unwrap();
+        assert_eq!(json["agent_prompt"], projected.render().unwrap());
+
+        let mut envelope = test_envelope("aw td create 3903", "test");
+        envelope.current.id.clear();
+        let error = serde_json::to_string(&envelope).unwrap_err().to_string();
+        assert!(error.contains("artifact.id must not be empty"), "{error}");
     }
 
     fn test_envelope(command: &str, reason: &str) -> WorkflowEnvelope {

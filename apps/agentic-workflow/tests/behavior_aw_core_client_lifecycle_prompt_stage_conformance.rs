@@ -1,22 +1,23 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-stage-conformance
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
-// @capability td-cb-lifecycle-automation
-// @claim td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
-// @contract td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec
+// @ec aw-core-client-lifecycle-prompt-stage-conformance
+// @capability aw-core-client-model-workitem-first-artifact-lifecycle
+// @claim lifecycle-prompt-migration-and-conformance
+// @contract aw-core-client-lifecycle-prompt-stage-conformance
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture
+// @command cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture
 // AW-EC-END
 
-// Contract: the public goal runner follows CB fill and check, stops at terminal required EC while red, resumes the same CB-filled WorkItem when green, records the consulted case, and closes at the unified terminal check
+// Contract: every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard
+// Contract: a frontend CB transition projects the complete concrete artifact-quality guard id set
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec() {
+fn aw_core_client_lifecycle_prompt_stage_conformance() {
     let command =
-        "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture";
-    let id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec";
+        "cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture";
+    let id = "aw-core-client-lifecycle-prompt-stage-conformance";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join("aw.toml").is_file() {
         assert!(

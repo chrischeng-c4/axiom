@@ -1471,7 +1471,11 @@ pub fn normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> {
         ("aw td gen", "aw cb gen"),
     ] {
         if let Some(rest) = trimmed.strip_prefix(legacy) {
-            let candidate = format!("{canonical}{rest}");
+            let candidate = if legacy == "aw td code-check" && rest.trim().is_empty() {
+                format!("{canonical} {slug}")
+            } else {
+                format!("{canonical}{rest}")
+            };
             return validate_aw_command_string(&candidate)
                 .ok()
                 .map(|_| candidate);

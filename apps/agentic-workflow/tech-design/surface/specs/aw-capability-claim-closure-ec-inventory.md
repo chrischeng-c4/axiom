@@ -64,6 +64,38 @@ e2e_tests:
     command: cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands -- --nocapture
     assertions:
       - agent-facing llm outline lists the registered command surface
+  - id: aw-core-client-prompt-vocabulary-and-grammar
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: prompt-vocabulary-and-grammar
+    command: cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture
+    assertions:
+      - "the registered public Markdown and JSON renderers expose identical prompt content with the exact closed vocabulary, seven ASCII operators, complete EC-first Python Spec transition table, sole workflow-authority boundary, and no Unicode operator lookalikes"
+  - id: aw-core-client-typed-prompt-ir-and-envelope-projection
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: typed-prompt-ir-and-envelope-projection
+    command: cargo test -p agentic-workflow --lib cli::run::tests::workflow_envelope_serializes_typed_prompt_contract_from_same_ir -- --exact --nocapture
+    assertions:
+      - "a production WorkflowEnvelope pins every typed prompt JSON field and its rendered agent_prompt from the same decoded IR"
+      - "an invalid typed contract makes WorkflowEnvelope serialization fail instead of falling back to prose"
+  - id: aw-core-client-lifecycle-prompt-stage-conformance
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: lifecycle-prompt-migration-and-conformance
+    command: cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture
+    assertions:
+      - "every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard"
+      - "a frontend CB transition projects the complete concrete artifact-quality guard id set"
+  - id: aw-core-client-lifecycle-prompt-blocker-conformance
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: lifecycle-prompt-migration-and-conformance
+    command: cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_routes_invalid_oracle_and_typed_blockers -- --exact --nocapture
+    assertions:
+      - "invalid oracle state routes to EC repair and decision, approval, environment, red-gate, and missing-evidence blockers remain typed with exact resume"
+  - id: aw-core-client-lifecycle-prompt-rollup-conformance
+    capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
+    claim_id: lifecycle-prompt-migration-and-conformance
+    command: cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_distinguishes_child_parked_and_root_terminal -- --exact --nocapture
+    assertions:
+      - "child dispatch, parked backlog work, and root terminal completion are distinct prompt states"
   - id: aw-core-client-workitem-loop-state-model
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: workitem-loop-state-model

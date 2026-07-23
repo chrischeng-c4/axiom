@@ -561,6 +561,95 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prompt_topic_public_renderer_pins_closed_language() {
+        let md = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "prompt",
+            cli_std::llm::Format::Md,
+        )
+        .unwrap();
+        let json = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "prompt",
+            cli_std::llm::Format::Json,
+        )
+        .unwrap();
+        let body = serde_json::from_str::<serde_json::Value>(&json).unwrap()["body"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(body, md);
+
+        let vocabulary = md
+            .split_once("## Closed vocabulary\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\n## Closed ASCII grammar")
+            .unwrap()
+            .0;
+        assert_eq!(
+            vocabulary,
+            r#"- truth: `unknown` (not yet validly verified), `red` (valid verifier rejected),
+  `green` (valid verifier accepted)
+- terminal level: `stage terminal`, `change closed`, `root complete`
+- owner: `EC`, `TD`, or `CB`; invalid oracle/evidence belongs to EC, while a
+  valid red gate belongs to the target it rejected
+- blocker: `decision`, `approval`, `environment`, `red_gate`,
+  `missing_evidence`
+
+`action == done` can mean a child stage ended.
+Only `completion.workflow_complete == true` means root complete."#
+        );
+
+        let grammar = md
+            .split_once("## Closed ASCII grammar\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\n## Python Spec pipeline")
+            .unwrap()
+            .0;
+        assert_eq!(
+            grammar,
+            "| operator | meaning |\n\
+|---|---|\n\
+| `A -> B` | workflow selects B after A |\n\
+| `A --gate-> V == green` | verifier V must be green before transition |\n\
+| `x := value` | bind a projection-local name |\n\
+| `==`, `!=` | equality predicates |\n\
+| `in`, `notin` | finite membership predicates |\n\n\
+The canonical operator set is exactly `->`, `--gate->`, `:=`, `==`, `!=`,\n\
+`in`, and `notin`."
+        );
+        assert!(md.contains(
+            "the AW workflow engine is the sole owner\nof state, transition selection, mutation, and completion"
+        ));
+
+        let expected_pipeline = "```text\n\
+EC := unknown\n\
+EC -> TD\n\
+TD --gate-> EC[TD].behavior == green\n\
+TD --gate-> EC[TD].security == green\n\
+EC[TD] -> CB\n\
+CB --gate-> EC[CB].behavior == green\n\
+CB --gate-> EC[CB].security == green\n\
+CB --gate-> EC[CB].stability == green\n\
+CB --gate-> EC[CB].efficiency in {green, not-applicable}\n\
+completion.workflow_complete == true\n\
+```";
+        assert!(md.contains(expected_pipeline));
+        for lookalike in ['→', '⇒', '⟶', '∈', '≠', '≔'] {
+            assert!(
+                !md.contains(lookalike),
+                "public prompt contains non-canonical operator `{lookalike}`"
+            );
+        }
+    }
+
     /// #1496: binary orientation and canonical active contracts teach one
     /// agent-first CLI product. Stable legacy machine ids and paths remain for
     /// traceability, but removed product semantics may not return in prose.

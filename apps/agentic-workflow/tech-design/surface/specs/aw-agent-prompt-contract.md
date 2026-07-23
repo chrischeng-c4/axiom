@@ -142,6 +142,35 @@ tests. TD-stage verification requires behavior and security. Stability and
 efficiency are added after TD generation and are required at CB-stage
 verification according to target policy; Rust defaults efficiency to required.
 
+## Production Projection
+<!-- type: doc lang: markdown -->
+
+Every production `WorkflowEnvelope` is projected through
+`workflow_prompt_contract` during serialization. Invalid contracts fail
+serialization; there is no fallback to incomplete hand-authored prompt prose.
+The existing prose is retained only as `guidance` inside the typed IR and is
+therefore rendered from the same source as the symbolic contract.
+
+| command/state | owner | verifier |
+|---|---|---|
+| `aw ec check` | `external-contracts/**` | `EC.structure == green` |
+| `aw ec review` | `external-contracts/**` | `EC.review == accepted` |
+| `aw td check` | `tech-design/**` | `TD.compile == green` |
+| `aw ec verify --stage td` | read-only EC + TD | behavior and security green |
+| `aw cb gen` / `aw cb fill` | `src/**` | generated / HANDWRITE resolved |
+| `aw cb check` | read-only CB | `CB.unit == green` |
+| `aw ec verify --stage cb` | read-only EC + CB | all applicable dimensions |
+| `aw wi close` | issue-platform change | `change.closed == true` |
+
+Invalid oracle or stale evidence always routes to writable EC scope, never TD
+or CB. Artifact-quality preflight IDs become typed guards. Rollup distinguishes
+child dispatch, parked work, change closure, and root terminal state.
+
+The conformance boundary requires every non-terminal contract to contain a
+state, artifact, disjoint scope, runnable transition, verifier, terminal
+condition, and guards. HITL additionally requires one typed blocker and the
+exact resume command.
+
 ## Contract Examples
 <!-- type: doc lang: markdown -->
 

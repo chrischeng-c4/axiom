@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-23T05:24:56.684869+00:00"
-ir_digest = "sha256:512f8ebcb195d402ed92932fa53b37782d9fe7c2a4289b05bace3539af01c716"
-source_digest = "sha256:12b61d16f8be961129e2ce0e58af86c5bc9cec2b7623d6e4e82e64263012af6b"
+generated_at = "2026-07-23T07:50:03.875542+00:00"
+ir_digest = "sha256:5d692e9873f631c199092fa7173ee0fbd4b7e45a93607e58afed13a007326073"
+source_digest = "sha256:8e0086a66b1c8dc3488bb9cd89b85dac6ba4624f2cfe16e25534e6022ee5e296"
 tool_contracts = []
 
 [[sources]]
@@ -90,7 +90,7 @@ digest = "sha256:37923e6a0f05e640d2190cb952777f0ace78dc7faa77af0783efd4653d14ffc
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:69c345f55229415535291072e3eee9dfcc432b550af288d2da702470db1398b6"
+digest = "sha256:2d567c516a53feb38bd27c18fe9e3f0f289b15c2262f86bcde8141415c2dee90"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md"
@@ -102,7 +102,7 @@ digest = "sha256:a974a00e9d89a389a17b4beaf911b471a01c5d2b006578ac34b57c6dae911f4
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md"
-digest = "sha256:7dff41e0d6c390f642bafef30618088ad3a9686d94dfcdab82f9dd0ca8c4e39a"
+digest = "sha256:b16189e3f91bb8beb4803cf32639732a43d97f524647494be524911ab80ac55b"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
@@ -286,6 +286,87 @@ assertions = ["admitting a remote WorkItem seeds the local EC-first lifecycle le
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:3248eabe2b31a57a08d9b849089a6f2f68199ee410207ae8d566ec2a2a0d6dcb"
+
+[[cases]]
+id = "aw-core-client-lifecycle-prompt-blocker-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-blocker-conformance"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-blocker-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_blocker_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_routes_invalid_oracle_and_typed_blockers -- --exact --nocapture"
+required_for_production = true
+assertions = ["invalid oracle state routes to EC repair and decision, approval, environment, red-gate, and missing-evidence blockers remain typed with exact resume"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e3d24d401fb2f02ed813712ef56ec8821392a8919f573887e6839d540b19e8b7"
+
+[[cases]]
+id = "aw-core-client-lifecycle-prompt-rollup-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-rollup-conformance"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-rollup-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_rollup_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_distinguishes_child_parked_and_root_terminal -- --exact --nocapture"
+required_for_production = true
+assertions = ["child dispatch, parked backlog work, and root terminal completion are distinct prompt states"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a0431b9b67e99cbb1cc0c5b0271820d4d7759a3256fc81cef917cc05327c21f3"
+
+[[cases]]
+id = "aw-core-client-lifecycle-prompt-stage-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "lifecycle-prompt-migration-and-conformance"
+contract_id = "aw-core-client-lifecycle-prompt-stage-conformance"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-lifecycle-prompt-stage-conformance"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_stage_conformance.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard",
+    "a frontend CB transition projects the complete concrete artifact-quality guard id set",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:432c053002da1f784b87692485cb8078832f9eeb46a5259d5669ee2fe3d2fbdc"
+
+[[cases]]
+id = "aw-core-client-prompt-vocabulary-and-grammar"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "prompt-vocabulary-and-grammar"
+contract_id = "aw-core-client-prompt-vocabulary-and-grammar"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-prompt-vocabulary-and-grammar"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_prompt_vocabulary_and_grammar.rs"
+command = "cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture"
+required_for_production = true
+assertions = ["the registered public Markdown and JSON renderers expose identical prompt content with the exact closed vocabulary, seven ASCII operators, complete EC-first Python Spec transition table, sole workflow-authority boundary, and no Unicode operator lookalikes"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:97dd8a1deb1025bb2ae88db0fa6efb9012ce978c0ba554d50a69770d8237688f"
+
+[[cases]]
+id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "typed-prompt-ir-and-envelope-projection"
+contract_id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-typed-prompt-ir-and-envelope-projection"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_typed_prompt_ir_and_envelope_projection.rs"
+command = "cargo test -p agentic-workflow --lib cli::run::tests::workflow_envelope_serializes_typed_prompt_contract_from_same_ir -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "a production WorkflowEnvelope pins every typed prompt JSON field and its rendered agent_prompt from the same decoded IR",
+    "an invalid typed contract makes WorkflowEnvelope serialization fail instead of falling back to prose",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:be0f1e754cbf4c5730760ee9c75967506fbad7f2674f619d0e8592ffb0e01819"
 
 [[cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"

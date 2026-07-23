@@ -139,20 +139,18 @@ impl AgentPromptSpec {
                 "scope path `{path}` cannot be both writable and readonly"
             ));
         }
-        if self.transition.command.trim().is_empty()
-            && self.terminal.predicate != "completion.workflow_complete == true"
-        {
+        let terminal_state = self.state.ends_with(".terminal");
+        if self.transition.command.trim().is_empty() && !terminal_state {
             return Err("non-root-terminal prompt requires transition.command".to_string());
         }
         if self.verifier.predicate.trim().is_empty() {
             return Err("verifier predicate must not be empty".to_string());
         }
-        if self.verifier.command.trim().is_empty()
-            && self.terminal.predicate != "completion.workflow_complete == true"
-        {
+        if self.verifier.command.trim().is_empty() && !terminal_state {
             return Err("non-root-terminal prompt requires verifier.command".to_string());
         }
         if self.blocker.is_some()
+            && !terminal_state
             && self
                 .resume_command
                 .as_deref()
@@ -268,8 +266,43 @@ mod tests {
         let json = serde_json::to_string(&contract).unwrap();
         let decoded: AgentPromptSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, contract);
-        assert_eq!(contract.render().unwrap(), decoded.render().unwrap());
-        assert!(json.contains("\"schema_version\":\"aw.prompt.v1\""));
+        assert_eq!(
+            contract.render().unwrap(),
+            "state := td.authored\n\
+artifact := td:#2440\n\
+scope.writable := {tech-design/2440}\n\
+scope.readonly := {external-contracts/2440}\n\
+td.authored -> ec_td_verifying\n\
+next.command := `aw ec verify --stage td --wi 2440`\n\
+`aw ec verify --stage td --wi 2440` --gate-> EC[TD].behavior == green\n\
+terminal.root --gate-> completion.workflow_complete == true\n\
+guard := action == done != completion.workflow_complete"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({
+                "schema_version": "aw.prompt.v1",
+                "state": "td.authored",
+                "artifact": {"kind": "td", "id": "#2440"},
+                "scope": {
+                    "writable": ["tech-design/2440"],
+                    "readonly": ["external-contracts/2440"]
+                },
+                "transition": {
+                    "command": "aw ec verify --stage td --wi 2440",
+                    "next_state": "ec_td_verifying"
+                },
+                "verifier": {
+                    "command": "aw ec verify --stage td --wi 2440",
+                    "predicate": "EC[TD].behavior == green"
+                },
+                "terminal": {
+                    "level": "root",
+                    "predicate": "completion.workflow_complete == true"
+                },
+                "guards": ["action == done != completion.workflow_complete"]
+            })
+        );
     }
 
     #[test]

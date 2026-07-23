@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:1294c1a81bc431cc4dc87cfa2d00cec064ea8e731d27b26576fe62d61bf4ff3a",
+  "source_digest": "sha256:1e5c89914673167be6bd8538b1a5a5b7d3adea821bc802ee67caae816dd059cb",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/agentic_workflow_ec_review",
-  "reviewed_at": "2026-07-23T05:30:44.903974+00:00",
-  "summary": "Accepted for the exact source digest reviewed. The refreshed legacy TD-derived EC inventory contains 91 required behavior cases covering the DeveloperTool capability claims and required behavior dimension. The prior four defects are closed by five added exact cases: separate EC-first phase routing, phase-less admission, and remote-ledger proofs; a configured required-EC red-to-green terminal fixture; a public goal convergence fixture that reaches CB fill/check and required EC; and real-listener HTTP/1.1+h2c plus service-http delegation proofs. Assertions pin concrete commands, phases, refusal/closure state, consulted-case evidence, protocol responses, and router bodies. The oracles are independently defined in exact test/fixture expectations rather than aw ec or the implementation's own reported truth. Every re-reviewed selector executed exactly one test; all seven relevant exact tests passed, including the two localhost listener cases, so no empty-filter or trivial-behavior loophole remains.",
+  "reviewed_at": "2026-07-23T07:54:47.137789+00:00",
+  "summary": "Accepted for the exact source digest reviewed. The 96 required behavior cases cover the DeveloperTool capability claims and required behavior dimension. The five prompt-contract cases now provide concrete independent oracles for the public language, typed envelope projection, lifecycle stage ownership, blocker typing, and rollup terminal distinctions. The public Markdown and JSON prompt renderers are compared, the complete Closed vocabulary and Closed ASCII grammar sections are pinned byte-for-byte, the full EC-first Python pipeline and authority boundary are asserted, and Unicode lookalikes are rejected. Production WorkflowEnvelope serialization pins the complete prompt_contract JSON and exact rendered agent_prompt from the decoded IR while an invalid artifact identity fails serialization. All nine Python phase-table rows pin scopes, predicates, terminal levels, and guards, including five concrete frontend artifact-quality guards. All three revised exact selectors executed one test and passed; no zero-test, empty-renderer, added-vocabulary/operator, omitted-phase, scope, or fallback loophole remains.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
