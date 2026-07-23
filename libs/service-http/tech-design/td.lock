@@ -2,10 +2,10 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-23T00:34:35.624944+00:00"
-digest = "sha256:a6eda79019d8f7e8095785d75ab59567b6c095b5228745c671e68655ca19eede"
-source_digest = "sha256:a6eda79019d8f7e8095785d75ab59567b6c095b5228745c671e68655ca19eede"
-ir_digest = "sha256:ab7e7c07866ea0aef15d0eeceb468dda6fa7b8b2f59808c0799bcfcd92ae48e8"
+generated_at = "2026-07-23T00:35:26.220015+00:00"
+digest = "sha256:c15b1653dc3749661f1d318c0e3f190263f4ac972ff5c471e084582fbed96615"
+source_digest = "sha256:c15b1653dc3749661f1d318c0e3f190263f4ac972ff5c471e084582fbed96615"
+ir_digest = "sha256:3ab5df5589174f7dfe506fc544ff777dd971a3ebb4256f5dbc0ae0cbf2cab8a8"
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
@@ -21,8 +21,8 @@ section_count = 3
 
 [[files]]
 path = "logic/emit-w3c-correlated-request-completion-events.md"
-digest = "sha256:6440d80701dd6f5eaf75a29ef181643399d75c6db1083b4b9d8d1aa1f162be21"
-ir_digest = "sha256:e5c357ee80ca1a378e64348bcf4dad193e1a02f5d715fcee3dc05c874bbdbd1f"
+digest = "sha256:46c02a6b0d5936305f7b4558f5a9aaa7b52e3aa2042a6987da9b971d997efff5"
+ir_digest = "sha256:91efb2075fbb4c0b35210ceedd69fb125e72fa01c163728a5cf4aecf31b44122"
 section_count = 3
 
 [[files]]
