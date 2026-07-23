@@ -82,6 +82,74 @@ fn missing_vendor_binaries_are_recoverable() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn resolver_accepts_account_local_macos_fallback_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().unwrap();
+    let local_bin = home.path().join(".local/bin");
+    std::fs::create_dir_all(&local_bin).unwrap();
+    let claude = local_bin.join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nprintf 'LOCAL_CLAUDE\\n'\n").unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cwd = tempfile::tempdir().unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let runtime = PtyRuntime::with_search_path_and_account_home(
+        empty_path.path().as_os_str(),
+        home.path(),
+    );
+    let session = runtime
+        .spawn_agent(&AgentLaunchCommand::for_kind(AgentKind::ClaudeCode, cwd.path()), test_size())
+        .unwrap();
+    let mut reader = session.try_clone_reader().unwrap();
+    let output_thread = thread::spawn(move || {
+        let mut output = String::new();
+        reader.read_to_string(&mut output).unwrap();
+        output
+    });
+    assert!(session.wait().unwrap().success());
+    assert!(output_thread.join().unwrap().contains("LOCAL_CLAUDE"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn inherited_path_precedes_account_local_fallback() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let inherited = tempfile::tempdir().unwrap();
+    let inherited_claude = inherited.path().join("claude");
+    std::fs::write(&inherited_claude, "#!/bin/sh\nprintf 'INHERITED_CLAUDE\\n'\n").unwrap();
+    std::fs::set_permissions(&inherited_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let home = tempfile::tempdir().unwrap();
+    let local_bin = home.path().join(".local/bin");
+    std::fs::create_dir_all(&local_bin).unwrap();
+    let local_claude = local_bin.join("claude");
+    std::fs::write(&local_claude, "#!/bin/sh\nprintf 'LOCAL_CLAUDE\\n'\n").unwrap();
+    std::fs::set_permissions(&local_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cwd = tempfile::tempdir().unwrap();
+    let runtime = PtyRuntime::with_search_path_and_account_home(
+        inherited.path().as_os_str(),
+        home.path(),
+    );
+    let session = runtime
+        .spawn_agent(&AgentLaunchCommand::for_kind(AgentKind::ClaudeCode, cwd.path()), test_size())
+        .unwrap();
+    let mut reader = session.try_clone_reader().unwrap();
+    let output_thread = thread::spawn(move || {
+        let mut output = String::new();
+        reader.read_to_string(&mut output).unwrap();
+        output
+    });
+    assert!(session.wait().unwrap().success());
+    let output = output_thread.join().unwrap();
+    assert!(output.contains("INHERITED_CLAUDE"), "{output:?}");
+    assert!(!output.contains("LOCAL_CLAUDE"), "{output:?}");
+}
+
 /// @spec apps/workbench/tech-design/interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md#unit-test
 #[cfg(unix)]
 #[test]

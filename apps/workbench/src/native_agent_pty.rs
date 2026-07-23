@@ -167,12 +167,14 @@ pub type PtyResult<T> = Result<T, PtyLaunchError>;
 #[derive(Debug, Clone)]
 pub struct PtyRuntime {
     search_path: Option<OsString>,
+    account_home: Option<PathBuf>,
 }
 
 impl Default for PtyRuntime {
     fn default() -> Self {
         Self {
             search_path: env::var_os("PATH"),
+            account_home: env::var_os("HOME").map(PathBuf::from),
         }
     }
 }
@@ -181,6 +183,23 @@ impl PtyRuntime {
     pub fn with_search_path(search_path: impl Into<OsString>) -> Self {
         Self {
             search_path: Some(search_path.into()),
+            // Keep deterministic unavailable-binary tests isolated from the
+            // host account's installed CLIs.
+            account_home: None,
+        }
+    }
+
+    /// Test-only configuration seam for macOS account-local CLI discovery.
+    ///
+    /// Production always reads HOME from the sidecar process and never from a
+    /// shell startup file.
+    pub fn with_search_path_and_account_home(
+        search_path: impl Into<OsString>,
+        account_home: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            search_path: Some(search_path.into()),
+            account_home: Some(account_home.into()),
         }
     }
 
@@ -243,10 +262,48 @@ impl PtyRuntime {
         if has_path {
             return is_executable_file(program).then(|| program.to_path_buf());
         }
-        let search_path = self.search_path.as_deref()?;
-        env::split_paths(search_path)
+        let inherited = self
+            .search_path
+            .as_deref()
+            .into_iter()
+            .flat_map(env::split_paths)
             .map(|directory| directory.join(program))
-            .find(|candidate| is_executable_file(candidate))
+            .find(|candidate| is_executable_file(candidate));
+        if inherited.is_some() {
+            return inherited;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .account_local_search_paths()
+                .into_iter()
+                .map(|directory| directory.join(program))
+                .find(|candidate| is_executable_file(candidate));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn account_local_search_paths(&self) -> Vec<PathBuf> {
+        let Some(home) = self.account_home.as_ref() else {
+            return Vec::new();
+        };
+        let candidates = [
+            home.join(".local/bin"),
+            home.join(".cargo/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ];
+        let mut paths = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            if !paths.contains(&candidate) {
+                paths.push(candidate);
+            }
+        }
+        paths
     }
 }
 
