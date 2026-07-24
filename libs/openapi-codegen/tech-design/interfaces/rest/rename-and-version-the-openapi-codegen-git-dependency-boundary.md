@@ -12,41 +12,45 @@ fill_sections: [logic, changes, unit-test]
 id: openapi-codegen-git-version-boundary
 entry: inventory
 nodes:
-  inventory: { kind: start, label: "inventory active legacy identities" }
-  package: { kind: process, label: "set package openapi-codegen 0.5.0 publish false" }
-  crate: { kind: process, label: "rename Rust crate to openapi_codegen" }
-  consumers: { kind: process, label: "rewrite local consumers to path plus version 0.5" }
-  manifest: { kind: process, label: "rename sidecar and generator identity" }
-  projections: { kind: process, label: "regenerate TD EC AW and Cargo projections" }
-  residue: { kind: decision, label: "active legacy identity remains" }
-  verify: { kind: process, label: "run target matrix and reverse consumer checks" }
-  fail: { kind: terminal, label: "reject migration" }
-  ready: { kind: terminal, label: "ready for openapi-codegen at 0.5.0 tag" }
+  inventory: { kind: start, label: "inventory active legacy identities at committed HEAD" }
+  package: { kind: process, label: "set package openapi-codegen version 0.5.0 publish false" }
+  crate: { kind: process, label: "set Rust library name openapi_codegen" }
+  consumers: { kind: process, label: "rewrite each local consumer to path plus version 0.5" }
+  manifest: { kind: process, label: "rename sidecar to .openapi-codegen.json and generator to openapi-codegen" }
+  projections: { kind: process, label: "refresh source mirrors Cargo lock AW registry TD lock and EC projection" }
+  identity_ok: { kind: decision, label: "metadata and residue invariants hold" }
+  matrix: { kind: process, label: "run full cross-toolchain target matrix" }
+  reverse: { kind: process, label: "compile six production consumers and example" }
+  reject: { kind: terminal, label: "reject boundary and preserve previous commit" }
+  ready: { kind: terminal, label: "commit is eligible for openapi-codegen at 0.5.0 tag" }
 edges:
   - { from: inventory, to: package }
   - { from: package, to: crate }
   - { from: crate, to: consumers }
   - { from: consumers, to: manifest }
   - { from: manifest, to: projections }
-  - { from: projections, to: residue }
-  - { from: residue, to: fail, label: "yes" }
-  - { from: residue, to: verify, label: "no" }
-  - { from: verify, to: fail, label: "failure" }
-  - { from: verify, to: ready, label: "pass" }
+  - { from: projections, to: identity_ok }
+  - { from: identity_ok, to: reject, label: "no" }
+  - { from: identity_ok, to: matrix, label: "yes" }
+  - { from: matrix, to: reject, label: "failure" }
+  - { from: matrix, to: reverse, label: "pass" }
+  - { from: reverse, to: reject, label: "failure" }
+  - { from: reverse, to: ready, label: "pass" }
 ---
 flowchart TD
-  inventory([inventory active legacy identities]) --> package[set package openapi-codegen 0.5.0 publish false]
-  package --> crate[rename Rust crate to openapi_codegen]
-  crate --> consumers[rewrite local consumers to path plus version 0.5]
+  inventory([inventory active legacy identities at committed HEAD]) --> package[set package openapi-codegen version 0.5.0 publish false]
+  package --> crate[set Rust library name openapi_codegen]
+  crate --> consumers[rewrite each local consumer to path plus version 0.5]
   consumers --> manifest[rename sidecar and generator identity]
-  manifest --> projections[regenerate TD EC AW and Cargo projections]
-  projections --> residue{active legacy identity remains}
-  residue -->|yes| fail([reject migration])
-  residue -->|no| verify[run target matrix and reverse consumer checks]
-  verify -->|failure| fail
-  verify -->|pass| ready([ready for openapi-codegen at 0.5.0 tag])
+  manifest --> projections[refresh source mirrors Cargo lock AW registry TD lock and EC projection]
+  projections --> identity_ok{metadata and residue invariants hold}
+  identity_ok -->|no| reject([reject boundary and preserve previous commit])
+  identity_ok -->|yes| matrix[run full cross-toolchain target matrix]
+  matrix -->|failure| reject
+  matrix -->|pass| reverse[compile six production consumers and example]
+  reverse -->|failure| reject
+  reverse -->|pass| ready([commit is eligible for openapi-codegen at 0.5.0 tag])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
