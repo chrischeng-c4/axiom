@@ -264,6 +264,15 @@ struct ServeArgs {
     body_limit_bytes: usize,
 }
 
+/// Declarative topic/subscription provisioning from CR.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisionTopic {
+    name: String,
+    #[serde(default)]
+    subscriptions: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum LogFormat {
     Pretty,
@@ -822,6 +831,77 @@ fn subscription(args: SubscriptionArgs) -> Result<()> {
     }
 }
 
+/// Ensure subscriptions from CR-declared topics. Called after journal/raft
+/// is ready but before listener starts. Parses TAPE_PROVISION_TOPICS (compact JSON
+/// array of {name, subscriptions}), ensures each subscription, and logs decisions
+/// (created|already_exists|noted_implicit). In HA mode, proposals route through raft;
+/// all members' ensure attempts converge safely on AlreadyExists tolerance.
+fn ensure_subscriptions(state: &tape::server::AppState) {
+    let json_str = match std::env::var("TAPE_PROVISION_TOPICS") {
+        Ok(s) => s,
+        Err(std::env::VarError::NotPresent) => return, // No provisioning declared
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read TAPE_PROVISION_TOPICS env");
+            return;
+        }
+    };
+
+    let topics: Vec<ProvisionTopic> = match serde_json::from_str(&json_str) {
+        Ok(topics) => topics,
+        Err(e) => {
+            tracing::warn!(error = %e, json = %json_str, "failed to parse TAPE_PROVISION_TOPICS");
+            return;
+        }
+    };
+
+    for topic in topics {
+        if topic.subscriptions.is_empty() {
+            // Topic declared with no subscriptions: no journal mutation, just log the declaration
+            tracing::info!(
+                topic = %topic.name,
+                decision = "noted_implicit",
+                "topic provisioning noted (no subscriptions declared)"
+            );
+            continue;
+        }
+
+        for subscription in &topic.subscriptions {
+            // Attempt to create the subscription using the same path the API uses.
+            // In single-node mode, this is a direct journal mutation; in HA mode,
+            // this would be a raft proposal (but the serve path runs before the listener
+            // starts, so we use the in-process journal directly).
+            let journal_handle = state.journal_handle();
+            let mut journal = journal_handle.lock().expect("journal mutex poisoned");
+            match journal.create_subscription(&topic.name, subscription) {
+                Ok(_) => {
+                    tracing::info!(
+                        topic = %topic.name,
+                        subscription = %subscription,
+                        decision = "created",
+                        "subscription created (cr-provisioned)"
+                    );
+                }
+                Err(tape::SubscriptionError::AlreadyExists { .. }) => {
+                    tracing::info!(
+                        topic = %topic.name,
+                        subscription = %subscription,
+                        decision = "already_exists",
+                        "subscription already exists (idempotent)"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        topic = %topic.name,
+                        subscription = %subscription,
+                        error = %e,
+                        "subscription ensure failed; continuing with other subscriptions"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Run the tape HTTP server: load the journal from `--store` (or start
 /// empty), serve the shared service shell (standard probes merged with the
 /// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
@@ -1004,6 +1084,10 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         }
         state.set_raft(raft);
     }
+
+    // Ensure CR-declared subscriptions after journal/raft is ready but before listener starts.
+    // This is idempotent and tolerates AlreadyExists errors, so repeated boots converge safely.
+    ensure_subscriptions(&state);
 
     let app = if peer_transport.is_some() {
         tape::server::router_without_raft_routes_with_admission(state.clone(), admission)

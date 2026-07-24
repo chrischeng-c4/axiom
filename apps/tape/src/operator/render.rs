@@ -172,6 +172,13 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
     if let Some(seed_uri) = &s.bootstrap_seed_uri {
         extra_env.push(json!({ "name": "TAPE_BOOTSTRAP_SEED_URI", "value": seed_uri }));
     }
+    if let Some(topics) = &s.topics {
+        if !topics.is_empty() {
+            // Compact JSON representation of topic/subscription declarations for the serve path
+            let topics_json = serde_json::to_string(topics).expect("topics serialize as JSON");
+            extra_env.push(json!({ "name": "TAPE_PROVISION_TOPICS", "value": topics_json }));
+        }
+    }
 
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];

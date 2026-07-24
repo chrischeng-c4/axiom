@@ -218,20 +218,18 @@ done
 replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-initial.json"
 jq -e '(.events | length) >= 3' "$EVIDENCE_DIR/kubernetes/tape-replay-initial.json" >/dev/null
 
-curl --silent --show-error --fail-with-body -X POST \
-  "http://127.0.0.1:17137/topics/${topic}/subscriptions" \
-  -H 'content-type: application/json' \
-  --data "{\"name\":\"${sub}\"}" \
-  > "$EVIDENCE_DIR/kubernetes/tape-subscription-create.json"
-jq -e --arg topic "$topic" --arg name "$sub" \
-  '.topic == $topic and .name == $name' \
-  "$EVIDENCE_DIR/kubernetes/tape-subscription-create.json" >/dev/null
-
+# ASSERTION for #2557: spec.topics provisioning
+# The subscription is pre-created by the CR (spec.topics in render-manifests.sh),
+# so pull should work immediately with no imperative create call.
+# This proves the CR-based declarative provisioning works end-to-end.
 curl --silent --show-error --fail-with-body -X POST \
   "http://127.0.0.1:17137/topics/${topic}/subscriptions/${sub}/pull" \
   > "$EVIDENCE_DIR/kubernetes/tape-pull-before-ack.json"
 jq -e '.cursor == 0 and .next_offset == 3 and (.events | length) == 3' \
   "$EVIDENCE_DIR/kubernetes/tape-pull-before-ack.json" >/dev/null
+# Mark the pull success as evidence that #2557 CR-provisioned the subscription
+printf '%s\n' "subscription_pre_provisioned_via_cr_spec_topics" \
+  > "$EVIDENCE_DIR/kubernetes/tape-subscription-cr-provisioned.txt"
 
 curl --silent --show-error --fail-with-body -X POST \
   "http://127.0.0.1:17137/topics/${topic}/subscriptions/${sub}/ack" \

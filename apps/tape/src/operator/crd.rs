@@ -116,6 +116,27 @@ pub struct TapeSpec {
     /// default (#2484).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_limit_bytes: Option<u64>,
+
+    /// Declarative topic/subscription provisioning: a list of topics and their
+    /// pre-created subscriptions. The serve path (after the journal is ready)
+    /// idempotently ensures each subscription, tolerating `AlreadyExists` errors.
+    /// Topic creation is implicit (no journal mutation); declaring a topic alone
+    /// is documentation + future-proofing for per-topic config (retention/quotas
+    /// — #2550). **Additive-only**: removing an entry from this list never deletes
+    /// anything (deletion lifecycle is #2549's decision). Cross-ref: #2557.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topics: Option<Vec<TapeTopicSpec>>,
+}
+
+/// Topic declaration with optional subscriptions.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TapeTopicSpec {
+    /// Topic name.
+    pub name: String,
+    /// Pre-created subscriptions for this topic (default: empty).
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
 }
 
 /// Status subresource, written back by the reconcile loop.
