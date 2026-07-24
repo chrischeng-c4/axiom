@@ -62,3 +62,42 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-two-pane-workspace-verification
+requirements:
+  idle_profile_creation:
+    id: R2
+    text: "Profile selection creates an idle session without contacting the PTY sidecar."
+    kind: regression
+    risk: medium
+    verify: WorkbenchModelTests.testProfileMenuCreatesIdlePaneSession
+  native_ui:
+    id: R3
+    text: "The native UI exposes profile menu and pane controls without a fixed terminal tab strip."
+    kind: e2e
+    risk: medium
+    verify: WorkbenchMacUITests.testProfileMenuCreatesPaneSession
+  package_tests:
+    id: R4
+    text: "The native package compiles and passes regression tests."
+    kind: regression
+    risk: low
+    verify: swift test --package-path apps/workbench/macos
+  project_panes:
+    id: R1
+    text: "Each project restores its own one-or-two-pane terminal workspace and focus."
+    kind: functional
+    risk: medium
+    verify: WorkbenchModelTests.testProjectsRestoreIndependentPaneWorkspaces
+---
+flowchart TD
+    r1[R1 project panes] --> workbenchmodeltests_testprojectsrestoreindependentpaneworkspaces[WorkbenchModelTests.testProjectsRestoreIndependentPaneWorkspaces]
+    r2[R2 idle profile creation] --> workbenchmodeltests_testprofilemenucreatesidlepanesession[WorkbenchModelTests.testProfileMenuCreatesIdlePaneSession]
+    r3[R3 native ui] --> workbenchmacuitests_testprofilemenucreatespanesession[WorkbenchMacUITests.testProfileMenuCreatesPaneSession]
+    r4[R4 package tests] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
