@@ -29,10 +29,14 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
   member = "serviceAccount:${google_service_account.backup.email}"
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 resource "google_service_account_iam_member" "backup_workload_identity" {
   for_each = toset(concat(
-    ["lumen/lumen-backup"],
-    var.lumen_only ? [] : ["sift/sift-backup"],
+    var.acceptance_apps == "tape" ? ["tape/tape-backup", "tape/tape"] : ["lumen/lumen-backup"],
+    var.acceptance_apps == "tape" ? [] : ["sift/sift-backup"],
   ))
 
   service_account_id = google_service_account.backup.name
@@ -51,12 +55,22 @@ resource "google_service_account_iam_member" "backup_workload_identity" {
 # on the backup bucket. This mirrors the deployer responsibility any real
 # cold-restore integrator carries: the serving ServiceAccount that seeds from
 # GCS needs objectViewer on the seed bucket.
-data "google_project" "current" {
-  project_id = var.project_id
-}
-
 resource "google_storage_bucket_iam_member" "lumen_restore_reader" {
+  count  = var.acceptance_apps == "tape" ? 0 : 1
   bucket = google_storage_bucket.backups.name
   role   = "roles/storage.objectViewer"
   member = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/lumen/sa/lumen-restore"
+}
+
+# Direct workload-identity-federation grant for Tape's SERVING pods: run
+# 0723110114 proved the GSA-impersonation path (KSA annotation +
+# workloadIdentityUser binding) can still yield a pool-identity token that GCS
+# 403s, so the bucket additionally trusts the pod's federated principal
+# directly — no annotation or impersonation moving parts involved. Read-only:
+# the serving pod only fetches the exact bootstrapSeedUri object.
+resource "google_storage_bucket_iam_member" "tape_serving_reader" {
+  count  = var.acceptance_apps == "tape" ? 1 : 0
+  bucket = google_storage_bucket.backups.name
+  role   = "roles/storage.objectViewer"
+  member = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape"
 }

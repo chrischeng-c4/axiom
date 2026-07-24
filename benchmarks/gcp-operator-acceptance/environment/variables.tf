@@ -80,8 +80,13 @@ variable "image_tag" {
   type        = string
 }
 
-variable "lumen_only" {
-  description = "When true, provision only the Lumen backup workload-identity binding."
-  type        = bool
-  default     = false
+variable "acceptance_apps" {
+  description = "Acceptance app scope: 'lumen-sift' (default) for full harness, or 'tape' for tape-only mode."
+  type        = string
+  default     = "lumen-sift"
+
+  validation {
+    condition     = var.acceptance_apps == "lumen-sift" || var.acceptance_apps == "tape"
+    error_message = "acceptance_apps must be either 'lumen-sift' or 'tape'."
+  }
 }

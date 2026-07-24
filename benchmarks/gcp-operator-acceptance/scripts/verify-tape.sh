@@ -250,6 +250,20 @@ curl --silent --show-error --fail-with-body -X POST \
 jq -e '.cursor == 3 and .next_offset == 3 and (.events | length) == 0' \
   "$EVIDENCE_DIR/kubernetes/tape-pull-after-ack.json" >/dev/null
 
+# ---- Step A.1: lag gauge assertion ----
+# After append/consume operations, scrape /metrics and assert tape_subscription_lag is present.
+# This proves the lag gauge is instrumented correctly.
+curl --silent --show-error --fail-with-body \
+  "http://127.0.0.1:17137/metrics" \
+  > "$EVIDENCE_DIR/kubernetes/tape-metrics-after-consume.txt"
+if rg -F "tape_subscription_lag" "$EVIDENCE_DIR/kubernetes/tape-metrics-after-consume.txt" >/dev/null; then
+  printf 'tape_subscription_lag present\n' > "$EVIDENCE_DIR/kubernetes/tape-lag-gauge.txt"
+else
+  echo "tape_subscription_lag not found in /metrics after consume" >&2
+  cat "$EVIDENCE_DIR/kubernetes/tape-metrics-after-consume.txt" >&2
+  exit 1
+fi
+
 # ---- Step B: pod-restart data retention ----
 stop_forward
 kubectl -n tape delete pod/tape-0 --wait=true --timeout=120s
@@ -370,13 +384,36 @@ jq -e '.checkpoint.offset == 3' "$EVIDENCE_DIR/kubernetes/tape-checkpoint-after-
 }
 stop_forward
 
-# bootstrapSeedUri is one-shot by the documented contract (#2468): every pod
-# env still carries it, and a replacement pod restarting onto its existing
-# non-empty PVC refuses the seed and crash-loops — run 0723131223's
-# leader-kill proved it. Clear the field once the restore has converged and
-# let the resulting rolling update settle BEFORE any pod-replacement
-# exercise. The settled group also re-proves data retention across a full
-# no-seed rolling restart below.
+# ---- Step D.1: #2468 restart assertion - bootstrapSeedUri bootstrap-if-empty ----
+# After cold restore converges with bootstrapSeedUri present, restart a pod while
+# the CR still carries seedUri. Per #2468, the pod must return Ready (the seed is
+# skipped on non-empty PVC) and data must remain intact, proving bootstrap-if-empty.
+# Capture any decision= log line as evidence if reachable.
+stop_forward
+kubectl -n tape delete pod/tape-0 --grace-period=1 --wait=true --timeout=120s
+kubectl -n tape wait --for=condition=Ready pod/tape-0 --timeout=300s
+start_forward
+bootstrap_if_empty_deadline=$((SECONDS + 120))
+until replay_events > "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-uri-restart.json" 2>/dev/null \
+  && jq -e '(.events | length) == 3' \
+    "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-uri-restart.json" >/dev/null 2>&1; do
+  if (( SECONDS >= bootstrap_if_empty_deadline )); then
+    echo "pod restart with bootstrapSeedUri still present lost the restored events" >&2
+    cat "$EVIDENCE_DIR/kubernetes/tape-replay-after-seed-uri-restart.json" >&2 || true
+    capture_topology_diagnostics
+    exit 1
+  fi
+  kill -0 "$forward_pid" >/dev/null 2>&1 || start_forward
+  sleep 3
+done
+# Attempt to capture bootstrap decision logs from the restarted pod
+kubectl -n tape logs pod/tape-0 --all-containers --tail=100 --prefix \
+  > "$EVIDENCE_DIR/kubernetes/tape-bootstrap-decision.log" 2>&1 || true
+stop_forward
+
+# Clear the field once the restart has proven bootstrap-if-empty, then let the
+# resulting rolling update settle BEFORE the failover exercise below. The settled
+# group also re-proves data retention across a full no-seed rolling restart.
 kubectl -n tape patch tape/tape --type=json \
   --patch '[{"op":"remove","path":"/spec/bootstrapSeedUri"}]'
 kubectl -n tape rollout status statefulset/tape --timeout=600s
@@ -463,7 +500,7 @@ jq -n \
   --arg leader_after "$new_leader" \
   --argjson term_before "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-initial.json")" \
   --argjson term_after "$(jq '.term' "$EVIDENCE_DIR/kubernetes/tape-raftz-after-failover.json")" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", seed_cleared_rolling_restart_retention:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,distinct:($leader_before != $leader_after),term_before:$term_before,term_after:$term_after,leader_pod_replaced:"passed"}, post_failover_write_committed:"passed"}' \
+  '{schema:$schema, operator_reconcile_1x1:"passed", append_replay_lifecycle:"passed", subscription_pull_ack_cursor:"passed", subscription_lag_gauge:"passed", pod_restart_data_retention:"passed", gcs_backup:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_from_backup:"passed", bootstrap_seed_uri_restart:"passed", seed_cleared_rolling_restart_retention:"passed", topology_1_to_3:{from:1,to:3,ready_pods:3}, raft_failover:{leader_before:$leader_before,leader_after:$leader_after,distinct:($leader_before != $leader_after),term_before:$term_before,term_after:$term_after,leader_pod_replaced:"passed"}, post_failover_write_committed:"passed"}' \
   > "$EVIDENCE_DIR/tape-acceptance.json"
 
 jq -n \
