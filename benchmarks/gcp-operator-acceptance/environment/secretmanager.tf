@@ -9,6 +9,10 @@
 # required_apis list, same as every other required API — the harness never
 # enables APIs itself).
 resource "google_secret_manager_secret" "lumen_authcsi_tokens" {
+  # Lumen-mode only: tape mode has no auth+CSI leg, so the secret (and its
+  # version + grant below) must not be provisioned there (run 0724153400
+  # created it in tape mode — wasteful and misleading).
+  count     = var.acceptance_apps == "tape" ? 0 : 1
   project   = var.project_id
   secret_id = "${local.prefix}-lumen-tokens"
   labels    = local.labels
@@ -26,7 +30,8 @@ resource "google_secret_manager_secret" "lumen_authcsi_tokens" {
 # to prove the auth+CSI mount path end to end; it is destroyed with the rest
 # of this run's resources and never used past this leg.
 resource "google_secret_manager_secret_version" "lumen_authcsi_tokens" {
-  secret = google_secret_manager_secret.lumen_authcsi_tokens.id
+  count  = var.acceptance_apps == "tape" ? 0 : 1
+  secret = google_secret_manager_secret.lumen_authcsi_tokens[0].id
   secret_data = jsonencode({
     "${local.prefix}-lumen-authcsi-token" = {
       subject = "gke-authcsi-acceptance"
@@ -42,8 +47,9 @@ resource "google_secret_manager_secret_version" "lumen_authcsi_tokens" {
 # `lumen_restore_reader` above, which is the reference pattern for granting a
 # WI principal without a GSA.
 resource "google_secret_manager_secret_iam_member" "lumen_authcsi_reader" {
+  count     = var.acceptance_apps == "tape" ? 0 : 1
   project   = var.project_id
-  secret_id = google_secret_manager_secret.lumen_authcsi_tokens.secret_id
+  secret_id = google_secret_manager_secret.lumen_authcsi_tokens[0].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/lumen/sa/lumen-authcsi"
 }

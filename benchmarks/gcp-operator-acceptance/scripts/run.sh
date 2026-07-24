@@ -38,6 +38,12 @@ KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 cleanup_armed=0
 cleanup_started=0
 watchdog_pid=""
+# Completion sentinel: bash expansion errors (set -u unbound variable)
+# abort the script WITHOUT updating $?, so the EXIT trap's `local ec=$?`
+# reads the PREVIOUS command's 0 — a false-green exit (runs 0724151638
+# and 0724153400 both died mid-run yet exited 0). The trap therefore
+# refuses ec=0 unless the last line of the script body really ran.
+run_completed=0
 
 require() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -63,6 +69,10 @@ require_empty_list() {
 
 cleanup() {
   local ec=$?
+  if [[ "$ec" -eq 0 && "$run_completed" != "1" ]]; then
+    echo "run aborted before completion (likely an expansion error above) — forcing failure exit" >&2
+    ec=1
+  fi
   trap - EXIT INT TERM
   if [[ -n "$watchdog_pid" ]]; then
     kill "$watchdog_pid" >/dev/null 2>&1 || true
@@ -457,7 +467,9 @@ test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_
 test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
 test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
-test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
+if [[ "$ACCEPTANCE_APPS" != "tape" ]]; then
+  test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
+fi
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
 
@@ -516,3 +528,4 @@ else
 fi
 
 echo ">> acceptance passed; mandatory cleanup runs on EXIT"
+run_completed=1
