@@ -160,6 +160,7 @@ required_apis=(
   container.googleapis.com
   iam.googleapis.com
   iamcredentials.googleapis.com
+  secretmanager.googleapis.com
   storage.googleapis.com
 )
 : > "$EVIDENCE_DIR/preexisting-apis.txt"
@@ -358,6 +359,10 @@ fi
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
+# #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
+# plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
+# same deterministic string from RUN_ID (see environment/secretmanager.tf).
+LUMEN_AUTHCSI_SECRET_ID="axo-${RUN_ID}-lumen-tokens"
 export LUMEN_CLI LUMEN_IMAGE BACKUP_BUCKET BACKUP_GSA_EMAIL LUMEN_ONLY
 if [[ "$LUMEN_ONLY" != "1" ]]; then
   export SIFT_CLI SIFT_IMAGE
@@ -392,11 +397,12 @@ test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_
 test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
 test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
+test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
 printf '%s\n' "$cluster" > "$STATE_DIR/kube-context-ready.txt"
 
-export EVIDENCE_DIR
+export EVIDENCE_DIR LUMEN_AUTHCSI_SECRET_ID
 
 # Phase 1 is a hard gate: no Sift CRD/operator/instance/collector is applied
 # until Lumen has independently reconciled, recovered, backed up to GCS, and
