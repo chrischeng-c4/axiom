@@ -35,3 +35,30 @@ Each registered project owns a terminal workspace containing one or two panes. A
 Pane headers contain only profile icon, profile name, state dot, split-right action, and close action. Fixed default tabs and the global tab strip are removed. The Rust PTY remains project-qualified and starts only through the existing explicit start action.
 
 The first release supports a single right split only. Git worktrees, nested/vertical splits, drag-drop rearrangement, and restart persistence are out of scope.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchModel.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchModel
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchModelTests
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
