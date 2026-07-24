@@ -9,30 +9,35 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-recursive-pane-model
-entry: project-workspace
+id: workbench-recursive-pane-model-contract
+entry: select-project
 nodes:
-  workspace: { kind: start, label: "project workspace" }
-  leaf: { kind: process, label: "empty or session leaf" }
-  split: { kind: process, label: "horizontal or vertical split" }
-  sidecar: { kind: terminal, label: "existing PTY session" }
+  project: { kind: start, label: "selected project" }
+  tree: { kind: process, label: "recursive pane tree" }
+  empty: { kind: process, label: "empty leaf" }
+  session: { kind: process, label: "terminal session leaf" }
+  split: { kind: process, label: "explicit split mutation" }
+  pty: { kind: terminal, label: "unchanged Rust PTY" }
 edges:
-  - { from: workspace, to: leaf }
-  - { from: leaf, to: split, label: "explicit split only" }
-  - { from: leaf, to: sidecar, label: "one session" }
+  - { from: project, to: tree }
+  - { from: tree, to: empty }
+  - { from: empty, to: session, label: "profile chosen" }
+  - { from: session, to: split, label: "right or down chosen" }
+  - { from: session, to: pty }
 ---
 flowchart LR
-  workspace[Project workspace] --> leaf[Empty or session leaf]
-  leaf -->|explicit split only| split[Horizontal / vertical split]
-  leaf -->|one session| sidecar([Existing PTY])
+  project([Selected project]) --> tree[Recursive pane tree]
+  tree --> empty[Empty leaf]
+  empty -->|profile chosen| session[Session leaf]
+  session -->|right / down chosen| split[Explicit split mutation]
+  session --> pty([Unchanged Rust PTY])
 ```
 
-`WorkbenchModel` owns one in-memory recursive layout tree per project. A leaf references zero or one existing `TerminalTab`; that tab id remains the sole key routed to the Rust sidecar. A split owns orientation and a bounded first-child ratio.
+`PaneNode` is an indirect recursive enum: `leaf(id, tabId?)` or `split(id, axis, first, second, ratio)`. Leaf ids are stable presentation identities; a nonempty leaf references exactly one existing `TerminalTab`. `ProjectTerminalWorkspace` stores the tree root and focused leaf id beside its existing tab collection.
 
-Opening a profile into a nonempty leaf is rejected unless an explicit horizontal or vertical split placement is supplied. Project and pane selection are presentation transitions only: they never launch, shut down, resize, input, or poll a sidecar. Moving or closing the last session in a branch collapses it, leaving one empty root leaf when a workspace has no sessions. Sidecar ids remain ASCII-safe and stable for each session lifetime.
+`addTerminal(profile:)` only fills the focused empty leaf. `splitFocusedPane(axis, profile)` creates a new sibling leaf, places the profile's idle `TerminalTab` in that sibling, and replaces the focused leaf in the tree with a 0.5 split. `moveTerminal(tabId, targetLeafId, placement)` is structural only: it creates the destination split, reassigns the existing leaf reference, and removes/collapses the emptied source branch. `closePane(leafId)` terminates its referenced session through the existing close path then collapses its branch. A workspace never has no root: final collapse normalizes to one empty leaf.
 
-This slice does not render the tree, persist it across relaunch, create pane-internal tab groups, or introduce drag recognition.
-
+Ratios are clamped to 0.15 through 0.85. Tree transitions reject unknown ids, a nonempty target for an implicit add, source/target no-ops, and moves across projects. Any rejection leaves tabs, focus, tree, output, and sidecar state untouched. Changing selected project or focused leaf only swaps model presentation fields. It must not invoke `launch`, `shutdown`, `resize`, `input`, or `poll`; existing per-session renderer keys remain stable.
 ## Changes
 <!-- type: changes lang: yaml -->
 
