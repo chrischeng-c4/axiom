@@ -283,12 +283,53 @@ metadata:
     iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
 EOF
 
+# Unlike Lumen/Sift, the Tape CRD has no CR-native `backup` field for the
+# operator to reconcile into a CronJob (apps/tape/src/operator/crd.rs — run
+# 0724154839 proved it: a /spec/backup patch is rejected by strict decoding).
+# Hand-roll the same disposable-run shape directly against the verified
+# `tape backup --url ... --dest ... --retention-secs ...` CLI verb.
+# ENTRYPOINT is already the `tape` binary (images/Dockerfile.tape), so
+# `args` alone selects the subcommand — no `command` override.
+cat > "$MANIFEST_DIR/tape/instance/backup-cronjob.yaml" <<EOF
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tape-backup
+  namespace: tape
+spec:
+  schedule: "*/5 * * * *"
+  # The acceptance flow triggers exactly one Job via
+  # \`kubectl create job --from=cronjob/tape-backup\` (which works on a
+  # suspended CronJob). An unsuspended schedule kept firing against the
+  # torn-down 1x1 instance during the cold-restore rebuild (run 0723080156).
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: tape-backup
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: ${TAPE_IMAGE}
+              args:
+                - backup
+                - --url
+                - http://tape.tape.svc.cluster.local:7137
+                - --dest
+                - gs://${BACKUP_BUCKET}/tape/${RUN_ID}
+                - --retention-secs
+                - "3600"
+EOF
+
 cat > "$MANIFEST_DIR/tape/instance/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - identity.yaml
   - tape.yaml
+  - backup-cronjob.yaml
 patches:
   - target:
       group: tape.dev
@@ -308,12 +349,6 @@ patches:
       - op: replace
         path: /spec/storage
         value: 1Gi
-      - op: add
-        path: /spec/backup
-        value:
-          schedule: "*/5 * * * *"
-          destination: gs://${BACKUP_BUCKET}/tape/${RUN_ID}
-          retentionSecs: 3600
 EOF
 
 kubectl kustomize "$MANIFEST_DIR/tape/operator" > "$MANIFEST_DIR/tape/operator.bundle.yaml"
