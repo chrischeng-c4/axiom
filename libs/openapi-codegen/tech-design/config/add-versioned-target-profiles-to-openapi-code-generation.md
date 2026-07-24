@@ -88,11 +88,6 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Keep generated Python runtime annotation behavior compatible with its profile."
-  - path: "libs/openapi-codegen/src/emit/ts/client_emit.rs"
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: "Attach TypeScript compiler and module requirements without changing OpenAPI semantics."
   - path: "libs/openapi-codegen/src/emit/rust/models_emit.rs"
     action: modify
     section: logic
