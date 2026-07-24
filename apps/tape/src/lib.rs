@@ -382,6 +382,12 @@ impl TapeJournal {
         Ok(subscription)
     }
 
+    /// Return all subscriptions across all topics. Used by the metrics endpoint
+    /// to compute subscription lag gauges (#2485).
+    pub fn all_subscriptions(&self) -> Vec<&Subscription> {
+        self.subscriptions.values().collect()
+    }
+
     pub fn end_offset(&self, topic: &str) -> u64 {
         self.next_offsets.get(topic).copied().unwrap_or_else(|| {
             self.topics

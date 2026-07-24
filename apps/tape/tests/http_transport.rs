@@ -302,3 +302,111 @@ async fn oversized_append_body_is_rejected_with_413() {
         .unwrap();
     assert_eq!(resp.status(), 413);
 }
+
+/// #2485: `/metrics` exposes `tape_topic_latest_offset` and
+/// `tape_subscription_lag` gauges computed at scrape time, with topic and
+/// subscription label escaping. Lag reflects the gap between the topic's end
+/// offset and the subscription's checkpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_expose_topic_and_subscription_lag_gauges() {
+    let (addr, _state) = start_server().await;
+    let client = reqwest::Client::new();
+
+    // Append 5 events to the topic.
+    for n in 0..5 {
+        append(&client, addr, "test_topic", n).await;
+    }
+
+    // Create a subscription and pull 2 events (cursor at 2).
+    client
+        .post(url(addr, "/topics/test_topic/subscriptions"))
+        .json(&json!({ "name": "test_sub" }))
+        .send()
+        .await
+        .unwrap();
+
+    let pull: serde_json::Value = client
+        .post(url(addr, "/topics/test_topic/subscriptions/test_sub/pull"))
+        .json(&json!({ "limit": 2 }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pull["events"].as_array().unwrap().len(), 2);
+
+    // Ack to offset 2 (exclusive), so checkpoint is at 2.
+    let ack: serde_json::Value = client
+        .post(url(addr, "/topics/test_topic/subscriptions/test_sub/ack"))
+        .json(&json!({ "offset": 2 }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ack["offset"], 2);
+
+    // Scrape metrics: lag should be 5 - 2 = 3.
+    let metrics = client
+        .get(url(addr, "/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        metrics.contains("# TYPE tape_topic_latest_offset gauge"),
+        "metrics must include tape_topic_latest_offset TYPE line"
+    );
+    assert!(
+        metrics.contains("tape_topic_latest_offset{topic=\"test_topic\"} 5"),
+        "metrics must expose the latest offset for test_topic as 5"
+    );
+    assert!(
+        metrics.contains("# TYPE tape_subscription_lag gauge"),
+        "metrics must include tape_subscription_lag TYPE line"
+    );
+    assert!(
+        metrics.contains("tape_subscription_lag{subscription=\"test_sub\",topic=\"test_topic\"} 3"),
+        "metrics must expose lag of 3 for test_sub on test_topic"
+    );
+
+    // Ack more events: pull 3 more (offsets 2-4, next_offset 5), ack to 5.
+    let pull2: serde_json::Value = client
+        .post(url(addr, "/topics/test_topic/subscriptions/test_sub/pull"))
+        .json(&json!({ "limit": 10 }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pull2["events"].as_array().unwrap().len(), 3);
+
+    client
+        .post(url(addr, "/topics/test_topic/subscriptions/test_sub/ack"))
+        .json(&json!({ "offset": 5 }))
+        .send()
+        .await
+        .unwrap();
+
+    // Scrape again: lag should be 0.
+    let metrics2 = client
+        .get(url(addr, "/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        metrics2
+            .contains("tape_subscription_lag{subscription=\"test_sub\",topic=\"test_topic\"} 0"),
+        "metrics must expose lag of 0 after full ack"
+    );
+}
