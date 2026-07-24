@@ -2,6 +2,16 @@
 import XCTest
 
 final class WorkbenchMacUITests: XCTestCase {
+    private var uiTestStateRoots: [URL] = []
+
+    override func tearDownWithError() throws {
+        for root in uiTestStateRoots {
+            try? FileManager.default.removeItem(at: root)
+        }
+        uiTestStateRoots.removeAll()
+        try super.tearDownWithError()
+    }
+
     @MainActor
     func testPaneToolbarRemainsInContentChrome() throws {
         let fixtureFolder = try makeFixtureFolder()
@@ -76,11 +86,24 @@ final class WorkbenchMacUITests: XCTestCase {
     private func launch(_ fixtureFolder: URL) -> XCUIApplication {
         let app = XCUIApplication()
         app.terminate()
+        let stateRoot = repositoryRoot
+            .appendingPathComponent(".axiom-workbench/test-artifacts/ui-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        uiTestStateRoots.append(stateRoot)
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
         app.launchEnvironment["WORKBENCH_UI_TEST_FOLDER"] = fixtureFolder.path
+        app.launchEnvironment["WORKBENCH_UI_TEST_STATE_ROOT"] = stateRoot.path
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         return app
+    }
+
+    private var repositoryRoot: URL {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            root.deleteLastPathComponent()
+        }
+        return root
     }
 
     private func makeFixtureFolder() throws -> URL {

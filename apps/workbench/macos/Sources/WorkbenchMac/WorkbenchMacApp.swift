@@ -13,11 +13,18 @@ struct WorkbenchMacApp: App {
 
     init() {
         let runtimeProfile = WorkbenchRuntimeProfile.from()
-        WorkbenchDiagnosticLog.configure(profile: runtimeProfile)
-        let model = WorkbenchModel(
-            projectStore: ProjectStore(storageDirectory: runtimeProfile.projectsRoot())
+        let stateRoot = runtimeProfile.resolvedStateRoot()
+        WorkbenchDiagnosticLog.configure(
+            file: stateRoot
+                .appendingPathComponent("logs", isDirectory: true)
+                .appendingPathComponent("workbench.log")
         )
-        let localRuntime = LocalRuntimeServer(runtimeDirectory: runtimeProfile.runtimeRoot())
+        let model = WorkbenchModel(
+            projectStore: ProjectStore(storageDirectory: stateRoot)
+        )
+        let localRuntime = LocalRuntimeServer(
+            runtimeDirectory: stateRoot.appendingPathComponent("runtime", isDirectory: true)
+        )
         do {
             try localRuntime.start()
         } catch LocalRuntimeError.alreadyRunning {

@@ -7,10 +7,14 @@ import Foundation
 /// lifecycle, sidecar resolution, request type, and recoverable error context.
 public enum WorkbenchDiagnosticLog {
     private static let maximumBytes = 1_048_576
-    private static var activeProfile = WorkbenchRuntimeProfile.stable
+    private static var activeFile = WorkbenchRuntimeProfile.stable.logFile()
 
     public static func configure(profile: WorkbenchRuntimeProfile) {
-        activeProfile = profile
+        activeFile = profile.logFile()
+    }
+
+    public static func configure(file: URL) {
+        activeFile = file
     }
 
     public static func write(_ event: String, details: [String: String] = [:]) {
@@ -18,7 +22,7 @@ public enum WorkbenchDiagnosticLog {
             return
         }
         let fileManager = FileManager.default
-        let file = activeProfile.logFile(fileManager: fileManager)
+        let file = activeFile
         let directory = file.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 

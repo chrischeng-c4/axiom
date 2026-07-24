@@ -38,6 +38,21 @@ public enum WorkbenchRuntimeProfile: String, CaseIterable, Sendable {
         return fileManager.homeDirectoryForCurrentUser.appendingPathComponent(name, isDirectory: true)
     }
 
+    public func resolvedStateRoot(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> URL {
+        guard let fixture = environment["WORKBENCH_UI_TEST_FOLDER"],
+              !fixture.isEmpty,
+              let override = environment["WORKBENCH_UI_TEST_STATE_ROOT"],
+              !override.isEmpty,
+              (override as NSString).isAbsolutePath
+        else {
+            return stateRoot(fileManager: fileManager)
+        }
+        return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+    }
+
     public func projectsRoot(fileManager: FileManager = .default) -> URL {
         stateRoot(fileManager: fileManager)
     }

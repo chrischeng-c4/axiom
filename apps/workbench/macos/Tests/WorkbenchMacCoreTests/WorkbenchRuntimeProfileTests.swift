@@ -26,6 +26,42 @@ final class WorkbenchRuntimeProfileTests: XCTestCase {
         )
     }
 
+    func testUITestStateRootRequiresFixtureAndAbsoluteOverride() {
+        let override = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workbench-ui-test-state", isDirectory: true)
+        let environment = [
+            "WORKBENCH_UI_TEST_FOLDER": "/tmp/workbench-fixture",
+            "WORKBENCH_UI_TEST_STATE_ROOT": override.path,
+        ]
+
+        XCTAssertEqual(
+            WorkbenchRuntimeProfile.beta.resolvedStateRoot(environment: environment),
+            override.standardizedFileURL
+        )
+    }
+
+    func testNormalLaunchDoesNotAcceptUITestStateOverride() {
+        let profile = WorkbenchRuntimeProfile.beta
+        let override = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workbench-ui-test-state", isDirectory: true)
+
+        XCTAssertEqual(
+            profile.resolvedStateRoot(
+                environment: ["WORKBENCH_UI_TEST_STATE_ROOT": override.path]
+            ),
+            profile.stateRoot()
+        )
+        XCTAssertEqual(
+            profile.resolvedStateRoot(
+                environment: [
+                    "WORKBENCH_UI_TEST_FOLDER": "/tmp/workbench-fixture",
+                    "WORKBENCH_UI_TEST_STATE_ROOT": "relative/test-state",
+                ]
+            ),
+            profile.stateRoot()
+        )
+    }
+
     func testBuildSkillsAreProductScoped() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
