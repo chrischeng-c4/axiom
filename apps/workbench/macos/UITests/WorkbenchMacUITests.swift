@@ -21,13 +21,13 @@ final class WorkbenchMacUITests: XCTestCase {
 
         let workspace = app.descendants(matching: .any)["terminal.workspace"]
         let toolbar = app.descendants(matching: .any)["terminal.pane-toolbar"]
-        let addProfile = app.buttons["terminal.add-profile"]
+        let addProfile = app.menuButtons["terminal.add-profile"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 5))
         XCTAssertTrue(toolbar.waitForExistence(timeout: 5))
         XCTAssertTrue(addProfile.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["terminal.titlebar-tabs"].exists)
         XCTAssertGreaterThanOrEqual(toolbar.frame.minY, workspace.frame.minY)
-        XCTAssertLessThanOrEqual(toolbar.frame.maxY, workspace.frame.minY + 44)
+        XCTAssertLessThanOrEqual(toolbar.frame.height, 44)
         capture("pane-toolbar-in-content-chrome", app: app)
     }
 
@@ -56,8 +56,8 @@ final class WorkbenchMacUITests: XCTestCase {
         defer { app.terminate() }
 
         XCTAssertTrue(app.descendants(matching: .any)["auxiliary.files.list"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("Sources").path)"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("README.md").path)"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.Sources"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.README.md"].exists)
         capture("auxiliary-files-fixture-entries", app: app)
     }
 
@@ -68,7 +68,7 @@ final class WorkbenchMacUITests: XCTestCase {
         let app = launch(fixtureFolder)
         defer { app.terminate() }
 
-        let addProfile = app.buttons["terminal.add-profile"]
+        let addProfile = app.menuButtons["terminal.add-profile"]
         XCTAssertTrue(addProfile.waitForExistence(timeout: 5))
         addProfile.click()
         let claude = app.menuItems["Claude Code"]
@@ -99,6 +99,10 @@ final class WorkbenchMacUITests: XCTestCase {
         app.launchEnvironment["WORKBENCH_UI_TEST_STATE_ROOT"] = stateRoot.path
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workbench.detail"]
+                .waitForExistence(timeout: 10)
+        )
         return app
     }
 

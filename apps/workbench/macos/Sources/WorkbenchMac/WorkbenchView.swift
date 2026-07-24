@@ -152,6 +152,7 @@ struct WorkbenchView: View {
             terminalBody
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.workspace")
     }
 
@@ -229,7 +230,8 @@ struct WorkbenchView: View {
                         .padding(.horizontal, 6)
                         .frame(minHeight: 28)
                         .contentShape(Rectangle())
-                        .accessibilityIdentifier("auxiliary.file.(entry.id)")
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("auxiliary.file.\(entry.name)")
                         .accessibilityLabel("\(entry.kind == .directory ? "Folder" : "File") \(entry.name)")
                     }
                     if isTruncated {
@@ -270,6 +272,7 @@ struct WorkbenchView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.pane-toolbar")
     }
 
@@ -306,6 +309,7 @@ struct WorkbenchView: View {
     private var terminalBody: some View {
         paneTreeContent(model.paneTree)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.pane-tree")
     }
 
@@ -365,6 +369,7 @@ struct WorkbenchView: View {
             }
         }
         .coordinateSpace(name: splitCoordinateSpace(id))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.split.\(id)")
     }
 
@@ -428,7 +433,9 @@ struct WorkbenchView: View {
                     .accessibilityIdentifier("terminal.pane-split.\(pane.id)")
                     .accessibilityLabel("Split \(tab.title)")
                     Button { Task { await model.closeTab(tab.id) } } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain).accessibilityLabel("Close \(tab.title)")
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("terminal.pane-close.\(pane.id)")
+                        .accessibilityLabel("Close \(tab.title)")
                 } else {
                     Text("New terminal").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -447,6 +454,7 @@ struct WorkbenchView: View {
         .contentShape(Rectangle())
         .onTapGesture { model.selectPane(pane.id) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.pane.\(pane.id)")
     }
 
@@ -513,6 +521,7 @@ struct WorkbenchView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.idle.\(tab.id)")
     }
 
@@ -563,6 +572,7 @@ struct WorkbenchView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terminal.failed.\(tab.id)")
     }
 
