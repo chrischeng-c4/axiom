@@ -208,9 +208,9 @@ struct K8sOperatorRenderArgs {
     #[arg(long, default_value = "lumen-system")]
     namespace: String,
     /// Operator container image. Supply an immutable registry digest for
-    /// reproducible cluster deployment; the default preserves the checked-in
-    /// local-development manifest.
-    #[arg(long, default_value = "lumen:latest")]
+    /// reproducible cluster deployment; the default is this build's
+    /// published GHCR release, matching the checked-in operator manifest.
+    #[arg(long, default_value_t = format!("ghcr.io/chrischeng-c4/lumen:{}", env!("CARGO_PKG_VERSION")))]
     image: String,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
@@ -1754,7 +1754,7 @@ fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
         "lumen-system",
         namespace,
     );
-    let checked_in_image = "          image: lumen:latest";
+    let checked_in_image = "          image: ghcr.io/chrischeng-c4/lumen:0.4.24";
     if !deployment.contains(checked_in_image) {
         anyhow::bail!("checked-in operator manifest is missing its canonical image field");
     }
