@@ -1417,6 +1417,22 @@ where
     future.await
 }
 
+fn cb_gen_writable_scope(command: &str) -> Vec<&'static str> {
+    let target = |name: &str| {
+        command.contains(&format!("--target {name}"))
+            || command.contains(&format!("--target={name}"))
+    };
+    if target("rust") {
+        vec!["Cargo.toml", "src/**", "tests/**"]
+    } else if target("python") {
+        vec!["pyproject.toml", "src/**", "tests/**"]
+    } else if target("typescript") {
+        vec!["package.json", "tsconfig.json", "src/**", "tests/**"]
+    } else {
+        vec!["src/**"]
+    }
+}
+
 fn workflow_prompt_contract(
     envelope: &WorkflowEnvelope,
     root_command: Option<&str>,
@@ -1498,7 +1514,7 @@ fn workflow_prompt_contract(
                 "cb.generating",
                 "cb",
                 "CB.generated == true",
-                vec!["src/**"],
+                cb_gen_writable_scope(&command),
                 vec!["external-contracts/**", "tech-design/**"],
                 vec!["EC[TD].behavior == green", "EC[TD].security == green"],
             )
@@ -4311,7 +4327,7 @@ target = "{target}"
                 "cb.generating",
                 "cb",
                 "CB.generated == true",
-                vec!["src/**"],
+                vec!["Cargo.toml", "src/**", "tests/**"],
                 vec!["external-contracts/**", "tech-design/**"],
                 PromptTerminalLevel::Stage,
                 Some("EC[TD].behavior == green"),
@@ -4383,6 +4399,23 @@ target = "{target}"
                 );
             }
             assert!(contract.validate().is_ok(), "phase {phase:?}");
+        }
+
+        for (target, expected) in [
+            ("rust", vec!["Cargo.toml", "src/**", "tests/**"]),
+            ("python", vec!["pyproject.toml", "src/**", "tests/**"]),
+            (
+                "typescript",
+                vec!["package.json", "tsconfig.json", "src/**", "tests/**"],
+            ),
+        ] {
+            let envelope = test_envelope(
+                &format!("aw cb gen --target {target} --source-root tech-design --output-dir app"),
+                "generate native target",
+            );
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.scope.writable, expected, "target {target}");
         }
 
         let mut frontend = test_envelope(

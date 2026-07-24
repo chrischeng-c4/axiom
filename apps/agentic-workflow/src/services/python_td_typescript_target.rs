@@ -5,12 +5,11 @@
 //! source stays outside this output because EC remains independently authored.
 
 use super::python_td::{PythonTdDeclarationKind, PythonTdIr, PythonTdModule, PythonTdRole};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -67,14 +66,7 @@ pub fn emit_python_td_typescript_target(
     );
 
     let manifest = manifest(&files);
-    // Rendering and validation finish before a target path is created, so an
-    // unsupported declaration cannot leave a partially applied package.
-    for (path, content) in &files {
-        let output = output_root.join(path);
-        fs::create_dir_all(output.parent().expect("generated file has parent"))
-            .with_context(|| format!("create {}", output.display()))?;
-        fs::write(&output, content).with_context(|| format!("write {}", output.display()))?;
-    }
+    super::python_td::materialize_greenfield_target(output_root, "typescript", &files)?;
     Ok(TypeScriptTdTarget {
         digest: digest(&serde_json::to_vec(&manifest)?),
         files: manifest,

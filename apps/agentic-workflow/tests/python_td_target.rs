@@ -40,6 +40,12 @@ fn snapshot(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
+fn seed_existing_project(root: &std::path::Path, manifest: &str) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join(manifest), b"existing manifest\n").unwrap();
+    fs::write(root.join("src/existing.txt"), b"existing source\n").unwrap();
+}
+
 #[test]
 fn python_td_target_generates_deterministic_packages_and_native_tests() {
     for fixture_name in ["python_spec_typer", "python_spec_http_db"] {
@@ -80,6 +86,38 @@ fn python_td_target_generates_deterministic_packages_and_native_tests() {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+}
+
+#[test]
+fn native_targets_reject_existing_projects_before_any_write() {
+    let ir = compile_python_td_project(&fixture("python_spec_typer")).unwrap();
+
+    let python = tempfile::tempdir().unwrap();
+    seed_existing_project(python.path(), "pyproject.toml");
+    let python_before = snapshot(python.path());
+    let python_error = emit_python_td_target(&ir, python.path()).unwrap_err();
+    assert!(python_error
+        .to_string()
+        .contains("non-empty existing project"));
+    assert_eq!(snapshot(python.path()), python_before);
+
+    let rust = tempfile::tempdir().unwrap();
+    seed_existing_project(rust.path(), "Cargo.toml");
+    let rust_before = snapshot(rust.path());
+    let rust_error = emit_python_td_rust_target(&ir, rust.path()).unwrap_err();
+    assert!(rust_error
+        .to_string()
+        .contains("non-empty existing project"));
+    assert_eq!(snapshot(rust.path()), rust_before);
+
+    let typescript = tempfile::tempdir().unwrap();
+    seed_existing_project(typescript.path(), "package.json");
+    let typescript_before = snapshot(typescript.path());
+    let typescript_error = emit_python_td_typescript_target(&ir, typescript.path()).unwrap_err();
+    assert!(typescript_error
+        .to_string()
+        .contains("non-empty existing project"));
+    assert_eq!(snapshot(typescript.path()), typescript_before);
 }
 
 #[test]
@@ -183,6 +221,39 @@ fn cb_gen_rust_target_routes_to_native_emitter() {
     );
     assert!(output.path().join("Cargo.toml").is_file());
     assert!(output.path().join("tests/generated_inventory.rs").is_file());
+}
+
+#[test]
+fn cb_gen_rust_target_refuses_existing_project_without_partial_output() {
+    let output = tempfile::tempdir().unwrap();
+    seed_existing_project(output.path(), "Cargo.toml");
+    let before = snapshot(output.path());
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap()
+        .to_path_buf();
+    let result = Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args([
+            "cb",
+            "gen",
+            "--target",
+            "rust",
+            "--source-root",
+            fixture("python_spec_typer").to_str().unwrap(),
+            "--output-dir",
+            output.path().to_str().unwrap(),
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("non-empty existing project"),
+        "stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(snapshot(output.path()), before);
 }
 
 #[test]

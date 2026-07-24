@@ -9,14 +9,115 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use tree_sitter::{Node, Parser};
 use walkdir::WalkDir;
 
 pub const PYTHON_TD_IR_SCHEMA: &str = "aw.python-td-ir.v1";
+
+/// Atomically materialize one target-native package into a new or empty root.
+///
+/// Python-TD native emitters are greenfield package generators. They do not
+/// own preservation-aware edits to an existing project, so accepting a
+/// non-empty root would let a generated manifest or module replace product
+/// source. Renderers must build the complete candidate write set before
+/// calling this function; this preflight rejects unsafe roots before creating
+/// the staging directory or touching the output root.
+pub(crate) fn materialize_greenfield_target(
+    output_root: &Path,
+    target: &str,
+    files: &BTreeMap<String, String>,
+) -> Result<()> {
+    if files.is_empty() {
+        bail!("{target} target candidate write set is empty");
+    }
+    for relative in files.keys() {
+        let path = Path::new(relative);
+        if relative.is_empty()
+            || path.is_absolute()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            bail!("unsafe {target} target candidate path `{relative}`");
+        }
+    }
+
+    let output_existed = match fs::symlink_metadata(output_root) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                bail!(
+                    "refusing to materialize greenfield {target} target at `{}`: output root must be a new or empty directory",
+                    output_root.display()
+                );
+            }
+            let mut entries = fs::read_dir(output_root)
+                .with_context(|| format!("inspect output root {}", output_root.display()))?
+                .map(|entry| {
+                    entry
+                        .map(|value| value.file_name().to_string_lossy().into_owned())
+                        .with_context(|| format!("inspect output root {}", output_root.display()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            entries.sort();
+            if !entries.is_empty() {
+                let candidates = files.keys().cloned().collect::<Vec<_>>().join(", ");
+                bail!(
+                    "refusing to materialize greenfield {target} target into non-empty existing project `{}`; existing entries: {}; candidate write set: {candidates}. Existing-project materialization requires a bounded preservation-aware HANDWRITE or patch workflow",
+                    output_root.display(),
+                    entries.join(", ")
+                );
+            }
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect output root {}", output_root.display()));
+        }
+    };
+
+    let parent = output_root
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create target parent {}", parent.display()))?;
+    let staging = tempfile::Builder::new()
+        .prefix(".aw-python-td-target-")
+        .tempdir_in(parent)
+        .with_context(|| format!("create {target} target staging directory"))?;
+    for (relative, content) in files {
+        let staged = staging.path().join(relative);
+        fs::create_dir_all(staged.parent().expect("validated candidate has parent"))
+            .with_context(|| format!("create staged parent for {relative}"))?;
+        fs::write(&staged, content.as_bytes())
+            .with_context(|| format!("write staged {target} target {relative}"))?;
+    }
+
+    if output_existed {
+        fs::remove_dir(output_root)
+            .with_context(|| format!("replace empty output root {}", output_root.display()))?;
+    }
+    if let Err(error) = fs::rename(staging.path(), output_root) {
+        if output_existed {
+            let _ = fs::create_dir(output_root);
+        }
+        return Err(error).with_context(|| {
+            format!(
+                "atomically install staged {target} target at {}",
+                output_root.display()
+            )
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PythonTdIr {

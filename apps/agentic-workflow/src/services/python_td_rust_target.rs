@@ -1,11 +1,10 @@
 // HANDWRITE-BEGIN gap="missing-generator:python-ir-rust-target" tracker="#2301" reason="Rust lowering validates the reviewed IR before output exists."
 use super::python_td::{PythonTdDeclarationKind, PythonTdIr};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -118,12 +117,7 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
             digest: digest(c.as_bytes()),
         })
         .collect::<Vec<_>>();
-    for (path, content) in &files {
-        let output = root.join(path);
-        fs::create_dir_all(output.parent().unwrap())
-            .with_context(|| format!("create {}", output.display()))?;
-        fs::write(output, content)?;
-    }
+    super::python_td::materialize_greenfield_target(root, "rust", &files)?;
     Ok(RustTdTarget {
         digest: digest(&serde_json::to_vec(&manifest)?),
         files: manifest,

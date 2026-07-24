@@ -6,10 +6,10 @@
 //! @spec apps/agentic-workflow/tech-design/logic/aw-ddd-python-source-generation.md#logic
 
 use super::python_td::{PythonTdDeclarationKind, PythonTdIr};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PythonTdTarget {
@@ -37,18 +37,14 @@ pub fn emit_python_td_target(ir: &PythonTdIr, output_root: &Path) -> Result<Pyth
     let unit_path = "tests/unit/test_generated_inventory.py".to_string();
     files.insert(unit_path.clone(), render_unit_test(ir));
 
-    let mut manifest = Vec::new();
-    for (relative, content) in files {
-        let path = output_root.join(&relative);
-        fs::create_dir_all(path.parent().unwrap())
-            .with_context(|| format!("create generated parent for {}", path.display()))?;
-        fs::write(&path, content.as_bytes())
-            .with_context(|| format!("write generated Python target {}", path.display()))?;
-        manifest.push(PythonTdTargetFile {
-            path: relative,
+    let manifest = files
+        .iter()
+        .map(|(relative, content)| PythonTdTargetFile {
+            path: relative.clone(),
             digest: digest(content.as_bytes()),
-        });
-    }
+        })
+        .collect::<Vec<_>>();
+    super::python_td::materialize_greenfield_target(output_root, "python", &files)?;
     let digest = digest(&serde_json::to_vec(&manifest)?);
     Ok(PythonTdTarget {
         files: manifest,
