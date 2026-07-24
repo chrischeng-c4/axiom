@@ -48,3 +48,35 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-native-accessibility-identities-verification
+requirements:
+  bounded_file_rows:
+    id: R2
+    text: "Auxiliary file rows use bounded name-based identifiers that remain below XCUI query limits."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries
+  independent_terminal_controls:
+    id: R1
+    text: "Terminal workspace, toolbar, and add-profile control retain independent queryable identifiers."
+    kind: regression
+    risk: high
+    verify: WorkbenchMacUITests.testPaneToolbarRemainsInContentChrome
+  native_tree:
+    id: R3
+    text: "The native accessibility tree exposes pane controls and file rows through real XCUI queries."
+    kind: functional
+    risk: high
+    verify: apps/workbench/macos/Scripts/run-native-e2e.sh
+---
+flowchart TD
+    r1[R1 independent terminal controls] --> workbenchmacuitests_testpanetoolbarremainsincontentchrome[WorkbenchMacUITests.testPaneToolbarRemainsInContentChrome]
+    r2[R2 bounded file rows] --> workbenchmacuitests_testfilesauxiliarycolumnshowsfixtureentries[WorkbenchMacUITests.testFilesAuxiliaryColumnShowsFixtureEntries]
+    r3[R3 native tree] --> apps_workbench_macos_scripts_run_native_e2e_sh[apps/workbench/macos/Scripts/run-native-e2e.sh]
+```
