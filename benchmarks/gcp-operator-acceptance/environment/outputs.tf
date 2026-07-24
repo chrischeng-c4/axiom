@@ -31,5 +31,6 @@ output "artifact_registry_repository" {
 }
 
 output "lumen_authcsi_secret_id" {
-  value = google_secret_manager_secret.lumen_authcsi_tokens.secret_id
+  # Empty in tape mode — the secret is lumen-mode-only (count-gated).
+  value = var.acceptance_apps == "tape" ? "" : google_secret_manager_secret.lumen_authcsi_tokens[0].secret_id
 }

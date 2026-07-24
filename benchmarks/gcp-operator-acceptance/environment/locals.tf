@@ -6,7 +6,9 @@ locals {
   }
 
   registry = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repository}"
-  images = {
+  images = var.acceptance_apps == "tape" ? {
+    tape = "${local.registry}/tape:${var.image_tag}"
+    } : {
     lumen = "${local.registry}/lumen:${var.image_tag}"
     sift  = "${local.registry}/sift:${var.image_tag}"
   }
