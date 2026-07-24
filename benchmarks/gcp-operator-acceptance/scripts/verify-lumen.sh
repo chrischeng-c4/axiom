@@ -187,6 +187,40 @@ curl --silent --show-error --fail-with-body -X POST \
 search_probe > "$EVIDENCE_DIR/kubernetes/lumen-search-before-restart.json"
 jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-search-before-restart.json" >/dev/null
 
+# ---- Admission CRD exposure exercise on the main instance (#2477) ----
+# Pure exposure of the pre-existing `LUMEN_ADMISSION_*` env grammar
+# (`libs/service-http::AdmissionConfig`, wired in `serve()` in
+# apps/lumen/src/bin/lumen.rs) onto a declarative CR field (`AdmissionSpec`,
+# apps/lumen/src/operator/crd.rs), rendered onto the StatefulSet pod spec by
+# `serving_env` in apps/lumen/src/operator/render.rs. Enable it via a CR
+# patch, assert the rendered env, then remove the block again so admission
+# stays off for the rest of this run.
+stop_forward
+kubectl -n lumen patch lumen/lumen --type=merge --patch \
+  '{"spec":{"admission":{"readCapacity":100,"writeCapacity":50,"adminCapacity":10,"refillSecs":30,"maxKeys":256}}}'
+kubectl -n lumen rollout status statefulset/lumen --timeout=600s
+kubectl -n lumen wait --for=condition=Ready pod/lumen-0 --timeout=300s
+kubectl -n lumen get statefulset/lumen \
+  -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  > "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
+if ! {
+  grep -qx 'LUMEN_ADMISSION_READ_CAPACITY=100' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
+  && grep -qx 'LUMEN_ADMISSION_WRITE_CAPACITY=50' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
+  && grep -qx 'LUMEN_ADMISSION_ADMIN_CAPACITY=10' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
+  && grep -qx 'LUMEN_ADMISSION_REFILL_SECS=30' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
+  && grep -qx 'LUMEN_ADMISSION_MAX_KEYS=256' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
+}; then
+  echo "StatefulSet pod spec did not carry the expected LUMEN_ADMISSION_* env after the CR patch" >&2
+  cat "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" >&2 || true
+  kubectl -n lumen get lumen/lumen -o yaml >&2 || true
+  exit 1
+fi
+kubectl -n lumen patch lumen/lumen --type=json \
+  --patch '[{"op":"remove","path":"/spec/admission"}]'
+kubectl -n lumen rollout status statefulset/lumen --timeout=600s
+kubectl -n lumen wait --for=condition=Ready pod/lumen-0 --timeout=300s
+start_forward
+
 test "$(kubectl -n lumen get cronjob/lumen-backup -o jsonpath='{.spec.jobTemplate.spec.template.spec.serviceAccountName}')" = "lumen-backup"
 lumen_job="lumen-backup-${RUN_ID}"
 kubectl -n lumen create job --from=cronjob/lumen-backup "$lumen_job"
@@ -340,5 +374,5 @@ jq -n \
   --arg schema "axiom.gcp.lumen.acceptance.v1" \
   --arg object "$first_object" \
   --argjson bytes "$object_size" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, cpu_memory_actuator:"not_claimed", live_replica_membership:"not_claimed"}' \
+  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, cpu_memory_actuator:"not_claimed", live_replica_membership:"not_claimed"}' \
   > "$EVIDENCE_DIR/lumen-acceptance.json"
