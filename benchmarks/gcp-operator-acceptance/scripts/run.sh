@@ -413,11 +413,19 @@ fi
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
-export LUMEN_CLI SIFT_CLI TAPE_CLI LUMEN_IMAGE SIFT_IMAGE TAPE_IMAGE
 export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
-"$SCRIPT_DIR/render-manifests.sh"
+# Export mode-specific CLIs and images only
+if [[ "$acceptance_mode" == "tape" ]]; then
+  export TAPE_CLI TAPE_IMAGE
+else
+  export LUMEN_CLI LUMEN_IMAGE SIFT_CLI SIFT_IMAGE
+fi
+"$SCRIPT_DIR/render-manifests.sh" || {
+  echo "manifest rendering failed" >&2
+  exit 1
+}
 
 echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
 mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
