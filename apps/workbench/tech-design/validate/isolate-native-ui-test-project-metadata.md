@@ -28,3 +28,35 @@ flowchart LR
 ```
 
 This design applies only to native app bootstrap when `WORKBENCH_UI_TEST_FOLDER` is present. The XCUI launcher supplies an explicit `WORKBENCH_UI_TEST_STATE_ROOT` below the repository-local ignored test-artifact directory. ProjectStore, LocalRuntimeServer, and diagnostic logging use that root for the test process. Normal stable and beta launches continue using their existing profile roots.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchRuntimeProfile.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchRuntimeProfile
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/DiagnosticLog.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchDiagnosticLog
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchMacApp.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchMacApp
+  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchRuntimeProfileTests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchRuntimeProfileTests
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
