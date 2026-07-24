@@ -92,7 +92,10 @@ impl CollectionState {
 }
 
 /// Shared handler state: the registry plus the optional GPU context used to
-/// (re)build indexes. Cheap to clone (both fields are `Arc`-backed).
+/// (re)build indexes. Cheap to clone (registry and gpu are `Arc`-backed).
+///
+/// The body cap is deliberately NOT held here: it is enforced by a tower layer
+/// wrapping the data plane, so no handler ever reads it.
 #[derive(Clone)]
 struct AppState {
     registry: Registry,
@@ -195,11 +198,7 @@ fn conflict_err(message: impl Into<String>) -> ApiErr {
 }
 
 fn internal_err(message: impl Into<String>) -> ApiErr {
-    ApiErr::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal_error",
-        message,
-    )
+    ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
 }
 
 // -- JSON <-> engine mapping ----------------------------------------------
@@ -632,9 +631,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 // -- Assembly + serve ------------------------------------------------------
 
 /// Build the application router over a fresh empty registry, wiring the given
-/// GPU context (queries use the GPU flat path when it is `Some`). Public so tests
-/// can mount the same routes on an ephemeral listener.
-pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
+/// GPU context (queries use the GPU flat path when it is `Some`) and the data-plane
+/// request body size limit. Public so tests can mount the same routes on an ephemeral listener.
+pub fn router(gpu: Option<Arc<GpuContext>>, body_limit_bytes: usize) -> Router {
     let state = AppState {
         registry: Arc::new(RwLock::new(HashMap::new())),
         gpu,
@@ -646,20 +645,20 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
         )
         .route("/v1/collections/{name}", delete(drop_collection))
         .route("/v1/collections/{name}/vectors", post(upsert_vectors))
-        .route(
-            "/v1/collections/{name}/vectors/{id}",
-            delete(delete_vector),
-        )
+        .route("/v1/collections/{name}/vectors/{id}", delete(delete_vector))
         .route("/v1/collections/{name}/query", post(query_collection))
         .route("/admin/backup", get(admin_backup))
         .route("/admin/restore", post(admin_restore))
-        .with_state(state);
+        .with_state(state.clone())
+        // Data-plane-only body cap, rendering a structured 413 envelope; the
+        // probes mounted below stay unbounded, matching `service_http`'s
+        // documented probe behavior.
+        .layer(service_http::body_limit_layer(body_limit_bytes));
 
     let drain = Arc::new(server_lifecycle::DrainController::new());
 
     let probes = service_http::standard_probe_routes(
-        drain,
-        None, // metrics provider
+        drain, None, // metrics provider
         openapi,
     );
 
@@ -682,7 +681,8 @@ pub async fn serve_on(
 /// Run the vector-database service: acquire the GPU (if any), bind `addr`, print
 /// the bound address, and serve the REST API until Ctrl-C / SIGTERM. `addr` is
 /// `host:port`; port `0` picks an ephemeral port (the bound one is printed).
-pub async fn serve(addr: &str) -> anyhow::Result<()> {
+/// `body_limit_bytes` configures the data-plane request body size limit.
+pub async fn serve(addr: &str, body_limit_bytes: usize) -> anyhow::Result<()> {
     let gpu = GpuContext::new().map(Arc::new);
     match &gpu {
         Some(ctx) => {
@@ -699,6 +699,6 @@ pub async fn serve(addr: &str) -> anyhow::Result<()> {
     println!("beam serving on http://{bound}");
 
     let shutdown = service_http::wait_shutdown_signal();
-    serve_on(listener, router(gpu), shutdown).await;
+    serve_on(listener, router(gpu, body_limit_bytes), shutdown).await;
     Ok(())
 }

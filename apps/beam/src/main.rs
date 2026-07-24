@@ -11,10 +11,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
 use beam::dx::*;
-
-
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// This binary's identity + build provenance for the standard CLI ops
 /// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention. The `BEAM_*`
@@ -246,6 +244,11 @@ struct ServeArgs {
     /// Graceful drain window on SIGTERM.
     #[arg(long, env = "BEAM_GRACE_SECS", default_value_t = 30)]
     grace_secs: u64,
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB (`BEAM_BODY_LIMIT_BYTES`).
+    #[arg(long, env = "BEAM_BODY_LIMIT_BYTES", default_value_t = 8 * 1024 * 1024)]
+    body_limit_bytes: usize,
 }
 
 /// `beam spec` flags.
@@ -642,10 +645,6 @@ struct IssueCreateArgs {
     message: Vec<String>,
 }
 
-
-
-
-
 use anyhow::Context;
 
 fn main() -> ExitCode {
@@ -718,7 +717,10 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         }
         // Report the resolved GPU backend + device — the dual-platform proof.
         Command::Info => {
-            println!("beam {} ({}, git {})", TOOL.version, TOOL.target, TOOL.git_sha);
+            println!(
+                "beam {} ({}, git {})",
+                TOOL.version, TOOL.target, TOOL.git_sha
+            );
             match beam::gpu::GpuContext::new() {
                 Some(gpu) => {
                     let (backend, name) = gpu.adapter_info();
@@ -736,7 +738,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         // Real HTTP/2 (h2c) vector-database service. Blocks until Ctrl-C/SIGTERM.
         Command::Serve(args) => {
             let addr = format!("{}:{}", args.host, args.port);
-            block_on(beam::service::serve(&addr))?;
+            block_on(beam::service::serve(&addr, args.body_limit_bytes))?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Spec(args) => {
@@ -776,46 +778,48 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         }
         Command::K8s(args) => {
             match args.cmd {
-                K8sCmd::Crd(crd) => {
-                    match crd.cmd {
-                        K8sCrdCmd::Render(out) => {
-                            write_or_print(out.out.as_deref(), "crd.yaml", &render_crd_yaml(), |target| {
-                                format!("kubectl apply -f {}", target.display())
-                            })?;
-                        }
+                K8sCmd::Crd(crd) => match crd.cmd {
+                    K8sCrdCmd::Render(out) => {
+                        write_or_print(
+                            out.out.as_deref(),
+                            "crd.yaml",
+                            &render_crd_yaml(),
+                            |target| format!("kubectl apply -f {}", target.display()),
+                        )?;
                     }
-                }
-                K8sCmd::Operator(operator) => {
-                    match operator.cmd.unwrap_or(K8sOperatorCmd::Run) {
-                        K8sOperatorCmd::Run => {
-                            println!("beam operator: reconcile controller running (placeholder)");
-                        }
-                        K8sOperatorCmd::Render(render) => {
-                            let body = render_operator_yaml(&render.namespace);
-                            write_or_print(render.out.as_deref(), "operator.yaml", &body, |target| {
-                                format!("kubectl apply -f {}", target.display())
-                            })?;
-                        }
+                },
+                K8sCmd::Operator(operator) => match operator.cmd.unwrap_or(K8sOperatorCmd::Run) {
+                    K8sOperatorCmd::Run => {
+                        println!("beam operator: reconcile controller running (placeholder)");
                     }
-                }
-                K8sCmd::Instance(instance) => {
-                    match instance.cmd {
-                        K8sInstanceCmd::Render(render) => {
-                            let name = render.name.as_deref().unwrap_or("beam");
-                            let namespace = render.namespace.as_deref().unwrap_or("default");
-                            let profile_str = match render.profile {
-                                K8sInstanceProfile::Dev => "dev",
-                                K8sInstanceProfile::Staging => "staging",
-                                K8sInstanceProfile::Prod => "prod",
-                                K8sInstanceProfile::Template => "template",
-                            };
-                            let body = render_instance_yaml(profile_str, name, namespace, render.image.as_deref());
-                            write_or_print(render.out.as_deref(), "beam.yaml", &body, |target| {
-                                format!("kubectl apply -f {}", target.display())
-                            })?;
-                        }
+                    K8sOperatorCmd::Render(render) => {
+                        let body = render_operator_yaml(&render.namespace);
+                        write_or_print(render.out.as_deref(), "operator.yaml", &body, |target| {
+                            format!("kubectl apply -f {}", target.display())
+                        })?;
                     }
-                }
+                },
+                K8sCmd::Instance(instance) => match instance.cmd {
+                    K8sInstanceCmd::Render(render) => {
+                        let name = render.name.as_deref().unwrap_or("beam");
+                        let namespace = render.namespace.as_deref().unwrap_or("default");
+                        let profile_str = match render.profile {
+                            K8sInstanceProfile::Dev => "dev",
+                            K8sInstanceProfile::Staging => "staging",
+                            K8sInstanceProfile::Prod => "prod",
+                            K8sInstanceProfile::Template => "template",
+                        };
+                        let body = render_instance_yaml(
+                            profile_str,
+                            name,
+                            namespace,
+                            render.image.as_deref(),
+                        );
+                        write_or_print(render.out.as_deref(), "beam.yaml", &body, |target| {
+                            format!("kubectl apply -f {}", target.display())
+                        })?;
+                    }
+                },
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -882,13 +886,9 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                     Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
                     None => service_backup::RetentionPolicy::default(),
                 };
-                let result = beam::backup::run_backup(
-                    &args.url,
-                    args.token.as_deref(),
-                    &dest,
-                    &retention,
-                )
-                .await?;
+                let result =
+                    beam::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention)
+                        .await?;
                 let mut out = serde_json::to_value(&result)?;
                 if let serde_json::Value::Object(ref mut map) = out {
                     map.insert(
@@ -906,7 +906,11 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         }
         Command::Connect(args) => {
             block_on(async {
-                let service = args.service.clone().or_else(|| args.cr.clone()).context("--service or --cr is required")?;
+                let service = args
+                    .service
+                    .clone()
+                    .or_else(|| args.cr.clone())
+                    .context("--service or --cr is required")?;
                 let secret = match args.secret.clone() {
                     Some(s) => Some(s),
                     None => match &args.cr {
@@ -936,7 +940,8 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 ]);
                 pf_cmd.stdout(std::process::Stdio::null());
                 pf_cmd.stderr(std::process::Stdio::null());
-                let _forward = cli_std::connect::ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
+                let _forward = cli_std::connect::ChildGuard::spawn(&mut pf_cmd)
+                    .context("start kubectl port-forward")?;
                 cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
                 let target = QueryTarget {
@@ -949,7 +954,9 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                             secret.as_deref(),
                             args.role.into(),
                             Some(c),
-                        ).ok().flatten()
+                        )
+                        .ok()
+                        .flatten()
                     }),
                     context: args.context.clone(),
                     namespace: Some(args.namespace.clone()),
@@ -958,7 +965,10 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 };
 
                 let base_url = format!("http://127.0.0.1:{local_port}");
-                let (program, rest) = args.command.split_first().context("wrapped command is empty")?;
+                let (program, rest) = args
+                    .command
+                    .split_first()
+                    .context("wrapped command is empty")?;
                 let mut child_cmd = std::process::Command::new(program);
                 child_cmd.args(rest);
                 child_cmd.env("BEAM_URL", &base_url);
@@ -976,27 +986,42 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         Command::Query(args) => {
             block_on(async {
                 match args.command {
-                    QueryCommand::Collections(col_args) => {
-                        match col_args.command {
-                            QueryCollectionsCommand::List(list_args) => {
-                                let url = list_args.target.url.clone().context("--url or BEAM_URL is required")?;
-                                let client = reqwest::Client::new();
-                                let mut req = client.get(format!("{}/v1/collections", url.trim_end_matches('/')));
-                                if let Some(tok) = &list_args.target.token {
-                                    req = req.bearer_auth(tok);
-                                }
-                                let resp = req.send().await?;
-                                if !resp.status().is_success() {
-                                    anyhow::bail!("list collections failed (status {}): {}", resp.status(), resp.text().await?);
-                                }
-                                println!("{}", resp.text().await?);
+                    QueryCommand::Collections(col_args) => match col_args.command {
+                        QueryCollectionsCommand::List(list_args) => {
+                            let url = list_args
+                                .target
+                                .url
+                                .clone()
+                                .context("--url or BEAM_URL is required")?;
+                            let client = reqwest::Client::new();
+                            let mut req =
+                                client.get(format!("{}/v1/collections", url.trim_end_matches('/')));
+                            if let Some(tok) = &list_args.target.token {
+                                req = req.bearer_auth(tok);
                             }
+                            let resp = req.send().await?;
+                            if !resp.status().is_success() {
+                                anyhow::bail!(
+                                    "list collections failed (status {}): {}",
+                                    resp.status(),
+                                    resp.text().await?
+                                );
+                            }
+                            println!("{}", resp.text().await?);
                         }
-                    }
+                    },
                     QueryCommand::Query(query_args) => {
-                        let url = query_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let url = query_args
+                            .target
+                            .url
+                            .clone()
+                            .context("--url or BEAM_URL is required")?;
                         let client = reqwest::Client::new();
-                        let mut req = client.post(format!("{}/v1/collections/{}/query", url.trim_end_matches('/'), query_args.collection));
+                        let mut req = client.post(format!(
+                            "{}/v1/collections/{}/query",
+                            url.trim_end_matches('/'),
+                            query_args.collection
+                        ));
                         if let Some(tok) = &query_args.target.token {
                             req = req.bearer_auth(tok);
                         }
@@ -1006,20 +1031,35 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                         }));
                         let resp = req.send().await?;
                         if !resp.status().is_success() {
-                            anyhow::bail!("query failed (status {}): {}", resp.status(), resp.text().await?);
+                            anyhow::bail!(
+                                "query failed (status {}): {}",
+                                resp.status(),
+                                resp.text().await?
+                            );
                         }
                         println!("{}", resp.text().await?);
                     }
                     QueryCommand::Upsert(upsert_args) => {
-                        let url = upsert_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let url = upsert_args
+                            .target
+                            .url
+                            .clone()
+                            .context("--url or BEAM_URL is required")?;
                         let mut items = Vec::new();
                         for raw in upsert_args.items {
-                            let (id, vec_str) = raw.split_once(':').context("invalid item format (expected ID:VEC)")?;
-                            let vector: Vec<f32> = serde_json::from_str(vec_str).context("failed to parse vector list")?;
+                            let (id, vec_str) = raw
+                                .split_once(':')
+                                .context("invalid item format (expected ID:VEC)")?;
+                            let vector: Vec<f32> = serde_json::from_str(vec_str)
+                                .context("failed to parse vector list")?;
                             items.push(serde_json::json!({ "id": id, "vector": vector }));
                         }
                         let client = reqwest::Client::new();
-                        let req = client.post(format!("{}/v1/collections/{}/vectors", url.trim_end_matches('/'), upsert_args.collection));
+                        let req = client.post(format!(
+                            "{}/v1/collections/{}/vectors",
+                            url.trim_end_matches('/'),
+                            upsert_args.collection
+                        ));
                         let req = if let Some(tok) = &upsert_args.target.token {
                             req.bearer_auth(tok)
                         } else {
@@ -1028,20 +1068,37 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                         let req = req.json(&serde_json::json!({ "items": items }));
                         let resp = req.send().await?;
                         if !resp.status().is_success() {
-                            anyhow::bail!("upsert failed (status {}): {}", resp.status(), resp.text().await?);
+                            anyhow::bail!(
+                                "upsert failed (status {}): {}",
+                                resp.status(),
+                                resp.text().await?
+                            );
                         }
                         println!("{}", resp.text().await?);
                     }
                     QueryCommand::Delete(delete_args) => {
-                        let url = delete_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let url = delete_args
+                            .target
+                            .url
+                            .clone()
+                            .context("--url or BEAM_URL is required")?;
                         let client = reqwest::Client::new();
-                        let mut req = client.delete(format!("{}/v1/collections/{}/vectors/{}", url.trim_end_matches('/'), delete_args.collection, delete_args.id));
+                        let mut req = client.delete(format!(
+                            "{}/v1/collections/{}/vectors/{}",
+                            url.trim_end_matches('/'),
+                            delete_args.collection,
+                            delete_args.id
+                        ));
                         if let Some(tok) = &delete_args.target.token {
                             req = req.bearer_auth(tok);
                         }
                         let resp = req.send().await?;
                         if !resp.status().is_success() {
-                            anyhow::bail!("delete failed (status {}): {}", resp.status(), resp.text().await?);
+                            anyhow::bail!(
+                                "delete failed (status {}): {}",
+                                resp.status(),
+                                resp.text().await?
+                            );
                         }
                         println!("{}", resp.text().await?);
                     }
@@ -1052,8 +1109,6 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         }
     }
 }
-
-
 
 /// `beam issue <verb>` — dispatch search/view/create to cli-std. `create` always
 /// tags `project:beam`; `search` defaults to beam's own issues.
@@ -1104,7 +1159,13 @@ fn issue_title(explicit: Option<String>, message: Option<&str>) -> String {
     let Some(message) = message.map(str::trim).filter(|m| !m.is_empty()) else {
         return "beam: issue report".to_string();
     };
-    let head: String = message.lines().next().unwrap_or(message).chars().take(72).collect();
+    let head: String = message
+        .lines()
+        .next()
+        .unwrap_or(message)
+        .chars()
+        .take(72)
+        .collect();
     format!("beam: {head}")
 }
 

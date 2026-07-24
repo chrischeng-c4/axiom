@@ -46,10 +46,14 @@ async fn service_end_to_end() {
     // GPU flat path when a GPU is reachable (this Mac / Metal), else the CPU flat
     // oracle — the graceful GPU-or-CPU choice, identical results.
     let gpu = beam::gpu::GpuContext::new().map(Arc::new);
-    let query_path = if gpu.is_some() { "GPU flat" } else { "CPU flat oracle" };
+    let query_path = if gpu.is_some() {
+        "GPU flat"
+    } else {
+        "CPU flat oracle"
+    };
     eprintln!("beam service test: query path = {query_path}");
 
-    let app = beam::service::router(gpu);
+    let app = beam::service::router(gpu, 8 * 1024 * 1024);
     let server = tokio::spawn(async move {
         beam::service::serve_on(listener, app, std::future::pending::<()>()).await;
     });
@@ -60,11 +64,21 @@ async fn service_end_to_end() {
 
     // 1. Health/readiness probes → 200.
     assert_eq!(
-        client.get(format!("{base}/healthz")).send().await.unwrap().status(),
+        client
+            .get(format!("{base}/healthz"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         200
     );
     assert_eq!(
-        client.get(format!("{base}/readyz")).send().await.unwrap().status(),
+        client
+            .get(format!("{base}/readyz"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         200
     );
 
@@ -132,8 +146,14 @@ async fn service_end_to_end() {
     assert_eq!(ns.len(), 2);
     assert_eq!(ns[0]["id"], "a");
     assert_eq!(ns[1]["id"], "b");
-    let (s0, s1) = (ns[0]["score"].as_f64().unwrap(), ns[1]["score"].as_f64().unwrap());
-    assert!(s0 < s1, "L2 scores must be ascending (smaller = nearer): {s0} !< {s1}");
+    let (s0, s1) = (
+        ns[0]["score"].as_f64().unwrap(),
+        ns[1]["score"].as_f64().unwrap(),
+    );
+    assert!(
+        s0 < s1,
+        "L2 scores must be ascending (smaller = nearer): {s0} !< {s1}"
+    );
     // Payload round-trips on the returned neighbor.
     assert_eq!(ns[0]["payload"]["category"], 1);
     assert_eq!(ns[0]["payload"]["lang"], "en");
@@ -158,7 +178,10 @@ async fn service_end_to_end() {
     assert_eq!(nf[0]["id"], "b");
     assert_eq!(nf[1]["id"], "d");
     assert!(nf.iter().all(|n| n["payload"]["category"] == 2));
-    assert!(nf.iter().all(|n| n["id"] != "a"), "filtered-out `a` must be absent");
+    assert!(
+        nf.iter().all(|n| n["id"] != "a"),
+        "filtered-out `a` must be absent"
+    );
 
     // 3b. Range filter over an integer attribute.
     let qr: Value = client
@@ -199,7 +222,10 @@ async fn service_end_to_end() {
     assert_eq!(nd.len(), 2);
     assert_eq!(nd[0]["id"], "b", "b is nearest once a is deleted");
     assert_eq!(nd[1]["id"], "c");
-    assert!(nd.iter().all(|n| n["id"] != "a"), "deleted `a` must not appear");
+    assert!(
+        nd.iter().all(|n| n["id"] != "a"),
+        "deleted `a` must not appear"
+    );
 
     // 5. Error cases.
     // Wrong query dim → 400.
@@ -240,7 +266,12 @@ async fn service_end_to_end() {
 
     // Drop the collection, verify listing is empty, then restore and verify it returns.
     assert_eq!(
-        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
+        client
+            .delete(format!("{base}/v1/collections/docs"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         200
     );
     let list_empty: Value = client
@@ -276,13 +307,176 @@ async fn service_end_to_end() {
 
     // Drop the collection → 200, and dropping again → 404.
     assert_eq!(
-        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
+        client
+            .delete(format!("{base}/v1/collections/docs"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         200
     );
     assert_eq!(
-        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
+        client
+            .delete(format!("{base}/v1/collections/docs"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         404
     );
+
+    server.abort();
+}
+
+/// #2556: an upsert body over the shared data-plane body cap is rejected
+/// with 413 rather than buffered/accepted, guarding against unbounded
+/// request bodies on the data plane (probes stay exempt/unbounded).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_upsert_body_is_rejected_with_413() {
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("skipping oversized_upsert_body test: cannot bind 127.0.0.1:0 ({e})");
+            return;
+        }
+    };
+    let addr = listener.local_addr().expect("bound local addr");
+
+    // Test with a small body limit (100 KiB) so we don't have to upload 8 MiB.
+    let small_limit = 100 * 1024;
+    let gpu = beam::gpu::GpuContext::new().map(Arc::new);
+    let app = beam::service::router(gpu, small_limit);
+
+    let server = tokio::spawn(async move {
+        beam::service::serve_on(listener, app, std::future::pending::<()>()).await;
+    });
+
+    let client = reqwest::Client::new();
+    let base = format!("http://{addr}");
+    wait_healthy(&client, &base).await;
+
+    // Create a collection first.
+    client
+        .post(format!("{base}/v1/collections"))
+        .json(&json!({ "name": "test", "dim": 3, "metric": "l2" }))
+        .send()
+        .await
+        .unwrap();
+
+    // Build an oversized payload (just over the 100 KiB limit).
+    // One vector item is roughly: {"id":"X","vector":[0.0,0.0,0.0],"payload":{...}}
+    // Let's create many items to exceed the limit.
+    let oversized_id = "a".repeat(100 * 1024 + 1);
+    let result = client
+        .post(format!("{base}/v1/collections/test/vectors"))
+        .header("content-type", "application/json")
+        .body(format!(
+            r#"{{"items":[{{"id":"{oversized_id}","vector":[0.1,0.2,0.3]}}]}}"#
+        ))
+        .send()
+        .await;
+
+    // The Content-Length short-circuit is the point of the layer: the server
+    // answers and closes without reading 100 KiB it has already decided to
+    // refuse. The client is still uploading when that happens, so it races
+    // between reading the 413 and having its own write fail with
+    // ECONNRESET — both outcomes are the same refusal, and asserting only on
+    // the status code makes this test flaky (~1 run in 5).
+    match result {
+        Ok(resp) => {
+            assert_eq!(resp.status(), 413, "oversized upsert must be refused");
+            // Check that the response is the structured error envelope.
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                assert_eq!(body["error"], "payload_too_large");
+            }
+        }
+        Err(err) => assert!(
+            err.is_request(),
+            "expected a transport-level refusal from the early close, got: {err}"
+        ),
+    }
+
+    // Race-free invariant: whichever way the client observed the refusal,
+    // the oversized body never reached the collection. Query and verify
+    // the collection is still empty.
+    let list: Value = client
+        .get(format!("{base}/v1/collections"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let cols = list["collections"].as_array().unwrap();
+    assert_eq!(
+        cols[0]["size"], 0,
+        "the refused body must not be inserted: {list}"
+    );
+
+    server.abort();
+}
+
+/// #2556: an under-limit upsert body succeeds, so the cap doesn't reject
+/// everything (sanity check that the layer is configured correctly and
+/// doesn't block legitimate traffic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn under_limit_upsert_body_succeeds() {
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("skipping under_limit_upsert_body test: cannot bind 127.0.0.1:0 ({e})");
+            return;
+        }
+    };
+    let addr = listener.local_addr().expect("bound local addr");
+
+    // Test with a reasonable body limit.
+    let body_limit = 1024 * 1024; // 1 MiB
+    let gpu = beam::gpu::GpuContext::new().map(Arc::new);
+    let app = beam::service::router(gpu, body_limit);
+
+    let server = tokio::spawn(async move {
+        beam::service::serve_on(listener, app, std::future::pending::<()>()).await;
+    });
+
+    let client = reqwest::Client::new();
+    let base = format!("http://{addr}");
+    wait_healthy(&client, &base).await;
+
+    // Create a collection.
+    client
+        .post(format!("{base}/v1/collections"))
+        .json(&json!({ "name": "test", "dim": 128, "metric": "l2" }))
+        .send()
+        .await
+        .unwrap();
+
+    // Upsert a normal batch of vectors (well under the limit).
+    let resp = client
+        .post(format!("{base}/v1/collections/test/vectors"))
+        .json(&json!({ "items": [
+            { "id": "v1", "vector": vec![0.1; 128] },
+            { "id": "v2", "vector": vec![0.2; 128] },
+        ] }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200, "under-limit upsert must succeed");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["upserted"], 2);
+
+    // Verify the vectors were inserted.
+    let list: Value = client
+        .get(format!("{base}/v1/collections"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let cols = list["collections"].as_array().unwrap();
+    assert_eq!(cols[0]["size"], 2, "under-limit upsert must insert vectors");
 
     server.abort();
 }
