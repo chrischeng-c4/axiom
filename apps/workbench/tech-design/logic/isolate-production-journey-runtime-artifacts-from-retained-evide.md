@@ -52,17 +52,17 @@ changes:
 
 ```mermaid
 ---
-id: workbench-runtime-artifact-isolation-verification
+id: workbench-runtime-artifact-isolation-contract-verification
 requirements:
   retained:
     id: R2
-    text: "Tracked retained evidence is not changed by routine verification."
+    text: "Routine verification leaves the tracked production evidence baseline byte-clean."
     kind: regression
     risk: high
     verify: git diff --exit-code -- apps/workbench/evidence/production-journey/v1
   runtime:
     id: R1
-    text: "Routine production journeys write run-specific artifacts below ignored repository runtime state."
+    text: "Routine journey artifacts are generated below ignored repository-local runtime state."
     kind: regression
     risk: high
     verify: cargo test -p workbench --test production_journey -- --nocapture
