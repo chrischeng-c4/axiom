@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T04:37:30.514666+00:00"
-digest = "sha256:5227f918ce29a5e65e67676ca139bca0faffa178820d6197cdce6f53feab9f32"
-source_digest = "sha256:5227f918ce29a5e65e67676ca139bca0faffa178820d6197cdce6f53feab9f32"
-ir_digest = "sha256:e2d733b7a4a93ad747f2550a04d30cd84755995cf2983f2a7d5c67fcfe4a884b"
+generated_at = "2026-07-24T04:48:15.118007+00:00"
+digest = "sha256:bd07f6e3706c6fbd843e92001b8ebe42610660335c5d4f2945962f327860cade"
+source_digest = "sha256:bd07f6e3706c6fbd843e92001b8ebe42610660335c5d4f2945962f327860cade"
+ir_digest = "sha256:aedcedf03e0b506a3031c1a5c8c96d283477b5fd1979c089698dd42e319b11f8"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -167,6 +167,12 @@ section_count = 0
 path = "logic/render-aw-typed-artifacts-as-optional-read-only-workbench-contex.md"
 digest = "sha256:91a7cfdee6d5192fab7d40f0a0dd363002817b259ac151aaf4af08fdb301ccd1"
 ir_digest = "sha256:00a388debbf5cbdc90563daebb2a08412de2b3bdf89b01143fd988fe0b22aabb"
+section_count = 3
+
+[[files]]
+path = "logic/render-recursive-terminal-panes-with-explicit-split-controls.md"
+digest = "sha256:4703eda6779598adf8b9920b6f592648072b99fbc4cd4af0f6b80d341d38a4a1"
+ir_digest = "sha256:ff47065d2f7878450d0b190f9db9f00a32bebccc31901a46284e9a7232d159a0"
 section_count = 3
 
 [[files]]
