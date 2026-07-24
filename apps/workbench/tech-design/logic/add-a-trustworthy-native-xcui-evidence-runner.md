@@ -39,6 +39,9 @@ flowchart TD
     screenshot[Named keepAlways screenshot] -->|xcresult attachment| execute
 ```
 
+The runner resolves the repository from its own location, creates a unique directory beneath `.axiom-workbench/test-artifacts/ui-tests`, builds `workbench-core`, and passes that exact binary through `WORKBENCH_CORE_BIN` to the Xcode build and test. It supplies an explicit macOS arm64 destination and result bundle path so evidence is never inferred from DerivedData logs.
+
+After `xcodebuild test` returns, the runner requires the `.xcresult` directory and queries `xcrun xcresulttool get test-results summary`. It extracts the executed and failed counts with a bounded system tool, rejects zero executed tests or any failure, and prints the preserved artifact locations. Each XCUI journey calls one shared screenshot helper that assigns a stable name and `.keepAlways` lifetime before the app is terminated.
 ## Changes
 <!-- type: changes lang: yaml -->
 
