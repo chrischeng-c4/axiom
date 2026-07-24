@@ -1,0 +1,10 @@
+[project]
+name = "python-artifact-structured-failure"
+version = "0.0.0"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml", "requirements.lock"]
+evidence_dir = "evidence"

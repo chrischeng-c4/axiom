@@ -7,6 +7,10 @@
 //! - [`Issue`] / [`IssueType`] / [`IssueState`] / [`IssueFilter`] — wire
 //!   format (also the local issue `{open,closed}/*.md` frontmatter schema)
 //! - [`IssueBackend`] — storage trait implemented by each backend
+//! - [`graph`] — deterministic epic/change ownership and relation projection
+//! - [`planner`] — canonical two-stage epic/change planning projection
+//! - [`planning_transaction`] — digest-bound retry-safe plan publication
+//! - [`ready_graph`] — shared epic/backlog ready-leaf selection policy
 //! - [`backends::LocalBackend`] — reads/writes issue files under a chosen root
 //! - [`backends::GitHubBackend`] — shells out to `gh` CLI (read-only MVP)
 //! - [`remote_read_cache_backend`] — ephemeral `/tmp` cache for remote reads
@@ -24,15 +28,39 @@
 // CODEGEN-BEGIN
 pub mod backend;
 pub mod backends;
+pub mod graph;
 pub mod labels;
 pub mod next_id;
+pub mod planner;
+pub mod planning_transaction;
 pub mod push_through;
+pub mod ready_graph;
 pub mod slug;
 pub mod types;
 
 pub use backend::{sync, IssueBackend, SyncReport};
 pub use backends::{GitHubBackend, GitLabBackend, LocalBackend};
+pub use graph::{
+    build_work_item_graph, dependency_label, duplicate_label, epic_owner_label,
+    explicit_parent_references, issue_declares_parent, issue_key, superseded_by_label,
+    supersedes_label, GraphChange, GraphDiagnostic, GraphEpic, GraphNext, GraphPriority,
+    WorkItemGraph, GRAPH_SCHEMA,
+};
+pub use planner::{
+    build_project_plan, looks_too_large_for_atomic_wi, PlanRequirement, PlannedChange, PlannedEpic,
+    ProjectPlan, ProjectPlanStage, ProposedChange, ProposedEpic, PROJECT_PLAN_SCHEMA,
+};
+pub use planning_transaction::{
+    apply_planning_transaction, build_planning_transaction_manifest,
+    planning_transaction_source_digest, verify_published_planning_transaction,
+    PlanningIssueSnapshot, PlanningMutation, PlanningMutationResult, PlanningTransactionManifest,
+    PlanningTransactionResult, PLANNING_TRANSACTION_SCHEMA,
+};
 pub use push_through::push_through;
+pub use ready_graph::{
+    select_ready_change_leaf, ReadinessBlocker, ReadyChangeLeaf, ReadyGraphError,
+    ReadyGraphSelection,
+};
 pub use types::{
     Issue, IssueErrorCode, IssueFilter, IssuePatch, IssuePhase, IssueSection, IssueState,
     IssueType, ShipStatus,

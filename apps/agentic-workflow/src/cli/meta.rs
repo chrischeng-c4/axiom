@@ -41,6 +41,9 @@ const REPO_CONTRIBUTING_START: &str = "<!-- aw:meta:repo-contributing:start -->"
 const REPO_CONTRIBUTING_END: &str = "<!-- aw:meta:repo-contributing:end -->";
 const PROJECT_README_START: &str = "<!-- aw:meta:project-readme:start -->";
 const PROJECT_README_END: &str = "<!-- aw:meta:project-readme:end -->";
+const PROJECT_BRIEF_START: &str = "<!-- aw:meta:project-brief:start -->";
+const PROJECT_BRIEF_END: &str = "<!-- aw:meta:project-brief:end -->";
+const PROJECT_BRIEF_PLACEHOLDER: &str = "Describe the agent-readable purpose of this project.";
 const PROJECT_CONTRIBUTING_START: &str = "<!-- aw:meta:project-contributing:start -->";
 const PROJECT_CONTRIBUTING_END: &str = "<!-- aw:meta:project-contributing:end -->";
 const PROJECT_CAPABILITIES_START: &str = "<!-- aw:meta:project-capabilities:start -->";
@@ -579,11 +582,30 @@ fn reconcile_producer(
         force_stale,
     )?;
     match desired {
-        DesiredDocument::Unchanged => changes.push(MetaDocChange {
-            path: relative,
-            block: producer.block_id.to_string(),
-            status: "unchanged".to_string(),
-        }),
+        DesiredDocument::Unchanged => {
+            changes.push(MetaDocChange {
+                path: relative.clone(),
+                block: producer.block_id.to_string(),
+                status: "unchanged".to_string(),
+            });
+            if mode == ApplyMode::Check
+                && producer.kind == ProducerKind::ProjectReadme
+                && existing
+                    .as_deref()
+                    .is_some_and(project_readme_has_placeholder_brief)
+            {
+                findings.push(MetaDocFinding {
+                    code: "project_brief_placeholder".to_string(),
+                    path: relative,
+                    message: "project README still contains the unresolved Brief placeholder"
+                        .to_string(),
+                    remediation: format!(
+                        "Replace the text between `{PROJECT_BRIEF_START}` and `{PROJECT_BRIEF_END}` in {} with the project purpose, then run `aw meta sync`.",
+                        producer.filename
+                    ),
+                });
+            }
+        }
         DesiredDocument::Malformed(message) => findings.push(MetaDocFinding {
             code: "managed_block_malformed".to_string(),
             path: relative.clone(),
@@ -744,7 +766,14 @@ fn desired_document(
             DesiredDocument::Changed(desired)
         });
     }
-    let block = render_block(target_name, producer);
+    let mut block = render_block(target_name, producer);
+    if producer.kind == ProducerKind::ProjectReadme {
+        if let Some(existing) = existing {
+            if let Some(brief) = project_brief_from_existing_document(existing) {
+                block = replace_project_brief(&block, &brief)?;
+            }
+        }
+    }
     let Some(existing) = existing else {
         if producer.kind == ProducerKind::RepoMetaMatrix {
             return Ok(DesiredDocument::Unchanged);
@@ -819,7 +848,7 @@ fn render_block(target_name: &str, producer: &MetaDocProducer) -> String {
         ),
         ProducerKind::RepoMetaMatrix => render_meta_doc_ownership_table(),
         ProducerKind::ProjectReadme => format!(
-            "## Brief\n\nDescribe the agent-readable purpose of {name}.\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md).\n\n## Capability Contract\n\nProduct promises and work roots live in [CAPABILITIES.md](CAPABILITIES.md)."
+            "## Brief\n\n{PROJECT_BRIEF_START}\n{PROJECT_BRIEF_PLACEHOLDER}\n{PROJECT_BRIEF_END}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md).\n\n## Capability Contract\n\nProduct promises and work roots live in [CAPABILITIES.md](CAPABILITIES.md)."
         ),
         ProducerKind::ProjectContributing => format!(
             "## Brief\n\nProject-local contribution contract for {name}.\n\n## Authoritative Inputs\n\n- Product promises and work roots: [CAPABILITIES.md](CAPABILITIES.md)\n- Project orientation: [README.md](README.md)\n\n## Local Workflow\n\nFollow repository-level agent guidance and keep project-specific rules here.\n\n## Verification\n\nList the narrow commands that prove changes to {name}."
@@ -838,6 +867,63 @@ fn render_block(target_name: &str, producer: &MetaDocProducer) -> String {
         inner.trim_end(),
         producer.end_marker
     )
+}
+
+fn project_brief_from_existing_document(document: &str) -> Option<String> {
+    project_brief_between_markers(document)
+        .filter(|brief| !is_placeholder_brief(brief))
+        .or_else(|| {
+            document
+                .split("## Brief")
+                .skip(1)
+                .filter_map(|section| {
+                    let brief = section
+                        .lines()
+                        .skip_while(|line| line.trim().is_empty())
+                        .take_while(|line| !line.trim_start().starts_with("## "))
+                        .filter(|line| !line.trim_start().starts_with("<!--"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .trim()
+                        .to_string();
+                    (!brief.is_empty() && !is_placeholder_brief(&brief)).then_some(brief)
+                })
+                .next()
+        })
+}
+
+fn project_readme_has_placeholder_brief(document: &str) -> bool {
+    project_brief_between_markers(document).is_some_and(|brief| is_placeholder_brief(&brief))
+}
+
+fn project_brief_between_markers(document: &str) -> Option<String> {
+    let start = document.find(PROJECT_BRIEF_START)? + PROJECT_BRIEF_START.len();
+    let end = document[start..].find(PROJECT_BRIEF_END)? + start;
+    Some(document[start..end].trim().to_string())
+}
+
+fn is_placeholder_brief(brief: &str) -> bool {
+    brief.trim() == PROJECT_BRIEF_PLACEHOLDER
+        || brief
+            .trim()
+            .starts_with("Describe the agent-readable purpose of ")
+}
+
+fn replace_project_brief(block: &str, brief: &str) -> Result<String> {
+    let start = block
+        .find(PROJECT_BRIEF_START)
+        .context("project README block is missing the Brief start marker")?
+        + PROJECT_BRIEF_START.len();
+    let end = block[start..]
+        .find(PROJECT_BRIEF_END)
+        .context("project README block is missing the Brief end marker")?
+        + start;
+    Ok(format!(
+        "{}\n{}\n{}",
+        &block[..start],
+        brief.trim(),
+        &block[end..]
+    ))
 }
 
 fn replace_marker_block(
@@ -1037,6 +1123,62 @@ mod tests {
     }
 
     #[test]
+    fn meta_project_brief_slot_is_durable_and_projects_to_root_table() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = args_for("apps/demo", false);
+        let scope = resolve_scope(temp.path(), &args).unwrap();
+        execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+
+        let project_readme = temp.path().join("apps/demo/README.md");
+        let initialized = fs::read_to_string(&project_readme).unwrap();
+        assert!(initialized.contains(PROJECT_BRIEF_START));
+        assert!(initialized.contains(PROJECT_BRIEF_PLACEHOLDER));
+
+        fs::write(
+            temp.path().join("aw.toml"),
+            "[[projects]]\nname = \"demo\"\npath = \"apps/demo\"\n",
+        )
+        .unwrap();
+        let repo_readme = temp.path().join("README.md");
+        let mut root = fs::read_to_string(&repo_readme).unwrap();
+        root.push_str(&format!(
+            "\n{}\n{}\n",
+            doc_mirror::PROJECTS_TABLE_START,
+            doc_mirror::PROJECTS_TABLE_END
+        ));
+        fs::write(&repo_readme, root).unwrap();
+
+        fs::write(
+            &project_readme,
+            initialized.replace(
+                PROJECT_BRIEF_PLACEHOLDER,
+                "Demo gives agents a durable, concise project purpose.",
+            ),
+        )
+        .unwrap();
+        execute(temp.path(), &scope, &args, ApplyMode::Sync).unwrap();
+
+        let projected = fs::read_to_string(&repo_readme).unwrap();
+        assert!(projected.contains("Demo gives agents a durable, concise project purpose."));
+        let clean = execute(temp.path(), &scope, &args, ApplyMode::Check).unwrap();
+        assert!(clean.findings.is_empty(), "{:#?}", clean.findings);
+
+        fs::write(
+            &project_readme,
+            fs::read_to_string(&project_readme).unwrap().replace(
+                "Demo gives agents a durable, concise project purpose.",
+                PROJECT_BRIEF_PLACEHOLDER,
+            ),
+        )
+        .unwrap();
+        let blocked = execute(temp.path(), &scope, &args, ApplyMode::Check).unwrap();
+        assert!(blocked
+            .findings
+            .iter()
+            .any(|finding| finding.code == "project_brief_placeholder"));
+    }
+
+    #[test]
     fn meta_sync_is_byte_idempotent_and_preserves_human_regions() {
         let temp = tempfile::tempdir().unwrap();
         let args = args_for("apps/demo", false);
@@ -1069,6 +1211,16 @@ mod tests {
         let args = args_for("apps/demo", false);
         let scope = resolve_scope(temp.path(), &args).unwrap();
         execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+        let project_readme = temp.path().join("apps/demo/README.md");
+        let project_readme_body = fs::read_to_string(&project_readme).unwrap();
+        fs::write(
+            &project_readme,
+            project_readme_body.replace(
+                PROJECT_BRIEF_PLACEHOLDER,
+                "Demo exercises META-doc drift and repair.",
+            ),
+        )
+        .unwrap();
         let targets = [
             ("AGENTS.md", AW_START_MARKER),
             ("CLAUDE.md", AW_START_MARKER),

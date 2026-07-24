@@ -176,6 +176,7 @@ fn test_td_check_path_mode_smoke() {
         target: spec.to_str().unwrap().to_string(),
         json: true,
         section_type_conformance: false,
+        wi: None,
     };
     // We don't assert exit code (rule registry may flag style), only
     // that the entry point doesn't panic on a syntactically valid path.
@@ -183,7 +184,7 @@ fn test_td_check_path_mode_smoke() {
     // forked process? — too heavy. Just run; if it process::exits, the
     // test process dies. To avoid that, run in a thread that catches
     // unwind only; exit() bypasses unwind so this is best-effort.
-    let _ = td::run_check(args);
+    let _ = td::run_check(args, None);
 }
 
 #[test]
@@ -247,8 +248,9 @@ fn test_td_check_accepts_operations_section_types() {
         target: spec.to_str().unwrap().to_string(),
         json: true,
         section_type_conformance: false,
+        wi: None,
     };
-    let _ = td::run_check(args);
+    let _ = td::run_check(args, None);
 }
 
 /// R4 directory mode: passing a non-existent path returns Err (exit 2 is
@@ -260,8 +262,9 @@ fn test_td_check_unresolvable_target_errors() {
         target: "/this/path/does/not/exist/at/all.md".to_string(),
         json: false,
         section_type_conformance: false,
+        wi: None,
     };
-    let result = td::run_check(args);
+    let result = td::run_check(args, None);
     // Either Err (anyhow bail) OR a process::exit. We can only assert
     // Err here; if it exits, the test runner reports the harness failure.
     assert!(result.is_err(), "unresolvable target must return Err");

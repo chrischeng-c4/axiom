@@ -41,7 +41,7 @@ scenarios:
   - id: S3
     title: planning output is estimate-free
     given:
-      - "aw wi atomize or aw wi prioritize renders local planning artifacts"
+      - "aw wi plan or a compatibility planning alias renders the canonical local project-plan artifact"
     then:
       - "artifact lines do not summarize agent_minutes or human_attention"
       - "roadmap-sized routing is based on issue type and size heuristics"
@@ -151,15 +151,15 @@ e2e_tests:
   - id: wi-remove-agent-estimate-build
     capability_id: work-item-planning
     claim_id: capability-to-epic-planning
-    command: cargo build -p agentic-workflow --bin aw
+    command: cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture
     assertions:
-      - "the aw binary builds after removing estimate helpers"
+      - "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result"
   - id: wi-remove-agent-estimate-spec-check
     capability_id: work-item-planning
     claim_id: capability-to-epic-planning
-    command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md
+    command: cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture
     assertions:
-      - "the canonical contract remains parseable by td check"
+      - "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement"
 ```
 
 ## Changes

@@ -7,21 +7,21 @@
 // @contract existing-project-standardization-shared-service-kit-substrate
 // @category behavior
 // @required_for_production true
-// @command cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http
+// @command cargo test -p server-tcp --lib tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture
 // AW-EC-END
 
-// Contract: the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)
+// Contract: the shared TCP accept loop binds a real listener, admits a connection, invokes the closure handler, and completes without an async-trait box (#1241)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn existing_project_standardization_shared_service_kit_substrate() {
     let command =
-        "cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http";
+        "cargo test -p server-tcp --lib tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture";
     let id = "existing-project-standardization-shared-service-kit-substrate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

@@ -8,6 +8,7 @@
 //! flag syntax is owned by clap `--help`; this surface never restates it.
 //!
 //! @spec apps/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md
+//! @spec apps/agentic-workflow/tech-design/surface/specs/aw-agent-prompt-contract.md
 
 use crate::Result;
 use clap::{Args, ValueEnum};
@@ -33,6 +34,9 @@ pub enum LlmTopic {
     /// The loop verb: the closed four-leaf root-type enum (wi / capability /
     /// backlog / adhoc) and which verifier each one names.
     Goal,
+    /// The prompt projection: closed vocabulary, symbolic grammar, and the
+    /// boundary that keeps the workflow engine authoritative.
+    Prompt,
 }
 
 /// Output format.
@@ -93,6 +97,11 @@ const TOPICS: &[cli_std::llm::Topic] = &[
         summary: "the loop verb: the four root types and their verifiers",
         body: GOAL_MD,
     },
+    cli_std::llm::Topic {
+        id: "prompt",
+        summary: "the projection: typed lifecycle state rendered for an agent",
+        body: PROMPT_MD,
+    },
 ];
 
 pub fn run(args: LlmArgs) -> Result<()> {
@@ -124,6 +133,7 @@ fn topic_name(topic: LlmTopic) -> &'static str {
         LlmTopic::Ec => "ec",
         LlmTopic::Wi => "wi",
         LlmTopic::Goal => "goal",
+        LlmTopic::Prompt => "prompt",
     }
 }
 
@@ -201,24 +211,24 @@ Aggregate readiness across all dimensions lives in `aw health`.
 For exact flags, run `aw capability --help`.
 "#;
 
-const TD_MD: &str = r#"# aw llm --topic td -- the artifact (how + the running code)
+const TD_MD: &str = r#"# aw llm --topic td -- executable design
 
-Spec defines how; `td` code is the artifact that runs. Implementation is
-generated from the tech-design, and the tree is regenerable. td is
-**caps-agnostic**: it does not reference the capability -- it only has to pass
-ec. Passing ec verify == achieving caps, so td chases ec green, in any shape.
+TD is an executable Python project describing candidate design structure,
+interfaces, components, and unit tests. It lowers through Python AST into
+Python, Rust, or TypeScript CB targets. TD is **caps-agnostic**: it does not
+redefine the capability; it has to satisfy the already-authored EC.
 
 ## Mental model
 
-- The lifecycle is LINEAR: `create -> gen -> fill -> code-check`. There is no
-  review/revise step -- the gate is ec, not a reviewer. Logic and unit-test
-  sections are Mermaid Plus blocks (YAML IR + a rendered diagram).
-- `gen` turns the TD into code. Every in-scope region is either `CODEGEN`
+- The staged lifecycle is `EC -> TD -> EC[TD] -> CB -> EC[CB]`.
+  `EC[TD]` requires behavior and security green before CB generation.
+- `gen` lowers Python TD into code. Every in-scope region is either `CODEGEN`
   (emitted from the spec) or `HANDWRITE` (a named generator gap that codegen
   cannot yet cover). There is no skip state for source ownership.
 - Regenerability invariant: delete the codebase, re-run codegen on the TDs,
   replay HANDWRITE blocks, and the tree is byte-equivalent.
-- Code beauty is irrelevant; ec green is the only truth.
+- TD and CB use ordinary Python project structure rather than YAML/Mermaid as
+  the canonical semantic representation.
 
 ## Where it lives
 
@@ -229,7 +239,7 @@ ec. Passing ec verify == achieving caps, so td chases ec green, in any shape.
 For exact flags, run `aw td --help`.
 "#;
 
-const EC_MD: &str = r#"# aw llm --topic ec -- the verifier (the only gate)
+const EC_MD: &str = r#"# aw llm --topic ec -- executable external contract
 
 EC is what everything trusts. The loop terminates on ec; caps is "achieved"
 iff ec is green; td chases ec green. So ec is the one artifact that decides
@@ -240,26 +250,28 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 | dimension   | question                                  |
 |-------------|-------------------------------------------|
 | behavior    | does it do the right thing? (required)    |
-| benchmark   | is it fast enough?                        |
+| efficiency  | is it efficient enough for its target?   |
 | security    | is it safe?                               |
 | stability   | does it hold up under failure / time?     |
 
 ## Mental model
 
-- ec is two things: the `doc` defines WHAT to test; the `code` is the verifier
-  that runs and yields green / red.
+- EC is authored first as an ordinary executable Python project. Its code is
+  the verifier; it does not need a semantic generation step.
 - What to test is DERIVED FROM caps. That derivation is the single human +
   agent collaboration point (HITL) -- and the only place a review belongs,
   because a wrong ec yields a false green nothing downstream can catch.
 - The approval path is `draft -> fill -> check -> review`. `needs_revision`
-  routes back to bounded `fill`; `accepted` advances to `gen -> verify`.
+  routes back to bounded `fill`; `accepted` advances to staged verification.
   Production-required EC needs digest-bound independent review evidence.
   `ec_review_backing` (either default, agent-first | agent | human, opt-in
   blocking human-only review) picks who may back it; same-agent self-review
   never counts, and a human audit can always reopen an agent-accepted EC.
   `ec_review_mode = "deferred"` queues a pending human review without
   blocking the runner (#1828/#1829/#1859).
-- ec green is the only code-check gate. Code style / fmt are not gates.
+- `EC[TD]` runs behavior and security against TD. After TD generation,
+  stability and efficiency are added; `EC[CB]` runs all applicable dimensions
+  against CB. Rust targets require efficiency by default.
 - Wired per project via `aw.toml` `ec.<category>`; absent -> the
   default test gate. Non-capability scope (delivery, docs) has no behavior ec
   and rides a zero-EC / cold-build lane instead.
@@ -287,7 +299,7 @@ loop converges on ec green.
 ## The decision (driven by ec, not review)
 
     ec green  -> converged   -> aw td code-check <wi>
-    ec red    -> iterating   -> aw td gen <wi> (adapt; never re-run the same fail)
+    ec red    -> iterating   -> repair the owner named by the staged verifier
     blocked   -> HITL        -> surface hitl_question to a human
 
 ## The envelope
@@ -301,7 +313,7 @@ Drive it: `aw goal wi <id>` for one work item, or `aw goal capability
 the `goal` topic for the full root-type map); the linear authoring path is
 `skeleton -> fill -> validate`; unresolved product decisions become HITL.
 There is no WI review or arbitration phase. The implementation path is
-`wi -> ec skeleton/fill/review/gen -> td/codegen -> ec verify -> code-check
+`wi -> ec draft/fill/check/review -> td -> ec[td] -> cb -> ec[cb] -> code-check
 -> parent rollup`; capability is the META-doc goal ledger and `aw health` is
 read-only observation, not an authoring step.
 
@@ -356,6 +368,62 @@ For exact flags, run `aw goal --help`, `aw goal wi --help`, `aw goal
 capability --help`, or `aw goal backlog --help`.
 "#;
 
+const PROMPT_MD: &str = r#"# aw llm --topic prompt -- aw.prompt.v1
+
+`aw.prompt.v1` is the typed projection of lifecycle state into a concise agent
+instruction. It is descriptive only: the AW workflow engine is the sole owner
+of state, transition selection, mutation, and completion. Never evaluate
+the prompt as Python and never invent a command absent from `next.command` or
+`invoke.command`.
+
+## Closed vocabulary
+
+- truth: `unknown` (not yet validly verified), `red` (valid verifier rejected),
+  `green` (valid verifier accepted)
+- terminal level: `stage terminal`, `change closed`, `root complete`
+- owner: `EC`, `TD`, or `CB`; invalid oracle/evidence belongs to EC, while a
+  valid red gate belongs to the target it rejected
+- blocker: `decision`, `approval`, `environment`, `red_gate`,
+  `missing_evidence`
+
+`action == done` can mean a child stage ended.
+Only `completion.workflow_complete == true` means root complete.
+
+## Closed ASCII grammar
+
+| operator | meaning |
+|---|---|
+| `A -> B` | workflow selects B after A |
+| `A --gate-> V == green` | verifier V must be green before transition |
+| `x := value` | bind a projection-local name |
+| `==`, `!=` | equality predicates |
+| `in`, `notin` | finite membership predicates |
+
+The canonical operator set is exactly `->`, `--gate->`, `:=`, `==`, `!=`,
+`in`, and `notin`.
+
+## Python Spec pipeline
+
+```text
+EC := unknown
+EC -> TD
+TD --gate-> EC[TD].behavior == green
+TD --gate-> EC[TD].security == green
+EC[TD] -> CB
+CB --gate-> EC[CB].behavior == green
+CB --gate-> EC[CB].security == green
+CB --gate-> EC[CB].stability == green
+CB --gate-> EC[CB].efficiency in {green, not-applicable}
+completion.workflow_complete == true
+```
+
+EC and TD are ordinary executable Python projects. EC is authored first. TD
+lowers through Python AST to Python, Rust, or TypeScript. CB lives under
+`src/*`, is grouped by domain, and includes unit tests. TD-stage verification
+requires behavior and security; CB-stage verification requires all applicable
+dimensions, with efficiency required by default for Rust targets.
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +463,8 @@ mod tests {
             LlmTopic::Td,
             LlmTopic::Ec,
             LlmTopic::Wi,
+            LlmTopic::Goal,
+            LlmTopic::Prompt,
         ] {
             let md = cli_std::llm::render(
                 "aw",
@@ -465,6 +535,8 @@ mod tests {
             LlmTopic::Td,
             LlmTopic::Ec,
             LlmTopic::Wi,
+            LlmTopic::Goal,
+            LlmTopic::Prompt,
         ] {
             assert_eq!(
                 cli_std::llm::render(
@@ -485,6 +557,95 @@ mod tests {
                 .unwrap(),
                 "{} topic must be pure and deterministic",
                 topic_name(topic)
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_topic_public_renderer_pins_closed_language() {
+        let md = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "prompt",
+            cli_std::llm::Format::Md,
+        )
+        .unwrap();
+        let json = cli_std::llm::render(
+            "aw",
+            env!("AW_BUILD_VERSION"),
+            TOPICS,
+            "prompt",
+            cli_std::llm::Format::Json,
+        )
+        .unwrap();
+        let body = serde_json::from_str::<serde_json::Value>(&json).unwrap()["body"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(body, md);
+
+        let vocabulary = md
+            .split_once("## Closed vocabulary\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\n## Closed ASCII grammar")
+            .unwrap()
+            .0;
+        assert_eq!(
+            vocabulary,
+            r#"- truth: `unknown` (not yet validly verified), `red` (valid verifier rejected),
+  `green` (valid verifier accepted)
+- terminal level: `stage terminal`, `change closed`, `root complete`
+- owner: `EC`, `TD`, or `CB`; invalid oracle/evidence belongs to EC, while a
+  valid red gate belongs to the target it rejected
+- blocker: `decision`, `approval`, `environment`, `red_gate`,
+  `missing_evidence`
+
+`action == done` can mean a child stage ended.
+Only `completion.workflow_complete == true` means root complete."#
+        );
+
+        let grammar = md
+            .split_once("## Closed ASCII grammar\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\n## Python Spec pipeline")
+            .unwrap()
+            .0;
+        assert_eq!(
+            grammar,
+            "| operator | meaning |\n\
+|---|---|\n\
+| `A -> B` | workflow selects B after A |\n\
+| `A --gate-> V == green` | verifier V must be green before transition |\n\
+| `x := value` | bind a projection-local name |\n\
+| `==`, `!=` | equality predicates |\n\
+| `in`, `notin` | finite membership predicates |\n\n\
+The canonical operator set is exactly `->`, `--gate->`, `:=`, `==`, `!=`,\n\
+`in`, and `notin`."
+        );
+        assert!(md.contains(
+            "the AW workflow engine is the sole owner\nof state, transition selection, mutation, and completion"
+        ));
+
+        let expected_pipeline = "```text\n\
+EC := unknown\n\
+EC -> TD\n\
+TD --gate-> EC[TD].behavior == green\n\
+TD --gate-> EC[TD].security == green\n\
+EC[TD] -> CB\n\
+CB --gate-> EC[CB].behavior == green\n\
+CB --gate-> EC[CB].security == green\n\
+CB --gate-> EC[CB].stability == green\n\
+CB --gate-> EC[CB].efficiency in {green, not-applicable}\n\
+completion.workflow_complete == true\n\
+```";
+        assert!(md.contains(expected_pipeline));
+        for lookalike in ['→', '⇒', '⟶', '∈', '≠', '≔'] {
+            assert!(
+                !md.contains(lookalike),
+                "public prompt contains non-canonical operator `{lookalike}`"
             );
         }
     }
@@ -540,6 +701,49 @@ mod tests {
                     "{name} still advertises removed product semantics `{removed}`",
                 );
             }
+        }
+    }
+
+    // @spec aw-agent-prompt-contract.md
+    #[test]
+    fn prompt_topic_defines_closed_language() {
+        for term in [
+            "aw.prompt.v1",
+            "unknown",
+            "red",
+            "green",
+            "stage terminal",
+            "change closed",
+            "root complete",
+            "decision",
+            "approval",
+            "environment",
+            "red_gate",
+            "missing_evidence",
+            "EC -> TD",
+            "EC[TD]",
+            "EC[CB]",
+            "completion.workflow_complete == true",
+            "sole owner",
+        ] {
+            assert!(
+                PROMPT_MD.contains(term),
+                "prompt topic must define canonical term `{term}`"
+            );
+        }
+        for operator in ["->", "--gate->", ":=", "==", "!=", "in", "notin"] {
+            assert!(
+                PROMPT_MD.contains(&format!("`{operator}`")),
+                "prompt topic must define canonical operator `{operator}`"
+            );
+        }
+        for stale in ["Mermaid Plus", "YAML IR", "ec skeleton/fill/review/gen"] {
+            assert!(
+                ![MODEL_MD, TD_MD, EC_MD, WI_MD, GOAL_MD, PROMPT_MD]
+                    .iter()
+                    .any(|topic| topic.contains(stale)),
+                "orientation must not teach stale lifecycle wording `{stale}`"
+            );
         }
     }
 }

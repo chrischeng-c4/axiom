@@ -1,16 +1,11 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/goal_backlog_test.md#source
 // CODEGEN-BEGIN
 //! `aw goal backlog --project <p>` fixture proof (#1899 R7, AC6): a mixed
-//! open backlog -- one HITL-blocked change WI, one runnable change WI, and
-//! one open epic -- drains deterministically. A single invocation parks the
-//! blocked WI (recording its reason) and dispatches the first non-blocked
-//! candidate in priority/id order; once that candidate closes, the next
-//! invocation advances to the epic (routed through the existing atomize
-//! dispatch rule); once the epic closes too, the final invocation reports
-//! terminal `completion.workflow_complete = true` and names the still-open
-//! parked WI plus its reason. No invocation ever spins (each is one bounded
-//! probe-and-select tick) or completes prematurely while the blocked WI is
-//! still open and unresolved.
+//! reviewed graph -- one HITL-blocked change and one runnable sibling under
+//! one prioritized epic -- drains deterministically. The first invocation
+//! parks the blocked leaf and dispatches the runnable sibling. Once runnable
+//! closes, later invocations remain terminal with the blocked leaf reported;
+//! the open epic is never redispatched for atomization.
 
 use std::path::Path;
 use std::process::Command;
@@ -73,7 +68,8 @@ fn write_fixture_aw_toml_with_local_issue_platform(root: &Path, project: &str) {
     std::fs::write(
         root.join("aw.toml"),
         format!(
-            "[[projects]]\nname = \"{project}\"\npath = \".\"\n\n\
+            "[agentic_workflow.workspace]\nmode = \"in_place\"\n\n\
+             [[projects]]\nname = \"{project}\"\nlabel = \"app:{project}\"\npath = \".\"\n\n\
              [[projects.workspaces]]\nname = \"{project}\"\npaths = [\"**\"]\ntarget = \"rust\"\n\n\
              [agentic_workflow.issue_platform]\ntype = \"local\"\n"
         ),
@@ -81,12 +77,25 @@ fn write_fixture_aw_toml_with_local_issue_platform(root: &Path, project: &str) {
     .unwrap();
 }
 
+fn structured_change_body(scope: &str) -> String {
+    format!(
+        "## Capability Alignment\n\n\
+         Capability: workflow-root-runner\n\
+         Capability Gap: reviewed-graph-selection\n\
+         Progress Evidence: compiled backlog fixture\n\n\
+         ## Scope\n\n\
+         ### In Scope\n- {scope}\n\n\
+         ### Out of Scope\n- Unrelated graph behavior.\n\n\
+         ## Acceptance Criteria\n\n- {scope} is observable.\n\n\
+         ## Reference Context\n\n- Issue #2389\n"
+    )
+}
+
 /// `github_id` must be set: `LocalBackend::create` silently demotes any
 /// `state: Open` issue with no `github_id`/`gitlab_id` to `Draft` (real
-/// local-only drafts start unpublished), which would drop it out of
-/// `list_open_project_issues`'s `state: Some(IssueState::Open)` filter.
-/// Fabricated numeric ids also give the fixture a deterministic id-order
-/// tiebreak matching `list_open_project_issues`'s sort.
+/// local-only drafts start unpublished), which would drop it out of the
+/// planner and graph's open issue inventory. Fabricated numeric ids also give
+/// the fixture stable issue-platform identity and deterministic graph order.
 fn base_issue(issue_type: IssueType, slug: &str, github_id: u64, labels: Vec<String>) -> Issue {
     Issue {
         issue_type,
@@ -144,6 +153,62 @@ fn run_backlog(aw_bin: &str, root: &Path, project: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("stdout is not a single JSON envelope: {e}\nstdout:\n{stdout}"))
 }
 
+fn run_json(aw_bin: &str, root: &Path, args: &[&str]) -> serde_json::Value {
+    let output = Command::new(aw_bin)
+        .args(args)
+        .current_dir(root)
+        .env(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env("AW_AGENT_ID", "author-agent")
+        .output()
+        .expect("spawn aw fixture command");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stdout={stdout}\nstderr={stderr}");
+    if let Ok(value) = serde_json::from_str(stdout.trim()) {
+        return value;
+    }
+    stdout
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .unwrap_or_else(|| panic!("aw fixture command did not emit JSON: {stdout}"))
+}
+
+fn publish_reviewed_graph(aw_bin: &str, root: &Path) {
+    let plan = run_json(aw_bin, root, &["wi", "plan", "--project", "demo", "--json"]);
+    let payload_path = std::path::PathBuf::from(plan["payload_path"].as_str().unwrap());
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&payload_path).unwrap()).unwrap();
+    payload["decision"] = serde_json::Value::String("accepted".to_string());
+    payload["reviewed_by"] = serde_json::Value::String("independent-reviewer".to_string());
+    payload["summary"] = serde_json::Value::String(
+        "Reviewed the exact backlog graph and transaction manifest.".to_string(),
+    );
+    for key in [
+        "scope_coverage",
+        "bounded_candidates",
+        "tracker_reconciliation",
+        "priority_consistent",
+        "no_duplicate_wis",
+        "publication_safe",
+    ] {
+        payload["checklist"][key] = serde_json::Value::Bool(true);
+    }
+    payload["findings"] = serde_json::Value::Array(Vec::new());
+    std::fs::write(
+        &payload_path,
+        format!("{}\n", serde_json::to_string_pretty(&payload).unwrap()),
+    )
+    .unwrap();
+    let evidence = payload_path.to_string_lossy().to_string();
+    let applied = run_json(
+        aw_bin,
+        root,
+        &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
+    );
+    assert_eq!(applied["transaction"]["status"], "complete");
+}
+
 #[tokio::test]
 async fn goal_backlog_drains_runnable_blocked_and_epic_mix() {
     let Some((git, aw_bin)) = skip_unless_binaries() else {
@@ -158,11 +223,22 @@ async fn goal_backlog_drains_runnable_blocked_and_epic_mix() {
 
     let backend = LocalBackend::from_project_root(root);
 
-    // Alphabetically first so it sorts to the front of the priority-tied
-    // (no priority label -> rank 4 for all three) drain order. Carries the
-    // project label (so `list_open_project_issues` can even see it -- a
-    // WI missing the project label entirely is invisible to this query, not
-    // a per-project "blocked" candidate) plus an `<!-- aw:loop-state -->`
+    let mut epic = base_issue(
+        IssueType::Epic,
+        "ccc-epic-wi",
+        103,
+        vec![
+            "app:demo".to_string(),
+            "type:epic".to_string(),
+            "priority:p0".to_string(),
+        ],
+    );
+    epic.body = "## Requirements\n\n- R1: park the blocked child.\n- R2: run the ready sibling.\n"
+        .to_string();
+    backend.create(&epic).await.expect("seed epic WI");
+
+    // The high-priority child carries the project and epic labels required by
+    // the reviewed graph, plus an `<!-- aw:loop-state -->`
     // block with `next_action: None`, the one `wi_envelope` path that
     // reports `requires_hitl: true`/`action: "blocked"` for a WI the
     // project's backlog can actually enumerate (`loop_state_envelope`'s
@@ -172,8 +248,14 @@ async fn goal_backlog_drains_runnable_blocked_and_epic_mix() {
         IssueType::Enhancement,
         "aaa-blocked-wi",
         101,
-        vec!["app:demo".to_string()],
+        vec![
+            "app:demo".to_string(),
+            "type:change".to_string(),
+            "epic:103".to_string(),
+            "priority:p0".to_string(),
+        ],
     );
+    blocked.body = structured_change_body("park the blocked child");
     let blocked_loop_state = LoopState {
         version: 1,
         issue_id: "aaa-blocked-wi".to_string(),
@@ -187,24 +269,21 @@ async fn goal_backlog_drains_runnable_blocked_and_epic_mix() {
     // Sorts second: a plain open change WI with a resolvable project label
     // and no phase yet -- `wi_change_lifecycle_step` dispatches it straight
     // to `aw ec draft ...` (no TD/CB state required), never blocking.
-    let runnable = base_issue(
+    let mut runnable = base_issue(
         IssueType::Enhancement,
         "bbb-runnable-wi",
         102,
-        vec!["app:demo".to_string()],
+        vec![
+            "app:demo".to_string(),
+            "type:change".to_string(),
+            "epic:103".to_string(),
+            "priority:p1".to_string(),
+        ],
     );
+    runnable.body = structured_change_body("run the ready sibling");
     backend.create(&runnable).await.expect("seed runnable WI");
 
-    // Sorts third: an open epic with a resolvable project label --
-    // `open_epic_envelope` dispatches `aw wi atomize --project demo`,
-    // never blocking either.
-    let epic = base_issue(
-        IssueType::Epic,
-        "ccc-epic-wi",
-        103,
-        vec!["app:demo".to_string()],
-    );
-    backend.create(&epic).await.expect("seed epic WI");
+    publish_reviewed_graph(&aw_bin, root);
 
     // Tick 1: the drain walks blocked -> runnable -> selects runnable
     // (parking blocked along the way) within this single invocation.
@@ -234,35 +313,18 @@ async fn goal_backlog_drains_runnable_blocked_and_epic_mix() {
         .await
         .expect("close runnable WI");
 
-    // Tick 2: the blocked WI stays parked (still open, still unresolved);
-    // the runnable WI is gone from the open set; the epic is next in
-    // priority order. The drain always hands off via the shared
-    // `aw goal wi <id>` command (never the underlying envelope's own
-    // `next.command`, e.g. `aw wi atomize --project demo`) -- the host
-    // re-observes the epic's actual atomize routing itself once it runs
-    // that command (`open_epic_envelope`, exercised end to end by
-    // `fixture_loop_test.rs`'s epic-rollup coverage).
+    // Tick 2: the blocked WI stays parked and the reviewed epic has no other
+    // ready leaf. The drain is terminal for this pass and never re-atomizes
+    // the already-reviewed epic.
     let second = run_backlog(&aw_bin, root, "demo");
     assert_eq!(
-        second["action"], "dispatch",
-        "expected the open epic to be selected next, got: {second:#?}"
+        second["action"], "done",
+        "expected only the parked reviewed leaf to remain, got: {second:#?}"
     );
-    assert_eq!(second["completion"]["workflow_complete"], false);
-    let second_command = second["next"]["command"]
-        .as_str()
-        .expect("dispatch envelope must carry next.command");
-    assert_eq!(
-        second_command, "aw goal wi 103",
-        "epic candidates must still hand off via the shared `aw goal wi <id>` command"
-    );
+    assert_eq!(second["completion"]["workflow_complete"], true);
+    assert!(!second.to_string().contains("atomize"));
 
-    backend
-        .close("ccc-epic-wi", None)
-        .await
-        .expect("close epic WI");
-
-    // Tick 3: every open WI is now either closed (runnable, epic) or parked
-    // (blocked) -- terminal, reporting the parked set.
+    // Tick 3: repeated invocation remains terminal and reports the parked set.
     let third = run_backlog(&aw_bin, root, "demo");
     assert_eq!(
         third["action"], "done",

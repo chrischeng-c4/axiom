@@ -7,21 +7,21 @@
 // @contract aw-core-client-workitem-artifact-admission-gate
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md
+// @command cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture
 // AW-EC-END
 
-// Contract: workitem artifact gate TD validates as the admission gate claim
+// Contract: the real compiled CB generator rejects an unsupported or unadmitted artifact before issue, Git, or source mutation and accepts a valid admitted WorkItem with exact generated ownership
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_core_client_workitem_artifact_admission_gate() {
     let command =
-        "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md";
+        "cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture";
     let id = "aw-core-client-workitem-artifact-admission-gate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

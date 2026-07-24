@@ -1,0 +1,26 @@
+schema_version: aw.ddd-meta-projection.v1
+projections:
+  - surface: capabilities
+    identity: context:workflow
+    facts: [promise]
+    rendered_markdown: "### Workflow promises moved"
+  - surface: readme
+    identity: context:workflow
+    facts: [overview, journey]
+    rendered_markdown: "# Product overview moved to a different document"
+  - surface: contributing
+    identity: context:workflow
+    facts: [boundary, authoring-rule]
+    rendered_markdown: "## New authoring location"
+  - surface: ec
+    identity: port:verification/contract-runner
+    facts: [external-truth]
+    rendered_markdown: "# External evidence result"
+  - surface: td
+    identity: use-case:workflow/plan-change
+    facts: [executable-construction]
+    rendered_markdown: "### Construction moved"
+  - surface: source
+    identity: aggregate:workflow/work-item
+    facts: [implementation, unit-test]
+    rendered_markdown: "// Source moved without a new logical owner"

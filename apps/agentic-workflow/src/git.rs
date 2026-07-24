@@ -83,17 +83,28 @@ pub fn is_git_repo(project_root: &Path) -> bool {
 /// @spec apps/agentic-workflow/tech-design/core/logic/git.md#source
 pub fn ensure_no_staged_changes(project_root: &Path) -> Result<()> {
     let git_bin = find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let status = std::process::Command::new(git_bin)
+    let output = std::process::Command::new(git_bin)
         .arg("-C")
         .arg(project_root)
-        .args(["diff", "--cached", "--quiet"])
-        .status()
+        .args(["diff", "--cached", "--name-only"])
+        .output()
         .context("git diff --cached failed")?;
-    if status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!("refusing to commit lifecycle changes with pre-existing staged changes")
+    if !output.status.success() {
+        anyhow::bail!(
+            "git diff --cached failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
+    let staged = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !staged.is_empty() {
+        anyhow::bail!(
+            "refusing to commit lifecycle changes with pre-existing staged paths:\n{}\n\
+             Unstage only those paths with `git restore --staged -- <path>` and re-run; unrelated unstaged or untracked work is left untouched.",
+            staged,
+        );
+    }
+    Ok(())
 }
 
 /// Stage exactly `paths`, create `message` as a lifecycle commit, and no-op
@@ -232,6 +243,18 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn init_git_repo(root: &Path) -> bool {
+        let Some(git) = find_git_bin() else {
+            return false;
+        };
+        std::process::Command::new(git)
+            .args(["init", "-q"])
+            .current_dir(root)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn find_bin_on_path_scans_path_without_shelling_out_to_which() {
         let dir = TempDir::new().unwrap();
@@ -240,6 +263,30 @@ mod tests {
         let path_env = std::env::join_paths([dir.path()]).unwrap();
 
         assert_eq!(find_bin_on_path("git", Some(path_env)), Some(git_path));
+    }
+
+    #[test]
+    fn staged_guard_allows_unstaged_work_and_names_staged_paths() {
+        let dir = TempDir::new().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let review = dir.path().join("ec-review.json");
+        std::fs::write(&review, "{}\n").unwrap();
+        ensure_no_staged_changes(dir.path()).unwrap();
+
+        let git = find_git_bin().unwrap();
+        let staged = std::process::Command::new(git)
+            .args(["add", "ec-review.json"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(staged.status.success());
+        let error = ensure_no_staged_changes(dir.path())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("ec-review.json"), "{error}");
+        assert!(error.contains("git restore --staged"), "{error}");
     }
 }
 

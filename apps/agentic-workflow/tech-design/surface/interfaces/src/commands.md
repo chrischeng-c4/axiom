@@ -21,8 +21,8 @@ Public API manifest for `apps/agentic-workflow/src/cli/commands.rs` generated fr
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Commands` | apps/agentic-workflow/src/cli/commands.rs | enum | pub | 23 |  |
-| `run_command` | apps/agentic-workflow/src/cli/commands.rs | function | pub | 77 | run_command(cmd: Commands) -> Result<()> |
+| `Commands` | apps/agentic-workflow/src/cli/commands.rs | enum | pub | 25 |  |
+| `run_command` | apps/agentic-workflow/src/cli/commands.rs | function | pub | 87 | run_command(cmd: Commands) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -46,6 +46,7 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::meta;
 use crate::cli::project;
+use crate::cli::review;
 use crate::cli::standard_cli;
 
 /// Agentic Workflow CLI commands
@@ -99,11 +100,18 @@ pub enum Commands {
     #[command(name = "report-issue")]
     ReportIssue(standard_cli::ReportIssueArgs),
 
-    /// Tech-design and generated-code lifecycle
+    /// Tech-design authoring and validation lifecycle.
     Td(crate::cli::td::TdArgs),
+
+    /// Codebase materialization lifecycle: generate, fill, check, and promote.
+    Cb(crate::cli::cb::CbArgs),
 
     /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
     Ec(ec::EcArgs),
+
+    /// Read-only project-profile resolution + report (kind/surface,
+    /// workload, state ownership, replication/consensus, serving role).
+    Review(review::ReviewArgs),
 }
 
 /// Run an Agentic Workflow CLI command
@@ -156,8 +164,14 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
         }
+        Commands::Cb(args) => {
+            crate::cli::cb::run(args).await?;
+        }
         Commands::Ec(args) => {
             ec::run(args)?;
+        }
+        Commands::Review(args) => {
+            review::run_review(args)?;
         }
     }
 

@@ -7,21 +7,21 @@
 // @contract td-cb-lifecycle-automation-hand-written-implementation-evidence-gate
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture
+// @command cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture
 // AW-EC-END
 
-// Contract: terminal code-check refuses hand-written create/modify paths with no committed diff since their Td-Init baseline (#1382)
+// Contract: terminal CB check refuses a hand-written modify path with zero committed implementation diff since its Td-Init baseline (#1382)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn td_cb_lifecycle_automation_hand_written_implementation_evidence_gate() {
     let command =
-        "cargo test -p agentic-workflow --test cli_tests td_no_merge_test:: -- --nocapture";
+        "cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture";
     let id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

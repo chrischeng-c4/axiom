@@ -18,10 +18,10 @@ fn manual_evidence_artifacts_generated_manual_ec_evidence_schema() {
         "cargo test -p agentic-workflow --lib ec_generated_manual_artifact -- --nocapture";
     let id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

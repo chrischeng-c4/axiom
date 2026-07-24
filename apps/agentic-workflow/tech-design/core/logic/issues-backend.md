@@ -72,7 +72,7 @@ requirements:
     risk: low
     verification: test
     notes: |
-      `create --title T --type bug --body B` writes `.aw/issues/bug-T.md` with `state: draft`.
+      `create --title T --type change --body B` writes a workspace-scoped draft with canonical `type:change`.
       Push-through to GitHub/GitLab is resolved from `.aw/config.toml`; there is no public remote selector.
       `--json` returns the `Issue` struct.
   R2:
@@ -237,20 +237,20 @@ scenarios:
     name: Create local draft issue
     verifies: [R1, R7]
     given: |
-      User runs `aw wi create --title "Fix login bug" --type bug --body "Login fails on Safari"`
+      User runs `aw wi create --title "Fix login bug" --type change --body "Login fails on Safari"`
     when: The command completes
     then: |
-      - `.aw/issues/bug-fix-login-bug.md` exists
-      - frontmatter: type=bug, state=draft, id=null, title="Fix login bug"
+      - a workspace-scoped `change-fix-login-bug.md` draft exists
+      - frontmatter: type=change, state=draft, id=null, title="Fix login bug"
       - body: "Login fails on Safari"
       - exit code 0
-      - --json returns {"type":"bug","title":"Fix login bug","state":"draft","id":null,...}
+      - --json returns {"type":"change","title":"Fix login bug","state":"draft","id":null,...}
   S2:
     name: Create push-through uses configured GitHub backend
     verifies: [R1]
     given: "`gh auth status` is authenticated"
     when: |
-      User runs `aw wi create --title "New feature" --type enhancement --body "..."`
+      User runs `aw wi create --title "New feature" --type change --body "..."`
     then: |
       - configured backend push-through calls gh issue create
       - Local file updated with id and url populated from GitHub response
@@ -258,9 +258,9 @@ scenarios:
   S3:
     name: Update metadata locally
     verifies: [R2]
-    given: "`.aw/issues/bug-fix-login-bug.md` exists with state: draft"
+    given: "the workspace-scoped change draft exists with state: draft"
     when: |
-      User runs `aw wi update bug-fix-login-bug --add-label priority:p1 --state open`
+      User runs `aw wi update change-fix-login-bug --add-label priority:p1 --state open`
     then: |
       - frontmatter gains priority:p1 in labels
       - state: open

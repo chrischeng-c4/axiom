@@ -21,19 +21,21 @@ Public API manifest for `apps/agentic-workflow/src/issues/mod.rs` generated from
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `backend` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 25 |  |
-| `backends` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 26 |  |
-| `github_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 238 | github_backend() -> GitHubBackend |
-| `labels` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 27 |  |
-| `local_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 184 | local_backend(project_root: &Path) -> LocalBackend |
-| `make_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 57 | make_backend(     kind: &str,     project_root: &Path,     repo: Option<String>,     host: Option<String>, ) -> Result<Box<dyn IssueBackend>> |
-| `next_id` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 28 |  |
-| `push_through` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 29 |  |
-| `remote_read_cache_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 207 | remote_read_cache_backend(     kind: &str,     repo: Option<&str>,     host: Option<&str>, ) -> LocalBackend |
-| `remote_read_cache_dir` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 192 | remote_read_cache_dir(kind: &str, repo: Option<&str>, host: Option<&str>) -> PathBuf |
-| `resolve_default_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 87 | resolve_default_backend(     project_root: &Path, ) -> Result<(String, Option<String>, Option<String>)> |
-| `slug` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 30 |  |
-| `types` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 31 |  |
+| `backend` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 26 |  |
+| `backends` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 27 |  |
+| `graph` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 28 |  |
+| `github_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 269 | github_backend() -> GitHubBackend |
+| `labels` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 29 |  |
+| `local_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 215 | local_backend(project_root: &Path) -> LocalBackend |
+| `make_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 65 | make_backend(     kind: &str,     project_root: &Path,     repo: Option<String>,     host: Option<String>, ) -> Result<Box<dyn IssueBackend>> |
+| `next_id` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 30 |  |
+| `planner` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 31 |  |
+| `push_through` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 31 |  |
+| `remote_read_cache_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 238 | remote_read_cache_backend(     kind: &str,     repo: Option<&str>,     host: Option<&str>, ) -> LocalBackend |
+| `remote_read_cache_dir` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 223 | remote_read_cache_dir(kind: &str, repo: Option<&str>, host: Option<&str>) -> PathBuf |
+| `resolve_default_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 113 | resolve_default_backend(     project_root: &Path, ) -> Result<(String, Option<String>, Option<String>)> |
+| `slug` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 32 |  |
+| `types` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 33 |  |
 ## Source
 <!-- type: source lang: rust -->
 
@@ -45,11 +47,15 @@ Public API manifest for `apps/agentic-workflow/src/issues/mod.rs` generated from
 //! - [`Issue`] / [`IssueType`] / [`IssueState`] / [`IssueFilter`] — wire
 //!   format (also the local issue `{open,closed}/*.md` frontmatter schema)
 //! - [`IssueBackend`] — storage trait implemented by each backend
+//! - [`graph`] — deterministic epic/change ownership and relation projection
+//! - [`planner`] — canonical two-stage epic/change planning projection
+//! - [`planning_transaction`] — digest-bound retry-safe plan publication
+//! - [`ready_graph`] — shared epic/backlog ready-leaf selection policy
 //! - [`backends::LocalBackend`] — reads/writes issue files under a chosen root
 //! - [`backends::GitHubBackend`] — shells out to `gh` CLI (read-only MVP)
 //! - [`remote_read_cache_backend`] — ephemeral `/tmp` cache for remote reads
 //! - [`make_backend`] — factory that picks a backend from resolved kind + repo + host
-//! - [`resolve_default_backend`] — read `.aw/config.toml` and return the
+//! - [`resolve_default_backend`] — read `aw.toml` and return the
 //!   `(kind, repo, host)` triple to feed into `make_backend`.
 //!
 //! # Agent usage

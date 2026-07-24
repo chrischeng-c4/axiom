@@ -12,6 +12,7 @@
 
 // Contract: run.rs:open_epic_envelope is present in EMIT_REGISTRY
 // Contract: aw wi atomize --project pgpool parses through the real CLI tree
+// Contract: aw conf init --project-label app:workbench parses through the real CLI tree
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_epic_project_label_dispatch_chain() {
@@ -19,10 +20,10 @@ fn aw_epic_project_label_dispatch_chain() {
         "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture";
     let id = "aw-epic-project-label-dispatch-chain";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

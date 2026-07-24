@@ -7,20 +7,21 @@
 // @contract td-cb-lifecycle-automation-self-ec-fixture-loop-gate
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+// @command cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture
 // AW-EC-END
 
-// Contract: fixture-loop e2e proof (#1279) gates aw's own terminal code-check as a hard, required-for-production EC case
+// Contract: a configured required EC case refuses the unchanged CB-filled WorkItem while red without phase or close mutation, then permits terminal close only when green and records the consulted case in the success envelope
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn td_cb_lifecycle_automation_self_ec_fixture_loop_gate() {
-    let command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture";
+    let command =
+        "cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture";
     let id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

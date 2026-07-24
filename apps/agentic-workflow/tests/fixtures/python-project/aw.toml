@@ -1,0 +1,15 @@
+[[projects]]
+name = "python-project"
+path = "."
+td_path = "tech-design"
+cap_path = "CAPABILITIES.md"
+artifact_model = "python-v1"
+
+[[projects.workspaces]]
+name = "python-project"
+paths = ["**"]
+target = "python"
+test_cmd = "python3 -m unittest discover -s tests/unit"
+
+[agentic_workflow.issue_platform]
+type = "local"

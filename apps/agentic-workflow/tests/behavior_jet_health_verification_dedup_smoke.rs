@@ -7,7 +7,7 @@
 // @contract jet-health-verification-dedup-smoke
 // @category behavior
 // @required_for_production false
-// @command cargo test -p agentic-workflow --lib capability
+// @command cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture
 // AW-EC-END
 
 // Contract: health command succeeds or reports only real project blockers
@@ -15,13 +15,14 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn jet_health_verification_dedup_smoke() {
-    let command = "cargo test -p agentic-workflow --lib capability";
+    let command =
+        "cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture";
     let id = "jet-health-verification-dedup-smoke";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

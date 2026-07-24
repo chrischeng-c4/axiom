@@ -19,10 +19,10 @@ fn quality_primitive_metadata_contract_test() {
     let command = "cargo test -p agentic-workflow --lib quality_primitives -- --nocapture";
     let id = "quality-primitive-metadata-contract-test";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

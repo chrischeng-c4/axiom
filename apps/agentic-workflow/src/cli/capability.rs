@@ -1209,6 +1209,9 @@ pub struct CapabilityReport {
     pub format_version: u8,
     pub status: String,
     pub test_gates: ProjectTestGateReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_artifact:
+        Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
     pub production_ready: bool,
     pub production_status: ProductionStatus,
     pub production_scope: Vec<String>,
@@ -5705,16 +5708,19 @@ fn capability_families_for_baselines(
     doc_mirror::CAPABILITY_FAMILIES
         .iter()
         .filter_map(|family| {
-            let baseline_capabilities = family
+            let mut family_baselines = family
                 .baseline_caps
                 .iter()
                 .filter(|capability| baseline_capabilities.iter().any(|id| id == **capability))
                 .map(|capability| (*capability).to_string())
                 .collect::<Vec<_>>();
-            (!baseline_capabilities.is_empty()).then(|| CapabilityFamilyProjection {
+            if baseline_capabilities.iter().any(|id| id == family.id) {
+                family_baselines.insert(0, family.id.to_string());
+            }
+            (!family_baselines.is_empty()).then(|| CapabilityFamilyProjection {
                 id: family.id.to_string(),
                 title: family.title.to_string(),
-                baseline_capabilities,
+                baseline_capabilities: family_baselines,
             })
         })
         .collect()
@@ -5945,6 +5951,11 @@ async fn build_capability_report_inner(
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
     let mut warnings = Vec::new();
+    let python_artifact =
+        crate::services::python_artifact_readiness::evaluate(&project_root, project)?;
+    if let Some(readiness) = &python_artifact {
+        blockers.extend(readiness.blockers.iter().cloned());
+    }
     let profile = match load_capability_profile_report(&project_root, project) {
         Ok(profile) => complete_capability_profile_for_document(profile, &document),
         Err(err) => {
@@ -6119,6 +6130,7 @@ async fn build_capability_report_inner(
         format_version: document.format_version(),
         status: "healthy".to_string(),
         test_gates,
+        python_artifact: python_artifact.clone(),
         production_ready: production_readiness.production_ready,
         production_status: production_readiness.production_status,
         production_scope: production_readiness.production_scope.clone(),
@@ -6153,6 +6165,22 @@ async fn build_capability_report_inner(
         &capability_types,
         include_issue_inventory,
     );
+    if let Some(readiness) = &python_artifact {
+        if let Some(command) = readiness.next_command.as_ref() {
+            report.next_action = CapabilityAction {
+                kind: CapabilityActionKind::RunVerify,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: project.to_string(),
+                command: command.clone(),
+                reason: "Python artifact inventory or digest-bound evidence is not ready"
+                    .to_string(),
+                requires_hitl: false,
+                hitl_question: None,
+            };
+        }
+    }
     if !report.blockers.is_empty()
         || report.next_action.kind != CapabilityActionKind::None
         || verified_count < capability_count
@@ -6217,6 +6245,7 @@ fn capability_map_read_blocked_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -6262,6 +6291,7 @@ fn capability_map_stale_project_config_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -7823,6 +7853,25 @@ fn lifecycle_action_for_work_item(
         );
     }
 
+    // `python-v1` is an explicit project-model opt-in.  Route capability
+    // roots through the same artifact/gate table as `aw goal wi`; backlog
+    // roots already reach this table by probing their selected WI.  Keep the
+    // legacy phase logic below byte-for-byte for projects that do not opt in.
+    if let Ok(project_root) = crate::find_project_root() {
+        if let Ok(Some(step)) = crate::cli::run::python_artifact_lifecycle_step(
+            &project_root,
+            &report.project,
+            work_item,
+            evidence.and_then(|evidence| evidence.phase.as_deref()),
+        ) {
+            return (
+                action_kind_for_lifecycle_command(&step.command),
+                step.command,
+                step.reason,
+            );
+        }
+    }
+
     // issues #916 / #850: derive from the single td_phase transition table
     // instead of a raw-string match, and normalize before matching so a WI
     // parked at a retired CRRR phase (cb_reviewed/cb_revised/cb_arbitrated/
@@ -7841,7 +7890,7 @@ fn lifecycle_action_for_work_item(
         ),
         Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
-            format!("aw td fill {work_item}"),
+            format!("aw cb fill {work_item}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
         // cb_reviewed / cb_revised / cb_arbitrated all normalize to
@@ -7887,10 +7936,7 @@ fn lifecycle_issue_evidence_unresolved(evidence: Option<&CapabilityWiEvidence>) 
 
 fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
     let command = command.trim();
-    if command.starts_with("aw td gen ")
-        || command.starts_with("aw td fill ")
-        || command.starts_with("aw td code-")
-    {
+    if command.starts_with("aw cb ") {
         CapabilityActionKind::RunCb
     } else if command.starts_with("aw ec verify")
         || command.starts_with("aw capability report")
@@ -7906,8 +7952,8 @@ fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
 
 fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
     match td_spec_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some(path) => format!("aw td gen {work_item} --spec-path {}", shell_quote(path)),
-        None => format!("aw td gen {work_item}"),
+        Some(path) => format!("aw cb gen {work_item} --spec-path {}", shell_quote(path)),
+        None => format!("aw cb gen {work_item}"),
     }
 }
 
@@ -11524,6 +11570,7 @@ fn capability_map_readme_resident_report(
         format_version: 0,
         status: "blocked".to_string(),
         test_gates,
+        python_artifact: None,
         production_ready: false,
         production_status: ProductionStatus::NotEvaluated,
         production_scope: Vec::new(),
@@ -13080,6 +13127,7 @@ mod tests {
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -13681,7 +13729,7 @@ traits = ["service", "long_running", "cli_facing", "competitive_replacement", "n
         assert!(profile.traits.contains(&"agent_facing".to_string()));
         assert!(profile
             .required_baseline_caps
-            .contains(&"agent-task-navigation".to_string()));
+            .contains(&"developer-agent-experience".to_string()));
         for unchanged_service_baseline in [
             "http2-api-list",
             "kubernetes-native-deployment",
@@ -13702,7 +13750,7 @@ traits = ["service", "long_running", "cli_facing", "competitive_replacement", "n
             family.id == "developer-agent-experience"
                 && family
                     .baseline_capabilities
-                    .contains(&"agent-task-navigation".to_string())
+                    .contains(&"developer-agent-experience".to_string())
         }));
     }
 
@@ -18170,6 +18218,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18254,6 +18303,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18384,6 +18434,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18490,6 +18541,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::Blocked,
             production_scope: Vec::new(),
@@ -18586,6 +18638,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::Blocked,
             production_scope: Vec::new(),
@@ -18706,6 +18759,7 @@ capability_refs:
             format_version: 2,
             status: "healthy".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("meter"),
+            python_artifact: None,
             production_ready: true,
             production_status: ProductionStatus::Ready,
             production_scope: Vec::new(),
@@ -18803,6 +18857,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -18935,6 +18990,7 @@ capability_refs:
             format_version: 1,
             status: "blocked".to_string(),
             test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            python_artifact: None,
             production_ready: false,
             production_status: ProductionStatus::NotEvaluated,
             production_scope: Vec::new(),
@@ -19096,9 +19152,12 @@ capability_refs:
         assert_eq!(kind, CapabilityActionKind::RunCb);
         assert_eq!(
             command,
-            "aw td gen 57 --spec-path 'apps/agentic-workflow/tech-design/logic/manual.md'"
+            "aw cb gen 57 --spec-path 'apps/agentic-workflow/tech-design/logic/manual.md'"
         );
-        assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+        assert_eq!(
+            reason,
+            "active WI has reviewed TD; continue TD code generation"
+        );
     }
 
     // issue #850: cb_reviewed/cb_revised/cb_arbitrated are retired CRRR
@@ -19221,7 +19280,7 @@ capability_refs:
             issue_type: "enhancement".to_string(),
             state: "open".to_string(),
             phase: Some("td_reviewed".to_string()),
-            expected_command: Some("aw td fill 57".to_string()),
+            expected_command: Some("aw cb fill 57".to_string()),
             title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
         };
 
@@ -19236,7 +19295,7 @@ capability_refs:
         );
 
         assert_eq!(kind, CapabilityActionKind::RunCb);
-        assert_eq!(command, "aw td fill 57");
+        assert_eq!(command, "aw cb fill 57");
         assert_eq!(
             reason,
             "active WI has a workflow expected_command; follow lifecycle lock"
@@ -19287,7 +19346,7 @@ capability_refs:
 
         assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
         assert_eq!(command, "aw wi plan --project jet");
-        assert!(reason.contains("before TD/CB lifecycle"));
+        assert!(reason.contains("before the EC-first TD/codegen lifecycle"));
     }
 
     #[test]

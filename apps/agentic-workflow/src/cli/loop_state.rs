@@ -175,8 +175,7 @@ pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Opt
             // td_phase transition table rather than a hardcoded literal, so
             // this producer stays in sync with the terminal code-check
             // guard it feeds.
-            let base =
-                td_phase::next_phase_command(td_phase::CB_FILLED).unwrap_or("aw td code-check");
+            let base = td_phase::next_phase_command(td_phase::CB_FILLED).unwrap_or("aw cb check");
             let command = if issue_id.is_empty() {
                 // Defensive fallback only: `apply_verification` always seeds
                 // `issue_id`, so this arm should not be reachable from the
@@ -188,7 +187,7 @@ pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Opt
             (LoopStatus::Converged, Some(command))
         }
         LastResult::Red { .. } => {
-            let base = td_phase::next_phase_command(td_phase::TD_CREATED).unwrap_or("aw td gen");
+            let base = td_phase::next_phase_command(td_phase::TD_CREATED).unwrap_or("aw cb gen");
             let command = if issue_id.is_empty() {
                 base.to_string()
             } else {
@@ -236,10 +235,7 @@ mod tests {
     fn decide_green_converges_to_code_check() {
         assert_eq!(
             decide_next_action(&LastResult::Green, "42"),
-            (
-                LoopStatus::Converged,
-                Some("aw td code-check 42".to_string())
-            )
+            (LoopStatus::Converged, Some("aw cb check 42".to_string()))
         );
     }
 
@@ -250,7 +246,7 @@ mod tests {
     fn decide_green_with_no_issue_id_falls_back_to_bare_command() {
         assert_eq!(
             decide_next_action(&LastResult::Green, ""),
-            (LoopStatus::Converged, Some("aw td code-check".to_string()))
+            (LoopStatus::Converged, Some("aw cb check".to_string()))
         );
     }
 
@@ -262,7 +258,7 @@ mod tests {
         };
         assert_eq!(
             decide_next_action(&red, "42"),
-            (LoopStatus::Iterating, Some("aw td gen 42".to_string()))
+            (LoopStatus::Iterating, Some("aw cb gen 42".to_string()))
         );
     }
 
@@ -294,12 +290,12 @@ mod tests {
         );
         assert_eq!(s.iterations.len(), 1);
         assert_eq!(s.status, LoopStatus::Iterating);
-        assert_eq!(s.next_action.as_deref(), Some("aw td gen 1"));
+        assert_eq!(s.next_action.as_deref(), Some("aw cb gen 1"));
 
         s.record_verification(LastResult::Green, None);
         assert_eq!(s.iterations.len(), 2);
         assert_eq!(s.status, LoopStatus::Converged);
-        assert_eq!(s.next_action.as_deref(), Some("aw td code-check 1"));
+        assert_eq!(s.next_action.as_deref(), Some("aw cb check 1"));
         assert_eq!(s.last_result, LastResult::Green);
     }
 
@@ -420,7 +416,7 @@ mod tests {
         assert_eq!(s.issue_id, "188");
         assert_eq!(s.iterations.len(), 1);
         assert_eq!(s.status, LoopStatus::Iterating);
-        assert_eq!(s.next_action.as_deref(), Some("aw td gen 188"));
+        assert_eq!(s.next_action.as_deref(), Some("aw cb gen 188"));
 
         // Re-apply a Green verdict on the same body -> converged, 2nd iteration,
         // block replaced in place (not duplicated). `issue_id` is already
@@ -429,7 +425,7 @@ mod tests {
         let s2 = parse_loop_state(&out2).unwrap();
         assert_eq!(s2.iterations.len(), 2);
         assert_eq!(s2.status, LoopStatus::Converged);
-        assert_eq!(s2.next_action.as_deref(), Some("aw td code-check 188"));
+        assert_eq!(s2.next_action.as_deref(), Some("aw cb check 188"));
         assert_eq!(out2.matches(LOOP_START).count(), 1);
     }
 }

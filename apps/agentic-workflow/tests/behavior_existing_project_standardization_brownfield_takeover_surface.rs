@@ -18,10 +18,10 @@ fn existing_project_standardization_brownfield_takeover_surface() {
         "cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture";
     let id = "existing-project-standardization-brownfield-takeover-surface";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

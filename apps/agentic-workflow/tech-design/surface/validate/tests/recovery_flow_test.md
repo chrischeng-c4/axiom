@@ -57,10 +57,8 @@ fn test_recovery_verbs_present() {
         td.find_subcommand("idle").is_none(),
         "td idle was removed with the old .aw/worktrees recovery model"
     );
-    assert!(
-        cmd.find_subcommand("cb").is_none(),
-        "cb namespace is retired into td"
-    );
+    cmd.find_subcommand("cb")
+        .expect("cb codebase-materialization namespace");
     assert!(
         td.find_subcommand("code-claim").is_none(),
         "td code-claim was folded into td create --from-source (#1273)"
@@ -89,7 +87,7 @@ fn flow_b1_e2e_wi_inventory_adoption() {
 }
 
 /// B2 e2e: `aw td claim --from-path <spec.md>` advances phase to
-/// td_created and emits a dispatch envelope to `aw td gen`.
+/// td_created and emits a dispatch envelope to `aw cb gen`.
 /// Requires a temp git repo with the spec on disk.
 #[test]
 #[ignore = "requires temp git repo + git binary; run manually with --ignored"]

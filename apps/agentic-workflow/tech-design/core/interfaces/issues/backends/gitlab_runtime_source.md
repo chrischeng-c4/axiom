@@ -25,7 +25,9 @@ Public API manifest for `apps/agentic-workflow/src/issues/backends/gitlab.rs` ge
 
 `IssueBackend::write` remains conservative for unmanaged remote labels;
 `IssueBackend::update` selects the explicit-removal write variant so requested
-unmanaged removals become `glab issue update --unlabel` arguments.
+unmanaged removals become `glab issue update --unlabel` arguments. Read
+fixtures normalize every legacy non-epic type label to canonical `change`
+output without mutating the original remote label set.
 
 ### Symbols
 
@@ -49,5 +51,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:gitlab-backend-runtime>"
-    description: "Source template owns GitLab backend runtime behavior and tests, including authoritative IssuePatch label removals."
+    description: "Source template owns GitLab backend runtime behavior and tests, including legacy type compatibility reads and authoritative IssuePatch label removals."
 ```

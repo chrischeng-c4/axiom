@@ -79,7 +79,6 @@ fn legacy_top_level_commands_are_removed() {
         "scaffold-spec",
         "project",
         "caps",
-        "cb",
         "init",
         "sync",
         // #1503: the shared cross-checkout transport is retired without an
@@ -96,7 +95,15 @@ fn legacy_top_level_commands_are_removed() {
 #[test]
 fn workflow_protocol_commands_remain_registered() {
     let cmd = Cli::command();
-    for name in ["health", "capability", "wi", "td", "generator", "conf"] {
+    for name in [
+        "health",
+        "capability",
+        "wi",
+        "td",
+        "cb",
+        "generator",
+        "conf",
+    ] {
         assert!(
             cmd.find_subcommand(name).is_some(),
             "{name} should remain registered"
@@ -144,7 +151,6 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "scaffold-spec",
         "project",
         "caps",
-        "cb",
         "init",
         "sync",
     ] {
@@ -211,7 +217,6 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw scaffold-spec",
         "aw project health",
         "aw caps",
-        "aw cb",
         "aw init",
         "aw sync",
         // #920 (epic #914 slice F): `aw standardize` is retired down to
@@ -317,20 +322,20 @@ fn test_td_merge_parse_fails() {
 }
 
 #[test]
-fn code_artifact_commands_are_inherited_by_td() {
+fn code_artifact_commands_are_owned_by_cb() {
     let cmd = Cli::command();
-    assert!(cmd.find_subcommand("cb").is_none());
+    let cb = cmd.find_subcommand("cb").expect("cb namespace registered");
     let td = cmd.find_subcommand("td").expect("td namespace registered");
-    for name in ["gen", "gen-source", "code-check", "fill"] {
+    for name in ["gen", "gen-source", "check", "fill", "promote"] {
         assert!(
-            td.find_subcommand(name).is_some(),
-            "td {name} should remain registered"
+            cb.find_subcommand(name).is_some(),
+            "cb {name} should remain registered"
         );
     }
-    for name in ["code-review", "code-revise", "code-arbitrate"] {
+    for name in ["gen", "gen-source", "code-check", "fill", "promote"] {
         assert!(
             td.find_subcommand(name).is_none(),
-            "td {name} should not preserve the retired CB CRRR loop"
+            "td {name} should not own codebase lifecycle commands"
         );
     }
 }
@@ -414,8 +419,8 @@ fn public_aggregation_points_remain_registered() {
     assert!(generator.find_subcommand("check").is_some());
     assert!(generator.find_subcommand("request").is_some());
 
-    let td = cmd.find_subcommand("td").expect("td namespace registered");
-    assert!(td.find_subcommand("code-check").is_some());
+    let cb = cmd.find_subcommand("cb").expect("cb namespace registered");
+    assert!(cb.find_subcommand("check").is_some());
 }
 // CODEGEN-END
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md#schema

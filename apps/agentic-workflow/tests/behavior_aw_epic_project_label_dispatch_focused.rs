@@ -13,6 +13,7 @@
 // Contract: the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool
 // Contract: app:mamba and lib:pg retain their existing atomize commands
 // Contract: missing, empty, and whitespace-only project labels return blocked/HITL remediation
+// Contract: a valid unregistered app:workbench identity emits aw conf init --project-label app:workbench
 // Contract: no tested envelope contains --project PROJECT
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
@@ -21,10 +22,10 @@ fn aw_epic_project_label_dispatch_focused() {
         "cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture";
     let id = "aw-epic-project-label-dispatch-focused";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

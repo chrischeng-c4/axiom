@@ -18,10 +18,10 @@ fn project_local_td_and_ec_gates_td_lock_and_external_contract_target_resolution
         "cargo test -p agentic-workflow --lib ec_context_defaults_td_root_to_project_tech_design -- --nocapture";
     let id = "project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

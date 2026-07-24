@@ -51,19 +51,6 @@ pub enum TdCommand {
     Lock(super::td_lock::TdLockArgs),
     /// Adopt an on-disk TD spec into the score lifecycle.
     Claim(TdClaimArgs),
-    /// Generate implementation code from an approved TD spec.
-    Gen(super::cb::CbGenArgs),
-    /// Forward-generate one target source file from a per-file TD source unit.
-    GenSource(super::cb::CbGenSourceArgs),
-    /// Audit code-space files for TD generation drift and HANDWRITE gaps.
-    CodeCheck(super::cb::CbCheckArgs),
-    /// Fill HANDWRITE marker blocks in generated code.
-    Fill(super::cb::CbFillArgs),
-    /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
-    /// closed (byte-equivalence-checked). This is the `promote_handwrite`
-    /// standardization action, homed as a first-class td verb (#919).
-    /// @spec apps/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
-    Promote(PromoteArgs),
     /// Record a bounded preservation audit fixture for the project. This is
     /// the former `aw standardize audit record` action, homed as a
     /// first-class td verb mirroring the `promote` precedent above (#1278,
@@ -247,6 +234,10 @@ pub struct CheckArgs {
     /// `tech-design/surface/specs/score-section-type-registry.md`.
     #[arg(long)]
     pub section_type_conformance: bool,
+    /// Root-owned Python artifact lifecycle WI. A successful Python TD check
+    /// records target generation rather than requiring root re-discovery.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -394,7 +385,7 @@ fn activate_td_workspace_for_lifecycle(
     project_root: &std::path::Path,
     workflow_slug: &str,
 ) -> Result<String> {
-    let current_branch = crate::branch_switch::current_branch(project_root)?;
+    let current_branch = ensure_inplace_td_lifecycle_ready(project_root)?;
     if should_use_td_branch(&current_branch) {
         let aw = super::slug_workspace::enter_workspace_for_verb(
             project_root,
@@ -405,10 +396,26 @@ fn activate_td_workspace_for_lifecycle(
         .context("failed to provision tech-design workspace")?;
         Ok(aw.branch)
     } else {
-        crate::branch_switch::ensure_branch_clean(project_root)
-            .map_err(|e| anyhow::anyhow!("in-place td verb requires clean tree: {}", e))?;
         Ok(current_branch)
     }
+}
+
+/// An off-main project branch is already the active lifecycle workspace, so
+/// it does not need a whole-tree-clean branch-switch gate. Preserve unrelated
+/// unstaged work from concurrent agents, while refusing pre-existing staged
+/// paths that a lifecycle commit could accidentally absorb. Main still needs
+/// the strict check because activating `td-<slug>` changes branches.
+fn ensure_inplace_td_lifecycle_ready(project_root: &std::path::Path) -> Result<String> {
+    let current = crate::branch_switch::current_branch(project_root)?;
+    if should_use_td_branch(&current) {
+        crate::branch_switch::ensure_branch_clean(project_root)
+            .map_err(|e| anyhow::anyhow!("td branch activation requires a clean tree: {e}"))?;
+    } else {
+        crate::git::ensure_no_staged_changes(project_root).map_err(|e| {
+            anyhow::anyhow!("in-place td verb cannot include pre-existing staged paths: {e}")
+        })?;
+    }
+    Ok(current)
 }
 
 /// Activate the `td-<slug>` branch only when invoked from `main`.
@@ -422,86 +429,27 @@ pub(crate) fn td_activate_inplace_if_present(
     slug: &str,
 ) -> Result<()> {
     crate::branch_switch::ensure_branch_clean(project_root)
-        .map_err(|e| anyhow::anyhow!("in-place td verb requires clean tree: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("in-place td verb requires a clean tree: {e}"))?;
     let current = crate::branch_switch::current_branch(project_root)?;
-    if !should_use_td_branch(&current) {
-        return Ok(());
-    }
-
-    let branch = td_branch_name(slug);
-    if !crate::branch_switch::branch_exists_local(project_root, &branch).unwrap_or(false) {
-        anyhow::bail!(
-            "workspace not found: branch '{}' does not exist (run `aw td create {}` first to provision)",
-            branch,
-            slug,
-        );
-    }
-    crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
-    Ok(())
+    activate_td_branch_if_present(project_root, slug, &current)
 }
 
-/// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub(crate) fn td_activate_inplace_allowing_dirty_lifecycle_paths(
+/// Activate an existing TD workspace for an operation that stages only its
+/// declared target paths. On a project branch it leaves unrelated unstaged
+/// work alone; on `main` the normal branch-switch clean-tree rule remains.
+pub(crate) fn td_activate_inplace_for_scoped_mutation(
     project_root: &std::path::Path,
     slug: &str,
-    allowed_rel: &[&str],
 ) -> Result<()> {
-    ensure_clean_or_only_dirty_paths(project_root, allowed_rel).map_err(|e| {
-        anyhow::anyhow!(
-            "in-place td verb requires clean tree or only matching lifecycle-state files \
-             (allowed: {:?}): {}",
-            allowed_rel
-                .iter()
-                .map(|p| normalize_checkout_rel_path(p))
-                .collect::<Vec<_>>(),
-            e
-        )
-    })?;
-    let current = crate::branch_switch::current_branch(project_root)?;
-    if !should_use_td_branch(&current) {
-        return Ok(());
-    }
-
-    let branch = td_branch_name(slug);
-    if !crate::branch_switch::branch_exists_local(project_root, &branch).unwrap_or(false) {
-        anyhow::bail!(
-            "workspace not found: branch '{}' does not exist (run `aw td create {}` first to provision)",
-            branch,
-            slug,
-        );
-    }
-    crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
-    Ok(())
+    let current = ensure_inplace_td_lifecycle_ready(project_root)?;
+    activate_td_branch_if_present(project_root, slug, &current)
 }
 
-/// @spec .aw/tech-design/projects/score/specs/aw-td-extend-dirty-allow-issue-file.md#logic
-///
-/// Payload round-trip files no longer need a dirty-path exception here:
-/// they live under `/tmp/aw/workspaces/<workspace>/payloads` (see
-/// [`crate::shared::workspace::payloads_path`]), which is outside the
-/// project's git status entirely.
-pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
+fn activate_td_branch_if_present(
     project_root: &std::path::Path,
     slug: &str,
-    spec_path: &str,
+    current: &str,
 ) -> Result<()> {
-    let issue_path = canonical_issue_path_for_slug(project_root, slug);
-    let allowed: Vec<&str> = match issue_path.as_deref() {
-        Some(p) => vec![spec_path, p],
-        None => vec![spec_path],
-    };
-    ensure_clean_or_only_dirty_paths(project_root, &allowed).map_err(|e| {
-        anyhow::anyhow!(
-            "in-place td verb requires clean tree or only the dirty spec path \
-             plus matching lifecycle-state files (allowed: {:?}): {}",
-            allowed
-                .iter()
-                .map(|p| normalize_checkout_rel_path(p))
-                .collect::<Vec<_>>(),
-            e
-        )
-    })?;
-    let current = crate::branch_switch::current_branch(project_root)?;
     if !should_use_td_branch(&current) {
         return Ok(());
     }
@@ -514,7 +462,7 @@ pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
             slug,
         );
     }
-    crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
+    crate::branch_switch::switch_or_create_branch(project_root, &branch, current)?;
     Ok(())
 }
 
@@ -559,13 +507,6 @@ fn activate_td_workspace_with_recoverable_skeleton(
     Ok(active)
 }
 
-/// The retired checkout `.aw/issues` tree is no longer a lifecycle dirty-path
-/// exception. Issue working copies now live under the temp-backed
-/// [`LocalBackend`] store, outside git status.
-fn canonical_issue_path_for_slug(_project_root: &std::path::Path, _slug: &str) -> Option<String> {
-    None
-}
-
 fn issue_path_arg(backend: &LocalBackend, issue: &crate::issues::Issue) -> String {
     if !issue.slug.is_empty() {
         return backend.issue_path(issue).to_string_lossy().into_owned();
@@ -578,59 +519,6 @@ fn issue_path_arg(backend: &LocalBackend, issue: &crate::issues::Issue) -> Strin
         .or_else(|| issue.id.clone())
         .unwrap_or_else(|| "unknown".to_string());
     backend.issue_path(&issue).to_string_lossy().into_owned()
-}
-
-/// Permit at most the given set of checkout-relative lifecycle-state paths
-/// to be dirty. Any dirty path outside the allowed set is a hard error.
-/// Pass an empty slice to require a fully clean tree.
-fn ensure_clean_or_only_dirty_paths(
-    project_root: &std::path::Path,
-    allowed_rel: &[&str],
-) -> Result<()> {
-    let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
-    let output = std::process::Command::new(&git)
-        .args(["status", "--porcelain=v1", "--untracked-files=all"])
-        .current_dir(project_root)
-        .output()
-        .with_context(|| format!("running git status in {}", project_root.display()))?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git status failed in {}: {}",
-            project_root.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    let porcelain = String::from_utf8_lossy(&output.stdout).into_owned();
-    let dirty_paths: Vec<String> = porcelain
-        .lines()
-        .filter_map(porcelain_path)
-        .map(normalize_checkout_rel_path)
-        .collect();
-    if dirty_paths.is_empty() {
-        return Ok(());
-    }
-
-    let allowed_norm: Vec<String> = allowed_rel
-        .iter()
-        .map(|p| normalize_checkout_rel_path(p))
-        .collect();
-    if dirty_paths.iter().all(|d| {
-        allowed_norm.contains(d)
-            || allowed_norm
-                .iter()
-                .any(|allowed| allowed.ends_with('/') && d.starts_with(allowed))
-            || (d.ends_with('/') && allowed_norm.iter().any(|allowed| allowed.starts_with(d)))
-    }) {
-        return Ok(());
-    }
-
-    anyhow::bail!(
-        "working tree at {} is dirty outside allowed paths {:?}; porcelain output:\n{}",
-        project_root.display(),
-        allowed_norm,
-        porcelain
-    )
 }
 
 /// Return whether the checkout contains exactly one status record and that
@@ -686,14 +574,6 @@ fn checkout_has_only_exact_untracked_path(
         );
     }
     Ok(whole_tree.stdout == expected)
-}
-
-fn porcelain_path(line: &str) -> Option<&str> {
-    let path = line.get(3..)?.trim();
-    if path.is_empty() {
-        return None;
-    }
-    Some(path.rsplit_once(" -> ").map_or(path, |(_, dst)| dst.trim()))
 }
 
 fn normalize_checkout_rel_path(path: &str) -> String {
@@ -843,8 +723,11 @@ async fn reset_unreachable_td_init(
                 );
             }
         }
-        None => crate::branch_switch::ensure_branch_clean(project_root)
-            .map_err(|e| anyhow::anyhow!("TD lifecycle recovery requires a clean tree: {e}"))?,
+        None => {
+            ensure_inplace_td_lifecycle_ready(project_root).map_err(|e| {
+                anyhow::anyhow!("TD lifecycle recovery cannot include staged work: {e}")
+            })?;
+        }
     }
     let backend = LocalBackend::from_project_root(project_root);
     let mut issue = backend
@@ -3445,34 +3328,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
         | TdCommand::Ast(_)
         | TdCommand::Lock(_)
         | TdCommand::AuditRecord(_) => {}
-        TdCommand::CodeCheck(a) => {
-            // Issue #856d: shared slug-vs-path classifier with cb.rs's
-            // `run_check` instead of a third copy of the same check (issue
-            // #860 removed the dead top-level `CbCommand::Check` arm this
-            // comment used to reference).
-            if let Some(target) = a.target.as_deref() {
-                if super::cb::code_check_target_is_slug(&project_root, target) {
-                    super::workflow_guard::guard_issue_mutation(
-                        &project_root,
-                        Some(("td", target)),
-                    )
-                    .await?;
-                }
-            }
-        }
-        TdCommand::Gen(a) => {
-            if let Some(slug) = a.slug.as_deref() {
-                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", slug)))
-                    .await?;
-            } else {
-                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            }
-        }
-        TdCommand::GenSource(a) => {
-            if !a.dry_run {
-                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            }
-        }
         TdCommand::Create(a) => {
             if a.from_source.is_some() {
                 // Folded `aw td code-claim` (#1273): same "any pending lock
@@ -3484,27 +3339,18 @@ pub async fn run(args: TdArgs) -> Result<()> {
                     .await?;
             }
         }
-        TdCommand::Fill(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::Promote(_) => {
+        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
     let project = args.project.clone();
     match args.command {
         TdCommand::Create(a) => run_create(a, project.as_deref()).await,
-        TdCommand::Check(a) => run_check(a),
+        TdCommand::Check(a) => run_check(a, project.as_deref()),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
-        TdCommand::Gen(a) => super::cb::run_gen(a).await,
-        TdCommand::GenSource(a) => super::cb::run_gen_source(a),
-        TdCommand::CodeCheck(a) => super::cb::run_check(a, project.as_deref()).await,
-        TdCommand::Fill(a) => super::cb_fill::run(a).await,
-        TdCommand::Promote(a) => run_promote(a),
         TdCommand::AuditRecord(a) => {
             super::standardize::run_audit_record(
                 project.as_deref(),
@@ -3526,7 +3372,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
 /// 1 with violations, 2 on invocation error.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-pub fn run_check(args: CheckArgs) -> Result<()> {
+pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()> {
     // R2 of #1212: section-type-conformance dispatch runs before any
     // target resolution — the verb defaults to scanning the project root
     // and treats `target` as an optional positional path.
@@ -3550,6 +3396,58 @@ pub fn run_check(args: CheckArgs) -> Result<()> {
         );
     }
 
+    let candidate = std::path::PathBuf::from(target);
+    let configured_row = if candidate.is_dir() {
+        configured_project
+            .map(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    &project_root,
+                    project,
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let configured_python = configured_row.as_ref().is_some_and(|row| {
+        row.effective_artifact_model() == crate::models::project::ProjectArtifactModel::PythonV1
+    });
+    if candidate.is_dir()
+        && (configured_python
+            || candidate.join("src").is_dir()
+            || candidate.join("pyproject.toml").is_file())
+    {
+        let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
+        if args.json {
+            println!("{}", serde_json::to_string(&ir)?);
+        } else {
+            println!(
+                "Python TD check passed: {} module(s), semantic digest {}",
+                ir.modules.len(),
+                ir.semantic_digest
+            );
+        }
+        if let (Some(row), Some(wi)) = (configured_row.as_ref(), args.wi.as_deref()) {
+            if row.effective_artifact_model()
+                == crate::models::project::ProjectArtifactModel::PythonV1
+            {
+                crate::cli::td_lock::write_project_td_lock_snapshot_at_root(
+                    &project_root,
+                    &row.name,
+                )?;
+                crate::cli::ec::persist_ec_first_next_action(
+                    &project_root,
+                    wi,
+                    format!(
+                        "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                        row.name,
+                    ),
+                )?;
+            }
+        }
+        return Ok(());
+    }
+
     // Disambiguate slug vs path: contains `/` or ends `.md` → path;
     // otherwise slug.
     let looks_like_path = target.contains('/') || target.ends_with(".md");
@@ -3562,11 +3460,36 @@ pub fn run_check(args: CheckArgs) -> Result<()> {
     run_slug_check(target, None, args.json)
 }
 
-/// Run `aw td ast <path>` — parse a TD spec into a `TDAst` and emit JSON.
+/// Run `aw td ast <path>` — parse a Markdown, Python-project, or Python UI TD
+/// into its inspectable IR and emit JSON.
 ///
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
 fn run_ast(args: AstArgs) -> Result<()> {
     let path = std::path::PathBuf::from(&args.path);
+    if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("py") {
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("read Python UI TD {}", path.display()))?;
+        let ir = crate::services::python_ui_td::lower_python_ui_td(&source)?;
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&ir)
+        } else {
+            serde_json::to_string(&ir)
+        }
+        .context("failed to serialise Python UI TD IR")?;
+        println!("{}", json);
+        return Ok(());
+    }
+    if path.is_dir() && (path.join("src").is_dir() || path.join("pyproject.toml").is_file()) {
+        let ir = crate::services::python_td::compile_python_td_project(&path)?;
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&ir)
+        } else {
+            serde_json::to_string(&ir)
+        }
+        .context("failed to serialise Python TD IR")?;
+        println!("{}", json);
+        return Ok(());
+    }
     let ast = crate::td_ast::parse_td(&path)
         .map_err(|e| anyhow::anyhow!("td ast parse failed: {}", e.message))?;
     let json = if args.pretty {
@@ -4098,7 +4021,7 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("--spec-path is required with --apply"))?;
 
-    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
+    td_activate_inplace_for_scoped_mutation(&project_root, slug)?;
     let worktree_abs = td_workspace_path(&project_root, slug);
     if !worktree_abs.exists() {
         anyhow::bail!("workspace not found: {}", worktree_abs.display());
@@ -4334,7 +4257,7 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td gen",
+            command: "aw cb gen",
             args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
         },
     })?;
@@ -4469,7 +4392,7 @@ async fn complete_section_apply(
             None => Some((
                 "Td-Applicability-Complete",
                 active_phase,
-                "aw td gen",
+                "aw cb gen",
                 serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             )),
         }
@@ -4489,7 +4412,7 @@ async fn complete_section_apply(
         Some((
             "Td-Contract-Complete",
             "td_created".to_string(),
-            "aw td gen",
+            "aw cb gen",
             serde_json::json!({
                 "slug": slug,
                 "spec_path": spec_path,
@@ -4741,7 +4664,7 @@ async fn prepare_td_generation_before_lifecycle(
         resolve_issue_td_generation_spec_path(project_root, issue, &workflow_slug).map_err(
             |error| {
                 anyhow::anyhow!(
-                    "td gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                    "cb gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw cb gen {requested_slug} --spec-path <repo-relative-spec.md>`"
                 )
             },
         )?
@@ -4751,7 +4674,7 @@ async fn prepare_td_generation_before_lifecycle(
         discovered
     } else {
         anyhow::bail!(
-            "td gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+            "cb gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw cb gen {requested_slug} --spec-path <repo-relative-spec.md>`"
         );
     };
 
@@ -4797,7 +4720,7 @@ async fn prepare_td_generation_before_lifecycle(
     };
 
     let rerun_command = format!(
-        "aw td gen {} --spec-path {}",
+        "aw cb gen {} --spec-path {}",
         shell_quote_td_arg(requested_slug),
         shell_quote_td_arg(&spec_path),
     );
@@ -4889,7 +4812,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         .with_context(|| format!("re-reading prepared TD spec {}", spec_abs.display()))?;
     if execution_spec_content != prepared.spec_content {
         anyhow::bail!(
-            "td gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw td gen` command"
+            "cb gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw cb gen` command"
         );
     }
     let td_lock =
@@ -4980,7 +4903,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td fill",
+                command: "aw cb fill",
                 args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             },
         })?;
@@ -4989,7 +4912,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td code-check",
+                command: "aw cb check",
                 args: serde_json::json!({ "target": slug }),
             },
         })?;
@@ -5069,8 +4992,8 @@ pub(crate) fn run_audit(args: AuditArgs) -> Result<()> {
     if args.drift {
         anyhow::bail!(
             "`--drift` has been removed. Drift is now the default behavior of \
-             `aw td code-check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
-             in one walk. Run `aw td code-check projects/` to scan all code."
+             `aw cb check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
+             in one walk. Run `aw cb check projects/` to scan all code."
         );
     }
 
@@ -5755,6 +5678,30 @@ mod tests {
         assert!(!should_use_td_branch("project-score"));
         assert!(!should_use_td_branch("feature/sdd"));
         assert!(!should_use_td_branch("td-existing"));
+    }
+
+    #[test]
+    fn inplace_td_activation_keeps_unstaged_concurrent_work_out_of_lifecycle() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        git_stdout(tmp.path(), &["checkout", "-qb", "app/demo"]);
+
+        std::fs::write(tmp.path().join("ec-review.json"), "{}\n").unwrap();
+        td_activate_inplace_for_scoped_mutation(tmp.path(), "2179").unwrap();
+        assert_eq!(
+            crate::branch_switch::current_branch(tmp.path()).unwrap(),
+            "app/demo"
+        );
+
+        std::fs::write(tmp.path().join("staged-user-change.rs"), "// user\n").unwrap();
+        git_stdout(tmp.path(), &["add", "staged-user-change.rs"]);
+        let error = td_activate_inplace_for_scoped_mutation(tmp.path(), "2179")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("staged-user-change.rs"), "{error}");
     }
 
     #[test]
@@ -8256,7 +8203,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td gen",
+            command: "aw cb gen",
             args: invoke_args,
         },
     })?;
@@ -8355,7 +8302,7 @@ fn commit_lifecycle_with_extra(
 /// above) with a `Promote-Target` trailer.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-fn run_promote(args: PromoteArgs) -> Result<()> {
+pub(crate) fn run_promote(args: PromoteArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     run_promote_at(&project_root, args)
 }

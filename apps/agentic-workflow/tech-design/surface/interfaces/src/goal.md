@@ -55,9 +55,9 @@ Public API manifest for `apps/agentic-workflow/src/cli/goal.rs` generated from A
 //!     file and emits a terminal `gave_up` status without dropping the
 //!     recorded intent from the report.
 //!
-//! This is explicitly not a daemon and does not replace `aw wi run`/`aw
-//! capability run` completion semantics: gates are executable commands
-//! only (no LLM-judged/prose-only conditions), and goal state never
+//! The ad-hoc leaf is explicitly not a daemon and does not replace the
+//! `wi`/`capability`/`backlog` lifecycle roots: its gates are executable
+//! commands only (no LLM-judged/prose-only conditions), and goal state never
 //! crosses sessions/workspaces.
 
 use std::io::Read;
@@ -112,9 +112,9 @@ pub enum GoalCommand {
     /// no capability id is given (#1899: unified re-home of the retired
     /// `aw capability run [<cap-id>] --project <p>`).
     Capability(GoalCapabilityArgs),
-    /// Tracker-driven drain of every open work item for a project, one WI
-    /// per tick via the same shared engine `aw goal wi <id>` uses; blocked
-    /// WIs are parked (not surfaced) so the drain continues (#1899 R7).
+    /// Drain ready changes from the accepted published epic graph; blocked
+    /// leaves are parked and terminal epics roll up through `aw goal wi`
+    /// (#1899 R7, #2389).
     Backlog(GoalBacklogArgs),
 }
 
@@ -1174,10 +1174,10 @@ changes:
       `Migration`/non-mutating with a sunset criterion; `GoalWiArgs` stays
       the canonical args struct this slice's redirect target uses. New
       `GoalCommand::Backlog(GoalBacklogArgs)` variant + `run_goal_backlog`
-      re-home `aw goal backlog --project <p>` (R7): a tracker-driven drain
-      of every open work item for a project, one WI per invocation, handed
-      off via the same `aw goal wi <id>` command the shared engine already
-      emits elsewhere. `run_goal_backlog` is a thin delegate straight into
+      re-home `aw goal backlog --project <p>` (R7): #2389 makes it a drain
+      of ready changes from the accepted published epic graph, one WI per
+      invocation, handed off via the same `aw goal wi <id>` command the
+      shared engine already emits elsewhere. `run_goal_backlog` is a thin delegate straight into
       `crate::cli::run::run_backlog_root`; the drain/park/select logic lives
       there (see `agentic-workflow-cli.md#schema`'s `run.rs` Changes entry).
 ```

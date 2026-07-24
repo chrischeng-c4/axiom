@@ -1,6 +1,6 @@
 ---
 id: aw-capability-alignment-wi-planning
-summary: "Add a human-confirmed capability anchor, agent-backed digest-bound capability-plan review, and bounded WI planning/validation gates."
+summary: "Add a human-confirmed capability anchor, agent-backed digest-bound capability and inventory-plan review, and bounded WI planning/validation gates."
 fill_sections: [scenarios, state-machine, logic, cli, test-plan, changes]
 capability_refs:
   - id: workflow-root-runner
@@ -58,7 +58,7 @@ capability_refs:
     coverage: full
     rationale: "This spec defines atomization and bounded WI planning flow."
 command_refs:
-  - command: aw wi run
+  - command: aw goal wi
   - command: aw wi plan
   - command: aw wi plan-review
   - command: aw capability
@@ -69,7 +69,7 @@ command_refs:
   - command: aw capability migrate
   - command: aw capability next
   - command: aw capability report
-  - command: aw capability run
+  - command: aw goal capability
   - command: aw capability set-ec-dimension
   - command: aw capability set-status
   - command: aw capability set-surface
@@ -97,28 +97,29 @@ scenarios:
       - "YAML capability sections, Field/Value contract tables, and legacy one-row contract tables are migration input only and cannot count as verified"
 
   - id: S2
-    title: "roadmap-sized request becomes epic or atomization draft"
+    title: "roadmap-sized request enters the canonical project plan"
     given: ["prompt says 'build Google Maps in Rust'"]
     when: ["agent routes through /aw:wi planning"]
     then:
       - "non-epic implementation WI is rejected as too-large"
-      - "aw wi atomize produces local candidates under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
+      - "aw wi plan produces one canonical project plan under /tmp/aw/workspaces/<workspace>/workitems/{project}/project-plan/project-plan.json"
 
   - id: S3
-    title: "prioritize classifies readiness and dependency lanes"
+    title: "project plan jointly atomizes and prioritizes"
     given: ["open issues include bounded work, dependency-blocked work, roadmap-sized work, and triage gaps"]
-    when: ["aw wi prioritize --project P runs"]
+    when: ["aw wi plan --project P runs"]
     then:
-      - "artifact records ready_now, blocked_by_dependency, needs_atomize, needs_triage, and deferred lanes"
+      - "stage one atomizes and prioritizes epics before stage two reconciles and prioritizes owned changes"
+      - "artifact records ready_now, blocked_by_dependency, needs_atomize, needs_triage, duplicate, and deferred lanes"
       - "readiness is based on bounded sections, dependencies, and roadmap-size signals"
 
   - id: S4
     title: "project run consumes readiness instead of sprint batches"
     given: ["project capability graph and issue backend contain open work"]
-    when: ["aw capability run --project P runs"]
+    when: ["aw goal capability --project P runs"]
     then:
-      - "the project root consumes the prioritize readiness lanes and selects the next ready_now WI"
-      - "if no ready_now work exists, the project root dispatches atomize or blocks with a prioritize readiness artifact"
+      - "the project root consumes canonical project-plan readiness and selects the next ready_now WI"
+      - "if no ready_now work exists, the project root routes to aw wi plan or its pending review"
       - "cron-style sprint batches are not part of the public workflow"
 
   - id: S5
@@ -127,7 +128,7 @@ scenarios:
     when: ["the capability alignment workflow is installed or refreshed"]
     then:
       - "aw-capability is installed as a Claude Code skill"
-      - "aw-wi skill documents atomize, prioritize readiness, and bounded WI gates"
+      - "aw-wi skill documents the canonical two-stage project plan and bounded WI gates"
       - "aw-standardize is the single human-facing standardization skill"
 
   - id: S6
@@ -152,11 +153,11 @@ scenarios:
       - "format migration repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "report/next compact summaries expose capability type, surface, EC dimension, and efficiency backfill coverage so agents can inspect #78 contract facets without reading the full README"
-      - "report/next/run/check JSON output treats stdout broken-pipe as a successful early reader close so agent pipe sampling does not look like a capability failure"
+      - "report/next/check JSON output treats stdout broken-pipe as a successful early reader close so agent pipe sampling does not look like a capability failure"
       - "next emits exactly one next_action"
       - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
       - "active README WI refs that are stale, missing from live inventory, or hidden by --skip-issue-inventory route to ReconcileWiRefs rather than CreateWi"
-      - "aw wi plan resolves README active WI refs that are absent from the open issue inventory through backend get lookups and emits Tracker WI Ref Lookups with closed, not_found, or lookup_error status for HITL reconciliation"
+      - "the capability sweep WI-plan producer resolves README active WI refs that are absent from the open issue inventory through backend get lookups and emits Tracker WI Ref Lookups with closed, not_found, or lookup_error status for review reconciliation"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
       - "check validates project-local capability profile required baseline capabilities against README capability IDs"
@@ -181,13 +182,13 @@ scenarios:
       - "capability must define required verification through README tables"
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
-      - "aw wi plan uses required claims as bounded WI planning inputs"
-      - "aw wi plan labels claim planning evidence as gate commands, fixture/inventory references, or prose evidence so agents do not mistake fixture-only claims for missing gate commands"
-      - "aw wi plan emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
-      - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
+      - "the capability sweep WI-plan producer uses required claims as bounded WI planning inputs"
+      - "the capability sweep WI-plan producer labels claim planning evidence as gate commands, fixture/inventory references, or prose evidence so agents do not mistake fixture-only claims for missing gate commands"
+      - "the capability sweep WI-plan producer emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
+      - "the capability sweep WI-plan producer adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
     title: "root runner rolls child completion upward"
-    given: ["agent invokes aw wi run or aw capability run with a project, capability, epic, or change root"]
+    given: ["agent invokes aw goal wi, aw goal capability, or aw goal backlog with a project, capability, epic, or change root"]
     when: ["the current layer is complete or blocked"]
     then:
       - "JSON output includes next.kind, invoke.command, agent_prompt, and completion"
@@ -197,16 +198,16 @@ scenarios:
       - "completed capabilities ask the agent to inspect the project root"
   - id: S9
     title: "root runner does not duplicate pending planning artifacts"
-    given: ["aw wi epicize has produced a local /tmp/aw/workspaces/<workspace>/workitems/{project}/epics artifact with agent_review_required=true and review_status=pending"]
-    when: ["aw capability run --project executes before the artifact is reviewed"]
+    given: ["aw wi plan has produced the canonical local /tmp/aw/workspaces/<workspace>/workitems/{project}/project-plan/project-plan.json artifact with agent_review_required=true and review_status=pending"]
+    when: ["aw goal capability --project executes before the artifact is reviewed"]
     then:
-      - "aw capability run emits action=blocked instead of invoking epicize again"
-      - "next.kind is review_planning_artifact and next.payload_path points at the pending artifact"
-      - "hitl_question.interaction.kind is user_question so the host captures the decision before tracker mutation"
+      - "aw goal capability routes to the existing digest-bound review instead of invoking a planning compatibility alias again"
+      - "unconfigured/either policy dispatches independent agent review without HITL; explicit human-only policy blocks with a native user question"
+      - "next.payload_path points at the existing pending artifact or review payload"
   - id: S10
     title: "capability WI plan review is agent-first and digest-bound"
     given: ["aw goal capability finds a required claim with no primary TD linkage"]
-    when: ["aw wi plan projects bounded claim candidates under an existing epic"]
+    when: ["aw capability sweep --include-issue-inventory --write-wi-plans projects bounded claim candidates under an existing epic"]
     then:
       - "unconfigured/either and agent policies emit pending_agent_review with requires_hitl=false, a payload_path, an independent reviewer prompt, and an executable aw wi plan-review command"
       - "explicit capability_plan_review_backing=human remains blocking and never fabricates approval"
@@ -215,10 +216,33 @@ scenarios:
       - "capability Root WI and claim WI remain distinct; one claim id yields at most one candidate across capabilities while retaining every capability alignment, and only an explicit claim WI ref or the exact claim id in an open non-epic WI suppresses the duplicate"
       - "every claim candidate includes a machine-runnable verification command plus a claim-specific expected result with non-zero evidence coverage"
       - "candidate gates retain every same-project test target declared by the claim, expected results name the observable claim, and generated WIs require implementation plus the passing gate instead of allowing linkage, prose, downgrade, or deferral alone to close"
-      - "needs_revision evidence publishes no work items and routes back to aw wi plan with concrete findings"
+      - "needs_revision evidence publishes no work items and routes back to the capability sweep WI-plan producer with concrete findings"
       - "accepted review publishes only bounded, deduplicated claim WIs and records their parent epic reference"
       - "the capability runner routes each published claim WI through EC-first TD/codegen lifecycle until primary TD evidence closes the claim"
-      - "legacy human-only plan artifacts without a manifest do not resurrect as blockers; rerunning aw wi plan produces the current review protocol"
+      - "legacy human-only capability-plan artifacts without a manifest do not resurrect as blockers; rerunning the capability sweep WI-plan producer produces the current review protocol"
+  - id: S11
+    title: "project planning review is agent-first, digest-bound, and singular"
+    given: ["aw wi plan, epicize, atomize, or prioritize has read the same project inventory"]
+    when: ["the canonical project-plan producer prepares its review sidecars and emits JSON"]
+    then:
+      - "all four verbs delegate to one project_plan artifact, model digest, review digest, and payload path"
+      - "the producer defaults to pending_agent_review with requires_hitl=false, an exact source_digest, a payload_path, an independent reviewer prompt, and an executable aw wi plan-review next command"
+      - "planning_review_backing=human remains an explicit blocking opt-in, while the legacy capability policy is accepted as a fallback"
+      - "accepted evidence rejects same-agent review and stale plan or manifest bytes, requires the inventory checklist, and binds the exact tracker snapshot, ordered mutation manifest, apply command, and terminal graph command into one reviewed digest"
+      - "accepted review preflights the complete project tracker before its first write, applies create_epic, create_change, update_epic, and update_change mutations in dependency-safe order, and names the drifted issue when preflight fails"
+      - "every mutation carries a stable tracker idempotency marker, so retry after an ambiguous transport failure reconciles completed writes, reapplies only missing mutations, and converges to a no-op without duplicate issues"
+      - "duplicate and superseded work items are retained as tracker history and receive reviewed labels and body evidence instead of being deleted or closed"
+      - "needs_revision persists concrete findings, publishes nothing, and routes to aw wi plan"
+  - id: S12
+    title: "work-item taxonomy is canonically epic or change"
+    given: ["local, GitHub, or GitLab inventory contains canonical and legacy non-epic type labels"]
+    when: ["an agent lists, creates, drafts, or updates work-item type state"]
+    then:
+      - "CLI help and authoring accept only epic or change"
+      - "new drafts, creates, update additions, JSON, and human output emit only type:epic or type:change"
+      - "change filtering includes bug, enhancement, refactor, and test compatibility aliases while epic filtering includes only epics"
+      - "compatibility reads preserve tracker identity, body, and the original legacy label without silently mutating tracker history"
+      - "local, GitHub, and GitLab adapters normalize the same legacy inputs deterministically"
 ```
 
 ## State Machine
@@ -233,16 +257,16 @@ stateDiagram-v2
     [*] --> capability_candidate : /aw:capability infer
     capability_candidate --> capability_confirmed : human confirms
     capability_candidate --> capability_candidate : human revises
-    capability_confirmed --> root_running : aw capability run --project
-    root_running --> epicized : aw wi epicize
-    epicized --> epic_review : digest-bound agent review (human only by opt-in)
-    epic_review --> atomized : aw wi atomize
-    epic_review --> epicized : revise or regenerate
-    atomized --> prioritized : aw wi prioritize
-    prioritized --> crrr_ready : ready_now lane
+    capability_confirmed --> root_running : aw goal capability --project
+    root_running --> project_planned : aw wi plan
+    project_planned --> plan_review : digest-bound agent review (human only by opt-in)
+    plan_review --> project_planned : needs_revision
+    plan_review --> plan_transaction : accepted exact manifest
+    plan_transaction --> project_planned : preflight drift, no writes
+    plan_transaction --> crrr_ready : retry-safe ordered apply complete
     crrr_ready --> td_ready : aw wi validate passes
     td_ready --> [*] : /aw:td
-    prioritized --> atomized : split_required or confidence low
+    project_planned --> project_planned : compatibility epicize/atomize/prioritize delegate
 ```
 
 ## Logic
@@ -257,16 +281,13 @@ nodes:
   infer_capability: { kind: process, label: "agent proposes capability map" }
   human_confirm: { kind: decision, label: "human confirms cap_path update?" }
   write_cap_path: { kind: process, label: "write confirmed Markdown capability sections and contract/work-root tables to cap_path" }
-  capability_command: { kind: process, label: "aw capability report/next/run/check evaluates capability/gap/claim graph" }
-  root_run: { kind: process, label: "aw wi run / aw capability run selects project/capability/wi root and emits invoke.command" }
-  wi_planning: { kind: process, label: "aw:wi routes gaps and required claims through planning operators" }
-  epicize: { kind: process, label: "epicize roadmap-sized direction" }
-  epic_review: { kind: decision, label: "independent digest-bound plan review accepted?" }
-  atomize: { kind: process, label: "atomize epic into atomic WI candidates" }
-  prioritize: { kind: process, label: "prioritize readiness and dependency lanes" }
+  capability_command: { kind: process, label: "aw capability report/next/check evaluates capability/gap/claim graph" }
+  root_run: { kind: process, label: "aw goal wi / capability / backlog selects a workflow root and emits invoke.command" }
+  project_plan: { kind: process, label: "aw wi plan atomizes and prioritizes epics, then reconciles and prioritizes their changes" }
+  plan_review: { kind: decision, label: "independent digest-bound project plan review accepted?" }
   validate: { kind: decision, label: "non-epic WI bounded and aligned?" }
   td_ready: { kind: terminal, label: "aw:td may start" }
-  split_or_hitl: { kind: terminal, label: "return to atomize or HITL decision" }
+  split_or_hitl: { kind: terminal, label: "return to project planning or HITL decision" }
 edges:
   - { from: cap_prompt, to: infer_capability, label: "prompt" }
   - { from: infer_capability, to: human_confirm, label: "candidate only" }
@@ -274,13 +295,10 @@ edges:
   - { from: human_confirm, to: write_cap_path, label: "confirm" }
   - { from: write_cap_path, to: capability_command, label: "capability anchor" }
   - { from: capability_command, to: root_run, label: "root runnable" }
-  - { from: root_run, to: wi_planning, label: "open gap or missing WI" }
-  - { from: wi_planning, to: epicize, label: "large direction" }
-  - { from: epicize, to: epic_review, label: "agent_review_required" }
-  - { from: epic_review, to: atomize, label: "approved" }
-  - { from: epic_review, to: epicize, label: "revise or regenerate" }
-  - { from: atomize, to: prioritize, label: "candidate set" }
-  - { from: prioritize, to: validate, label: "ready_now candidate WI" }
+  - { from: root_run, to: project_plan, label: "open gap or missing WI" }
+  - { from: project_plan, to: plan_review, label: "agent_review_required" }
+  - { from: plan_review, to: validate, label: "accepted ready_now change" }
+  - { from: plan_review, to: project_plan, label: "needs_revision" }
   - { from: validate, to: td_ready, label: "pass" }
   - { from: validate, to: split_or_hitl, label: "split_required, low confidence, decision, or too-large" }
 ---
@@ -289,23 +307,21 @@ flowchart TD
     infer_capability --> human_confirm{human confirms cap_path?}
     human_confirm -- revise --> infer_capability
     human_confirm -- confirm --> write_cap_path[write Markdown capability tables]
-    write_cap_path --> capability_command[aw capability report/next/run/check]
-    capability_command --> root_run[aw wi run / aw capability run root envelope]
-    root_run --> wi_planning[aw wi planning]
-    wi_planning --> epicize[epicize]
-    epicize --> epic_review{pending artifact reviewed?}
-    epic_review -- approved --> atomize[atomize]
-    epic_review -- revise/regenerate --> epicize
-    atomize --> prioritize[prioritize readiness]
-    prioritize --> validate{bounded and aligned?}
+    write_cap_path --> capability_command[aw capability report/next/check]
+    capability_command --> root_run[aw goal wi / capability / backlog]
+    root_run --> project_plan[aw wi plan: epics, then changes]
+    project_plan --> plan_review{project plan review accepted?}
+    plan_review -- accepted ready_now change --> validate{bounded and aligned?}
+    plan_review -- needs_revision --> project_plan
     validate -- pass --> td_ready([aw:td ready])
-    validate -- fail --> split_or_hitl([atomize or HITL])
+    validate -- fail --> split_or_hitl([project plan or HITL])
 ```
 
 `Capability` is a human-confirmed anchor. The model may infer and propose, but
 must not publish `cap_path` without confirmation. `aw capability` owns the
-read-only graph view and one-tick capability checks. `aw wi run`/`aw capability
-run` own root selection and emit `invoke.command`/`agent_prompt` so agents can
+read-only graph view and one-tick capability checks. `aw goal wi`, `aw goal
+capability`, and `aw goal backlog` own root selection and emit
+`invoke.command`/`agent_prompt` so agents can
 roll completed child work back up to the parent root. Its `completion` object is the
 authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
@@ -449,23 +465,34 @@ commands:
     behavior: "read cap_path Markdown capability contracts, project required claims into bounded child WI candidates, and emit a digest-bound agent-first review payload; YAML/legacy tables require migration"
     persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan"
     mutates_tracker: false
+  - path: [wi, list]
+    behavior: "filter by the canonical epic or change taxonomy; change includes legacy bug, enhancement, refactor, and test values without mutating their stored labels"
+    output: "JSON and human output serialize every non-epic compatibility value as change"
+    mutates_tracker: false
+  - path: [wi, create]
+    behavior: "accept only --type epic or --type change and derive only the matching canonical type label"
+    mutates_tracker: true
+  - path: [wi, update]
+    behavior: "canonicalize legacy type labels supplied through --add-label to type:change; explicit removal of an existing legacy label remains available for a later reviewed migration transaction"
+    mutates_tracker: true
   - path: [wi, plan-review]
     args:
       - name: evidence-file
         meaning: "independent agent or human review record bound to the exact plan plus manifest digest"
-    behavior: "validate review policy, reviewer independence, digest, checklist, and findings; accepted review publishes deduplicated bounded candidates, while needs_revision publishes nothing"
+    behavior: "validate capability or inventory review policy, reviewer independence, digest, kind-specific checklist, findings, and executable next command; accepted capability review publishes deduplicated bounded candidates, accepted inventory review authorizes only its recorded next command, and needs_revision publishes nothing"
     mutates_tracker: true
   - path: [wi, epicize]
-    behavior: "group roadmap direction into epic or phase candidates"
+    behavior: "group roadmap direction into epic or phase candidates and emit an agent-first digest-bound review payload"
   - path: [wi, atomize]
-    behavior: "split epic or roadmap-sized work into atomic WI candidates"
+    behavior: "split epic or roadmap-sized work into atomic WI candidates and emit an agent-first digest-bound review payload"
     persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
     mutates_tracker: false
   - path: [wi, prioritize]
-    behavior: "classify open work into ready_now, blocked_by_dependency, needs_atomize, needs_triage, and deferred lanes"
+    behavior: "classify open work into ready_now, blocked_by_dependency, needs_atomize, needs_triage, and deferred lanes, then emit an agent-first digest-bound review payload"
     persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/priorities"
     mutates_tracker: false
 validation:
+  work_item_type: [epic, change]
   non_epic_requires:
     - "Capability Alignment section"
     - "Scope section"
@@ -513,14 +540,14 @@ validation:
 ---
 id: aw-capability-alignment-wi-planning-tests
 requirements:
-  atomize_help:
+  plan_help:
     id: AW-CAP-WI-1
-    text: "aw wi atomize --help exposes the planning operator"
+    text: "aw wi plan --help exposes the canonical two-stage planning operator"
     risk: medium
     verifymethod: test
-  prioritize_help:
+  planning_aliases:
     id: AW-CAP-WI-2
-    text: "aw wi prioritize --help exposes readiness and dependency ordering"
+    text: "aw wi epicize, atomize, and prioritize delegate to the canonical project plan"
     risk: medium
     verifymethod: test
   huge_non_epic_rejected:
@@ -530,17 +557,17 @@ requirements:
     verifymethod: test
   bounded_alignment_required:
     id: AW-CAP-WI-4
-    text: "non-epic WI requires capability alignment, acceptance criteria, and agent estimate"
+    text: "non-epic WI requires capability alignment, scope, acceptance criteria, and reference context"
     risk: high
     verifymethod: test
   priority_readiness:
     id: AW-CAP-WI-5
-    text: "prioritize excludes split_required, low-confidence, and decision-gated work from ready_now"
+    text: "the project plan excludes split_required, low-confidence, dependency-blocked, and decision-gated work from ready_now"
     risk: high
     verifymethod: test
   cap_hitl:
     id: AW-CAP-WI-6
-    text: "aw:capability documents human confirmation, and aw capability/run emits structured hitl_question payloads for decision-gated capability work"
+    text: "aw:capability documents human confirmation, and aw goal capability emits structured hitl_question payloads for decision-gated capability work"
     risk: high
     verifymethod: review
   capability_plan_agent_review:
@@ -570,7 +597,7 @@ requirements:
     verifymethod: test
   claim_scoped_wi_plan:
     id: AW-CAP-WI-11
-    text: "aw wi plan emits claim-scoped WI candidates from required capability claims"
+    text: "capability sweep WI planning emits claim-scoped WI candidates from required capability claims"
     risk: high
     verifymethod: test
   draft_promise_preservation:
@@ -590,12 +617,12 @@ requirements:
     verifymethod: test
   issue_inventory_optional:
     id: AW-CAP-WI-15
-    text: "aw capability report/next/run/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
+    text: "aw capability report/next/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
     risk: medium
     verifymethod: test
   wi_plan_review_summary:
     id: AW-CAP-WI-16
-    text: "aw wi plan emits a capability-level review summary with candidate counts, existing WI refs, next operator, and first action before the detailed matrix"
+    text: "capability sweep WI planning emits a capability-level review summary with candidate counts, existing WI refs, next operator, and first action before the detailed matrix"
     risk: medium
     verifymethod: test
   draft_index_review_summary:
@@ -655,7 +682,7 @@ requirements:
     verifymethod: test
   wi_plan_tracker_lookup:
     id: AW-CAP-WI-28
-    text: "aw wi plan resolves README WI refs missing from open inventory into Tracker WI Ref Lookups with closed, not_found, or lookup_error status"
+    text: "capability sweep WI planning resolves README WI refs missing from open inventory into Tracker WI Ref Lookups with closed, not_found, or lookup_error status"
     risk: medium
     verifymethod: test
   draft_candidate_title_normalization:
@@ -671,15 +698,15 @@ elements:
   init_unit_tests:
     type: "cargo test -p agentic-workflow init::tests::test_install_claude_skills_installs_current_skills --lib"
   cli_help_smoke:
-    type: "aw wi atomize|prioritize --help"
+    type: "aw wi plan|epicize|atomize|prioritize --help"
   skill_review:
     type: "manual doc review"
 relations:
   - { from: issues_unit_tests, to: huge_non_epic_rejected, kind: verifies }
   - { from: issues_unit_tests, to: bounded_alignment_required, kind: verifies }
   - { from: issues_unit_tests, to: priority_readiness, kind: verifies }
-  - { from: cli_help_smoke, to: atomize_help, kind: verifies }
-  - { from: cli_help_smoke, to: prioritize_help, kind: verifies }
+  - { from: cli_help_smoke, to: plan_help, kind: verifies }
+  - { from: cli_help_smoke, to: planning_aliases, kind: verifies }
   - { from: init_unit_tests, to: claude_skill_sync, kind: verifies }
   - { from: skill_review, to: cap_hitl, kind: verifies }
   - { from: capability_unit_tests, to: capability_h2_schema, kind: verifies }
@@ -702,15 +729,15 @@ relations:
   - { from: issues_unit_tests, to: wi_plan_tracker_lookup, kind: verifies }
 ---
 requirementDiagram
-    requirement atomize_help {
+    requirement plan_help {
         id: AW-CAP-WI-1
-        text: "aw wi atomize help exposes the planning operator"
+        text: "aw wi plan help exposes the canonical two-stage planner"
         risk: medium
         verifymethod: test
     }
-    requirement prioritize_help {
+    requirement planning_aliases {
         id: AW-CAP-WI-2
-        text: "aw wi prioritize help exposes readiness and dependency ordering"
+        text: "planning aliases delegate to the canonical project plan"
         risk: medium
         verifymethod: test
     }
@@ -722,13 +749,13 @@ requirementDiagram
     }
     requirement bounded_alignment_required {
         id: AW-CAP-WI-4
-        text: "non-epic WI requires alignment, AC, and estimate"
+        text: "non-epic WI requires alignment, scope, AC, and reference context"
         risk: high
         verifymethod: test
     }
     requirement priority_readiness {
         id: AW-CAP-WI-5
-        text: "prioritize excludes unbounded work from ready_now"
+        text: "project planning excludes unready work from ready_now"
         risk: high
         verifymethod: test
     }
@@ -764,7 +791,7 @@ requirementDiagram
     }
     requirement claim_scoped_wi_plan {
         id: AW-CAP-WI-11
-        text: "aw wi plan emits claim-scoped candidates"
+        text: "capability sweep WI planning emits claim-scoped candidates"
         risk: high
         verifymethod: test
     }
@@ -888,8 +915,8 @@ requirementDiagram
     issues_unit_tests - verifies -> huge_non_epic_rejected
     issues_unit_tests - verifies -> bounded_alignment_required
     issues_unit_tests - verifies -> priority_readiness
-    cli_help_smoke - verifies -> atomize_help
-    cli_help_smoke - verifies -> prioritize_help
+    cli_help_smoke - verifies -> plan_help
+    cli_help_smoke - verifies -> planning_aliases
     init_unit_tests - verifies -> claude_skill_sync
     skill_review - verifies -> cap_hitl
     capability_unit_tests - verifies -> capability_h2_schema
@@ -944,12 +971,27 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Feed required capability claims into aw wi plan candidates.
+    description: Feed required capability claims into capability sweep WI-plan candidates.
   - path: apps/agentic-workflow/src/cli/issues.rs
     action: modify
     section: cli
     impl_mode: hand-written
     description: "Issue #2187: emit and consume digest-bound independent capability-plan review evidence, keep stale doc-stored WI refs advisory, keep capability Root WI distinct from claim WI, deduplicate repeated claims while preserving all capability alignments, suppress only explicit claim WI refs and exact claim-id matches, retain all declared test targets, require implementation plus runnable claim-specific observable verification, publish accepted bounded claim candidates idempotently, and preserve explicit human-only policy."
+  - path: apps/agentic-workflow/src/issues/types.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    description: "Issue #2385: expose epic and change as the canonical wire taxonomy while retaining legacy non-epic variants as decode-only compatibility aliases."
+  - path: apps/agentic-workflow/src/cli/issues.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    description: "Issue #2385: restrict public type arguments to epic/change, canonicalize create/update label production, and make change filtering include compatibility aliases."
+  - path: apps/agentic-workflow/tests/wi_epic_change_taxonomy_cli_test.rs
+    action: add
+    section: e2e-test
+    impl_mode: hand-written
+    description: "Issue #2385: prove compiled CLI help, create, update, filters, deterministic JSON, and history-preserving compatibility behavior."
   - path: apps/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli
@@ -1079,7 +1121,7 @@ changes:
     action: modify
     impl_mode: codegen
     section: source
-    description: Add capability-map plan, atomize and prioritize planning operators, section-based readiness checks, and alignment validation gates.
+    description: Add capability-map plan, epicize/atomize/prioritize planning operators, shared digest-bound independent review, section-based readiness checks, and alignment validation gates. Issue #2190 extends the #2187 review record across inventory plans with policy-derived HITL, same-agent and stale-evidence rejection, kind-specific checklists, and chain-valid accepted next commands.
   - path: apps/agentic-workflow/tech-design/surface/src/issues.md
     action: modify
     section: logic

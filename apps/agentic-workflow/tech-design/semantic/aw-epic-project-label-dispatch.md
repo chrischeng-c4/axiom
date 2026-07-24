@@ -1,6 +1,6 @@
 ---
 id: aw-epic-project-label-dispatch
-summary: Resolve every supported tracker project label before an open epic emits its atomize handoff, and block safely when no concrete identity exists.
+summary: Resolve every supported tracker project label before an open epic emits its atomize handoff, bootstrap a discoverable project-local configuration for valid greenfield identities, and block safely when no concrete identity exists.
 fill_sections: [logic, unit-test, e2e-test, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -25,6 +25,9 @@ nodes:
   labels: { kind: process, label: "scan labels in tracker order" }
   supported: { kind: decision, label: "non-empty project:/app:/lib: identity?" }
   project: { kind: process, label: "extract concrete project token" }
+  registered: { kind: decision, label: "project identity registered?" }
+  bootstrap: { kind: process, label: "run aw conf init --project-label identity" }
+  meta: { kind: terminal, label: "follow emitted aw meta init command, then rerun root" }
   atomize: { kind: process, label: "build aw wi atomize --project token" }
   validate: { kind: process, label: "parse emit-site sample through real CLI" }
   dispatch: { kind: terminal, label: "dispatch atomize" }
@@ -34,7 +37,10 @@ edges:
   - { from: epic, to: labels }
   - { from: labels, to: supported }
   - { from: supported, to: project, label: "yes" }
-  - { from: project, to: atomize }
+  - { from: project, to: registered }
+  - { from: registered, to: atomize, label: "yes" }
+  - { from: registered, to: bootstrap, label: "no" }
+  - { from: bootstrap, to: meta }
   - { from: atomize, to: validate }
   - { from: validate, to: dispatch }
   - { from: supported, to: blocked, label: "no" }
@@ -44,7 +50,10 @@ flowchart TD
   epic([aw wi run open epic]) --> labels[scan labels in tracker order]
   labels --> supported{non-empty project:/app:/lib: identity?}
   supported -->|yes| project[extract concrete project token]
-  project --> atomize[build aw wi atomize --project token]
+  project --> registered{project identity registered?}
+  registered -->|yes| atomize[build aw wi atomize --project token]
+  registered -->|no| bootstrap[run aw conf init --project-label identity]
+  bootstrap --> meta([follow emitted aw meta init command, then rerun root])
   atomize --> validate[parse emit-site sample through real CLI]
   validate --> dispatch([dispatch atomize])
   supported -->|no| blocked[build blocked HITL envelope]
@@ -82,6 +91,12 @@ requirements:
     kind: compatibility
     risk: high
     verify: "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+  greenfield_bootstrap:
+    id: R5
+    text: "A valid app:, lib:, or project: epic identity that is not yet registered emits aw conf init --project-label <identity>; the producer creates an idempotent discoverable project-local aw.toml and routes to aw meta init before atomization."
+    kind: functional
+    risk: high
+    verify: "cargo test -p agentic-workflow --lib epic_project_label_dispatch_bootstraps_valid_unregistered_project -- --nocapture && cargo test -p agentic-workflow --lib conf_init_ -- --nocapture"
 elements:
   epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize:
     kind: test
@@ -95,6 +110,12 @@ elements:
   emit_registry_entries_are_all_chain_valid:
     kind: test
     type: "rs/#[test]"
+  epic_project_label_dispatch_bootstraps_valid_unregistered_project:
+    kind: test
+    type: "rs/#[test]"
+  conf_init_bootstraps_discoverable_project_local_config:
+    kind: test
+    type: "rs/#[test]"
 relations:
   - { from: epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize, verifies: supported_labels }
   - { from: epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize, verifies: exact_pgpool }
@@ -102,6 +123,8 @@ relations:
   - { from: epic_project_label_dispatch_preserves_app_and_lib_commands, verifies: chain_conformance }
   - { from: epic_project_label_dispatch_blocks_unresolved_or_empty_labels, verifies: unresolved_hitl }
   - { from: emit_registry_entries_are_all_chain_valid, verifies: chain_conformance }
+  - { from: epic_project_label_dispatch_bootstraps_valid_unregistered_project, verifies: greenfield_bootstrap }
+  - { from: conf_init_bootstraps_discoverable_project_local_config, verifies: greenfield_bootstrap }
 ---
 requirementDiagram
   requirement R1 {
@@ -128,6 +151,12 @@ requirementDiagram
     risk: high
     verifymethod: test
   }
+  requirement R5 {
+    id: R5
+    text: "greenfield project config bootstrap"
+    risk: high
+    verifymethod: test
+  }
   element epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize {
     type: "rs/#[test]"
   }
@@ -138,6 +167,12 @@ requirementDiagram
     type: "rs/#[test]"
   }
   element emit_registry_entries_are_all_chain_valid {
+    type: "rs/#[test]"
+  }
+  element epic_project_label_dispatch_bootstraps_valid_unregistered_project {
+    type: "rs/#[test]"
+  }
+  element conf_init_bootstraps_discoverable_project_local_config {
     type: "rs/#[test]"
   }
 ```
@@ -155,6 +190,7 @@ e2e_tests:
       - "the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool"
       - "app:mamba and lib:pg retain their existing atomize commands"
       - "missing, empty, and whitespace-only project labels return blocked/HITL remediation"
+      - "a valid unregistered app:workbench identity emits aw conf init --project-label app:workbench"
       - "no tested envelope contains --project PROJECT"
   - id: aw-epic-project-label-dispatch-chain
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -163,6 +199,7 @@ e2e_tests:
     assertions:
       - "run.rs:open_epic_envelope is present in EMIT_REGISTRY"
       - "aw wi atomize --project pgpool parses through the real CLI tree"
+      - "aw conf init --project-label app:workbench parses through the real CLI tree"
 ```
 
 ## Changes
@@ -174,12 +211,17 @@ changes:
     action: modify
     section: logic
     impl_mode: codegen
-    description: Resolve project/app/lib tracker identity labels before epic dispatch and block unresolved identities without a placeholder command.
+    description: Resolve project/app/lib tracker identity labels before epic dispatch, route valid unregistered identities through the project configuration producer, and block unresolved identities without a placeholder command.
+  - path: apps/agentic-workflow/src/cli/conf.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the idempotent conf init producer that creates a discoverable project-local aw.toml from a safe tracker identity and emits aw meta init as its next command.
   - path: apps/agentic-workflow/src/cli/chain.rs
     action: modify
     section: logic
     impl_mode: codegen
-    description: Register the concrete pgpool epic atomize handoff in the emitted-command conformance inventory.
+    description: Register both the concrete pgpool atomize handoff and the greenfield workbench configuration bootstrap handoff in the emitted-command conformance inventory.
   - path: apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md
     action: modify
     section: schema
@@ -194,5 +236,5 @@ changes:
     action: modify
     section: capability
     impl_mode: hand-written
-    description: Register #1518 as the sole AW epic project label dispatch work-root.
+    description: Register #1518 and #2182 as the AW epic project label dispatch work roots.
 ```

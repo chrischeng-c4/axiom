@@ -21,18 +21,18 @@ capability_refs:
 id: terminal-touched-codegen-drift
 entry: request
 nodes:
-  request: { kind: start, label: "aw td code-check slug" }
+  request: { kind: start, label: "aw cb check slug" }
   issue: { kind: process, label: "read fresh terminal WI under existing EC lease" }
   accepted: { kind: process, label: "resolve accepted Issue.implements TDs" }
   baseline: { kind: process, label: "resolve exact Td-Init parent to HEAD committed paths" }
   claims: { kind: process, label: "select accepted create or modify CODEGEN rows whose TD or target changed" }
   compare: { kind: process, label: "audit each exact target and spec section with generate audit_file" }
   clean: { kind: decision, label: "all selected claims clean or aggregate?" }
-  refuse: { kind: terminal, label: "error before EC or mutation; next aw td gen slug" }
+  refuse: { kind: terminal, label: "error before EC or mutation; next aw cb gen slug" }
   gates: { kind: process, label: "continue marker, evidence, and EC gates" }
   close: { kind: terminal, label: "existing phase, tracker, landing, and close flow" }
-  repair: { kind: process, label: "aw td gen slug preflights and replays only selected target files" }
-  commit: { kind: terminal, label: "scoped repair commit; next aw td code-check slug" }
+  repair: { kind: process, label: "aw cb gen slug preflights and replays only selected target files" }
+  commit: { kind: terminal, label: "scoped repair commit; next aw cb check slug" }
 edges:
   - { from: request, to: issue }
   - { from: issue, to: accepted }
@@ -47,17 +47,17 @@ edges:
   - { from: repair, to: commit }
 ---
 flowchart TD
-  request([aw td code-check slug]) --> issue[read fresh terminal WI under existing EC lease]
+  request([aw cb check slug]) --> issue[read fresh terminal WI under existing EC lease]
   issue --> accepted[resolve accepted Issue.implements TDs]
   accepted --> baseline[resolve exact Td-Init parent to HEAD committed paths]
   baseline --> claims[select accepted create or modify CODEGEN rows whose TD or target changed]
   claims --> compare[audit each exact target and spec section with generate audit_file]
   compare --> clean{all selected claims clean or aggregate?}
-  clean -->|no| refuse([error before EC or mutation; next aw td gen slug])
+  clean -->|no| refuse([error before EC or mutation; next aw cb gen slug])
   clean -->|yes| gates[continue marker, evidence, and EC gates]
   gates --> close([existing phase, tracker, landing, and close flow])
-  refuse -->|run emitted command| repair[aw td gen slug preflights and replays only selected target files]
-  repair --> commit([scoped repair commit; next aw td code-check slug])
+  refuse -->|run emitted command| repair[aw cb gen slug preflights and replays only selected target files]
+  repair --> commit([scoped repair commit; next aw cb check slug])
 ```
 
 The claim set is the intersection of two boundaries: current create/modify
@@ -70,17 +70,17 @@ vacuous behavior, while corrupt same-slug lifecycle history fails closed.
 
 Each selected target is evaluated by `generate::audit::audit_file`, the same
 deterministic per-block regeneration comparator used by path-mode
-`aw td code-check <path>`. Only reports matching the accepted spec and section
+`aw cb check <path>`. Only reports matching the accepted spec and section
 are considered. Drift, an unresolvable owner, a missing target, or a missing
 managed region refuses before EC evaluation, phase update, tracker write,
 terminal commit, landing, or closure. Clean and aggregate reports continue
 through the pre-existing terminal sequence.
 
-The refusal emits `aw td gen <slug>`. In a fresh terminal phase that command
+The refusal emits `aw cb gen <slug>`. In a fresh terminal phase that command
 becomes a repair tick: it preflights every selected spec, regenerates only the
 selected target-file scopes with project-wide sibling/README/inventory
 post-passes disabled, commits only changed target paths, preserves WI phase,
-and emits `aw td code-check <slug>`. Normal `td_created` generation remains
+and emits `aw cb check <slug>`. Normal `td_created` generation remains
 unchanged.
 
 ## Unit Test
@@ -146,7 +146,7 @@ e2e_tests:
     assertions:
       - "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged"
       - "the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted"
-      - "the emitted aw td gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command"
+      - "the emitted aw cb gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command"
       - "restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit"
 ```
 

@@ -1,0 +1,11 @@
+schema_version: aw.ddd-context-map.v1
+nodes:
+  - { id: context:workflow, kind: context }
+  - { id: context:verification, kind: context }
+  - { id: port:workflow/command, kind: port }
+  - { id: adapter:verification/cli, kind: adapter }
+relations:
+  - { from: context:workflow, kind: depends-on, to: context:verification }
+  - { from: context:workflow, kind: contains, to: port:workflow/command }
+  - { from: context:verification, kind: contains, to: adapter:verification/cli }
+  - { from: adapter:verification/cli, kind: implements, to: port:workflow/command }

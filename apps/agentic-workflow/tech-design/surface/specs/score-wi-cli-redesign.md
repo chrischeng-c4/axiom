@@ -1,6 +1,6 @@
 ---
 id: score-wi-cli-redesign
-summary: "Replace `--label` on `aw wi create` with closed-vocabulary typed flags (`--type`/`--project`/`--priority`/`--agent`), make `aw wi` the canonical public verb (`iss`/`issues` as transition aliases), emit all label families with GitLab scoped-label syntax. Project/agent names resolve against `[[projects]]` and `[[agents]]` in config.toml; cardinality gated by type (epic = 0 or 1, others = exactly 1)."
+summary: "Replace `--label` on `aw wi create` with closed-vocabulary typed flags (`--type`/`--project`/`--priority`/`--agent`), expose only canonical epic/change types, and emit canonical type labels. Project/agent names resolve against `[[projects]]` and `[[agents]]` in aw.toml; cardinality is epic = 0 or 1 project and change = exactly 1."
 fill_sections: [scenarios, state-machine, logic, cli, test-plan, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -34,9 +34,9 @@ scenarios:
     given:
       - "[[projects]] in .aw/config.toml contains name=score label=app::score"
     when:
-      - "aw wi create --type enhancement --project score"
+      - "aw wi create --type change --project score"
     then:
-      - "labels vector = [type::enhancement, app::score]"
+      - "labels vector = [type:change, app:score]"
       - "dispatch envelope emitted on stdout"
 
   - id: S2
@@ -44,7 +44,7 @@ scenarios:
     given:
       - "[[projects]] has no entry with name=unknown-x"
     when:
-      - "aw wi create --type bug --project unknown-x"
+      - "aw wi create --type change --project unknown-x"
     then:
       - "error envelope emitted listing valid names from [[projects]]"
       - "no backend API call made"
@@ -52,10 +52,10 @@ scenarios:
   - id: S3
     title: "aw wi and aw wi aliases produce byte-identical envelopes"
     given:
-      - "aw wi create --type enhancement --project score emits envelope E"
+      - "aw wi create --type change --project score emits envelope E"
     when:
-      - "aw wi create --type enhancement --project score"
-      - "aw wi create --type enhancement --project score"
+      - "aw wi create --type change --project score"
+      - "aw wi create --type change --project score"
     then:
       - "both emit envelope byte-identical to E"
 
@@ -66,7 +66,7 @@ scenarios:
     when:
       - "aw wi create --type epic"
     then:
-      - "labels vector = [type::epic]"
+      - "labels vector = [type:epic]"
       - "dispatch envelope emitted"
 
   - id: S5
@@ -76,15 +76,15 @@ scenarios:
     when:
       - "aw wi create --type epic --project score"
     then:
-      - "labels vector = [type::epic, app::score]"
+      - "labels vector = [type:epic, app:score]"
       - "dispatch envelope emitted"
 
   - id: S6
     title: "non-epic type missing --project is rejected"
     given:
-      - "--type bug with no --project"
+      - "--type change with no --project"
     when:
-      - "aw wi create --type bug"
+      - "aw wi create --type change"
     then:
       - "error envelope emitted naming both the offending type and observed count"
       - "no backend call made"
@@ -92,9 +92,9 @@ scenarios:
   - id: S7
     title: "non-epic type with 2 --project flags is rejected"
     given:
-      - "--type enhancement with --project score --project sdd"
+      - "--type change with --project score --project sdd"
     when:
-      - "aw wi create --type enhancement --project score --project sdd"
+      - "aw wi create --type change --project score --project sdd"
     then:
       - "error envelope emitted naming offending type and observed count (2)"
       - "no backend call made"
@@ -104,9 +104,9 @@ scenarios:
     given:
       - "[[agents]] contains name=claude-code label=agent::claude-code"
     when:
-      - "aw wi create --type enhancement --project score --agent claude-code"
+      - "aw wi create --type change --project score --agent claude-code"
     then:
-      - "labels vector = [type::enhancement, app::score, agent::claude-code]"
+      - "labels vector = [type:change, app::score, agent::claude-code]"
       - "dispatch envelope emitted"
 
   - id: S9
@@ -114,7 +114,7 @@ scenarios:
     given:
       - "[[agents]] has no entry with name=gpt-x"
     when:
-      - "aw wi create --type enhancement --project score --agent gpt-x"
+      - "aw wi create --type change --project score --agent gpt-x"
     then:
       - "error envelope emitted listing valid names from [[agents]]"
       - "no backend call made"
@@ -124,18 +124,18 @@ scenarios:
     given:
       - "--priority p1 specified"
     when:
-      - "aw wi create --type bug --project score --priority p1"
+      - "aw wi create --type change --project score --priority p1"
     then:
-      - "labels vector = [type::bug, app::score, priority::p1]"
+      - "labels vector = [type:change, app::score, priority::p1]"
 
   - id: S11
     title: "label vector order is stable: type, project, priority, agent"
     given:
       - "all four flags provided"
     when:
-      - "aw wi create --type enhancement --project score --priority p2 --agent claude-code"
+      - "aw wi create --type change --project score --priority p2 --agent claude-code"
     then:
-      - "labels = [type::enhancement, app::score, priority::p2, agent::claude-code]"
+      - "labels = [type:change, app::score, priority::p2, agent::claude-code]"
       - "order invariant regardless of flag input order"
 ```
 
@@ -280,8 +280,8 @@ commands:
             long: --type
             required: true
             type: enum
-            values: [bug, enhancement, refactor, test, epic]
-            emits_label: "type::<value>"
+            values: [epic, change]
+            emits_label: "type:<value>"
           - name: project
             kind: option
             long: --project
@@ -352,7 +352,7 @@ id: wi-create-test-plan
 requirements:
   type_valid:
     id: TC1
-    text: "all 5 valid type values produce expected type::<v> label"
+    text: "both valid type values produce the expected canonical type:<v> label"
     kind: functional
     risk: low
     verify: test
@@ -376,13 +376,13 @@ requirements:
     verify: test
   project_card_epic_0:
     id: TC5
-    text: "epic with 0 --project succeeds; labels = [type::epic]"
+    text: "epic with 0 --project succeeds; labels = [type:epic]"
     kind: functional
     risk: low
     verify: test
   project_card_epic_1:
     id: TC6
-    text: "epic with 1 --project succeeds; labels = [type::epic, app::<v>]"
+    text: "epic with 1 --project succeeds; labels = [type:epic, app:<v>]"
     kind: functional
     risk: low
     verify: test
@@ -486,7 +486,7 @@ relations:
 requirementDiagram
     requirement type_valid {
       id: TC1
-      text: "all 5 valid type values produce expected type::<v> label"
+      text: "both valid type values produce the expected canonical type:<v> label"
       risk: low
       verifymethod: test
     }

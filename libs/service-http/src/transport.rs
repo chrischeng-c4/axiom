@@ -52,6 +52,54 @@ pub async fn serve(
     server_http::serve_h2c(listener, app, shutdown).await;
 }
 
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn serve_delegates_listener_to_shared_http_runtime() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let app = Router::new().route("/delegated", get(|| async { "shared-runtime" }));
+
+        let server = tokio::spawn(serve(listener, app, async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect delegated runtime");
+        stream
+            .write_all(b"GET /delegated HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write delegated request");
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .expect("read delegated response");
+        let response = String::from_utf8_lossy(&response);
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "service shell must expose the shared runtime listener: {response}"
+        );
+        assert!(
+            response.ends_with("shared-runtime"),
+            "service shell must preserve router behavior through delegation: {response}"
+        );
+
+        let _ = shutdown_tx.send(());
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .expect("delegated server shutdown")
+            .expect("delegated server task");
+    }
+}
+
 // <HANDWRITE gap="missing-generator:logic" tracker="1870" reason="logic section in transport.rs is hand-written pending codegen support">
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Canonical correlation fields for one inbound HTTP request.

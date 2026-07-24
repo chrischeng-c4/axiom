@@ -19,10 +19,10 @@ fn wi_remove_agent_estimate_unit_command() {
     let command = "cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture";
     let id = "wi-remove-agent-estimate-unit-command";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

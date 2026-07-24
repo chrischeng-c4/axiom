@@ -106,7 +106,7 @@ pub async fn run(
         let target_rel =
             repo_relative_path(&project_root, &project_root.join(&outcome.target_path));
         let next_command = format!(
-            "aw td gen-source --spec {} --target {} --dry-run",
+            "aw cb gen-source --spec {} --target {} --dry-run",
             shell_quote(&spec_rel),
             shell_quote(&target_rel),
         );

@@ -18,10 +18,10 @@ fn workflow_root_runner_parent_rollup_routing() {
         "cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection -- --nocapture";
     let id = "workflow-root-runner-parent-rollup-routing";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

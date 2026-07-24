@@ -34,6 +34,7 @@ fn make_project(name: &str, target: Language, test_cmd: Option<&str>) -> Project
         name: name.to_string(),
         path: PathBuf::from(format!("crates/{}", name)),
         tech_design_dir: None,
+        artifact_model: None,
         ec: Default::default(),
         ec_review_backing: None,
         ec_review_mode: None,

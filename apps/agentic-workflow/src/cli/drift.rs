@@ -594,12 +594,12 @@ mod tests {
     fn gate_decision_refuses_when_behind_and_verb_mutates() {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "9.9.9");
-        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), None);
+        let decision = gate_decision_at(&repo, "0.4.4", Some("cb.fill"), None);
         assert_eq!(
             decision,
             StaleBinaryGate::Refuse {
                 source_version: "9.9.9".to_string(),
-                verb_path: "td.fill".to_string(),
+                verb_path: "cb.fill".to_string(),
             }
         );
     }
@@ -624,7 +624,7 @@ mod tests {
     fn gate_decision_proceeds_when_versions_equal() {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "0.4.4");
-        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), None);
+        let decision = gate_decision_at(&repo, "0.4.4", Some("cb.fill"), None);
         assert_eq!(decision, StaleBinaryGate::Proceed);
     }
 
@@ -632,7 +632,7 @@ mod tests {
     fn gate_decision_proceeds_when_binary_ahead() {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "0.4.4");
-        let decision = gate_decision_at(&repo, "0.4.5", Some("td.fill"), None);
+        let decision = gate_decision_at(&repo, "0.4.5", Some("cb.fill"), None);
         assert_eq!(decision, StaleBinaryGate::Proceed);
     }
 
@@ -642,7 +642,7 @@ mod tests {
         // must never refuse, even for a mutating verb.
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "0.4.4");
-        let decision = gate_decision_at(&repo, "0.4.5-dev.abcd1234", Some("td.fill"), None);
+        let decision = gate_decision_at(&repo, "0.4.5-dev.abcd1234", Some("cb.fill"), None);
         assert_eq!(decision, StaleBinaryGate::Proceed);
     }
 
@@ -651,7 +651,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let elsewhere = tmp.path().join("elsewhere");
         std::fs::create_dir_all(&elsewhere).unwrap();
-        let decision = gate_decision_at(&elsewhere, "0.1.0", Some("td.fill"), None);
+        let decision = gate_decision_at(&elsewhere, "0.1.0", Some("cb.fill"), None);
         assert_eq!(decision, StaleBinaryGate::Proceed);
     }
 
@@ -659,12 +659,12 @@ mod tests {
     fn gate_decision_escape_hatch_overrides_refusal() {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "9.9.9");
-        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), Some("1"));
+        let decision = gate_decision_at(&repo, "0.4.4", Some("cb.fill"), Some("1"));
         assert_eq!(
             decision,
             StaleBinaryGate::Overridden {
                 source_version: "9.9.9".to_string(),
-                verb_path: "td.fill".to_string(),
+                verb_path: "cb.fill".to_string(),
             }
         );
     }
@@ -673,12 +673,12 @@ mod tests {
     fn gate_decision_ignores_non_1_escape_hatch_values() {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = write_fixture_repo(tmp.path(), "9.9.9");
-        let decision = gate_decision_at(&repo, "0.4.4", Some("td.fill"), Some("true"));
+        let decision = gate_decision_at(&repo, "0.4.4", Some("cb.fill"), Some("true"));
         assert_eq!(
             decision,
             StaleBinaryGate::Refuse {
                 source_version: "9.9.9".to_string(),
-                verb_path: "td.fill".to_string(),
+                verb_path: "cb.fill".to_string(),
             }
         );
     }
@@ -750,13 +750,13 @@ mod tests {
 
     #[test]
     fn refusal_envelope_names_versions_verb_and_remediation() {
-        let envelope = build_refusal_envelope("0.4.3", "deadbeef", "0.4.4", "td.fill");
+        let envelope = build_refusal_envelope("0.4.3", "deadbeef", "0.4.4", "cb.fill");
         assert_eq!(envelope["schema_version"], "aw.cli.v1");
         assert_eq!(envelope["action"], "error");
         let message = envelope["message"].as_str().unwrap();
         assert!(message.contains("0.4.3"), "must name the installed version");
         assert!(message.contains("0.4.4"), "must name the checkout version");
-        assert!(message.contains("td.fill"), "must name the invoked verb");
+        assert!(message.contains("cb.fill"), "must name the invoked verb");
         assert_eq!(
             envelope["next"]["command"],
             "cargo install --path apps/agentic-workflow"

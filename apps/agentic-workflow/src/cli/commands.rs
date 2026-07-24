@@ -15,11 +15,13 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::meta;
 use crate::cli::project;
+use crate::cli::review;
 use crate::cli::standard_cli;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
+// <HANDWRITE gap="missing-generator:logic" tracker="#2165" reason="logic section in commands.rs is hand-written pending codegen support">
 pub enum Commands {
     /// Create a greenfield project directory and bootstrap Agentic Workflow.
     // @spec apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
@@ -68,12 +70,20 @@ pub enum Commands {
     #[command(name = "report-issue")]
     ReportIssue(standard_cli::ReportIssueArgs),
 
-    /// Tech-design and generated-code lifecycle
+    /// Tech-design authoring and validation lifecycle.
     Td(crate::cli::td::TdArgs),
+
+    /// Codebase materialization lifecycle: generate, fill, check, and promote.
+    Cb(crate::cli::cb::CbArgs),
 
     /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
     Ec(ec::EcArgs),
+
+    /// Read-only project-profile resolution + report (kind/surface,
+    /// workload, state ownership, replication/consensus, serving role).
+    Review(review::ReviewArgs),
 }
+// </HANDWRITE>
 
 /// Run an Agentic Workflow CLI command
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
@@ -125,8 +135,14 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
         }
+        Commands::Cb(args) => {
+            crate::cli::cb::run(args).await?;
+        }
         Commands::Ec(args) => {
             ec::run(args)?;
+        }
+        Commands::Review(args) => {
+            review::run_review(args)?;
         }
     }
 

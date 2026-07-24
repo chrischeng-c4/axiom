@@ -20,10 +20,10 @@ fn completeness_placeholder_unit_command() {
         "cargo test -p agentic-workflow --lib completeness_placeholder_scanner_contract -- --nocapture";
     let id = "completeness-placeholder-unit-command";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

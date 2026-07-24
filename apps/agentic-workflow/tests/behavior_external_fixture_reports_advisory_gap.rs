@@ -7,20 +7,22 @@
 // @contract external-fixture-reports-advisory-gap
 // @category behavior
 // @required_for_production true
-// @command bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh
+// @command cargo test -p agentic-workflow --lib regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture
 // AW-EC-END
 
+// Contract: the external-advisory fixture reports the regenerability gap as an advisory warning
+// Contract: the advisory gap does not add a production blocker when all required gates are clean
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn external_fixture_reports_advisory_gap() {
     let command =
-        "bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh";
+        "cargo test -p agentic-workflow --lib regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture";
     let id = "external-fixture-reports-advisory-gap";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

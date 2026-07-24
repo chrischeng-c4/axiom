@@ -91,7 +91,7 @@ e2e_tests:
   - id: wi-ec-td-root-loop-fixture
     capability_id: workflow-root-runner
     claim_id: wi-ec-td-root-loop
-    command: cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture
+    command: cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture
     assertions:
       - "fixture root follows emitted commands until completion.workflow_complete=true"
       - "no retired lifecycle command or hidden agent-only step is required"

@@ -21,10 +21,11 @@ capability_refs:
     coverage: full
     rationale: "Standardize and health project scopes protect project-local source, TD, and generated artifact boundaries during takeover scans."
 command_refs:
-  # #1278 retired the public `aw standardize` namespace. Its remaining
-  # readiness readers live under health and its artifact producers under TD.
-  - command: aw health
-  - command: aw td
+  # #920 (epic #914 slice F): `managed`/`semantic`/`traceability` and their
+  # `next`/`report`/`run` stage subcommands are retired -- only `aw
+  # standardize` (dispatching solely to `audit`, claimed by
+  # aw-standardize-audit-first-quality.md) remains live.
+  - command: aw standardize
 ---
 
 # Standardized apps/agentic-workflow/src/cli/standardize.rs
@@ -152,9 +153,7 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw handoff",
     "aw takeoff",
     // #918: `aw run` full removal (superseded by `aw wi run` / `aw capability
-    // run`, #917) + #857 merge-era leftovers. `"aw cb "` keeps the trailing
-    // space so it does not false-positive on prose like "the aw cb_filled
-    // phase" while still catching a literal `aw cb ...` invocation.
+    // run`, #917) + #857 merge-era leftovers.
     "aw run",
     "aw td merge",
     "aw td review",
@@ -163,7 +162,6 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw wi review",
     "aw wi arbitrate",
     "aw wi draft review",
-    "aw cb ",
     // #1278 (epic #1270 R7): `aw standardize` is fully retired -- reporting
     // folded into `aw health`'s takeover-audit axis, `audit record` rehomed
     // as `aw td audit-record`. A bare `"aw standardize"` supersedes and
@@ -906,6 +904,14 @@ pub(crate) fn project_touched_scope_standardization(
     candidate_paths: &[String],
 ) -> Result<TouchedScopeStandardization> {
     let project_root = crate::find_project_root()?;
+    project_touched_scope_standardization_at(&project_root, project, candidate_paths)
+}
+
+fn project_touched_scope_standardization_at(
+    project_root: &Path,
+    project: &str,
+    candidate_paths: &[String],
+) -> Result<TouchedScopeStandardization> {
     let inventory = build_inventory(&project_root, &[], Some(project), false)?;
     let candidates: std::collections::BTreeSet<&str> =
         candidate_paths.iter().map(String::as_str).collect();
@@ -5064,7 +5070,13 @@ fn collect_source_files(project_root: &Path, scopes: &[String]) -> Result<Vec<So
             if !matcher.is_match(&rel) || !rels.insert(rel.clone()) {
                 continue;
             }
-            let content = fs::read_to_string(path).unwrap_or_default();
+            // Health must be resilient to build caches or other binary
+            // artifacts that happen to use a source-looking extension. They
+            // cannot provide marker evidence, so omit them rather than
+            // treating an undecodable file as empty managed source.
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
             let markers = detect_markers(&content);
             let handwrite_gaps = detect_handwrite_gaps(&content);
             out.push(SourceFile {
@@ -5157,7 +5169,7 @@ fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Resu
                 ));
             } else if content != expected {
                 blockers.push(format!(
-                    "project root artifact `{rel}` is stale; run `aw td gen --force-regen --project {}`",
+                    "project root artifact `{rel}` is stale; run `aw cb gen --force-regen --project {}`",
                     shell_quote(&project)
                 ));
             }
@@ -5669,9 +5681,13 @@ fn tracker_attr_absent(tracker: &str) -> bool {
 
 fn strip_comment_lead(line: &str) -> &str {
     let s = line.trim_start();
-    for prefix in ["///", "//!", "//", "#", "<!--"] {
+    for prefix in ["///", "//!", "//", "#", "<!--", "/*"] {
         if let Some(rest) = s.strip_prefix(prefix) {
-            return rest.trim_start().trim_end_matches("-->").trim();
+            return rest
+                .trim_start()
+                .trim_end_matches("-->")
+                .trim_end_matches("*/")
+                .trim();
         }
     }
     s
@@ -5679,7 +5695,7 @@ fn strip_comment_lead(line: &str) -> &str {
 
 fn marker_comment_body(line: &str) -> Option<&str> {
     let s = line.trim_start();
-    let is_comment = ["///", "//!", "//", "#", "<!--"]
+    let is_comment = ["///", "//!", "//", "#", "<!--", "/*"]
         .iter()
         .any(|prefix| s.starts_with(prefix));
     if !is_comment {
@@ -6061,7 +6077,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::RegenDrift,
             &finding.target,
             "mainthread",
-            "mainthread: regenerate affected CODEGEN block and rerun aw td code-check",
+            "mainthread: regenerate affected CODEGEN block and rerun aw cb check",
             &finding.reason,
             true,
         );
@@ -6179,7 +6195,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::GeneratorPrimitiveGap,
             &file.rel,
             "mainthread",
-            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw td gen --force-regen --project <project> --verify",
+            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw cb gen --force-regen --project <project> --verify",
             &format!(
                 "{} is CODEGEN-marked but its language/workspace is not replay-verifiable by current generators",
                 file.language
@@ -6196,7 +6212,7 @@ fn choose_regenerable_action_with_project(
                         StandardizeActionKind::RegenDrift,
                         file,
                         "mainthread",
-                        "mainthread: repair CODEGEN replay drift, then rerun aw td gen --force-regen --project <project> --verify",
+                        "mainthread: repair CODEGEN replay drift, then rerun aw cb gen --force-regen --project <project> --verify",
                         "CODEGEN-owned file is not audit/replay clean",
                         true,
                     );
@@ -6279,7 +6295,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::PromoteHandwrite,
             &file.rel,
             "mainthread",
-            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw td code-check",
+            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw cb check",
             "managed HANDWRITE remains; full regenerability requires CODEGEN ownership",
             true,
         );
@@ -7511,6 +7527,8 @@ changes:
             write(tmp.path(), rel, "fn main() {}\n");
         }
         write(tmp.path(), "node_modules/pkg/index.ts", "export {}\n");
+        let binary = tmp.path().join("src/transform-cache.ts");
+        fs::write(&binary, [0xff, 0x00, 0xfe]).unwrap();
         write(tmp.path(), "src/assets/highlight.min.js", "minified();\n");
         let files = collect_source_files(
             tmp.path(),
@@ -7519,6 +7537,10 @@ changes:
         .unwrap();
         assert_eq!(files.len(), 9);
         assert!(!files.iter().any(|f| f.rel.ends_with(".min.js")));
+        assert!(
+            !files.iter().any(|f| f.rel.ends_with("transform-cache.ts")),
+            "undecodable source-looking artifacts must be omitted from health inventory"
+        );
         let langs: BTreeSet<_> = files.iter().map(|f| f.language.as_str()).collect();
         assert!(langs.contains("rust"));
         assert!(langs.contains("python"));
@@ -7744,16 +7766,12 @@ test_cmd = "true"
         generated.push_str("\n");
         write(tmp.path(), "projects/tool/llms.txt", &generated);
         let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
-        assert_eq!(
-            blockers,
-            vec![
-                "project root artifact `projects/tool/llms.txt` is stale; run `aw td gen --force-regen --project tool`"
-                    .to_string()
-            ]
-        );
-        assert!(blockers
+        let stale = blockers
             .iter()
-            .all(|blocker| !blocker.contains("aw standardize")));
+            .find(|blocker| blocker.contains("is stale"))
+            .expect("stale llms.txt must report a remediation");
+        assert!(stale.contains("aw cb gen --force-regen --project tool"));
+        assert!(!stale.contains("aw standardize"));
 
         let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
         write(tmp.path(), "projects/tool/llms.txt", &generated);
@@ -8100,6 +8118,44 @@ paths = ["apps/cap/**"]
             "aw_ownership = \"CODEGEN-BEGIN tracker=\\\"#4041\\\" reason=\\\"valid TOML marker\\\"\"\n";
         let toml_markers = detect_markers(toml_marker);
         assert!(toml_markers.codegen);
+
+        let css_marker =
+            "/* HANDWRITE-BEGIN gap=\"css\" tracker=\"#4041\" reason=\"valid CSS marker\" */\n";
+        assert!(detect_markers(css_marker).handwrite);
+        assert!(detect_handwrite_gaps(css_marker).is_empty());
+    }
+
+    #[test]
+    fn touched_scope_standardization_accepts_filled_css_handwrite_marker() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "aw.toml",
+            r#"
+[[projects]]
+name = "demo"
+path = "apps/demo"
+
+[[projects.workspaces]]
+paths = ["apps/demo/**"]
+target = "typescript"
+"#,
+        );
+        write(
+            tmp.path(),
+            "apps/demo/ui/shell.css",
+            "/* HANDWRITE-BEGIN gap=\"css\" tracker=\"#2192\" reason=\"project shell\" */\n:root { color: #fff; }\n/* HANDWRITE-END */\n",
+        );
+
+        let candidate = "apps/demo/ui/shell.css".to_string();
+        let outcome = project_touched_scope_standardization_at(
+            tmp.path(),
+            "demo",
+            std::slice::from_ref(&candidate),
+        )
+        .unwrap();
+        assert!(outcome.unmarked.is_empty(), "{:#?}", outcome.unmarked);
+        assert!(outcome.attr_gap.is_empty(), "{:#?}", outcome.attr_gap);
     }
 
     #[test]
@@ -8963,8 +9019,8 @@ command_refs:
             "aw wi draft init",
             "aw td",
             "aw td check",
-            "aw td gen",
-            "aw td code-check",
+            "aw cb gen",
+            "aw cb check",
             // #1278 (epic #1270 R7): `aw standardize` is fully retired; the
             // relocated `audit record` remediation verb lives here instead.
             "aw td audit-record",
@@ -9037,7 +9093,7 @@ command_refs:
             "AGENTS.md",
             "Kick off the loop with `aw run --project demo`.\n\
              Legacy artifact steps used `aw td merge`, `aw td review`, and `aw td revise`.\n\
-             Do not use `aw wi merge` or `aw cb fill` here.\n",
+             Do not use `aw wi merge` here.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -9054,7 +9110,6 @@ command_refs:
             "aw td review",
             "aw td revise",
             "aw wi merge",
-            "aw cb ",
         ] {
             assert!(
                 deleted_targets.contains(expected),
@@ -9065,15 +9120,15 @@ command_refs:
 
     #[test]
     fn deleted_command_paths_918_does_not_false_positive_on_new_runner_verbs() {
-        // `"aw run"` and `"aw cb "` must not match inside the new #917
-        // canonical runner shells or inside ordinary `cb_*` phase prose.
+        // `"aw run"` must not match inside the new #917 canonical runner
+        // shells, and active CB commands and `cb_*` phase prose stay valid.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "AGENTS.md",
             "Use `aw wi run 42` or `aw capability run demo:foo --project demo`.\n\
              The lifecycle transitions through the cb_filled phase before\n\
-             `aw td code-check` closes the loop.\n",
+             `aw cb check` closes the loop.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -10343,7 +10398,7 @@ target = "python"
         };
         assert_eq!(
             drift_marker_health_worker_command("demo", Some(&regen)),
-            "aw td gen --force-regen --project demo"
+            "aw cb gen --force-regen --project demo"
         );
 
         let shadow = DriftMarkerFinding {
@@ -10353,7 +10408,7 @@ target = "python"
         };
         assert_eq!(
             drift_marker_health_worker_command("demo", Some(&shadow)),
-            "aw td promote src/cli/shadow_file.rs"
+            "aw cb promote src/cli/shadow_file.rs"
         );
 
         let marker_gap = DriftMarkerFinding {

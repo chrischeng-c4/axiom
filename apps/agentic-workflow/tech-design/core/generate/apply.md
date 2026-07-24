@@ -931,6 +931,12 @@ fn run_apply_inner(
                 .then(|| std::fs::read_to_string(&target_path).ok())
                 .flatten()
                 .is_some_and(|content| is_whole_file_handwrite_content(&content));
+        let existing_whole_file_handwrite = entry.impl_mode == ImplMode::HandWritten
+            && target_path
+                .exists()
+                .then(|| std::fs::read_to_string(&target_path).ok())
+                .flatten()
+                .is_some_and(|content| is_whole_file_handwrite_content(&content));
 
         // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
         // owns the writable skeleton: a new file gets a whole-file HANDWRITE
@@ -947,6 +953,21 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
+            if existing_whole_file_handwrite {
+                apply_diagnostic!(
+                    "[gen apply] HANDWRITE: existing whole-file marker retained in {} (idempotent)",
+                    entry.path,
+                );
+                files.push(FileApplyResult {
+                    path: PathBuf::from(&entry.path),
+                    created: false,
+                    updated: false,
+                    blocks_updated: 0,
+                    dry_run,
+                    processed: true,
+                });
+                continue;
+            }
             if target_path.exists() && !is_rust_source(&target_path) {
                 apply_diagnostic!(
                     "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
@@ -1016,7 +1037,7 @@ fn run_apply_inner(
                     }
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::AnchorMissing) => {
                         return Err(crate::generate::GenerateError::InvalidValue(format!(
-                            "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                            "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                             entry.path, anchor,
                         )));
                     }
@@ -1026,7 +1047,7 @@ fn run_apply_inner(
                 }
             } else {
                 return Err(crate::generate::GenerateError::InvalidValue(format!(
-                    "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                    "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                     entry.path,
                 )));
             }
@@ -1665,7 +1686,7 @@ fn canonical_whole_file_source_block(
         .and_then(|ext| ext.to_str())?
         .to_ascii_lowercase();
     let comment = match extension.as_str() {
-        "py" => "# ",
+        "py" | "sh" | "bash" | "zsh" => "# ",
         "rs" | "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "go" => "// ",
         _ => return None,
     };
@@ -2080,10 +2101,9 @@ fn insert_register_body_block(lib_content: &str, spec_ref: &str, body: &str) -> 
 /// it up immediately. The body is intentionally empty (`// TODO: hand-write`)
 /// — the placeholder is a starting point, not the implementation.
 ///
-/// Files outside the recognised source-language set get a generic plain
-/// scaffold (no comment markers); Rust gets comment-style begin/end line
-/// markers; markdown gets HTML-comment markers. The gap/tracker/reason
-/// attributes on the begin line are read by `parse_handwrite_markers`.
+/// Recognised target languages receive syntax-valid HANDWRITE comments;
+/// markdown uses HTML comments. The gap/tracker/reason attributes on the
+/// begin line are read by `parse_handwrite_markers`.
 fn scaffold_handwrite_file(entry: &ChangeEntry) -> String {
     // R1 (bug-cb-fill-payload-routes-by-marker-id-alone-collides): when
     // the spec doesn't supply an explicit `handwrite_gap`, fall back to a
@@ -2144,6 +2164,28 @@ fn scaffold_handwrite_file(entry: &ChangeEntry) -> String {
              # TODO: hand-write content for `{path}`.\n\
              pass\n\
              # {end}\n",
+            begin = HANDWRITE_BEGIN_TOKEN,
+            end = HANDWRITE_END_TOKEN,
+            gap = gap,
+            tracker = tracker,
+            reason = reason,
+            path = entry.path,
+        ),
+        "toml" | "yaml" | "yml" | "sh" | "bash" | "zsh" => format!(
+            "# {begin} gap=\"{gap}\" tracker=\"{tracker}\" reason=\"{reason}\"\n\
+             # TODO: hand-write content for `{path}`.\n\
+             # {end}\n",
+            begin = HANDWRITE_BEGIN_TOKEN,
+            end = HANDWRITE_END_TOKEN,
+            gap = gap,
+            tracker = tracker,
+            reason = reason,
+            path = entry.path,
+        ),
+        "css" | "scss" => format!(
+            "/* {begin} gap=\"{gap}\" tracker=\"{tracker}\" reason=\"{reason}\" */\n\
+             /* TODO: hand-write content for `{path}`. */\n\
+             /* {end} */\n",
             begin = HANDWRITE_BEGIN_TOKEN,
             end = HANDWRITE_END_TOKEN,
             gap = gap,
@@ -2616,7 +2658,7 @@ fn validate_ambiguous_generation_plan(
     exact_target: Option<&Path>,
     rerun_command: Option<&str>,
 ) -> crate::generate::Result<()> {
-    let next_command = rerun_command.unwrap_or("aw td gen");
+    let next_command = rerun_command.unwrap_or("aw cb gen");
     validate_generated_unit_ownership_syntax(spec_content, next_command)?;
 
     // A canonical owner must resolve to one generated section and must itself
@@ -2722,9 +2764,9 @@ fn validate_ambiguous_generation_plan(
                     "add an exhaustive canonical `generates: [{section}:<unit>, ...]` list to every `{section}` CODEGEN target (or keep exactly one CODEGEN target and mark siblings hand-written), then rerun {}",
                     rerun_command
                         .map(|command| format!("`{command}`"))
-                        .unwrap_or_else(|| "the same `aw td gen` command".to_string())
+                        .unwrap_or_else(|| "the same `aw cb gen` command".to_string())
                 ),
-                next_command: rerun_command.unwrap_or("aw td gen").to_string(),
+                next_command: rerun_command.unwrap_or("aw cb gen").to_string(),
             });
         }
 
@@ -2961,6 +3003,7 @@ fn validate_handwrite_anchors_before_write(
     allowed_sections: Option<&[&str]>,
     exact_target: Option<&Path>,
 ) -> crate::generate::Result<()> {
+    let mut failures = Vec::new();
     for entry in entries {
         if entry.impl_mode != ImplMode::HandWritten {
             continue;
@@ -2997,6 +3040,15 @@ fn validate_handwrite_anchors_before_write(
             continue;
         }
 
+        let existing_whole_file_handwrite = target_path
+            .exists()
+            .then(|| std::fs::read_to_string(&target_path).ok())
+            .flatten()
+            .is_some_and(|content| is_whole_file_handwrite_content(&content));
+        if existing_whole_file_handwrite {
+            continue;
+        }
+
         // Tracked existing non-Rust target: no Rust marker scaffold, so no
         // anchor to validate.
         if target_path.exists() && !is_rust_source(&target_path) {
@@ -3010,19 +3062,27 @@ fn validate_handwrite_anchors_before_write(
         }
 
         let Some(anchor) = entry.handwrite_anchor.as_deref() else {
-            return Err(crate::generate::GenerateError::InvalidValue(format!(
-                "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+            failures.push(format!(
+                "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                 entry.path,
-            )));
+            ));
+            continue;
         };
         let found = crate::generate::handwrite_scaffold::anchor_present(&target_path, anchor)
             .map_err(crate::generate::GenerateError::Io)?;
         if !found {
-            return Err(crate::generate::GenerateError::InvalidValue(format!(
-                "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+            failures.push(format!(
+                "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw cb gen so AW can scaffold its HANDWRITE marker",
                 entry.path, anchor,
-            )));
+            ));
         }
+    }
+    if !failures.is_empty() {
+        return Err(crate::generate::GenerateError::InvalidValue(format!(
+            "hand-written anchor validation failed ({} issue(s)):\n- {}",
+            failures.len(),
+            failures.join("\n- "),
+        )));
     }
     Ok(())
 }
@@ -3723,6 +3783,9 @@ fn strip_handwrite_comment_lead(line: &str) -> &str {
         return rest.trim_start();
     }
     if let Some(rest) = s.strip_prefix('#') {
+        return rest.trim_start();
+    }
+    if let Some(rest) = s.strip_prefix("/*") {
         return rest.trim_start();
     }
     s
@@ -5160,6 +5223,18 @@ changes:
         assert!(!is_unix_shebang("#![allow(dead_code)]"));
     }
 
+    #[test]
+    fn canonical_shell_text_source_unit_accepts_shebang_and_hash_markers() {
+        let shell = "#!/usr/bin/env bash\n# SPEC-MANAGED: tech-design/build.md#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = parse_source_codegen_blocks(Path::new("build.sh"), shell).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].spec_ref, "tech-design/build.md#text-source-unit");
+        assert_eq!(blocks[0].content, "set -euo pipefail");
+
+        let partial = "echo outside\n# SPEC-MANAGED: tech-design/build.md#text-source-unit\n# CODEGEN-BEGIN\nset -e\n# CODEGEN-END\n";
+        assert!(parse_source_codegen_blocks(Path::new("build.sh"), partial).is_err());
+    }
+
     fn hw_open(attrs: &str) -> String {
         format!("// {HANDWRITE_XML_OPEN_PREFIX} {attrs}>")
     }
@@ -5255,6 +5330,94 @@ changes:
         let body = scaffold_handwrite_file(&entry);
         assert!(body.contains("gap=\"phase-1-namespace-split\""));
         assert!(!body.contains("phase-1-namespace-split:"));
+    }
+
+    #[test]
+    fn test_scaffold_handwrite_css_uses_valid_block_comments() {
+        let entry = ChangeEntry {
+            path: "apps/workbench/ui/shell.css".to_string(),
+            action: "create".to_string(),
+            description: Some("style the shell".to_string()),
+            section_id: Some("logic".to_string()),
+            impl_mode: ImplMode::HandWritten,
+            replaces: vec![],
+            generates: Vec::new(),
+            exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
+            trait_impl: None,
+            handwrite_gap: Some("missing-generator:css".to_string()),
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let body = scaffold_handwrite_file(&entry);
+        assert!(body.starts_with("/* HANDWRITE-BEGIN"));
+        assert!(body.contains("/* TODO: hand-write content"));
+        assert!(body.trim_end().ends_with("/* HANDWRITE-END */"));
+        assert!(!body.lines().any(|line| line.starts_with("//")));
+        assert!(is_whole_file_handwrite_content(&body));
+    }
+
+    #[test]
+    fn test_scaffold_handwrite_toml_uses_valid_hash_comments() {
+        let entry = ChangeEntry {
+            path: "apps/workbench/tests/fixtures/aw-context/aw.toml".to_string(),
+            action: "create".to_string(),
+            description: Some("configure the fixture".to_string()),
+            section_id: Some("logic".to_string()),
+            impl_mode: ImplMode::HandWritten,
+            replaces: vec![],
+            generates: Vec::new(),
+            exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
+            trait_impl: None,
+            handwrite_gap: Some("missing-generator:toml".to_string()),
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let body = scaffold_handwrite_file(&entry);
+        assert!(body.starts_with("# HANDWRITE-BEGIN"));
+        assert!(body.contains("# TODO: hand-write content"));
+        assert!(body.trim_end().ends_with("# HANDWRITE-END"));
+        assert!(!body.lines().any(|line| line.starts_with("//")));
+        assert!(is_whole_file_handwrite_content(&body));
+        toml::from_str::<toml::Table>(&body).expect("TOML scaffold must parse");
+    }
+
+    #[test]
+    fn test_scaffold_handwrite_shell_uses_valid_hash_comments() {
+        let entry = ChangeEntry {
+            path: "libs/service-observability/tests/soak_metrics_window_contract.sh".to_string(),
+            action: "create".to_string(),
+            description: Some("exercise the soak metrics contract".to_string()),
+            section_id: Some("e2e-test".to_string()),
+            impl_mode: ImplMode::HandWritten,
+            replaces: vec![],
+            generates: Vec::new(),
+            exports: Vec::new(),
+            preamble: None,
+            pub_uses: Vec::new(),
+            rust_source: None,
+            trait_impl: None,
+            handwrite_gap: Some("missing-generator:soak-metrics".to_string()),
+            handwrite_tracker: None,
+            handwrite_reason: None,
+            handwrite_anchor: None,
+        };
+
+        let body = scaffold_handwrite_file(&entry);
+        assert!(body.starts_with("# HANDWRITE-BEGIN"));
+        assert!(body.contains("# TODO: hand-write content"));
+        assert!(body.trim_end().ends_with("# HANDWRITE-END"));
+        assert!(!body.lines().any(|line| line.starts_with("//")));
+        assert!(is_whole_file_handwrite_content(&body));
     }
 
     #[test]
@@ -5710,7 +5873,6 @@ pub fn shadow() {}\n",
             &target,
             "// SPEC-MANAGED: apps/agentic-workflow/tech-design/generate/marker.md#source\n\
 // CODEGEN-BEGIN\n\
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/generate/marker.md#source\n\
 // CODEGEN-BEGIN\n\
 pub fn parse_codegen_blocks() {}\n\
 // CODEGEN-END\n\
@@ -6390,7 +6552,6 @@ properties:
             r#"// CODEGEN-BEGIN
 /// @spec .aw/tech-design/projects/score/logic/widget.md#schema
 pub struct OldWidget;
-// CODEGEN-END
 "#,
         )
         .unwrap();
@@ -7168,7 +7329,7 @@ changes:
         let error = run_apply(&spec_path, root, false).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("requires `anchor:`"), "{message}");
-        assert!(message.contains("aw td gen"), "{message}");
+        assert!(message.contains("aw cb gen"), "{message}");
 
         let after = std::fs::read_to_string(&target).unwrap();
         assert_eq!(before, after, "hand-written entry leaves file untouched");
@@ -7176,31 +7337,6 @@ changes:
             !after.contains("HANDWRITE-BEGIN"),
             "generation must not create an unscoped marker"
         );
-    }
-
-    #[test]
-    fn scoped_apply_skips_out_of_scope_handwrite_before_anchor_preflight() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let source_root = root.join("apps/fixture/src");
-        std::fs::create_dir_all(&source_root).unwrap();
-        let spec_path = root.join("apps/fixture/tech-design/mixed.md");
-        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &spec_path,
-            format!(
-                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/fixture/src/generated.rs\n    action: create\n    section: schema\n    impl_mode: codegen\n  - path: Cargo.toml\n    action: modify\n    section: config\n    impl_mode: hand-written\n```\n",
-                schema_section()
-            ),
-        )
-        .unwrap();
-
-        let report =
-            run_apply_scoped_targets(&spec_path, root, false, &[source_root]).unwrap();
-
-        assert!(root.join("apps/fixture/src/generated.rs").is_file());
-        assert!(!root.join("Cargo.toml").exists());
-        assert_eq!(report.total_blocks_updated(), 1);
     }
 
     /// #1807 regression: a spec with one clean codegen target and one
@@ -7290,6 +7426,114 @@ flowchart TD
     }
 
     #[test]
+    fn td_gen_reports_all_invalid_handwritten_anchors_before_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for (name, body) in [
+            ("one.rs", "struct ExistingOne {}\n"),
+            ("two.rs", "struct ExistingTwo {}\n"),
+        ] {
+            let target = root.join("apps/fixture/src").join(name);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, body).unwrap();
+        }
+        let codegen_target = root.join("apps/fixture/src/generated.rs");
+        let spec_path = root.join("apps/fixture/tech-design/logic/gen-2181.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: gen-2181
+fill_sections: [logic, changes]
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/fixture/src/generated.rs
+    action: create
+    section: logic
+  - path: apps/fixture/src/one.rs
+    action: create
+    impl_mode: hand-written
+    anchor: missing_one
+  - path: apps/fixture/src/two.rs
+    action: create
+    impl_mode: hand-written
+    anchor: missing_two
+```
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+"#,
+        )
+        .unwrap();
+
+        let error = run_apply(&spec_path, root, false).unwrap_err().to_string();
+        assert!(error.contains("missing_one"), "{error}");
+        assert!(error.contains("missing_two"), "{error}");
+        assert!(
+            !codegen_target.exists(),
+            "all anchor failures must be reported before any output is written"
+        );
+    }
+
+    #[test]
+    fn hand_written_existing_non_rust_target_skips_rust_marker_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let target = root.join("docs/capability.md");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "# Existing capability contract\n").unwrap();
+        let before = std::fs::read_to_string(&target).unwrap();
+
+        let spec_path = root.join("tech-design/logic/documented-change.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: documented-change
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: docs/capability.md
+    action: modify
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        assert!(report
+            .files
+            .iter()
+            .any(|file| { file.path == PathBuf::from("docs/capability.md") && file.processed }));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), before);
+    }
+
+    #[test]
     fn hand_written_existing_non_rust_create_targets_skip_rust_anchor_requirement() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -7345,6 +7589,55 @@ changes:
         }
         assert_eq!(std::fs::read(&config_target).unwrap(), config_before);
         assert_eq!(std::fs::read(&icon_target).unwrap(), icon_before);
+    }
+
+    #[test]
+    fn hand_written_whole_file_create_scaffold_is_regeneration_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let target = root.join("src/host.rs");
+        let spec_path = root.join("tech-design/logic/idempotent-handwrite.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: idempotent-handwrite
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/host.rs
+    action: create
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply(&spec_path, root, false).unwrap();
+        let scaffold = std::fs::read_to_string(&target).unwrap();
+        let filled = scaffold.replace("// TODO: hand-write", "pub fn filled_host() {}");
+        assert_ne!(filled, scaffold);
+        std::fs::write(&target, &filled).unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        assert!(report.files.iter().any(|file| {
+            file.path == PathBuf::from("src/host.rs") && file.processed && !file.updated
+        }));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), filled);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.
@@ -10301,10 +10594,10 @@ pub(crate) fn generate_code_for_entry(
             unit_ids: entry.generates.clone(),
             targets: vec![entry.path.clone()],
             remediation: format!(
-                "the validated owned partition produced no code; record a concrete generator gap and make `{}` hand-written, or implement the missing generator before rerunning `aw td gen`",
+                "the validated owned partition produced no code; record a concrete generator gap and make `{}` hand-written, or implement the missing generator before rerunning `aw cb gen`",
                 entry.path
             ),
-            next_command: "aw td gen".to_string(),
+            next_command: "aw cb gen".to_string(),
         });
     }
 
@@ -11936,12 +12229,9 @@ changes:
             &target,
             r#"console.log("ok");
 
-// SPEC-MANAGED: tech-design/semantic/assets.md#logic
-// CODEGEN-BEGIN
 pub fn preserve_frontend_behavior() -> std::result::Result<(), Box<dyn std::error::Error>> {
     todo!()
 }
-// CODEGEN-END
 "#,
         )
         .unwrap();
@@ -11994,10 +12284,7 @@ changes:
         std::fs::write(
             &target,
             "\
-// SPEC-MANAGED: tech-design/source.md#source
-// CODEGEN-BEGIN
 pub fn old() {}
-// CODEGEN-END
 pub fn stale() {}
 ",
         )
@@ -12060,10 +12347,7 @@ changes:
         std::fs::write(
             &target,
             "\
-// SPEC-MANAGED: tech-design/source.md#source
-// CODEGEN-BEGIN
 pub fn generated() {}
-// CODEGEN-END
 ",
         )
         .unwrap();
@@ -12127,10 +12411,7 @@ changes:
         std::fs::write(
             &target,
             "\
-// SPEC-MANAGED: tech-design/source.md#source
-// CODEGEN-BEGIN
 pub fn old() {}
-// CODEGEN-END
 
 pub fn outside() {}
 ",

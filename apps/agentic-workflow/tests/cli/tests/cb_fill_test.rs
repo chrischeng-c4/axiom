@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/cb_fill_test.md#source
 // CODEGEN-BEGIN
-//! Integration tests for `aw td fill` (Phase 3).
+//! Integration tests for `aw cb fill` (Phase 3).
 //!
 //! Smoke tests for CLI registration, brief mode envelope shape, marker
 //! enumeration, and `--apply --marker` block replacement, plus a real-binary
@@ -45,12 +45,12 @@ fn handwrite_end() -> &'static str {
 
 // ── R1 / R14(1) ─────────────────────────────────────────────────────────
 
-/// R1: `aw td fill` is registered as a first-class subcommand under td.
+/// R1: `aw cb fill` is registered as a first-class subcommand under cb.
 #[test]
 fn test_cb_fill_registered() {
     let cmd = Cli::command();
-    let td = cmd.find_subcommand("td").expect("td namespace");
-    let fill = td.find_subcommand("fill").expect("td fill subcommand");
+    let cb = cmd.find_subcommand("cb").expect("cb namespace");
+    let fill = cb.find_subcommand("fill").expect("cb fill subcommand");
     let positionals: Vec<String> = fill
         .get_positionals()
         .map(|p: &clap::Arg| p.get_id().as_str().to_string())
@@ -62,9 +62,9 @@ fn test_cb_fill_registered() {
 fn test_cb_fill_apply_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("td")
+        .find_subcommand("cb")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("td fill");
+        .expect("cb fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "apply")
         .expect("--apply flag");
@@ -77,9 +77,9 @@ fn test_cb_fill_apply_flag() {
 fn test_cb_fill_spec_path_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("td")
+        .find_subcommand("cb")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("td fill");
+        .expect("cb fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "spec_path")
         .expect("--spec-path flag");
@@ -104,7 +104,7 @@ fn test_lifecycle_trailer_cb_fill_variant() {
     assert_eq!(lifecycle_trailer::CB_FILL, "Cb-Fill");
 }
 
-/// R10: terminal `aw td code-check` accepts `cb_filled` as a valid phase.
+/// R10: terminal `aw cb check` accepts `cb_filled` as a valid phase.
 /// We verify this at the helper-level:
 /// `is_terminal_code_checkable("cb_filled") == true`.
 #[test]
@@ -127,7 +127,7 @@ fn test_brief_mode_envelope_shape() {
         "agent": null,
         "slug": "demo",
         "invoke": {
-            "command": "aw td fill",
+            "command": "aw cb fill",
             "args": {
                 "slug": "demo",
                 "marker_list": [{
@@ -483,14 +483,14 @@ esac
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_aw"))
-        .args(["td", "fill", "2535", "--spec-path", spec_rel])
+        .args(["cb", "fill", "2535", "--spec-path", spec_rel])
         .current_dir(root.path())
         .env("HOME", home)
         .env("GH_TOKEN", "fixture-token")
         .env("AW_GH_LOG", &gh_log)
         .env("AW_DISABLE_CAP", "1")
         .output()
-        .expect("run repo-built aw td fill");
+        .expect("run repo-built aw cb fill");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -561,7 +561,7 @@ fn test_collision_enumerate_returns_both_entries() {
 
 // ── e2e gates (require real worktree + payload + check pipeline) ────────
 
-/// AC1 (#1096, #1559, #1717): a real `aw td fill` brief + apply round trip writes and
+/// AC1 (#1096, #1559, #1717): a real `aw cb fill` brief + apply round trip writes and
 /// reads the marker payload under `/tmp/aw/workspaces/<workspace>/payloads/`
 /// (never under the repo's `.aw/payloads/`), quoting the absolute path in
 /// the dispatch envelope, and the apply step actually reads that file back
@@ -610,7 +610,7 @@ async fn test_apply_marker_replaces_block() {
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // #1921: `aw cb fill`'s mutating verbs resolve the configured issue
     // backend unconditionally via `guard_issue_mutation`, so this fully
     // offline sandbox needs a resolvable `local` backend, gated behind the
     // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
@@ -684,7 +684,7 @@ async fn test_apply_marker_replaces_block() {
         .status()
         .unwrap();
 
-    // Seed the open issue at cb_genned (the phase `aw td fill` expects).
+    // Seed the open issue at cb_genned (the phase `aw cb fill` expects).
     let slug = "cb-fill-payload-roundtrip-test";
     let backend = LocalBackend::from_project_root(root);
     let issue = Issue {
@@ -729,13 +729,13 @@ async fn test_apply_marker_replaces_block() {
     // is an ABSOLUTE path under /tmp/aw/workspaces/ — never the old
     // repo-relative `.aw/payloads/`.
     let brief_output = Command::new(&aw_bin)
-        .arg("td")
+        .arg("cb")
         .arg("fill")
         .arg(slug)
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill (brief)");
+        .expect("run aw cb fill (brief)");
     let brief_stdout = String::from_utf8_lossy(&brief_output.stdout);
     let brief_stderr = String::from_utf8_lossy(&brief_output.stderr);
     assert!(
@@ -788,13 +788,16 @@ async fn test_apply_marker_replaces_block() {
     // The CLI already initialized the payload template at that absolute
     // path; overwrite it with the marker's real fill content, proving the
     // apply step reads back from /tmp, not from the repo tree.
-    let app_payload_body = "// filled app marker\n";
+    let app_payload_body = format!(
+        "// filled app marker\n\n{} marker: {} path: {} reason: unfilled -->\n",
+        "<!--", first_marker_id, app_marker_rel
+    );
     std::fs::write(&payload_path, app_payload_body).expect("write app payload at /tmp/aw path");
 
     // Apply the app marker. The continuation must remain in fill and point at
     // the lib marker rather than skipping straight to code-check.
     let app_apply_output = Command::new(&aw_bin)
-        .arg("td")
+        .arg("cb")
         .arg("fill")
         .arg(slug)
         .arg("--apply")
@@ -803,7 +806,7 @@ async fn test_apply_marker_replaces_block() {
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill --apply for app marker");
+        .expect("run aw cb fill --apply for app marker");
     let app_apply_stdout = String::from_utf8_lossy(&app_apply_output.stdout);
     let app_apply_stderr = String::from_utf8_lossy(&app_apply_output.stderr);
     assert!(
@@ -817,7 +820,7 @@ async fn test_apply_marker_replaces_block() {
     assert!(
         app_apply_envelope["next"]["command"]
             .as_str()
-            .is_some_and(|command| command.starts_with("aw td fill")),
+            .is_some_and(|command| command.starts_with("aw cb fill")),
         "first apply must dispatch to the remaining lib marker, got:\n{}",
         app_apply_stdout
     );
@@ -829,11 +832,11 @@ async fn test_apply_marker_replaces_block() {
         .expect("write lib payload at /tmp/aw path");
 
     let lib_apply_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", "lib-marker"])
+        .args(["cb", "fill", slug, "--apply", "--marker", "lib-marker"])
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill --apply for lib marker");
+        .expect("run aw cb fill --apply for lib marker");
     let lib_apply_stdout = String::from_utf8_lossy(&lib_apply_output.stdout);
     let lib_apply_stderr = String::from_utf8_lossy(&lib_apply_output.stderr);
     assert!(
@@ -843,7 +846,7 @@ async fn test_apply_marker_replaces_block() {
         lib_apply_stderr
     );
     assert!(
-        lib_apply_stdout.contains("\"command\":\"aw td code-check"),
+        lib_apply_stdout.contains("\"command\":\"aw cb check"),
         "last active marker must dispatch to terminal code-check, got:\n{}",
         lib_apply_stdout
     );
@@ -858,6 +861,11 @@ async fn test_apply_marker_replaces_block() {
     assert!(
         updated_app.contains("filled app marker") && !updated_app.contains("TODO: hand-write"),
         "app source must contain its payload body in place of the stub, got:\n{}",
+        updated_app
+    );
+    assert!(
+        !updated_app.contains("<!-- marker:"),
+        "generated payload metadata must never be copied into source, got:\n{}",
         updated_app
     );
     let updated_lib =
@@ -898,7 +906,7 @@ async fn test_apply_marker_replaces_block() {
 /// payload is meant to carry) while still rejecting a dirty edit anywhere
 /// else in the tree.
 #[tokio::test]
-async fn test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_dirty_path() {
+async fn test_apply_commits_current_marker_and_preserves_unrelated_dirty_path() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
     use std::process::Command;
@@ -935,7 +943,7 @@ async fn test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_di
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // #1921: `aw cb fill`'s mutating verbs resolve the configured issue
     // backend unconditionally via `guard_issue_mutation`, so this fully
     // offline sandbox needs a resolvable `local` backend, gated behind the
     // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
@@ -1024,11 +1032,11 @@ pub fn existing() { 1; }\n\
     // (as an adoption payload) auto-initializes its payload to the adopt
     // sentinel — no payload write needed before apply.
     let brief_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
+        .args(["cb", "fill", slug])
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill (brief)");
+        .expect("run aw cb fill (brief)");
     assert!(
         brief_output.status.success(),
         "brief mode should exit 0:\nstdout:\n{}\nstderr:\n{}",
@@ -1043,65 +1051,21 @@ pub fn existing() { 1; }\n\
         .expect("marker_list[0].id present")
         .to_string();
 
-    // AC2: dirty an unrelated untracked file, then attempt apply. The
-    // lifecycle dirty-tree guard must still reject it before touching the
-    // marker source or committing anything.
+    // Dirty an unrelated untracked file, then apply. The bounded lifecycle
+    // commit must update and commit only the active marker source while
+    // preserving the unrelated worktree change.
     let unrelated_path = root.join("unrelated.txt");
     std::fs::write(&unrelated_path, "not part of this marker\n").unwrap();
 
-    let rejected_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill --apply with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "apply must reject an unrelated dirty path instead of applying:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let unchanged_marker_source =
-        std::fs::read_to_string(&marker_path).expect("read marker source after rejected apply");
-    assert!(
-        unchanged_marker_source.contains("tracker=\"pending-tracker\""),
-        "a rejected apply must never touch the marker source, got:\n{}",
-        unchanged_marker_source
-    );
-
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the active marker's own declared source path — the
-    // bounded implementation edit an adoption payload is meant to carry —
-    // then apply. It must be accepted and folded into the normal lifecycle
-    // commit alongside the tracker update.
-    std::fs::write(
-        &marker_path,
-        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
-pub fn existing() { 42; }\n\
-// </HANDWRITE>\n",
-    )
-    .unwrap();
-
     let accepted_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
+        .args(["cb", "fill", slug, "--apply", "--marker", &marker_id])
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill --apply with a dirty current-marker source file");
+        .expect("run aw cb fill --apply with an unrelated dirty file");
     assert!(
         accepted_output.status.success(),
-        "apply must accept a dirty current-marker source path:\nstdout:\n{}\nstderr:\n{}",
+        "apply must preserve unrelated dirty work while committing its bounded source:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&accepted_output.stdout),
         String::from_utf8_lossy(&accepted_output.stderr)
     );
@@ -1109,8 +1073,8 @@ pub fn existing() { 42; }\n\
     let adopted_source =
         std::fs::read_to_string(&marker_path).expect("read marker source after accepted apply");
     assert!(
-        adopted_source.contains("pub fn existing() { 42; }"),
-        "the author's dirty implementation edit must survive the adoption apply, got:\n{}",
+        adopted_source.contains("pub fn existing() { 1; }"),
+        "the adopted implementation body must survive the tracker update, got:\n{}",
         adopted_source
     );
     assert!(
@@ -1119,9 +1083,8 @@ pub fn existing() { 42; }\n\
         adopted_source
     );
 
-    // The dirty source path and the lifecycle state landed in the same
-    // commit: the working tree is clean again, and the last commit's stat
-    // includes the marker source path.
+    // The marker source and lifecycle state land together; unrelated work is
+    // neither staged nor committed.
     let status_output = Command::new(&git)
         .arg("-C")
         .arg(root)
@@ -1129,11 +1092,8 @@ pub fn existing() { 42; }\n\
         .output()
         .expect("git status after accepted apply");
     assert!(
-        String::from_utf8_lossy(&status_output.stdout)
-            .trim()
-            .is_empty(),
-        "the marker-fill commit must stage the accepted source diff and lifecycle state together, \
-         leaving the tree clean:\n{}",
+        String::from_utf8_lossy(&status_output.stdout).contains("unrelated.txt"),
+        "the marker-fill commit must preserve the unrelated dirty path:\n{}",
         String::from_utf8_lossy(&status_output.stdout)
     );
     let show_output = Command::new(&git)
@@ -1158,13 +1118,13 @@ pub fn existing() { 42; }\n\
 
 /// #1904 AC1/AC2/AC3: once the active TD's declared `## Changes` paths carry
 /// zero HANDWRITE markers (a marker-free integration test + semantic doc
-/// accompanying already-filled source), `aw td fill <id>` brief mode must
+/// accompanying already-filled source), `aw cb fill <id>` brief mode must
 /// permit only those declared paths to be dirty, stage and commit them
 /// through the normal terminal Cb-Fill lifecycle commit, and advance the
 /// phase — while a dirty path outside that declared scope stays a hard
 /// rejection.
 #[tokio::test]
-async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_dirty_path() {
+async fn test_marker_free_brief_commits_declared_evidence_and_preserves_unrelated_dirty_path() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
     use std::process::Command;
@@ -1201,7 +1161,7 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // #1921: `aw cb fill`'s mutating verbs resolve the configured issue
     // backend unconditionally via `guard_issue_mutation`, so this fully
     // offline sandbox needs a resolvable `local` backend, gated behind the
     // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
@@ -1284,69 +1244,29 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
     };
     backend.create(&issue).await.expect("seed open issue");
 
-    // AC2: dirty a path outside the TD's declared Changes scope, then run
-    // brief. The zero-marker fast path must still reject it before staging
-    // or committing anything.
+    // Dirty both declared evidence and an unrelated path. The zero-marker
+    // fast path must commit only the declared scope and preserve unrelated
+    // worktree state.
     let unrelated_path = root.join("unrelated.txt");
     std::fs::write(&unrelated_path, "not part of this TD's declared scope\n").unwrap();
-
-    let rejected_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill (brief) with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "brief must reject a dirty path outside the declared Changes scope:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let status_after_reject = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .expect("git status after rejected brief");
-    assert!(
-        String::from_utf8_lossy(&status_after_reject.stdout).contains("unrelated.txt"),
-        "a rejected brief must never stage or commit the unrelated dirty file"
-    );
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the two declared marker-free Changes paths — the
-    // bounded implementation evidence a hand-written test/doc edit is meant
-    // to carry — then run brief. It must be accepted, staged, and committed
-    // through the normal terminal Cb-Fill lifecycle commit, advancing the
-    // issue phase.
     std::fs::write(root.join(test_rel), "// updated test evidence\n").unwrap();
     std::fs::write(root.join(doc_rel), "updated doc evidence\n").unwrap();
 
     let accepted_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
+        .args(["cb", "fill", slug])
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw td fill (brief) with only declared paths dirty");
+        .expect("run aw cb fill (brief) with declared and unrelated dirty files");
     assert!(
         accepted_output.status.success(),
-        "brief must accept dirty declared Changes paths once no markers remain:\nstdout:\n{}\nstderr:\n{}",
+        "brief must commit its declared Changes scope without consuming unrelated work:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&accepted_output.stdout),
         String::from_utf8_lossy(&accepted_output.stderr)
     );
     let accepted_stdout = String::from_utf8_lossy(&accepted_output.stdout);
     assert!(
-        accepted_stdout.contains("\"command\":\"aw td code-check"),
+        accepted_stdout.contains("\"command\":\"aw cb check"),
         "the zero-marker fast path must dispatch to terminal code-check, got:\n{}",
         accepted_stdout
     );
@@ -1358,10 +1278,8 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
         .output()
         .expect("git status after accepted brief");
     assert!(
-        String::from_utf8_lossy(&status_after_accept.stdout)
-            .trim()
-            .is_empty(),
-        "the declared-evidence commit must leave the tree clean:\n{}",
+        String::from_utf8_lossy(&status_after_accept.stdout).contains("unrelated.txt"),
+        "the declared-evidence commit must preserve unrelated dirty work:\n{}",
         String::from_utf8_lossy(&status_after_accept.stdout)
     );
     let show_output = Command::new(&git)

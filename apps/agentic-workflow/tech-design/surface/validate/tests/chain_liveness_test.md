@@ -44,7 +44,7 @@ No public AST symbols.
 //!     phase, which the linear lifecycle has no outgoing transition from —
 //!     a permanent claim deadlock.
 //!   - #846 a partial terminal failure (backend already updated, trailer
-//!     commit never landed) was unretryable — re-running `aw td code-check`
+//!     commit never landed) was unretryable — re-running `aw cb check`
 //!     did not converge.
 //!
 //! Each test below drives the real `aw` binary against a from-scratch sandbox
@@ -62,7 +62,7 @@ No public AST symbols.
 //! (`issues::resolve_default_backend` — "Only `github` / `gitlab` are
 //! accepted... the default targets a remote source of truth"), so a fully
 //! offline sandbox cannot drive `aw wi run` to `workflow_complete=true`
-//! without a live GitHub/GitLab fixture. `aw td claim` / `aw td code-check`
+//! without a live GitHub/GitLab fixture. `aw td claim` / `aw cb check`
 //! are the "internal lifecycle verbs [that] still use `LocalBackend` directly"
 //! (same module doc) — the exact layer where #842/#843/#846 actually
 //! manifested — so this test proves liveness there instead, which is where a
@@ -108,7 +108,7 @@ fn init_seed_repo(git: &Path, root: &Path) {
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw/issues/open")).unwrap();
     std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
-    // #1921: `aw td claim`/`aw td code-check` are internal lifecycle verbs
+    // #1921: `aw td claim`/`aw cb check` are internal lifecycle verbs
     // that still use `LocalBackend` directly for issue storage, but they run
     // behind `guard_issue_mutation`'s workflow-lock check, which resolves
     // the configured issue backend unconditionally. Declare the sanctioned
@@ -136,8 +136,8 @@ fn init_seed_repo(git: &Path, root: &Path) {
 }
 
 /// Commit every current working-tree change (`git add -A && git commit`).
-/// Real `aw td gen`/`aw td fill` already commit generated/filled
-/// implementation files before terminal `aw td code-check` ever runs; a
+/// Real `aw cb gen`/`aw cb fill` already commit generated/filled
+/// implementation files before terminal `aw cb check` ever runs; a
 /// fixture that hand-writes a WI's touched-scope file directly (simulating a
 /// hand-written `impl_mode` completion with no gen/fill step) must commit it
 /// the same way so it stays a realistic "ready for code-check" precondition
@@ -181,7 +181,7 @@ fn write_demo_changes_spec(root: &Path, entries: &[(&str, &str)]) {
 }
 
 /// Seed an open issue at `phase` with no `td-<slug>` branch — a fresh entry
-/// into `aw td code-check`, not the #846 retry path.
+/// into `aw cb check`, not the #846 retry path.
 async fn seed_open_issue_at_phase(root: &Path, slug: &str, phase: &str, spec_rel: &str) {
     let backend = LocalBackend::from_project_root(root);
     let issue = Issue {
@@ -373,7 +373,7 @@ async fn chain_liveness_claim_never_lands_on_deadlock_phase() {
 }
 
 /// #846 clean-path liveness: a `cb_filled` WI with its declared changes
-/// already on disk must reach terminal `aw td code-check` completion in a
+/// already on disk must reach terminal `aw cb check` completion in a
 /// single tick (code-check *is* the terminal step of the linear lifecycle —
 /// there is nothing further to dispatch to).
 #[tokio::test]
@@ -403,11 +403,11 @@ async fn chain_liveness_code_check_terminates_within_tick_budget() {
             .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
-            .unwrap_or_else(|e| panic!("tick {tick}: run aw td code-check: {e}"));
+            .unwrap_or_else(|e| panic!("tick {tick}: run aw cb check: {e}"));
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
-            "tick {tick}: aw td code-check should exit 0:\nstdout:\n{stdout}\nstderr:\n{}",
+            "tick {tick}: aw cb check should exit 0:\nstdout:\n{stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         if stdout.contains("\"action\":\"done\"") {
@@ -468,7 +468,7 @@ async fn chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_
             .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
-            .unwrap_or_else(|e| panic!("tick {tick}: run aw td code-check: {e}"));
+            .unwrap_or_else(|e| panic!("tick {tick}: run aw cb check: {e}"));
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
@@ -501,7 +501,7 @@ async fn chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_
             .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
             .current_dir(root)
             .output()
-            .unwrap_or_else(|e| panic!("second pass tick {tick}: run aw td code-check: {e}"));
+            .unwrap_or_else(|e| panic!("second pass tick {tick}: run aw cb check: {e}"));
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
@@ -538,7 +538,7 @@ changes:
     description: |
       #921 tier 2 (epic #914 slice G): a bounded-tick ("livelock = failure")
       chain-liveness proof for the internal-lifecycle-verb layer (`aw td
-      claim`, `aw td code-check` via `LocalBackend`, matching
+      claim`, `aw cb check` via `LocalBackend`, matching
       `td_no_merge_test.rs`'s established pattern), driving the real `aw`
       binary. Three tests: `chain_liveness_claim_never_lands_on_deadlock_phase`
       asserts a repeated `aw td claim --from-path` / `--force-rebase` loop

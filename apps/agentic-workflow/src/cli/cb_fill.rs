@@ -1,16 +1,16 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 // CODEGEN-BEGIN
-//! `aw td fill` — Phase 3 marker-fill workflow.
+//! `aw cb fill` — Phase 3 marker-fill workflow.
 //!
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
 //!   marker-list dispatch envelope for mainthread,
-//!   or fast-path-dispatch directly to `aw td code-check` when zero markers
+//!   or fast-path-dispatch directly to `aw cb check` when zero markers
 //!   are present (R11).
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
 //!   projection trailers, then lock the next marker or dispatch
-//!   `aw td code-check`.
+//!   `aw cb check`.
 //!
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md
 
@@ -65,7 +65,24 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !matches!(
         ext,
-        "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+        "rs" | "py"
+            | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "css"
+            | "scss"
+            | "md"
+            | "html"
+            | "toml"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "sh"
+            | "bash"
+            | "zsh"
     ) && file_name != "Dockerfile"
     {
         return;
@@ -231,6 +248,7 @@ fn marker_body_is_unfilled(content: &str, start_line: usize, end_line: usize) ->
     let lower = body.to_ascii_lowercase();
     lower.contains("todo: hand-write content")
         || lower.contains("todo hand-write content")
+        || lower.contains("todo: implement (missing-generator:")
         || lower == "(fill)"
 }
 
@@ -248,37 +266,45 @@ fn cb_marker_payload_path(project_root: &Path, slug: &str, marker_id: &str) -> P
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
-    format!("aw td fill {} --apply --marker {}", slug, marker_id)
+    format!("aw cb fill {} --apply --marker {}", slug, marker_id)
 }
 
 fn td_code_check_command(slug: &str) -> String {
-    format!("aw td code-check {slug}")
+    format!("aw cb check {slug}")
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
     if marker.adopt_existing {
         return format!("{ADOPT_EXISTING_PAYLOAD}\n");
     }
+    format!("(fill)\n\n{}\n", marker_payload_footer(marker))
+}
+
+/// The payload template carries this trailing note to identify its target to
+/// the author. It is transport metadata, not source code: `td fill --apply`
+/// must remove it even when the author replaces only `(fill)` and leaves the
+/// generated note in place.
+fn marker_payload_footer(marker: &HandwriteMarkerEntry) -> String {
     format!(
-        "(fill)\n\n<!-- marker: {} path: {} reason: {} -->\n",
+        "<!-- marker: {} path: {} reason: {} -->",
         marker.id, marker.source_path, marker.reason
     )
 }
 
-/// Payload files include an AW-owned HTML footer so humans can identify the
-/// target while editing them. The footer is transport metadata, not authored
-/// source, and must never be copied into the HANDWRITE body.
-fn strip_marker_payload_footer(payload: &str) -> &str {
-    let trimmed = payload.trim_end();
-    let Some((body, last_line)) = trimmed.rsplit_once('\n') else {
-        return trimmed;
-    };
-    let footer = last_line.trim();
-    if footer.starts_with("<!-- marker: ") && footer.ends_with("-->") {
-        body.trim_end()
-    } else {
-        trimmed
+fn authored_marker_payload<'a>(payload: &'a str, marker: &HandwriteMarkerEntry) -> Result<&'a str> {
+    let payload = payload.trim_end_matches(['\r', '\n']);
+    let footer = marker_payload_footer(marker);
+    let authored = payload
+        .strip_suffix(&footer)
+        .map(|body| body.trim_end_matches(['\r', '\n']))
+        .unwrap_or(payload);
+    if authored.trim().is_empty() || authored.trim() == "(fill)" {
+        anyhow::bail!(
+            "payload for marker '{}' has no authored body; replace the (fill) placeholder",
+            marker.id
+        );
     }
+    Ok(authored)
 }
 
 fn initialize_marker_payload(
@@ -416,7 +442,7 @@ fn parse_handwrite_begin_end(content: &str) -> Vec<BeginEndMarker> {
 // can pattern-match the body uniformly.
 fn strip_lead(line: &str) -> &str {
     let s = line.trim_start();
-    for prefix in ["///", "//!", "//", "# ", "#", "<!--"] {
+    for prefix in ["///", "//!", "//", "# ", "#", "<!--", "/*"] {
         if let Some(rest) = s.strip_prefix(prefix) {
             return rest.trim_start();
         }
@@ -489,6 +515,46 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         std::process::exit(2);
     }
 
+    let python_project = issue.labels.iter().find_map(|label| {
+        label
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
+            .or_else(|| label.strip_prefix("lib:"))
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+            .and_then(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    &project_root,
+                    project,
+                )
+                .ok()
+                .filter(|row| {
+                    row.effective_artifact_model()
+                        == crate::models::project::ProjectArtifactModel::PythonV1
+                })
+                .map(|row| row.name)
+            })
+    });
+    if python_project.is_some() && enumerate_worktree_markers(&worktree_abs).is_empty() {
+        crate::cli::ec::persist_ec_first_next_action(
+            &project_root,
+            &slug,
+            format!("aw cb check {slug}"),
+        )?;
+        let env = serde_json::json!({
+            "action": "dispatch",
+            "agent": serde_json::Value::Null,
+            "slug": slug,
+            "next": format!("aw cb check {slug}"),
+            "invoke": {
+                "command": "aw cb check",
+                "args": { "target": slug },
+            },
+        });
+        print_compact_json(&env)?;
+        return Ok(());
+    }
+
     // Look up the spec_path from the explicit CLI arg, issue frontmatter, or
     // the unique TD spec touched by this branch. If none is available, preserve
     // the legacy all-marker behavior.
@@ -503,12 +569,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             }
         };
     let spec_path = spec_path.unwrap_or_default();
-    let allowed_dirty_paths = brief_allowed_dirty_paths(&markers, change_paths.as_deref());
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &allowed_dirty_paths,
-    )?;
+    crate::cli::td::td_activate_inplace_for_scoped_mutation(&project_root, &slug)?;
 
     if markers.is_empty() {
         // A TD may legitimately generate no HANDWRITE blocks, or a caller may
@@ -542,7 +603,8 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
                 .await?;
             let issue_path = backend.issue_path(issue);
             let issue_path_s = issue_path.to_string_lossy().into_owned();
-            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s, scope)
+            {
                 emit_error(&slug, &format!("git commit failed: {error}"))?;
                 std::process::exit(1);
             }
@@ -555,7 +617,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw td code-check",
+                "command": "aw cb check",
                 "args": { "target": slug },
             },
         });
@@ -610,7 +672,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
         "next": next_for_marker(&slug, first, &first_payload),
         "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw td fill",
+            "command": "aw cb fill",
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -622,24 +684,6 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
     let _ = args.json;
     let _ = args.force;
     Ok(())
-}
-
-/// While a marker is pending, brief mode must begin from a clean tree so its
-/// payload dispatch names an unambiguous source snapshot. Once the active TD
-/// has no markers left, its declared Changes paths are the only legitimate
-/// marker-free evidence that may be staged by the terminal Cb-Fill commit.
-fn brief_allowed_dirty_paths<'a>(
-    markers: &[HandwriteMarkerEntry],
-    change_paths: Option<&'a [String]>,
-) -> Vec<&'a str> {
-    if markers.is_empty() {
-        return change_paths
-            .unwrap_or_default()
-            .iter()
-            .map(String::as_str)
-            .collect();
-    }
-    Vec::new()
 }
 
 fn marker_free_fill_can_commit_evidence(phase: Option<&str>) -> bool {
@@ -662,7 +706,7 @@ fn resolve_active_spec_path(
         return match paths.as_slice() {
             [path] => Ok(Some(path.clone())),
             _ => anyhow::bail!(
-                "issue '{}' owns multiple TD specs ({}); rerun aw td fill with --spec-path",
+                "issue '{}' owns multiple TD specs ({}); rerun aw cb fill with --spec-path",
                 args.slug,
                 paths.join(", ")
             ),
@@ -935,7 +979,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 &slug,
                 &format!(
                     "marker id '{}' is ambiguous — {} files match: {}. \
-                     Re-run `aw td fill` (no --apply) to get the disambiguated marker list.",
+                     Re-run `aw cb fill` (no --apply) to get the disambiguated marker list.",
                     marker_id,
                     many.len(),
                     paths.join(", "),
@@ -948,12 +992,8 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     // The active marker's file is the only source path a fill application may
     // carry: an adoption payload must preserve its existing body while
     // committing the author's bounded implementation edit and tracker update
-    // together. All unrelated dirty paths remain a hard preflight failure.
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &[target.source_path.as_str()],
-    )?;
+    // together. Unrelated unstaged paths remain outside this scoped commit.
+    crate::cli::td::td_activate_inplace_for_scoped_mutation(&project_root, &slug)?;
 
     // Read the payload.
     let payload_abs = cb_marker_payload_path(&project_root, &slug, &marker_id);
@@ -1028,7 +1068,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "next": next_for_marker(&slug, next, &next_payload),
             "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw td fill",
+                "command": "aw cb fill",
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -1062,7 +1102,12 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     let issue_path = backend.issue_path(&issue);
     let issue_path_s = issue_path.to_string_lossy().into_owned();
     maybe_push_remote(&worktree_abs, &issue_path, &slug).await?;
-    if let Err(e) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+    if let Err(e) = stage_and_commit_cb_fill(
+        &worktree_abs,
+        &slug,
+        &issue_path_s,
+        std::slice::from_ref(&target.source_path),
+    ) {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
     }
@@ -1076,7 +1121,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         "slug": slug,
         "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw td code-check",
+            "command": "aw cb check",
             "args": { "target": slug },
         },
     });
@@ -1132,15 +1177,17 @@ fn replace_block_body_for_path(
     replace_block_and_markers(src, start_line, end_line, payload)
 }
 
-/// Generated XML and comment-style markers carry the pending sentinel until
-/// their first fill. Promote it to the work-item reference after a successful
-/// body replacement so the marker becomes valid managed-source ownership.
+/// Generated HANDWRITE markers carry the pending sentinel until their first
+/// fill. Promote it to the work-item reference after a successful body
+/// replacement so both XML and comment-style markers become valid managed
+/// source ownership.
 fn mark_pending_marker_filled(src: &str, start_line: usize, slug: &str) -> String {
     let mut lines: Vec<String> = src.lines().map(str::to_string).collect();
     let Some(line) = lines.get_mut(start_line.saturating_sub(1)) else {
         return src.to_string();
     };
-    if (line.contains("<HANDWRITE") || line.contains("HANDWRITE-BEGIN"))
+    let marker = strip_lead(line.trim_start());
+    if (marker.starts_with("<HANDWRITE") || marker.starts_with(HANDWRITE_BEGIN_TOKEN))
         && line.contains(&format!(
             "tracker=\"{}\"",
             crate::generate::handwrite_scaffold::PENDING_TRACKER
@@ -1181,7 +1228,6 @@ fn apply_marker_payload(
     payload: &str,
     slug: &str,
 ) -> Result<String> {
-    let payload = strip_marker_payload_footer(payload);
     if payload.trim() == ADOPT_EXISTING_PAYLOAD {
         if !pending_xml_marker_has_existing_body(original, target.start_line, target.end_line) {
             anyhow::bail!(
@@ -1195,6 +1241,7 @@ fn apply_marker_payload(
             slug,
         ));
     }
+    let payload = authored_marker_payload(payload, target)?;
     let replaced = replace_block_body_for_path(
         original,
         target.start_line,
@@ -1225,7 +1272,7 @@ fn should_preserve_handwrite_markers(source_path: &str) -> bool {
     }
     !matches!(
         path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        "json" | "toml" | "yaml" | "yml"
+        "html" | "json" | "toml" | "yaml" | "yml"
     )
 }
 
@@ -1361,6 +1408,30 @@ pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String])
     scope
 }
 
+/// Resolve the marker-reconciliation scope for one active TD fill loop.
+///
+/// A non-empty `extra_scope` is the active TD's declared Changes plan and is
+/// therefore authoritative for marker ownership. Persistent app/lib branches
+/// can contain unrelated historical commits; adding their full branch diff
+/// would let a foreign HANDWRITE marker block an otherwise completed TD. The
+/// branch diff remains the compatibility fallback only when the TD has no
+/// concrete Changes paths.
+fn resolve_marker_gate_scope(worktree_abs: &Path, extra_scope: &[String]) -> Vec<String> {
+    if !extra_scope.is_empty() {
+        let mut scope = extra_scope.to_vec();
+        scope.sort();
+        scope.dedup();
+        return scope;
+    }
+
+    let base = resolve_base_branch();
+    let mut scope: Vec<String> = branch_changed_files(worktree_abs, &base)
+        .into_iter()
+        .collect();
+    scope.sort();
+    scope
+}
+
 // Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
@@ -1377,11 +1448,11 @@ pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String])
 // a wrapper that hard-codes `extra_scope: &[]` added no behavior
 // `run_cb_check_gate_scoped(w, &[])` doesn't already provide directly.
 ///
-// The gate's scope is the union of the branch diff (`changed`) and
-// `extra_scope`. When that union is empty — no branch diff AND no WI Changes
-// entries to check against — the gate passes vacuously: a docs-only WI (or
-// one whose branch diff is unresolvable) must not be blocked by markers
-// inherited from unrelated, unmerged work elsewhere in the tree.
+// The gate prefers concrete active-TD `extra_scope` paths. Only when a TD has
+// no Changes plan does it fall back to the branch diff. When that selected
+// scope is empty, the gate passes vacuously: a docs-only WI (or one whose
+// branch diff is unresolvable) must not be blocked by markers inherited from
+// unrelated, unmerged work elsewhere in the tree.
 ///
 // Issue #859 part a: the scope union is computed *before* any marker
 // enumeration, and when it's empty the gate returns without walking the
@@ -1395,7 +1466,7 @@ pub(crate) async fn run_cb_check_gate_scoped(
     worktree_abs: &Path,
     extra_scope: &[String],
 ) -> std::result::Result<(), String> {
-    let scope = resolve_touched_scope(worktree_abs, extra_scope);
+    let scope = resolve_marker_gate_scope(worktree_abs, extra_scope);
 
     if scope.is_empty() {
         // No branch diff against base and no WI-scope file list to check
@@ -1433,24 +1504,44 @@ fn should_stage_lifecycle_path(worktree: &Path, path: &str) -> bool {
 }
 
 // Stage files and create the `Lifecycle-Stage: Cb-Fill` commit.
-fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, issue_path: &str) -> Result<()> {
+fn stage_and_commit_cb_fill(
+    worktree: &Path,
+    slug: &str,
+    issue_path: &str,
+    source_paths: &[String],
+) -> Result<()> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
-    // Add everything that changed (source files + issue file).
-    let _ = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["add", "-A"])
-        .output()
-        .context("git add -A")?;
     if should_stage_lifecycle_path(worktree, issue_path) {
-        // Make sure issue file is staged too (-A should cover it but be explicit).
-        let _ = std::process::Command::new(&git_bin)
+        let add = std::process::Command::new(&git_bin)
             .arg("-C")
             .arg(worktree)
-            .args(["add", issue_path])
-            .output();
+            .args(["add", "--", issue_path])
+            .output()
+            .context("git add terminal Cb-Fill issue path")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                issue_path,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
+    }
+    for source_path in source_paths {
+        let add = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(worktree)
+            .args(["add", "--", source_path.as_str()])
+            .output()
+            .context("git add final Cb-Fill source path")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                source_path,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
     }
 
     let msg = format!(
@@ -1509,7 +1600,7 @@ fn stage_and_commit_cb_marker(
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
          CB-Marker: {marker_id}\n\
-         Next-Command: aw td fill {slug} --apply --marker {next_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1555,7 +1646,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Stage: Cb-Fill-Start\n\
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
-         Next-Command: aw td fill {slug} --apply --marker {first_marker_id}",
+         Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1623,28 +1714,59 @@ mod tests {
     }
 
     #[test]
-    fn marker_free_brief_allows_only_declared_evidence_paths() {
-        let paths = vec![
-            "apps/pgpool/tests/connection_discovery.rs".to_string(),
-            "apps/pgpool/tech-design/semantic/discovery.md".to_string(),
-        ];
-        assert_eq!(
-            brief_allowed_dirty_paths(&[], Some(&paths)),
-            vec![
-                "apps/pgpool/tests/connection_discovery.rs",
-                "apps/pgpool/tech-design/semantic/discovery.md",
-            ]
-        );
-        assert!(brief_allowed_dirty_paths(&[marker("pending")], Some(&paths)).is_empty());
-    }
-
-    #[test]
     fn marker_free_fill_reenters_for_the_terminal_cb_filled_phase() {
         assert!(marker_free_fill_can_commit_evidence(Some("cb_genned")));
         assert!(marker_free_fill_can_commit_evidence(Some("cb_filled")));
         assert!(!marker_free_fill_can_commit_evidence(Some(
             "td_contract_in_progress"
         )));
+    }
+
+    #[test]
+    fn terminal_cb_fill_commit_does_not_stage_unrelated_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for args in [
+            ["init", "-q", "-b", "main"].as_slice(),
+            ["config", "user.email", "test@example.com"].as_slice(),
+            ["config", "user.name", "Test"].as_slice(),
+            ["commit", "--allow-empty", "-qm", "init"].as_slice(),
+        ] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/final.rs"), "pub fn filled() {}\n").unwrap();
+        std::fs::write(root.join("ec-review.json"), "{}\n").unwrap();
+        let source_paths = vec!["src/final.rs".to_string()];
+        stage_and_commit_cb_fill(root, "2179", "/tmp/aw/outside-issue.json", &source_paths)
+            .unwrap();
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&status.stdout).contains("ec-review.json"));
+        assert!(
+            !String::from_utf8_lossy(&status.stdout).contains("src/final.rs"),
+            "the final filled source must be included in the bounded lifecycle commit"
+        );
+        let message = std::process::Command::new("git")
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&message.stdout).contains("Lifecycle-Stage: Cb-Fill"));
     }
 
     #[test]
@@ -1704,6 +1826,37 @@ mod tests {
         let markers = enumerate_worktree_markers(tmp.path());
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, "missing-generator:component");
+    }
+
+    #[test]
+    fn generated_todo_implement_marker_is_queued_and_fillable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_path = tmp.path().join("apps/demo/tests/structured_stdout.rs");
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        let source = format!(
+            "{}\n// TODO: implement (missing-generator:unit-test:demo)\n{}\n",
+            handwrite_begin(
+                "gap=\"missing-generator:unit-test:demo\" tracker=\"pending-tracker\" reason=\"generated test\""
+            ),
+            handwrite_end(),
+        );
+        std::fs::write(&source_path, &source).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        let marker = &markers[0];
+        assert_eq!(marker.id, "missing-generator:unit-test:demo");
+
+        let payload = marker_payload_template(marker).replacen(
+            "(fill)",
+            "#[test]\nfn generated_contract() {}",
+            1,
+        );
+        let filled = apply_marker_payload(&source, marker, &payload, "2419").unwrap();
+        assert!(filled.contains("fn generated_contract() {}"));
+        assert!(filled.contains("tracker=\"#2419\""));
+        std::fs::write(&source_path, filled).unwrap();
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
     }
 
     #[test]
@@ -1806,6 +1959,7 @@ pub fn existing() { 42; }\n\
     fn enumerate_worktree_markers_includes_config_artifact_files() {
         let tmp = tempfile::tempdir().unwrap();
         let files = [
+            "frontend/index.html",
             "frontend/package.json",
             "backend/pyproject.toml",
             "k8s/base/backend-deployment.yaml",
@@ -1941,7 +2095,7 @@ pub fn existing() { 42; }\n\
 
         assert_eq!(
             next["command"],
-            "aw td fill 4124 --apply --marker missing-generator-cli"
+            "aw cb fill 4124 --apply --marker missing-generator-cli"
         );
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(
@@ -1973,7 +2127,7 @@ pub fn existing() { 42; }\n\
 
     #[test]
     fn td_code_check_next_command_uses_positional_slug() {
-        assert_eq!(td_code_check_command("4124"), "aw td code-check 4124");
+        assert_eq!(td_code_check_command("4124"), "aw cb check 4124");
         assert!(!td_code_check_command("4124").contains("--json"));
     }
 
@@ -2008,38 +2162,32 @@ pub fn before() {}\n\
     }
 
     #[test]
-    fn comment_style_fill_strips_payload_footer_and_binds_tracker() {
+    fn comment_marker_fill_strips_generated_footer_and_binds_tracker() {
+        let mut target = marker("missing-generator:logic");
+        target.start_line = 1;
+        target.end_line = 3;
         let src = format!(
             "{}\n// TODO: hand-write content for `src/demo.rs`.\n{}\n",
             handwrite_begin(
-                "gap=\"missing-generator:unit-test:fixture\" tracker=\"pending-tracker\" reason=\"fixture\""
+                "gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"missing deterministic generator\""
             ),
             handwrite_end(),
         );
-        let target = HandwriteMarkerEntry {
-            id: "missing-generator:unit-test:fixture".to_string(),
-            source_path: "src/demo.rs".to_string(),
-            start_line: 1,
-            end_line: 3,
-            reason: "fixture".to_string(),
-            spec_ref: None,
-            adopt_existing: false,
-        };
-        let payload = "pub fn filled() {}\n\n<!-- marker: missing-generator:unit-test:fixture path: src/demo.rs reason: fixture -->\n";
+        let payload = marker_payload_template(&target).replacen("(fill)", "pub fn filled() {}", 1);
 
-        let filled = apply_marker_payload(&src, &target, payload, "2384").unwrap();
+        let filled = apply_marker_payload(&src, &target, &payload, "2384").unwrap();
 
-        assert!(filled.contains("tracker=\"#2384\""));
         assert!(filled.contains("pub fn filled() {}"));
+        assert!(filled.contains("tracker=\"#2384\""));
         assert!(!filled.contains("<!-- marker:"));
-        assert!(!filled.contains("pending-tracker"));
+        assert!(!filled.contains("TODO: hand-write content"));
     }
 
     #[test]
     fn gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source() {
         // Issue #1898 end-to-end: drive the real `aw td gen` scaffold
         // (`crate::generate::handwrite_scaffold::scaffold_handwrite`) over a
-        // pre-existing function, then confirm `aw td fill`'s enumerator
+        // pre-existing function, then confirm `aw cb fill`'s enumerator
         // offers it (AC1), its payload adopts the existing body (AC1), and
         // applying that payload resolves the pending tracker and drops the
         // marker out of the next enumeration (AC4 in the issue's R4 sense).
@@ -2133,6 +2281,125 @@ pub fn before() {}\n\
         assert!(out.contains("\"scripts\": {}"));
         assert!(out.starts_with("{\n"));
         assert!(out.ends_with("}\n"));
+
+        let html = format!(
+            "{}\n// TODO: hand-write content for `frontend/index.html`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:html\" reason=\"bootstrap document\""),
+            handwrite_end(),
+        );
+        let out = replace_block_body_for_path(
+            &html,
+            1,
+            3,
+            "<!doctype html><title>Workbench</title>",
+            "frontend/index.html",
+        )
+        .unwrap();
+        assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!out.contains(HANDWRITE_END_TOKEN));
+        assert_eq!(out, "<!doctype html><title>Workbench</title>\n");
+    }
+
+    #[test]
+    fn css_and_javascript_markers_enumerate_and_css_fill_stays_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ui = tmp.path().join("apps/workbench/ui");
+        std::fs::create_dir_all(&ui).unwrap();
+        std::fs::write(
+            ui.join("shell.css"),
+            "/* HANDWRITE-BEGIN gap=\"missing-generator:css\" reason=\"shell styles\" */\n\
+             /* TODO: hand-write content for shell CSS. */\n\
+             /* HANDWRITE-END */\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ui.join("shell.js"),
+            "// HANDWRITE-BEGIN gap=\"missing-generator:js\" reason=\"shell behavior\"\n\
+             // TODO: hand-write content for shell JavaScript.\n\
+             // HANDWRITE-END\n",
+        )
+        .unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 2);
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:css"));
+        assert!(markers
+            .iter()
+            .any(|marker| marker.id == "missing-generator:js"));
+
+        let css = std::fs::read_to_string(ui.join("shell.css")).unwrap();
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:css")
+            .unwrap();
+        let filled = apply_marker_payload(&css, marker, ":root { color: #fff; }", "2210").unwrap();
+        assert!(filled.contains("/* HANDWRITE-BEGIN"));
+        assert!(filled.contains("/* HANDWRITE-END */"));
+        assert!(filled.contains(":root { color: #fff; }"));
+        assert!(!filled.contains("// HANDWRITE"));
+    }
+
+    #[test]
+    fn toml_markers_enumerate_and_fill_stay_parseable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("apps/workbench/tests/fixtures/aw-context/aw.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let scaffold =
+            "# HANDWRITE-BEGIN gap=\"missing-generator:toml\" reason=\"fixture config\"\n\
+                         # TODO: hand-write content for fixture TOML.\n\
+                         # HANDWRITE-END\n";
+        std::fs::write(&path, scaffold).unwrap();
+        toml::from_str::<toml::Table>(scaffold).expect("TOML scaffold must parse");
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:toml")
+            .expect("TOML marker must be discovered");
+        let filled = apply_marker_payload(scaffold, marker, "name = \"workbench\"", "2223")
+            .expect("TOML marker payload must apply");
+
+        assert!(!filled.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!filled.contains(HANDWRITE_END_TOKEN));
+        let parsed = toml::from_str::<toml::Table>(&filled).expect("filled TOML must parse");
+        assert_eq!(
+            parsed.get("name").and_then(toml::Value::as_str),
+            Some("workbench")
+        );
+    }
+
+    #[test]
+    fn shell_markers_enumerate_and_fill_stay_syntax_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("libs/service-observability/tests/soak_metrics_window_contract.sh");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let scaffold = "# HANDWRITE-BEGIN gap=\"missing-generator:soak-metrics\" tracker=\"pending-tracker\" reason=\"soak contract\"\n\
+                         # TODO: hand-write content for soak metrics.\n\
+                         # HANDWRITE-END\n";
+        std::fs::write(&path, scaffold).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let marker = markers
+            .iter()
+            .find(|marker| marker.id == "missing-generator:soak-metrics")
+            .expect("shell marker must be discovered instead of false-greening fill");
+        let filled = apply_marker_payload(scaffold, marker, "echo soak-metrics", "2287")
+            .expect("shell marker payload must apply");
+        assert!(filled.contains("tracker=\"#2287\""));
+        assert!(filled.contains("echo soak-metrics"));
+        std::fs::write(&path, &filled).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(&path)
+            .status()
+            .expect("sh must validate the filled shell contract");
+        assert!(status.success(), "filled shell contract must parse");
     }
 
     #[test]
@@ -2248,6 +2515,54 @@ pub fn before() {}\n\
             !changed.contains("unrelated.rs"),
             "already-landed main-side work from an unrelated branch must not \
              be attributed to this branch after rebase-landing, got: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn marker_gate_scope_prefers_active_td_changes_over_persistent_branch_history() {
+        let Some(git) = crate::git::find_git_bin() else {
+            eprintln!("skipping: git binary not on PATH");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&git)
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .output()
+                .unwrap_or_else(|error| panic!("git {args:?} failed to spawn: {error}"));
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "test@test"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.path().join("README.md"), "seed\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-qm", "seed"]);
+        run(&["checkout", "-qb", "persistent-app-branch"]);
+        let foreign = "apps/agentic-workflow/tests/fixtures/foreign.yaml";
+        let foreign_path = tmp.path().join(foreign);
+        std::fs::create_dir_all(foreign_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &foreign_path,
+            "# HANDWRITE-BEGIN gap=\"foreign\" reason=\"unrelated fixture\"\n",
+        )
+        .unwrap();
+        run(&["add", foreign]);
+        run(&["commit", "-qm", "foreign historical fixture"]);
+
+        assert!(branch_changed_files(tmp.path(), "main").contains(foreign));
+        let declared = vec!["apps/loom/src/main.rs".to_string()];
+        assert_eq!(
+            resolve_marker_gate_scope(tmp.path(), &declared),
+            declared,
+            "a current TD must not inherit persistent-branch marker ownership"
         );
     }
 }

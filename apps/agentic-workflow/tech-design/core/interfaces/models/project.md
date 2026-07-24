@@ -21,7 +21,10 @@ registry types shared between `project_discovery` (writes) and `project_registry
 Seven structs declared in this spec:
 
 - `Project` — a discovered or manually declared project entry in `.aw/projects.toml`.
-  Seven fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
+  Eight fields: `name`, `path` (PathBuf), optional `tech_design_dir`, optional
+  typed `artifact_model` compatibility value (`legacy`, `python`, or
+  `python-v1`; omitted and legacy values still resolve to the canonical Python
+  lifecycle),
   `ec: BTreeMap<String, EcBinding>` (EC tool bindings by category, declared
   before `workspaces` so the contract reads before the implementation),
   optional `ec_review_backing` (`human` | `agent` | `either` EC review policy,
@@ -72,6 +75,10 @@ definitions:
         type: string
         description: "Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent."
         x-serde-skip-if: "Option::is_none"
+      spec_model:
+        $ref: "#/definitions/ProjectArtifactModel"
+        description: "Explicit specification model. `artifact_model` remains a read-only compatibility alias."
+        x-serde-skip-if: "Option::is_none"
       ec:
         type: object
         x-rust-type: "BTreeMap<String, EcBinding>"
@@ -93,6 +100,16 @@ definitions:
         description: "Non-empty list of workspaces contained in this project."
     x-rust-struct:
       derive: [Debug, Clone, Serialize, Deserialize, PartialEq]
+
+  ProjectArtifactModel:
+    type: string
+    enum: [legacy, python]
+    description: "Read-compatible project specification value; `python-v1` is accepted as a historical spelling, while every recognized or omitted value resolves to the canonical Python lifecycle."
+    x-rust-enum:
+      derive: [Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize]
+      variants:
+        - { name: Legacy, doc: "Read-compatible historical value; it no longer selects the Markdown artifact lifecycle." }
+        - { name: PythonV1, doc: "Canonical Python project artifact lifecycle." }
 
   EcBinding:
     type: object

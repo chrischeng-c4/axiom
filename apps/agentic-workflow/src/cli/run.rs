@@ -6,6 +6,10 @@
 //! parse and redirect here via an error envelope rather than calling
 //! straight into the run engine).
 
+use crate::cli::agent_prompt::{
+    AgentPromptSpec, PromptArtifact, PromptBlocker, PromptBlockerKind, PromptScope, PromptTerminal,
+    PromptTerminalLevel, PromptTransition, PromptVerifier, PROMPT_SCHEMA_VERSION,
+};
 #[cfg(test)]
 use crate::cli::capability::HitlInteractionKind;
 use crate::cli::capability::{
@@ -15,7 +19,12 @@ use crate::cli::capability::{
 #[cfg(test)]
 use crate::cli::issues as wi_cli;
 use crate::issues::types::td_phase;
-use crate::issues::{make_backend, resolve_default_backend, Issue, IssueState, IssueType};
+use crate::issues::{
+    build_work_item_graph, make_backend, planning_transaction_source_digest,
+    resolve_default_backend, select_ready_change_leaf, verify_published_planning_transaction,
+    Issue, IssueFilter, IssueState, IssueType, PlanningTransactionManifest, ProjectPlan,
+    ReadyGraphSelection, WorkItemGraph,
+};
 use crate::models::artifact_quality::{
     infer_artifact_kind_from_hint, ArtifactKind, ArtifactQualityProfile,
 };
@@ -158,7 +167,12 @@ impl Serialize for WorkflowEnvelope {
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_struct("WorkflowEnvelope", 15)?;
+        let prompt_contract = workflow_prompt_contract(self, None, vec![self.agent_prompt.clone()])
+            .map_err(serde::ser::Error::custom)?;
+        let rendered_prompt = prompt_contract
+            .render()
+            .map_err(serde::ser::Error::custom)?;
+        let mut state = serializer.serialize_struct("WorkflowEnvelope", 16)?;
         state.serialize_field("schema_version", "aw.cli.v1")?;
         state.serialize_field("status", workflow_status(self))?;
         state.serialize_field("action", &self.action)?;
@@ -181,7 +195,8 @@ impl Serialize for WorkflowEnvelope {
         if let Some(payload_path) = self.next.payload_path.as_deref() {
             state.serialize_field("payload_path", payload_path)?;
         }
-        state.serialize_field("agent_prompt", &self.agent_prompt)?;
+        state.serialize_field("agent_prompt", &rendered_prompt)?;
+        state.serialize_field("prompt_contract", &prompt_contract)?;
         if let Some(profile) = &self.artifact_quality_profile {
             state.serialize_field("artifact_quality_profile", profile)?;
         }
@@ -302,6 +317,7 @@ struct WorkflowGoalEnvelope {
     inline_limit_bytes: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     goal_prompt: Option<String>,
+    prompt_contract: AgentPromptSpec,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -313,6 +329,9 @@ struct SelfHostingPolicyEnvelope {
     completion: CanonicalWorkflowCompletion,
     next: CanonicalWorkflowNext,
     policy_mode: &'static str,
+    required_trailer: &'static str,
+    root_runner_allowed: bool,
+    direct_repair_default: bool,
     hard_gates: &'static [&'static str],
     advisory_axes: &'static [&'static str],
     remediation: Vec<&'static str>,
@@ -351,6 +370,9 @@ fn self_hosting_policy_envelope(
             payload_path: None,
         },
         policy_mode: SELF_HOSTING_POLICY_MODE,
+        required_trailer: "Refs #<issue>",
+        root_runner_allowed: false,
+        direct_repair_default: true,
         hard_gates: self_hosting_hard_gates(),
         advisory_axes: self_hosting_advisory_axes(),
         remediation: vec![
@@ -545,18 +567,272 @@ pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
     format!("aw ec verify --project {project} --required-only --wi {wi}")
 }
 
+/// The artifact/gate phases used by the opt-in `python-v1` lifecycle.
+///
+/// This is deliberately separate from the legacy `td_phase` labels.  A Python
+/// artifact project is a pair of normal Python projects (`tech-design/` and
+/// `external-contracts/`), not a Markdown/CB lifecycle with renamed labels.
+/// The phase names are persisted through the ordinary tracker `phase:` label,
+/// which keeps the root selection stateless while the workers remain the sole
+/// owners of their individual evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PythonArtifactPhase {
+    EcAuthoring,
+    EcReview,
+    TdAuthoring,
+    EcTdVerify,
+    CbGenerate,
+    CbFill,
+    CbCheck,
+    EcCbVerify,
+    Close,
+    BehaviorOrSecurityRed,
+    StabilityRed,
+    EfficiencyRed,
+    ContractRepair,
+    Hitl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PythonArtifactLifecycleStep {
+    pub phase: PythonArtifactPhase,
+    pub command: String,
+    pub reason: String,
+    pub requires_hitl: bool,
+}
+
+fn shell_quote_goal_arg(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+pub(crate) fn python_target_gen_command(
+    project_root: &Path,
+    project: &str,
+    target: &str,
+    wi: &str,
+) -> Result<String> {
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    let output_dir = project_root
+        .join(&row.path)
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.join(&row.path));
+    let source_root = output_dir.join("tech-design");
+    Ok(format!(
+        "aw cb gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
+        shell_quote_goal_arg(&source_root.display().to_string()),
+        shell_quote_goal_arg(&output_dir.display().to_string()),
+        row.name,
+    ))
+}
+
+pub(crate) fn python_artifact_codegen_target(
+    project_root: &Path,
+    project: &str,
+) -> Result<&'static str> {
+    use crate::models::tech_stack::Language;
+
+    let canonical =
+        crate::services::project_registry::resolve_project_config_row(project_root, project)?.name;
+    let projects = crate::services::project_registry::load_projects(project_root)?;
+    let configured = projects
+        .iter()
+        .find(|candidate| candidate.name == canonical)
+        .and_then(|candidate| candidate.workspaces.first())
+        .map(|workspace| {
+            workspace
+                .codegen
+                .as_ref()
+                .and_then(|profile| profile.target)
+                .unwrap_or(workspace.target)
+        })
+        .unwrap_or(Language::Rust);
+    match configured {
+        Language::Rust => Ok("rust"),
+        Language::Python => Ok("python"),
+        Language::TypeScript => Ok("typescript"),
+        Language::JavaScript | Language::Schemas => anyhow::bail!(
+            "project `{canonical}` workspace target `{}` has no Python-TD native emitter; supported targets: rust, python, typescript",
+            match configured {
+                Language::JavaScript => "javascript",
+                Language::Schemas => "schemas",
+                _ => unreachable!("unsupported branch only"),
+            }
+        ),
+    }
+}
+
+fn python_td_check_command(project_root: &Path, project: &str, wi: &str) -> Result<String> {
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    let source_root = project_root.join(&row.path).join("tech-design");
+    Ok(format!(
+        "aw td check {} --project {} --wi {wi}",
+        shell_quote_goal_arg(&source_root.display().to_string()),
+        row.name
+    ))
+}
+
+/// Resolve the canonical Python artifact phase to one runnable worker command.
+///
+/// The optional return shape is retained for call-site compatibility, but a
+/// valid project always resolves to this table. All three root kinds call the
+/// same table: WI directly, backlog via its selected WI, and capability through
+/// its active-WI adapter.
+pub(crate) fn python_artifact_lifecycle_step(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+    phase_label: Option<&str>,
+) -> Result<Option<PythonArtifactLifecycleStep>> {
+    use crate::models::project::ProjectArtifactModel;
+
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    if row.effective_artifact_model() != ProjectArtifactModel::PythonV1 {
+        return Ok(None);
+    }
+
+    let phase = match phase_label.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("ec_missing" | "ec_authoring") => PythonArtifactPhase::EcAuthoring,
+        Some("ec_checked" | "ec_review_pending") => PythonArtifactPhase::EcReview,
+        Some("ec_reviewed" | "td_authoring") => PythonArtifactPhase::TdAuthoring,
+        Some("td_compiled") => PythonArtifactPhase::EcTdVerify,
+        Some("ec_td_green") => PythonArtifactPhase::CbGenerate,
+        Some("cb_generated") => PythonArtifactPhase::CbFill,
+        Some("cb_filled" | "unit_green") => PythonArtifactPhase::CbCheck,
+        Some("cb_checked") => PythonArtifactPhase::EcCbVerify,
+        Some("ec_cb_green" | "code_checked") => PythonArtifactPhase::Close,
+        // Compatibility for tracker labels written by the pre-TD/CB stage
+        // model. Resume at a safe point without making them canonical.
+        Some("td_generated") => PythonArtifactPhase::CbFill,
+        Some("ec_core_green") => PythonArtifactPhase::EcCbVerify,
+        Some("ec_operational_green") => PythonArtifactPhase::CbCheck,
+        Some("ec_behavior_red" | "ec_security_red") => PythonArtifactPhase::BehaviorOrSecurityRed,
+        Some("ec_stability_red") => PythonArtifactPhase::StabilityRed,
+        Some("ec_efficiency_red") => PythonArtifactPhase::EfficiencyRed,
+        Some("ec_stale" | "ec_invalid_oracle") => PythonArtifactPhase::ContractRepair,
+        Some("ec_hitl") => PythonArtifactPhase::Hitl,
+        // A legacy tracker label can exist during an explicit model migration.
+        // Do not pretend it is a green Python-artifact stage: return to the
+        // direct EC check, which will surface the missing/stale contract.
+        Some(_) => PythonArtifactPhase::EcAuthoring,
+    };
+
+    let target_gen = || {
+        let target = python_artifact_codegen_target(project_root, &row.name)?;
+        python_target_gen_command(project_root, &row.name, target, wi)
+    };
+    let step = match phase {
+        PythonArtifactPhase::EcAuthoring => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw ec check --project {} --wi {wi}", row.name),
+            reason: "the Python artifact lifecycle starts EC-first: author external-contracts Python source, then structurally check its contract".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::EcReview => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw ec review --project {} --wi {wi}", row.name),
+            reason: "EC source is structurally valid; obtain an independent digest-bound semantic review before TD authoring".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::TdAuthoring => PythonArtifactLifecycleStep {
+            phase,
+            command: python_td_check_command(project_root, &row.name, wi)?,
+            reason: "accepted EC admits direct Python tech-design authoring; compile/check the TD project before target generation".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::EcTdVerify => PythonArtifactLifecycleStep {
+            phase,
+            command: format!(
+                "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                row.name
+            ),
+            reason: "the Python TD reference is ready; behavior and security must pass before codebase materialization".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::CbGenerate => PythonArtifactLifecycleStep {
+            phase,
+            command: target_gen()?,
+            reason: "TD behavior and security are green; materialize the native DDD codebase and its unit-test inventory".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::CbFill => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw cb fill {wi}"),
+            reason: "generated source may contain explicit HANDWRITE gaps; resolve them before the target-native unit-test gate".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::CbCheck => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw cb check {wi}"),
+            reason: "codebase materialization is complete; run native checks before terminal EC verification".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::EcCbVerify => PythonArtifactLifecycleStep {
+            phase,
+            command: format!(
+                "aw ec verify --project {} --required-only --stage cb --wi {wi}",
+                row.name
+            ),
+            reason: "the codebase is built and checked; behavior, security, stability, and efficiency are now production gates".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::Close => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw wi close {wi} --push"),
+            reason: "terminal code-check is recorded; close the bounded change and let its parent root roll up".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::BehaviorOrSecurityRed => PythonArtifactLifecycleStep {
+            phase,
+            command: target_gen()?,
+            reason: "behavior/security EC is red; adapt TD or generated source, then regenerate the configured native target".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::StabilityRed => PythonArtifactLifecycleStep {
+            phase,
+            command: target_gen()?,
+            reason: "stability EC is red; adapt runtime/deployment/source behavior, then regenerate the configured native target".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::EfficiencyRed => PythonArtifactLifecycleStep {
+            phase,
+            command: target_gen()?,
+            reason: "efficiency EC is red; route remediation to the configured native production target".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::ContractRepair => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw ec check --project {} --wi {wi}", row.name),
+            reason: "EC evidence is stale or its oracle is invalid; repair and re-review the contract instead of changing product code".to_string(),
+            requires_hitl: false,
+        },
+        PythonArtifactPhase::Hitl => PythonArtifactLifecycleStep {
+            phase,
+            command: format!("aw ec review --project {} --wi {wi}", row.name),
+            reason: "Python artifact lifecycle requires the independent EC review verdict before it can continue".to_string(),
+            requires_hitl: true,
+        },
+    };
+    Ok(Some(step))
+}
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
-/// via the shared root loop.
+/// via the shared root loop. Agentic Workflow itself is rejected before the
+/// progress stream or local lifecycle ledger can mutate: a broken root loop
+/// cannot be its own repair prerequisite.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
-    // Resolve the owning project before the shared runner can load loop state
-    // or dispatch a lifecycle command. A failed read falls through to the
-    // existing runner diagnostics unchanged.
-    if let Ok(project_root) = crate::find_project_root() {
-        if let Ok(Some(issue)) = resolve_issue(id, &project_root).await {
-            if issue_is_self_hosting(&issue) {
-                return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
-            }
+    let project_root = crate::find_project_root()?;
+    if let Some(issue) = resolve_issue(id, &project_root).await? {
+        if issue_is_self_hosting(&issue) {
+            return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
         }
     }
     let root = ResolvedRunRoot::Wi {
@@ -565,6 +841,7 @@ pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> 
     };
     run_resolved_root(root, print).await
 }
+// </HANDWRITE>
 
 /// Command string `aw goal capability <capability-id> --project <project>`
 /// would print (#1899: canonical goal-namespace form; retired `aw
@@ -575,8 +852,10 @@ pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> Stri
     format!("aw goal capability {capability_id} --project {project}")
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal capability <capability-id>` -- drive that
-/// capability's next work-root tick via the shared root loop.
+/// capability's next work-root tick via the shared root loop. Agentic
+/// Workflow itself uses the sanctioned direct-commit repair policy.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_capability_root(
     project: &str,
@@ -593,16 +872,17 @@ pub(crate) async fn run_capability_root(
     };
     run_resolved_root(root, print).await
 }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Command string for the project-scoped capability completion loop that
-/// subsumes a project root.
+/// subsumes a project root. Self-hosting admission rejects this command before
+/// execution and directs the agent to bounded direct repair.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
-    if is_self_hosting_project(project) {
-        return format!("aw health --project {project} claims");
-    }
     format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
 }
+// </HANDWRITE>
 
 // ---------------------------------------------------------------------------
 // `aw goal backlog --project <p>` (#1899 R7): tracker-driven drain of every
@@ -623,6 +903,29 @@ struct BacklogState {
     /// map on the following tick rather than exiled forever.
     #[serde(default)]
     parked: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublishedProjectPlanReview {
+    version: u8,
+    kind: String,
+    project: String,
+    plan_path: String,
+    manifest_path: String,
+    source_digest: String,
+    decision: String,
+}
+
+#[derive(Debug)]
+struct ReviewedProjectGraph {
+    graph: WorkItemGraph,
+    source_digest: String,
+}
+
+#[derive(Debug)]
+struct ReviewedGraphFailure {
+    reason: String,
+    next_command: String,
 }
 
 fn backlog_state_id(project: &str) -> String {
@@ -654,33 +957,97 @@ fn save_backlog_state(project_root: &Path, project: &str, state: &BacklogState) 
     fs::write(&path, content).with_context(|| format!("writing backlog state {}", path.display()))
 }
 
-/// List every open work item labeled for `project`, in the same
-/// priority-first ordering `aw wi prioritize`/`aw wi plan` use
-/// ([`crate::cli::issues::priority_rank`]), then by numeric id for
-/// determinism.
-async fn list_open_project_issues(project_root: &Path, project_label: &str) -> Result<Vec<Issue>> {
-    let (kind, repo, host) = resolve_default_backend(project_root)?;
-    let backend = make_backend(&kind, project_root, repo, host)?;
-    let filter = crate::issues::IssueFilter {
-        state: Some(IssueState::Open),
-        issue_type: None,
-        label: Some(project_label.to_string()),
-        author: None,
+async fn load_reviewed_project_graph(
+    project_root: &Path,
+    project: &str,
+) -> std::result::Result<ReviewedProjectGraph, ReviewedGraphFailure> {
+    let rebuild = format!("aw wi plan --project {project} --json");
+    let directory = crate::shared::workspace::workitems_path(project_root)
+        .join(project)
+        .join("project-plan");
+    let plan_path = directory.join("project-plan.json");
+    let manifest_path = plan_path.with_extension("manifest.json");
+    let review_path = plan_path.with_extension("review.json");
+    let checkpoint_path = plan_path.with_extension("transaction.json");
+
+    let read = |path: &Path, kind: &str| {
+        fs::read_to_string(path).map_err(|error| ReviewedGraphFailure {
+            reason: format!(
+                "current reviewed project graph is unavailable: {kind} {} cannot be read: {error}",
+                path.display()
+            ),
+            next_command: rebuild.clone(),
+        })
     };
-    let mut issues = backend.list(&filter).await?;
-    issues.sort_by(|a, b| {
-        (
-            crate::cli::issues::priority_rank(a),
-            a.github_id.or(a.gitlab_id).unwrap_or(u64::MAX),
-            a.slug.clone(),
-        )
-            .cmp(&(
-                crate::cli::issues::priority_rank(b),
-                b.github_id.or(b.gitlab_id).unwrap_or(u64::MAX),
-                b.slug.clone(),
-            ))
-    });
-    Ok(issues)
+    let plan_body = read(&plan_path, "plan")?;
+    let manifest_body = read(&manifest_path, "manifest")?;
+    let review_body = read(&review_path, "accepted review")?;
+    let plan: ProjectPlan =
+        serde_json::from_str(&plan_body).map_err(|error| ReviewedGraphFailure {
+            reason: format!("current project plan is invalid: {error}"),
+            next_command: rebuild.clone(),
+        })?;
+    let manifest: PlanningTransactionManifest =
+        serde_json::from_str(&manifest_body).map_err(|error| ReviewedGraphFailure {
+            reason: format!("current project-plan transaction manifest is invalid: {error}"),
+            next_command: rebuild.clone(),
+        })?;
+    let review: PublishedProjectPlanReview =
+        serde_json::from_str(&review_body).map_err(|error| ReviewedGraphFailure {
+            reason: format!("current project-plan review record is invalid: {error}"),
+            next_command: rebuild.clone(),
+        })?;
+    let source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+    if review.version != 1
+        || review.kind != "project_plan"
+        || review.project != project
+        || review.decision != "accepted"
+        || review.source_digest != source_digest
+        || Path::new(&review.plan_path) != plan_path
+        || Path::new(&review.manifest_path) != manifest_path
+        || manifest.project != project
+        || manifest.plan_digest != plan.digest
+    {
+        return Err(ReviewedGraphFailure {
+            reason: "current project plan is stale or lacks exact accepted review evidence"
+                .to_string(),
+            next_command: rebuild,
+        });
+    }
+
+    let (kind, repo, host) =
+        resolve_default_backend(project_root).map_err(|error| ReviewedGraphFailure {
+            reason: format!("cannot resolve configured issue backend: {error}"),
+            next_command: format!("aw wi graph --project {project} --json"),
+        })?;
+    let backend =
+        make_backend(&kind, project_root, repo, host).map_err(|error| ReviewedGraphFailure {
+            reason: format!("cannot load configured issue backend: {error}"),
+            next_command: format!("aw wi graph --project {project} --json"),
+        })?;
+    let inventory = backend
+        .list(&IssueFilter::default())
+        .await
+        .map_err(|error| ReviewedGraphFailure {
+            reason: format!("cannot load complete issue inventory: {error}"),
+            next_command: format!("aw wi graph --project {project} --json"),
+        })?;
+    let graph = build_work_item_graph(project, &manifest.project_label, &inventory);
+    if !graph.valid {
+        return Ok(ReviewedProjectGraph {
+            graph,
+            source_digest,
+        });
+    }
+    verify_published_planning_transaction(&manifest, &source_digest, &checkpoint_path, &inventory)
+        .map_err(|error| ReviewedGraphFailure {
+            reason: error.to_string(),
+            next_command: rebuild.clone(),
+        })?;
+    Ok(ReviewedProjectGraph {
+        graph,
+        source_digest,
+    })
 }
 
 /// Resolve one work item's next `aw goal wi <id>` envelope without printing
@@ -704,63 +1071,137 @@ async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
     envelope
 }
 
-/// `aw goal backlog --project <p>` -- tracker-driven drain of every open
-/// work item for a project, one WI per envelope tick via the same shared
-/// engine `aw goal wi <id>` uses (#1899 R7). A candidate whose next
-/// envelope tick is HITL-blocked or hard-blocked is parked (its reason
-/// recorded in the project's ephemeral backlog state) instead of
-/// surfacing the block, and the drain moves on to the next open WI in
-/// priority order. Terminal (`completion.workflow_complete=true`) once
-/// every open WI is either closed or parked; the terminal envelope
-/// reports the parked set for human follow-up. Verifier: zero open
-/// unparked WIs for the project.
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
+/// `aw goal backlog --project <p>` -- drain ready change leaves from the
+/// accepted and completely published project graph (#1899 R7, #2389).
+/// Epic priority chooses project direction before dependency readiness and
+/// effective child priority. HITL/hard-blocked leaves are parked in ephemeral
+/// backlog state and the shared selector continues. Terminal output reports
+/// the parked set; an all-closed reviewed epic is handed to `aw goal wi
+/// <epic>` for the existing terminal rollup and is never re-atomized.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> Result<()> {
     if is_self_hosting_project(project) {
         return emit_self_hosting_policy_error(project, "backlog", project, print);
     }
     let project_root = crate::find_project_root()?;
-    let project_label = crate::cli::issues::resolve_project_label(&project_root, project)
-        .map_err(|err| anyhow::anyhow!(err.to_envelope_message()))?;
-    let open_issues = list_open_project_issues(&project_root, &project_label).await?;
-
-    let mut state = load_backlog_state(&project_root, project)?;
-    let open_ids: BTreeSet<String> = open_issues.iter().map(issue_cli_ref).collect();
-    // Park reasons are advisory, not a permanent exile: a WI that closed
-    // (or otherwise left the open set) since the last tick is dropped.
-    state.parked.retain(|id, _| open_ids.contains(id));
-
-    let mut selected: Option<(String, String)> = None;
-    for issue in &open_issues {
-        let id = issue_cli_ref(issue);
-        if state.parked.contains_key(&id) {
-            continue;
-        }
-        let envelope = probe_wi_root_envelope(&id).await;
-        if envelope.completion.workflow_complete {
-            continue;
-        }
-        if envelope.requires_hitl || envelope.action == "blocked" {
-            state.parked.insert(id, envelope.next.reason.clone());
-            continue;
-        }
-        selected = Some((id, wi_run_command(&issue_cli_ref(issue))));
-        break;
-    }
-    save_backlog_state(&project_root, project, &state)?;
-
     let root = WorkflowNode {
         kind: "backlog".to_string(),
         id: project.to_string(),
     };
+    let reviewed = match load_reviewed_project_graph(&project_root, project).await {
+        Ok(reviewed) => reviewed,
+        Err(failure) => {
+            let envelope = blocked_envelope(
+                root.clone(),
+                root,
+                failure.next_command,
+                failure.reason,
+                false,
+            );
+            return emit_workflow_envelope(&envelope, print);
+        }
+    };
+    let open_ids = reviewed
+        .graph
+        .epics
+        .iter()
+        .filter(|epic| epic.state != "closed")
+        .map(|epic| epic.id.clone())
+        .chain(
+            reviewed
+                .graph
+                .changes
+                .iter()
+                .filter(|change| change.state != "closed")
+                .map(|change| change.id.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+
+    let mut state = load_backlog_state(&project_root, project)?;
+    // Park reasons are advisory, not a permanent exile: a WI that closed
+    // (or otherwise left the open set) since the last tick is dropped.
+    state.parked.retain(|id, _| open_ids.contains(id));
+
+    let mut selected: Option<(String, String, String, ReadyGraphSelection)> = None;
+    let mut final_selection = None;
+    for _ in 0..=reviewed.graph.changes.len() {
+        let excluded = state.parked.keys().cloned().collect::<BTreeSet<_>>();
+        let selection = match select_ready_change_leaf(&reviewed.graph, None, &excluded) {
+            Ok(selection) => selection,
+            Err(error) => {
+                let envelope =
+                    blocked_envelope(root.clone(), root, error.next_command, error.message, false);
+                return emit_workflow_envelope(&envelope, print);
+            }
+        };
+        if let Some(leaf) = selection.selected.as_ref() {
+            let envelope = probe_wi_root_envelope(&leaf.id).await;
+            if envelope.completion.workflow_complete {
+                state.parked.insert(
+                    leaf.id.clone(),
+                    "reviewed graph reports an open change whose lifecycle root is terminal"
+                        .to_string(),
+                );
+                continue;
+            }
+            if envelope.requires_hitl || envelope.action == "blocked" {
+                state
+                    .parked
+                    .insert(leaf.id.clone(), envelope.next.reason.clone());
+                continue;
+            }
+            selected = Some((
+                "change".to_string(),
+                leaf.id.clone(),
+                wi_run_command(&leaf.id),
+                selection,
+            ));
+            break;
+        }
+        if let Some(epic) = selection.terminal_epic.as_ref() {
+            selected = Some((
+                "epic".to_string(),
+                epic.clone(),
+                wi_run_command(epic),
+                selection,
+            ));
+            break;
+        }
+        for blocker in &selection.blockers {
+            let id = blocker
+                .change
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| blocker.epic.clone());
+            state
+                .parked
+                .entry(id)
+                .or_insert_with(|| blocker.message.clone());
+        }
+        final_selection = Some(selection);
+        break;
+    }
+    save_backlog_state(&project_root, project, &state)?;
+
     let envelope = match selected {
-        Some((id, command)) => {
+        Some((kind, id, command, selection)) => {
             let remaining = open_ids.len().saturating_sub(state.parked.len());
+            let mut missing = vec![format!(
+                "{remaining} open work item(s) remain for `{project}` ({} parked)",
+                state.parked.len()
+            )];
+            missing.extend(
+                selection
+                    .blockers
+                    .iter()
+                    .map(|blocker| blocker.message.clone()),
+            );
             WorkflowEnvelope {
                 action: "dispatch".to_string(),
                 root: root.clone(),
                 current: WorkflowNode {
-                    kind: "change".to_string(),
+                    kind,
                     id: id.clone(),
                 },
                 completed: None,
@@ -768,16 +1209,15 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
                     root_complete: false,
                     workflow_complete: false,
                     criteria: Vec::new(),
-                    missing: vec![format!(
-                        "{remaining} open work item(s) remain for `{project}` \
-                         ({} parked)",
-                        state.parked.len()
-                    )],
+                    missing,
                 },
                 next: WorkflowNext {
                     kind: "run_command".to_string(),
                     command: command.clone(),
-                    reason: format!("drive open work item {id} to its next lifecycle tick"),
+                    reason: format!(
+                        "reviewed graph `{}` selected work item {id} for its next lifecycle tick",
+                        reviewed.source_digest
+                    ),
                     payload_path: None,
                 },
                 invoke: WorkflowInvoke { command },
@@ -792,6 +1232,16 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
             }
         }
         None => {
+            let blocker_summary = final_selection
+                .as_ref()
+                .map(|selection| {
+                    selection
+                        .blockers
+                        .iter()
+                        .map(|blocker| blocker.message.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             let parked_summary: Vec<String> = state
                 .parked
                 .iter()
@@ -814,9 +1264,9 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
                     root_complete: true,
                     workflow_complete: true,
                     criteria: vec![format!(
-                        "every open work item for `{project}` is closed or parked"
+                        "every reviewed open work item for `{project}` is closed or parked"
                     )],
-                    missing: Vec::new(),
+                    missing: blocker_summary,
                 },
                 next: WorkflowNext {
                     kind: "done".to_string(),
@@ -829,7 +1279,7 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
                 },
                 agent_prompt: if parked_summary.is_empty() {
                     format!(
-                        "`aw goal backlog --project {project}` is complete: every open \
+                        "`aw goal backlog --project {project}` is complete: every reviewed \
                          work item is closed."
                     )
                 } else {
@@ -848,16 +1298,9 @@ pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> R
             }
         }
     };
-
-    if print.human {
-        print_text(&envelope);
-    } else if print.pretty {
-        println!("{}", serde_json::to_string_pretty(&envelope)?);
-    } else {
-        println!("{}", serde_json::to_string(&envelope)?);
-    }
-    Ok(())
+    emit_workflow_envelope(&envelope, print)
 }
+// </HANDWRITE>
 
 struct RunProgressSink {
     root_kind: String,
@@ -996,11 +1439,277 @@ where
     future.await
 }
 
+fn cb_gen_writable_scope(command: &str) -> Vec<&'static str> {
+    let target = |name: &str| {
+        command.contains(&format!("--target {name}"))
+            || command.contains(&format!("--target={name}"))
+    };
+    if target("rust") {
+        vec!["Cargo.toml", "src/**", "tests/**"]
+    } else if target("python") {
+        vec!["pyproject.toml", "src/**", "tests/**"]
+    } else if target("typescript") {
+        vec!["package.json", "tsconfig.json", "src/**", "tests/**"]
+    } else {
+        vec!["src/**"]
+    }
+}
+
+fn workflow_prompt_contract(
+    envelope: &WorkflowEnvelope,
+    root_command: Option<&str>,
+    guidance: Vec<String>,
+) -> Result<AgentPromptSpec, String> {
+    let root_command = root_command.unwrap_or_default().trim();
+    let next_command = envelope.next.command.trim();
+    let transition_command = if next_command.is_empty() {
+        if envelope.completion.workflow_complete {
+            ""
+        } else {
+            root_command
+        }
+    } else {
+        next_command
+    };
+    let reason = envelope.next.reason.to_ascii_lowercase();
+    let command = transition_command.to_ascii_lowercase();
+    let (state, artifact_kind, verifier_predicate, writable, readonly, guards) =
+        if command.contains("aw ec verify") && command.contains("--stage td") {
+            (
+                "ec_td.verifying",
+                "td",
+                "EC[TD].behavior == green",
+                Vec::new(),
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["EC[TD].security == green"],
+            )
+        } else if command.contains("aw ec verify") && command.contains("--stage cb") {
+            (
+                "ec_cb.verifying",
+                "cb",
+                "EC[CB].behavior == green",
+                Vec::new(),
+                vec!["external-contracts/**", "src/**"],
+                vec![
+                    "EC[CB].security == green",
+                    "EC[CB].stability == green",
+                    "EC[CB].efficiency in {green, not-applicable}",
+                ],
+            )
+        } else if command.contains("aw ec check") {
+            (
+                if reason.contains("stale") || reason.contains("oracle") {
+                    "ec.contract_repair"
+                } else {
+                    "ec.authoring"
+                },
+                "ec",
+                "EC.structure == green",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                if reason.contains("stale") || reason.contains("oracle") {
+                    vec!["invalid_oracle -> EC"]
+                } else {
+                    Vec::new()
+                },
+            )
+        } else if command.contains("aw ec review") {
+            (
+                "ec.review_pending",
+                "ec",
+                "EC.review == accepted",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                Vec::new(),
+            )
+        } else if command.contains("aw td check") || command.contains("aw td create") {
+            (
+                "td.authoring",
+                "td",
+                "TD.compile == green",
+                vec!["tech-design/**"],
+                vec!["external-contracts/**", "src/**"],
+                vec!["EC -> TD"],
+            )
+        } else if command.contains("aw cb gen") {
+            (
+                "cb.generating",
+                "cb",
+                "CB.generated == true",
+                cb_gen_writable_scope(&command),
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["EC[TD].behavior == green", "EC[TD].security == green"],
+            )
+        } else if command.contains("aw cb fill") {
+            (
+                "cb.filling",
+                "cb",
+                "CB.HANDWRITE == resolved",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                vec!["CODEGEN != HANDWRITE"],
+            )
+        } else if command.contains("aw cb check") || command.contains("aw td code-check") {
+            (
+                "cb.checking",
+                "cb",
+                "CB.unit == green",
+                Vec::new(),
+                vec!["external-contracts/**", "tech-design/**", "src/**"],
+                vec!["CB.unit == green != completion.workflow_complete"],
+            )
+        } else if command.contains("aw wi close") {
+            (
+                "change.closing",
+                envelope.current.kind.as_str(),
+                "change.closed == true",
+                Vec::new(),
+                Vec::new(),
+                vec!["action == done != completion.workflow_complete"],
+            )
+        } else if command.contains("aw goal wi") && !reason.contains("parked") {
+            (
+                "rollup.child_dispatch",
+                envelope.current.kind.as_str(),
+                "child.change.closed == true",
+                Vec::new(),
+                Vec::new(),
+                vec!["child.done != root.complete"],
+            )
+        } else if envelope.completion.workflow_complete {
+            (
+                "root.terminal",
+                envelope.current.kind.as_str(),
+                "completion.workflow_complete == true",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if reason.contains("parked") {
+            (
+                "backlog.parked",
+                envelope.current.kind.as_str(),
+                "ready.change notin parked",
+                Vec::new(),
+                Vec::new(),
+                vec!["parked != closed"],
+            )
+        } else {
+            (
+                "lifecycle.dispatch",
+                envelope.current.kind.as_str(),
+                "next.command == green",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+    let mut writable = writable.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let mut readonly = readonly.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let mut guards = guards.into_iter().map(str::to_string).collect::<Vec<_>>();
+    writable.extend(
+        envelope
+            .persistence
+            .as_ref()
+            .map(|persistence| persistence.scopes.clone())
+            .unwrap_or_default(),
+    );
+    let writable_set = writable.iter().cloned().collect::<BTreeSet<_>>();
+    readonly.retain(|path| !writable_set.contains(path));
+    guards.extend([
+        "action == done != completion.workflow_complete".to_string(),
+        "completion.workflow_complete == true".to_string(),
+        "next.command in envelope".to_string(),
+    ]);
+    if let Some(profile) = &envelope.artifact_quality_profile {
+        guards.extend(
+            default_preflight_gates(profile.artifact_kind)
+                .into_iter()
+                .map(|gate| format!("artifact_quality.{} == green", gate.id)),
+        );
+    }
+    let blocker_kind = if envelope.requires_hitl || envelope.action == "blocked" {
+        Some(if reason.contains("evidence") {
+            PromptBlockerKind::MissingEvidence
+        } else if reason.contains("approval") || reason.contains("review") {
+            PromptBlockerKind::Approval
+        } else if reason.contains("decision") || envelope.hitl_question.is_some() {
+            PromptBlockerKind::Decision
+        } else if reason.contains("red") || reason.contains("failed") {
+            PromptBlockerKind::RedGate
+        } else {
+            PromptBlockerKind::Environment
+        })
+    } else {
+        None
+    };
+    let terminal_level = if envelope.completion.workflow_complete {
+        PromptTerminalLevel::Root
+    } else if command.contains("aw wi close") {
+        PromptTerminalLevel::Change
+    } else {
+        PromptTerminalLevel::Stage
+    };
+    let terminal_predicate = match terminal_level {
+        PromptTerminalLevel::Root => "completion.workflow_complete == true".to_string(),
+        PromptTerminalLevel::Change => "change.closed == true".to_string(),
+        PromptTerminalLevel::Stage => verifier_predicate.to_string(),
+    };
+    let contract = AgentPromptSpec {
+        schema_version: PROMPT_SCHEMA_VERSION.to_string(),
+        state: if envelope.completion.workflow_complete {
+            "root.terminal".to_string()
+        } else if transition_command.is_empty() && blocker_kind.is_some() {
+            "blocked.terminal".to_string()
+        } else {
+            state.to_string()
+        },
+        artifact: PromptArtifact {
+            kind: artifact_kind.to_string(),
+            id: envelope.current.id.clone(),
+        },
+        scope: PromptScope { writable, readonly },
+        transition: PromptTransition {
+            command: transition_command.to_string(),
+            next_state: envelope.next.kind.clone(),
+        },
+        verifier: PromptVerifier {
+            command: transition_command.to_string(),
+            predicate: verifier_predicate.to_string(),
+        },
+        terminal: PromptTerminal {
+            level: terminal_level,
+            predicate: terminal_predicate,
+        },
+        guards,
+        blocker: blocker_kind.map(|kind| PromptBlocker {
+            kind,
+            reason: envelope.next.reason.clone(),
+        }),
+        resume_command: blocker_kind.and_then(|_| {
+            if let Some(question) = &envelope.hitl_question {
+                Some(question.resume_command.clone())
+            } else if root_command.is_empty() {
+                (!transition_command.is_empty()).then(|| transition_command.to_string())
+            } else {
+                Some(root_command.to_string())
+            }
+        }),
+        guidance,
+    };
+    contract.validate()?;
+    Ok(contract)
+}
+
 fn workflow_goal_envelope(
     envelope: &WorkflowEnvelope,
     root_command: &str,
 ) -> Result<WorkflowGoalEnvelope> {
-    let prompt = workflow_goal_prompt(envelope, root_command);
+    let guidance = workflow_goal_prompt(envelope, root_command);
+    let prompt_contract =
+        workflow_prompt_contract(envelope, Some(root_command), vec![guidance.clone()])
+            .map_err(anyhow::Error::msg)?;
+    let prompt = prompt_contract.render().map_err(anyhow::Error::msg)?;
     let payload_path = workflow_goal_payload_path(envelope);
     write_goal_payload(&payload_path, &prompt)?;
     let prompt_size_bytes = prompt.len();
@@ -1017,6 +1726,7 @@ fn workflow_goal_envelope(
         prompt_size_bytes,
         inline_limit_bytes: GOAL_INLINE_LIMIT_BYTES,
         goal_prompt,
+        prompt_contract,
     })
 }
 
@@ -1436,7 +2146,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     }
 
     if issue.issue_type == IssueType::Epic {
-        open_epic_envelope(&issue)
+        open_epic_envelope_with_reviewed_graph(&project_root, &issue).await
     } else {
         if issue.phase.is_none() && project_from_labels(&issue).is_none() {
             return blocked_envelope(
@@ -1451,7 +2161,36 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
                 true,
             );
         }
-        let (command, reason) = wi_change_lifecycle_step(&issue);
+        let python_step = match project_from_labels(&issue) {
+            Some(project) => match python_artifact_lifecycle_step(
+                &project_root,
+                &project,
+                &issue_cli_ref(&issue),
+                issue.phase.as_deref(),
+            ) {
+                Ok(step) => step,
+                Err(error) => {
+                    return blocked_envelope(
+                        root.clone(),
+                        WorkflowNode {
+                            kind: "change".to_string(),
+                            id: issue_ref(&issue),
+                        },
+                        format!("aw wi show {}", issue_cli_ref(&issue)),
+                        format!("cannot resolve python-v1 lifecycle phase: {error}"),
+                        false,
+                    )
+                }
+            },
+            None => None,
+        };
+        let (command, reason, requires_hitl) = match python_step {
+            Some(step) => (step.command, step.reason, step.requires_hitl),
+            None => {
+                let (command, reason) = wi_change_lifecycle_step(&issue);
+                (command, reason, false)
+            }
+        };
         WorkflowEnvelope {
             action: "dispatch".to_string(),
             root,
@@ -1475,7 +2214,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             agent_prompt:
                 "Run the change lifecycle. When it completes, re-run the parent epic root."
                     .to_string(),
-            requires_hitl: false,
+            requires_hitl,
             artifact_quality_profile: None,
             hitl_question: None,
             persistence: None,
@@ -1485,14 +2224,15 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
 
 // An open epic can dispatch only after its tracker labels resolve a concrete
 // project identity. A missing identity is a HITL blocker with a runnable
-// inspection command; it must never leak a placeholder into next.command.
-// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R2 #R3
-fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
+// inspection command; an unregistered but valid identity is bootstrapped by
+// the configuration producer before atomization.
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R2 #R3 #R5
+fn open_epic_envelope(project_root: &Path, issue: &Issue) -> WorkflowEnvelope {
     let node = WorkflowNode {
         kind: "epic".to_string(),
         id: issue_ref(issue),
     };
-    let Some(project) = project_from_labels(issue) else {
+    let Some((project_label, project)) = project_identity_from_labels(issue) else {
         let issue_id = issue_cli_ref(issue);
         return blocked_envelope(
             node.clone(),
@@ -1506,6 +2246,58 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
             true,
         );
     };
+
+    match crate::cli::issues::resolve_project_label(project_root, &project) {
+        Err(_) => {
+            let command = format!("aw conf init --project-label {project_label}");
+            return WorkflowEnvelope {
+                action: "dispatch".to_string(),
+                root: node.clone(),
+                current: node,
+                completed: None,
+                completion: wi_completion(
+                    false,
+                    false,
+                    vec![format!(
+                        "epic project `{project}` must be registered before atomization"
+                    )],
+                ),
+                next: WorkflowNext {
+                    kind: "bootstrap_project".to_string(),
+                    command: command.clone(),
+                    reason: "tracker identity is valid but has no discoverable AW project config"
+                        .to_string(),
+                    payload_path: None,
+                },
+                invoke: WorkflowInvoke { command },
+                agent_prompt: "Run the project configuration producer, follow its emitted META-doc next command, then re-run this epic root."
+                    .to_string(),
+                requires_hitl: false,
+                artifact_quality_profile: None,
+                hitl_question: None,
+                persistence: None,
+            };
+        }
+        Ok(configured_label)
+            if configured_label
+                .split_once(':')
+                .map(|(_, configured_project)| configured_project)
+                != Some(project.as_str()) =>
+        {
+            let issue_id = issue_cli_ref(issue);
+            return blocked_envelope(
+                node.clone(),
+                node,
+                format!("aw wi show {issue_id}"),
+                format!(
+                    "open epic `{}` label `{project_label}` conflicts with configured project `{project}` label `{configured_label}`; reconcile the tracker or project config, then re-run `aw goal wi {issue_id}`",
+                    issue_ref(issue)
+                ),
+                true,
+            );
+        }
+        Ok(_) => {}
+    }
 
     let command = format!("aw wi atomize --project {project}");
     WorkflowEnvelope {
@@ -1534,6 +2326,228 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
     }
 }
 
+// Epic roots consume the same accepted, published graph as backlog roots.
+// They never rediscover children independently or fall back to re-atomization.
+// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+async fn open_epic_envelope_with_reviewed_graph(
+    project_root: &Path,
+    issue: &Issue,
+) -> WorkflowEnvelope {
+    let Some(project) = project_from_labels(issue) else {
+        return open_epic_envelope(project_root, issue);
+    };
+    // Before attempting the reviewed-graph admission, let the canonical epic
+    // dispatcher surface the scoped configuration bootstrap for a valid
+    // tracker identity that has not yet been discovered locally (#2202).
+    if crate::cli::issues::resolve_project_label(project_root, &project).is_err() {
+        return open_epic_envelope(project_root, issue);
+    }
+    let node = WorkflowNode {
+        kind: "epic".to_string(),
+        id: issue_ref(issue),
+    };
+    let reviewed = match load_reviewed_project_graph(project_root, &project).await {
+        Ok(reviewed) => reviewed,
+        Err(failure) => {
+            return blocked_envelope(
+                node.clone(),
+                node,
+                failure.next_command,
+                failure.reason,
+                false,
+            )
+        }
+    };
+    let selection = match select_ready_change_leaf(
+        &reviewed.graph,
+        Some(&issue_cli_ref(issue)),
+        &BTreeSet::new(),
+    ) {
+        Ok(selection) => selection,
+        Err(error) => {
+            return blocked_envelope(node.clone(), node, error.next_command, error.message, false)
+        }
+    };
+    if selection.terminal_epic.is_some() {
+        let child_count = reviewed
+            .graph
+            .epics
+            .iter()
+            .find(|epic| epic.id == issue_cli_ref(issue))
+            .map(|epic| epic.children.len())
+            .unwrap_or_default();
+        return completed_epic_envelope(issue, child_count);
+    }
+    if let Some(leaf) = selection.selected.as_ref() {
+        return open_epic_envelope_with_ready_leaf(
+            issue,
+            leaf,
+            &selection,
+            &reviewed.source_digest,
+        );
+    }
+    let blocker = selection.blockers.first();
+    blocked_envelope(
+        node.clone(),
+        node,
+        blocker
+            .map(|blocker| blocker.next_command.clone())
+            .unwrap_or_else(|| format!("aw wi graph --project {project} --json")),
+        blocker
+            .map(|blocker| blocker.message.clone())
+            .unwrap_or_else(|| {
+                "reviewed epic graph has no executable or terminal child".to_string()
+            }),
+        false,
+    )
+}
+
+#[cfg(test)]
+fn issue_declares_epic_parent(candidate: &Issue, epic: &Issue) -> bool {
+    crate::issues::issue_declares_parent(candidate, epic)
+}
+
+fn open_epic_envelope_with_ready_leaf(
+    issue: &Issue,
+    leaf: &crate::issues::ReadyChangeLeaf,
+    selection: &ReadyGraphSelection,
+    source_digest: &str,
+) -> WorkflowEnvelope {
+    let node = WorkflowNode {
+        kind: "epic".to_string(),
+        id: issue_ref(issue),
+    };
+    let command = wi_run_command(&leaf.id);
+    let mut missing = vec![format!(
+        "epic has {} open reviewed change(s) remaining",
+        selection.open_change_count
+    )];
+    missing.extend(
+        selection
+            .blockers
+            .iter()
+            .map(|blocker| blocker.message.clone()),
+    );
+    WorkflowEnvelope {
+        action: "dispatch".to_string(),
+        root: node,
+        current: WorkflowNode {
+            kind: "change".to_string(),
+            id: leaf.id.clone(),
+        },
+        completed: None,
+        completion: wi_completion(false, false, missing),
+        next: WorkflowNext {
+            kind: "execute_change".to_string(),
+            command: command.clone(),
+            reason: format!(
+                "reviewed graph `{source_digest}` selected epic {} ({}) then ready change {} ({})",
+                leaf.epic, leaf.epic_priority, leaf.id, leaf.change_priority
+            ),
+            payload_path: None,
+        },
+        invoke: WorkflowInvoke { command },
+        agent_prompt:
+            "Run the selected child change root. When it closes, re-run this epic root for rollup."
+                .to_string(),
+        requires_hitl: false,
+        artifact_quality_profile: None,
+        hitl_question: None,
+        persistence: None,
+    }
+}
+
+#[cfg(test)]
+fn open_epic_envelope_with_children(issue: &Issue, children: &[Issue]) -> WorkflowEnvelope {
+    let node = WorkflowNode {
+        kind: "epic".to_string(),
+        id: issue_ref(issue),
+    };
+    if let Some(child) = children
+        .iter()
+        .find(|child| child.state != IssueState::Closed)
+    {
+        let child_id = issue_cli_ref(child);
+        let command = wi_run_command(&child_id);
+        let open_count = children
+            .iter()
+            .filter(|candidate| candidate.state != IssueState::Closed)
+            .count();
+        return WorkflowEnvelope {
+            action: "dispatch".to_string(),
+            root: node,
+            current: WorkflowNode {
+                kind: "change".to_string(),
+                id: issue_ref(child),
+            },
+            completed: None,
+            completion: wi_completion(
+                false,
+                false,
+                vec![format!(
+                    "epic has {open_count} open child work-item(s) remaining"
+                )],
+            ),
+            next: WorkflowNext {
+                kind: "execute_change".to_string(),
+                command: command.clone(),
+                reason: format!(
+                    "dispatch the highest-priority open child {} instead of re-atomizing its epic",
+                    issue_ref(child)
+                ),
+                payload_path: None,
+            },
+            invoke: WorkflowInvoke { command },
+            agent_prompt:
+                "Run the child change root. When it closes, re-run this epic root for rollup."
+                    .to_string(),
+            requires_hitl: false,
+            artifact_quality_profile: None,
+            hitl_question: None,
+            persistence: None,
+        };
+    }
+
+    completed_epic_envelope(issue, children.len())
+}
+
+fn completed_epic_envelope(issue: &Issue, child_count: usize) -> WorkflowEnvelope {
+    let node = WorkflowNode {
+        kind: "epic".to_string(),
+        id: issue_ref(issue),
+    };
+    let issue_id = issue_cli_ref(issue);
+    let command = format!("aw wi close {issue_id} --push");
+    WorkflowEnvelope {
+        action: "dispatch".to_string(),
+        root: node.clone(),
+        current: node,
+        completed: None,
+        completion: wi_completion(
+            false,
+            false,
+            vec![format!(
+                "all {} reviewed child work-item(s) are closed; the epic tracker root remains open",
+                child_count
+            )],
+        ),
+        next: WorkflowNext {
+            kind: "close_epic".to_string(),
+            command: command.clone(),
+            reason: "all known epic children are terminal; close the parent root".to_string(),
+            payload_path: None,
+        },
+        invoke: WorkflowInvoke { command },
+        agent_prompt:
+            "Close the completed epic, then re-run its parent capability or backlog root."
+                .to_string(),
+        requires_hitl: false,
+        artifact_quality_profile: None,
+        hitl_question: None,
+        persistence: None,
+    }
+}
+
 /// #1268: derive the next lifecycle command for a still-open, non-epic WI
 /// from its tracker-reported `phase:*` label (`issue.phase`, already
 /// normalized on read by the issue backend — see
@@ -1554,11 +2568,11 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
     let normalized_phase = issue.phase.as_deref().map(td_phase::normalize);
     match normalized_phase {
         Some(td_phase::TD_CREATED) => (
-            format!("aw td gen {wi_id}"),
+            format!("aw cb gen {wi_id}"),
             "active WI has created TD; continue CB generation".to_string(),
         ),
         Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
-            format!("aw td fill {wi_id}"),
+            format!("aw cb fill {wi_id}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
         Some(td_phase::CB_FILLED) => match project_from_labels(issue) {
@@ -1568,13 +2582,13 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
                     .to_string(),
             ),
             None => (
-                format!("aw td code-check {wi_id}"),
+                format!("aw cb check {wi_id}"),
                 "active WI has no project label for EC verification; retry terminal code-check"
                     .to_string(),
             ),
         },
         Some(td_phase::TD_MERGED) => (
-            format!("aw td code-check {wi_id}"),
+            format!("aw cb check {wi_id}"),
             "active WI's terminal code-check is resumable; retry terminal code-check".to_string(),
         ),
         None => match project_from_labels(issue) {
@@ -1594,6 +2608,24 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
             "existing TD lifecycle state resumes its bounded TD/codegen path".to_string(),
         ),
     }
+}
+
+/// Repair the pre-EC-first persisted `aw td create <wi>` action when the
+/// tracker has already advanced beyond the only phase where TD creation is
+/// valid. The loop-state action is normally authoritative, but an old action
+/// must not override the current phase with a command that the CLI rejects.
+fn phase_routed_stale_loop_next_action(raw_command: &str, issue: &Issue) -> Option<String> {
+    let phase = issue.phase.as_deref().map(td_phase::normalize)?;
+    let advanced_phase = matches!(
+        phase,
+        td_phase::TD_CREATED
+            | td_phase::CB_GENNED
+            | "cb_fill_in_progress"
+            | td_phase::CB_FILLED
+            | td_phase::TD_MERGED
+    );
+    let stale_td_create = raw_command.trim() == format!("aw td create {}", issue_cli_ref(issue));
+    (advanced_phase && stale_td_create).then(|| wi_change_lifecycle_step(issue).0)
 }
 
 /// #188 E1: build the run envelope from a WI's loop-state block. The loop's
@@ -1619,7 +2651,9 @@ fn loop_state_envelope(
         // a blocked/HITL envelope naming the bad command instead of running
         // it verbatim.
         Some(raw_command) => {
-            match crate::cli::chain::normalize_legacy_next_action(raw_command, &slug) {
+            match phase_routed_stale_loop_next_action(raw_command, issue)
+                .or_else(|| crate::cli::chain::normalize_legacy_next_action(raw_command, &slug))
+            {
                 Some(command) => {
                     let converged = matches!(
                         loop_state.status,
@@ -1724,12 +2758,18 @@ fn parent_inspection_command(issue: &Issue) -> String {
             return project_capability_rollup_command(&project);
         }
     }
-    issue
-        .related
-        .iter()
-        .chain(issue.implements.iter())
-        .find_map(|reference| extract_issue_number(reference))
+    crate::issues::explicit_parent_references(issue)
+        .into_iter()
+        .next()
         .map(|id| wi_run_command(&id))
+        .or_else(|| {
+            issue
+                .related
+                .iter()
+                .chain(issue.implements.iter())
+                .find_map(|reference| extract_issue_number(reference))
+                .map(|id| wi_run_command(&id))
+        })
         .unwrap_or_else(|| format!("aw wi show {}", issue_cli_ref(issue)))
 }
 
@@ -2815,22 +3855,44 @@ fn issue_cli_ref(issue: &Issue) -> String {
         .unwrap_or_else(|| issue.slug.clone())
 }
 
-// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R1 #R4
-fn project_from_labels(issue: &Issue) -> Option<String> {
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R1 #R4 #R5
+fn project_identity_from_labels(issue: &Issue) -> Option<(String, String)> {
     issue.labels.iter().find_map(|label| {
         label
             .strip_prefix("project:")
             .or_else(|| label.strip_prefix("app:"))
             .or_else(|| label.strip_prefix("lib:"))
-            .filter(|project| !project.is_empty() && !project.chars().any(char::is_whitespace))
-            .map(|project| project.to_string())
+            .filter(|project| {
+                !project.is_empty()
+                    && project != &"."
+                    && project != &".."
+                    && project
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            })
+            .map(|project| (label.to_string(), project.to_string()))
     })
+}
+
+fn project_from_labels(issue: &Issue) -> Option<String> {
+    project_identity_from_labels(issue).map(|(_, project)| project)
 }
 
 fn issue_is_self_hosting(issue: &Issue) -> bool {
     project_from_labels(issue)
         .as_deref()
         .is_some_and(is_self_hosting_project)
+}
+
+fn emit_workflow_envelope(envelope: &WorkflowEnvelope, print: RunPrintOptions) -> Result<()> {
+    if print.human {
+        print_text(envelope);
+    } else if print.pretty {
+        println!("{}", serde_json::to_string_pretty(envelope)?);
+    } else {
+        println!("{}", serde_json::to_string(envelope)?);
+    }
+    Ok(())
 }
 
 fn print_text(envelope: &WorkflowEnvelope) {
@@ -2965,6 +4027,7 @@ mod tests {
                 blockers: Vec::new(),
             },
             test_gates: crate::cli::project::ProjectTestGateReport::passed_fixture("true"),
+            python_artifact: None,
             ec: crate::cli::project::ProjectEcGateReport::not_evaluated(project),
             claim_closure: crate::cli::project::ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),
@@ -3100,10 +4163,412 @@ mod tests {
         }
     }
 
+    fn write_project_rows(root: &Path, rows: &[(&str, &str, &str)]) {
+        let mut body = String::new();
+        for (name, path, label) in rows {
+            body.push_str(&format!(
+                "[[projects]]\nname = {:?}\npath = {:?}\nlabel = {:?}\n\n[[projects.workspaces]]\nname = {:?}\npaths = [\"{}/**\"]\ntarget = \"schemas\"\ntest_cmd = \"true\"\n\n",
+                name, path, label, name, path
+            ));
+        }
+        std::fs::write(root.join("aw.toml"), body).unwrap();
+    }
+
     fn assert_no_removed_wi_verbs(envelope: &WorkflowEnvelope) {
         let serialized = serde_json::to_string(envelope).unwrap();
         assert!(!serialized.contains("aw wi estimate"));
         assert!(!serialized.contains("aw wi sprintize"));
+    }
+
+    fn python_project_root() -> tempfile::TempDir {
+        python_project_root_with_target("rust")
+    }
+
+    fn python_project_root_with_target(target: &str) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("projects/demo/tech-design")).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            format!(
+                r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+artifact_model = "python-v1"
+
+[[projects.workspaces]]
+paths = ["projects/demo/**"]
+target = "{target}"
+"#
+            ),
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn python_artifact_codegen_target_follows_primary_workspace_language() {
+        for (configured, expected) in [
+            ("rust", "rust"),
+            ("python", "python"),
+            ("typescript", "typescript"),
+        ] {
+            let root = python_project_root_with_target(configured);
+            assert_eq!(
+                python_artifact_codegen_target(root.path(), "demo").unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn python_artifact_goal_routing_uses_one_ec_first_phase_table() {
+        let root = python_project_root();
+        let cases = [
+            (None, "aw ec check --project demo --wi 42"),
+            (
+                Some("td_contract_in_progress"),
+                "aw ec check --project demo --wi 42",
+            ),
+            (Some("ec_checked"), "aw ec review --project demo --wi 42"),
+            (Some("ec_reviewed"), "aw td check "),
+            (
+                Some("td_compiled"),
+                "aw ec verify --project demo --required-only --stage td --wi 42",
+            ),
+            (Some("ec_td_green"), "aw cb gen --target rust --source-root"),
+            (Some("cb_generated"), "aw cb fill 42"),
+            (Some("cb_filled"), "aw cb check 42"),
+            (
+                Some("cb_checked"),
+                "aw ec verify --project demo --required-only --stage cb --wi 42",
+            ),
+            (Some("ec_cb_green"), "aw wi close 42 --push"),
+        ];
+
+        for (label, expected_command) in cases {
+            let step = python_artifact_lifecycle_step(root.path(), "demo", "42", label)
+                .unwrap()
+                .expect("every project must use the Python artifact phase table");
+            assert!(
+                step.command.starts_with(expected_command),
+                "phase {label:?} emitted `{}` rather than `{expected_command}`",
+                step.command
+            );
+            if label == Some("ec_reviewed") {
+                assert!(step.command.contains("/projects/demo/tech-design"));
+                assert!(step.command.ends_with("--project demo --wi 42"));
+            }
+            assert!(!step.requires_hitl);
+        }
+    }
+
+    #[test]
+    fn python_artifact_goal_routing_separates_red_dimensions_and_contract_repairs() {
+        let root = python_project_root();
+        let behavior =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_behavior_red"))
+                .unwrap()
+                .unwrap();
+        assert!(behavior.command.contains("--target rust"));
+        assert!(behavior.reason.contains("behavior/security"));
+
+        let stability =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stability_red"))
+                .unwrap()
+                .unwrap();
+        assert!(stability.command.contains("--target rust"));
+        assert!(stability.reason.contains("stability"));
+
+        let efficiency =
+            python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_efficiency_red"))
+                .unwrap()
+                .unwrap();
+        assert!(efficiency.command.contains("--target rust"));
+        assert!(efficiency.reason.contains("configured native"));
+
+        let stale = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stale"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(stale.command, "aw ec check --project demo --wi 42");
+        assert!(stale.reason.contains("instead of changing product code"));
+
+        let hitl = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_hitl"))
+            .unwrap()
+            .unwrap();
+        assert!(hitl.requires_hitl);
+        assert_eq!(hitl.command, "aw ec review --project demo --wi 42");
+    }
+
+    #[test]
+    fn python_artifact_prompt_contracts_preserve_stage_owner_and_gate() {
+        let root = python_project_root();
+        let cases = [
+            (
+                None,
+                "ec.authoring",
+                "ec",
+                "EC.structure == green",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                None,
+            ),
+            (
+                Some("ec_checked"),
+                "ec.review_pending",
+                "ec",
+                "EC.review == accepted",
+                vec!["external-contracts/**"],
+                vec!["tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                None,
+            ),
+            (
+                Some("ec_reviewed"),
+                "td.authoring",
+                "td",
+                "TD.compile == green",
+                vec!["tech-design/**"],
+                vec!["external-contracts/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC -> TD"),
+            ),
+            (
+                Some("td_compiled"),
+                "ec_td.verifying",
+                "td",
+                "EC[TD].behavior == green",
+                vec![],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[TD].security == green"),
+            ),
+            (
+                Some("ec_td_green"),
+                "cb.generating",
+                "cb",
+                "CB.generated == true",
+                vec!["Cargo.toml", "src/**", "tests/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[TD].behavior == green"),
+            ),
+            (
+                Some("cb_generated"),
+                "cb.filling",
+                "cb",
+                "CB.HANDWRITE == resolved",
+                vec!["src/**"],
+                vec!["external-contracts/**", "tech-design/**"],
+                PromptTerminalLevel::Stage,
+                Some("CODEGEN != HANDWRITE"),
+            ),
+            (
+                Some("cb_filled"),
+                "cb.checking",
+                "cb",
+                "CB.unit == green",
+                vec![],
+                vec!["external-contracts/**", "tech-design/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("CB.unit == green != completion.workflow_complete"),
+            ),
+            (
+                Some("cb_checked"),
+                "ec_cb.verifying",
+                "cb",
+                "EC[CB].behavior == green",
+                vec![],
+                vec!["external-contracts/**", "src/**"],
+                PromptTerminalLevel::Stage,
+                Some("EC[CB].stability == green"),
+            ),
+            (
+                Some("ec_cb_green"),
+                "change.closing",
+                "change",
+                "change.closed == true",
+                vec![],
+                vec![],
+                PromptTerminalLevel::Change,
+                Some("action == done != completion.workflow_complete"),
+            ),
+        ];
+
+        for (phase, state, artifact, predicate, writable, readonly, terminal, guard) in cases {
+            let step = python_artifact_lifecycle_step(root.path(), "demo", "42", phase)
+                .unwrap()
+                .unwrap();
+            let mut envelope = test_envelope(&step.command, &step.reason);
+            envelope.current = WorkflowNode {
+                kind: "change".to_string(),
+                id: "#42".to_string(),
+            };
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.state, state, "phase {phase:?}");
+            assert_eq!(contract.artifact.kind, artifact, "phase {phase:?}");
+            assert_eq!(contract.scope.writable, writable, "phase {phase:?}");
+            assert_eq!(contract.scope.readonly, readonly, "phase {phase:?}");
+            assert_eq!(contract.verifier.predicate, predicate, "phase {phase:?}");
+            assert_eq!(contract.terminal.level, terminal, "phase {phase:?}");
+            if let Some(guard) = guard {
+                assert!(
+                    contract.guards.iter().any(|item| item == guard),
+                    "phase {phase:?} missing guard `{guard}`: {:?}",
+                    contract.guards
+                );
+            }
+            assert!(contract.validate().is_ok(), "phase {phase:?}");
+        }
+
+        for (target, expected) in [
+            ("rust", vec!["Cargo.toml", "src/**", "tests/**"]),
+            ("python", vec!["pyproject.toml", "src/**", "tests/**"]),
+            (
+                "typescript",
+                vec!["package.json", "tsconfig.json", "src/**", "tests/**"],
+            ),
+        ] {
+            let envelope = test_envelope(
+                &format!("aw cb gen --target {target} --source-root tech-design --output-dir app"),
+                "generate native target",
+            );
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.scope.writable, expected, "target {target}");
+        }
+
+        let mut frontend = test_envelope(
+            "aw cb gen --project demo frontend/src/App.tsx",
+            "generate frontend page component under frontend/src/App.tsx",
+        );
+        apply_artifact_quality_gate(&mut frontend);
+        let contract = workflow_prompt_contract(&frontend, None, Vec::new()).unwrap();
+        let quality_guards = contract
+            .guards
+            .iter()
+            .filter(|guard| guard.starts_with("artifact_quality."))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            quality_guards,
+            [
+                "artifact_quality.frontend-page-viewport-screenshots == green",
+                "artifact_quality.frontend-page-interaction-smoke == green",
+                "artifact_quality.frontend-page-accessibility-readability == green",
+                "artifact_quality.frontend-page-placeholder-free == green",
+                "artifact_quality.frontend-page-ux-review == green",
+            ]
+        );
+    }
+
+    #[test]
+    fn prompt_contract_routes_invalid_oracle_and_typed_blockers() {
+        let mut envelope = test_envelope(
+            "aw ec check --project demo --wi 42",
+            "EC evidence is stale or its oracle is invalid",
+        );
+        let contract =
+            workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+        assert_eq!(contract.state, "ec.contract_repair");
+        assert_eq!(contract.scope.writable, vec!["external-contracts/**"]);
+        assert!(contract
+            .guards
+            .iter()
+            .any(|guard| guard == "invalid_oracle -> EC"));
+
+        for (reason, requires_hitl, expected) in [
+            (
+                "human decision is required",
+                true,
+                PromptBlockerKind::Decision,
+            ),
+            (
+                "independent approval review is required",
+                true,
+                PromptBlockerKind::Approval,
+            ),
+            (
+                "required evidence is missing",
+                false,
+                PromptBlockerKind::MissingEvidence,
+            ),
+            ("EC gate is red", false, PromptBlockerKind::RedGate),
+            (
+                "runtime environment is unavailable",
+                false,
+                PromptBlockerKind::Environment,
+            ),
+        ] {
+            envelope.action = "blocked".to_string();
+            envelope.requires_hitl = requires_hitl;
+            envelope.next.reason = reason.to_string();
+            let contract =
+                workflow_prompt_contract(&envelope, Some("aw goal wi 42"), Vec::new()).unwrap();
+            assert_eq!(contract.blocker.as_ref().unwrap().kind, expected);
+            assert_eq!(contract.resume_command.as_deref(), Some("aw goal wi 42"));
+        }
+    }
+
+    #[test]
+    fn prompt_contract_distinguishes_child_parked_and_root_terminal() {
+        let child = test_envelope(
+            "aw goal wi 43",
+            "selected child change after prior child completed",
+        );
+        let child_contract =
+            workflow_prompt_contract(&child, Some("aw goal wi 42"), Vec::new()).unwrap();
+        assert_eq!(child_contract.state, "rollup.child_dispatch");
+        assert!(child_contract
+            .guards
+            .iter()
+            .any(|guard| guard == "child.done != root.complete"));
+
+        let parked = test_envelope(
+            "aw goal wi 44",
+            "change 43 is parked; continue with the next ready change",
+        );
+        let parked_contract =
+            workflow_prompt_contract(&parked, Some("aw goal backlog --project demo"), Vec::new())
+                .unwrap();
+        assert_eq!(parked_contract.state, "backlog.parked");
+        assert!(parked_contract
+            .guards
+            .iter()
+            .any(|guard| guard == "parked != closed"));
+
+        let terminal = project_done_envelope(
+            WorkflowNode {
+                kind: "project".to_string(),
+                id: "demo".to_string(),
+            },
+            Vec::new(),
+        );
+        let terminal_contract = workflow_prompt_contract(&terminal, None, Vec::new()).unwrap();
+        assert_eq!(terminal_contract.state, "root.terminal");
+        assert_eq!(terminal_contract.terminal.level, PromptTerminalLevel::Root);
+        assert!(terminal_contract.transition.command.is_empty());
+    }
+
+    #[test]
+    fn python_artifact_goal_routing_defaults_unconfigured_projects_to_python() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+workspaces = []
+"#,
+        )
+        .unwrap();
+        let step = python_artifact_lifecycle_step(root.path(), "demo", "42", None)
+            .unwrap()
+            .expect("unconfigured projects must use the Python artifact table");
+        assert_eq!(step.command, "aw ec check --project demo --wi 42");
     }
 
     #[test]
@@ -3155,21 +4620,21 @@ mod tests {
                 dimension: "behavior".to_string(),
                 why: "fixture failed".to_string(),
             },
-            next_action: Some("aw td gen 1500".to_string()),
+            next_action: Some("aw cb gen 1500".to_string()),
             ..Default::default()
         };
         let red_envelope = loop_state_envelope(root.clone(), &issue, &red);
-        assert_eq!(red_envelope.next.command, "aw td gen 1500");
+        assert_eq!(red_envelope.next.command, "aw cb gen 1500");
 
         let green = LoopState {
             issue_id: "1500".to_string(),
             status: LoopStatus::Converged,
             last_result: LastResult::Green,
-            next_action: Some("aw td code-check 1500".to_string()),
+            next_action: Some("aw cb check 1500".to_string()),
             ..Default::default()
         };
         let green_envelope = loop_state_envelope(root, &issue, &green);
-        assert_eq!(green_envelope.next.command, "aw td code-check 1500");
+        assert_eq!(green_envelope.next.command, "aw cb check 1500");
     }
 
     #[test]
@@ -3184,13 +4649,13 @@ mod tests {
         // Iterating with a command -> the loop engine dispatches the act.
         let s = LoopState {
             status: LoopStatus::Iterating,
-            next_action: Some("aw td gen".to_string()),
+            next_action: Some("aw cb gen".to_string()),
             ..Default::default()
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td gen");
-        assert_eq!(e.invoke.command, "aw td gen");
+        assert_eq!(e.next.command, "aw cb gen");
+        assert_eq!(e.invoke.command, "aw cb gen");
         assert!(!e.completion.workflow_complete);
         assert!(!e.requires_hitl);
 
@@ -3225,8 +4690,8 @@ mod tests {
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td code-check 188");
-        assert_eq!(e.invoke.command, "aw td code-check 188");
+        assert_eq!(e.next.command, "aw cb check 188");
+        assert_eq!(e.invoke.command, "aw cb check 188");
 
         // #845: `aw td merge` was removed from the LINEAR lifecycle; a stale
         // persisted string must repair to the current terminal step.
@@ -3237,7 +4702,24 @@ mod tests {
         };
         let e = loop_state_envelope(root.clone(), &issue, &s);
         assert_eq!(e.action, "dispatch");
-        assert_eq!(e.next.command, "aw td code-check 188");
+        assert_eq!(e.next.command, "aw cb check 188");
+
+        // #2423: an old loop-state can still name `aw td create <wi>` after
+        // the CB fill has advanced the tracker. The loop must route by the
+        // current phase instead of emitting the rejected create command.
+        let mut filled = issue.clone();
+        filled.phase = Some("cb_filled".to_string());
+        let s = LoopState {
+            status: LoopStatus::Iterating,
+            next_action: Some("aw td create 188".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root.clone(), &filled, &s);
+        assert_eq!(e.action, "dispatch");
+        assert_eq!(
+            e.next.command,
+            "aw ec verify --project jet --required-only --wi 188"
+        );
 
         // An unparseable/unrepairable command must not dispatch verbatim —
         // fall through to blocked/HITL naming the bad command.
@@ -3261,11 +4743,11 @@ mod tests {
         let mut issue = open_issue(IssueType::Enhancement, 937);
         issue.phase = Some("td_created".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td gen 937");
+        assert_eq!(command, "aw cb gen 937");
 
         issue.phase = Some("cb_genned".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td fill 937");
+        assert_eq!(command, "aw cb fill 937");
 
         issue.phase = Some("cb_filled".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
@@ -3278,7 +4760,7 @@ mod tests {
         // routing, same as the capability.rs router.
         issue.phase = Some("td_reviewed".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td gen 937");
+        assert_eq!(command, "aw cb gen 937");
 
         // No phase label at all means this bounded, project-labeled WI has no
         // verifier yet, so the shared root table starts its EC skeleton.
@@ -3326,6 +4808,14 @@ mod tests {
         assert_eq!(json["completion"]["requires_hitl"], false);
         assert_eq!(json["first_next"]["kind"], "run_command");
         assert_eq!(json["first_next"]["command"], "aw td create 3903");
+        assert_eq!(
+            json["prompt_contract"]["schema_version"],
+            PROMPT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            json["prompt_contract"]["transition"]["command"],
+            "aw td create 3903"
+        );
         assert!(json.get("first_invoke").is_none());
         assert!(json.get("requires_hitl").is_none());
         assert_eq!(goal.payload_path, "/tmp/aw/goals/aw-run-project-demo.md");
@@ -3415,7 +4905,7 @@ mod tests {
         assert!(is_self_hosting_project("aw"));
         assert_eq!(
             project_capability_rollup_command("agentic-workflow"),
-            "aw health --project agentic-workflow claims"
+            "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1"
         );
     }
 
@@ -3478,6 +4968,8 @@ cap_path = "apps/jet/README.md"
 
     #[test]
     fn epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_project_rows(tmp.path(), &[("pgpool", "apps/pgpool", "project:pgpool")]);
         let mut issue = open_issue(IssueType::Epic, 1511);
         issue.labels = vec![
             "priority:p2".to_string(),
@@ -3490,7 +4982,7 @@ cap_path = "apps/jet/README.md"
         assert_eq!(project_from_labels(&issue).as_deref(), Some("pgpool"));
         assert_eq!(issue_ref(&issue), "#1511");
 
-        let envelope = open_epic_envelope(&issue);
+        let envelope = open_epic_envelope(tmp.path(), &issue);
         assert_eq!(envelope.action, "dispatch");
         assert_eq!(envelope.next.kind, "atomize");
         assert_eq!(envelope.next.command, "aw wi atomize --project pgpool");
@@ -3503,12 +4995,20 @@ cap_path = "apps/jet/README.md"
 
     #[test]
     fn epic_project_label_dispatch_preserves_app_and_lib_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_project_rows(
+            tmp.path(),
+            &[
+                ("mamba", "apps/mamba", "app:mamba"),
+                ("pg", "libs/pg", "lib:pg"),
+            ],
+        );
         for (label, project) in [("app:mamba", "mamba"), ("lib:pg", "pg")] {
             let mut issue = open_issue(IssueType::Epic, 1512);
             issue.labels = vec![label.to_string()];
 
             assert_eq!(project_from_labels(&issue).as_deref(), Some(project));
-            let envelope = open_epic_envelope(&issue);
+            let envelope = open_epic_envelope(tmp.path(), &issue);
             assert_eq!(
                 envelope.next.command,
                 format!("aw wi atomize --project {project}")
@@ -3521,7 +5021,62 @@ cap_path = "apps/jet/README.md"
     }
 
     #[test]
+    fn open_epic_with_open_child_dispatches_child_instead_of_atomizing() {
+        let mut epic = open_issue(IssueType::Epic, 2171);
+        epic.labels = vec!["app:workbench".to_string()];
+        let mut closed = open_issue(IssueType::Bug, 2191);
+        closed.state = IssueState::Closed;
+        let open = open_issue(IssueType::Enhancement, 2192);
+
+        let envelope = open_epic_envelope_with_children(&epic, &[closed, open]);
+
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "execute_change");
+        assert_eq!(envelope.next.command, "aw goal wi 2192");
+        assert!(!envelope.next.command.contains("atomize"));
+        assert!(!envelope.requires_hitl);
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("child root dispatch must be chain-valid");
+    }
+
+    #[test]
+    fn open_epic_with_all_children_closed_rolls_up_instead_of_atomizing() {
+        let mut epic = open_issue(IssueType::Epic, 2171);
+        epic.labels = vec!["app:workbench".to_string()];
+        let mut first = open_issue(IssueType::Bug, 2191);
+        first.state = IssueState::Closed;
+        let mut second = open_issue(IssueType::Enhancement, 2192);
+        second.state = IssueState::Closed;
+
+        let envelope = open_epic_envelope_with_children(&epic, &[first, second]);
+
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "close_epic");
+        assert_eq!(envelope.next.command, "aw wi close 2171 --push");
+        assert!(!envelope.next.command.contains("atomize"));
+        assert!(!envelope.requires_hitl);
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("completed epic close must be chain-valid");
+    }
+
+    #[test]
+    fn epic_parent_relation_reads_machine_label_and_legacy_body_contract() {
+        let epic = open_issue(IssueType::Epic, 2171);
+        let mut label_child = open_issue(IssueType::Bug, 2191);
+        label_child.labels.push("epic:2171".to_string());
+        let mut prose_child = open_issue(IssueType::Enhancement, 2192);
+        prose_child.body = "## Capability Alignment\n\nParent Epic: #2171\n".to_string();
+        let mut unrelated = open_issue(IssueType::Test, 2193);
+        unrelated.body = "Parent Epic: #9999\n".to_string();
+
+        assert!(issue_declares_epic_parent(&label_child, &epic));
+        assert!(issue_declares_epic_parent(&prose_child, &epic));
+        assert!(!issue_declares_epic_parent(&unrelated, &epic));
+    }
+
+    #[test]
     fn epic_project_label_dispatch_blocks_unresolved_or_empty_labels() {
+        let tmp = tempfile::tempdir().unwrap();
         for labels in [
             vec!["type:epic".to_string()],
             vec!["project:".to_string()],
@@ -3535,7 +5090,7 @@ cap_path = "apps/jet/README.md"
             issue.labels = labels;
 
             assert_eq!(project_from_labels(&issue), None);
-            let mut envelope = open_epic_envelope(&issue);
+            let mut envelope = open_epic_envelope(tmp.path(), &issue);
             ensure_hitl_question(&mut envelope, "aw goal wi 1513");
 
             assert_eq!(envelope.action, "blocked");
@@ -3550,6 +5105,34 @@ cap_path = "apps/jet/README.md"
             crate::cli::chain::validate_aw_command_string(&envelope.next.command)
                 .expect("unresolved epic remediation must remain chain-valid");
         }
+    }
+
+    #[test]
+    fn epic_project_label_dispatch_bootstraps_valid_unregistered_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            "[agentic_workflow.projects]\ndiscover = [\"apps/*/aw.toml\"]\n",
+        )
+        .unwrap();
+        let mut issue = open_issue(IssueType::Epic, 2171);
+        issue.labels = vec!["type:epic".to_string(), "app:workbench".to_string()];
+
+        assert_eq!(
+            project_identity_from_labels(&issue),
+            Some(("app:workbench".to_string(), "workbench".to_string()))
+        );
+        let envelope = open_epic_envelope(tmp.path(), &issue);
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "bootstrap_project");
+        assert_eq!(
+            envelope.next.command,
+            "aw conf init --project-label app:workbench"
+        );
+        assert_eq!(envelope.invoke.command, envelope.next.command);
+        assert!(!envelope.requires_hitl);
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("unregistered epic bootstrap command must parse against the real CLI");
     }
 
     #[test]
@@ -4262,7 +5845,7 @@ review_status: pending
     #[test]
     fn artifact_quality_gate_injects_frontend_profile_and_prompt() {
         let mut envelope = test_envelope(
-            "aw td gen --project jet frontend/src/App.tsx",
+            "aw cb gen --project jet frontend/src/App.tsx",
             "generate frontend page component under frontend/src/App.tsx",
         );
 
@@ -4281,6 +5864,11 @@ review_status: pending
             .completion
             .criteria
             .contains(&"artifact quality hard preflight gates are satisfied".to_string()));
+        let contract = workflow_prompt_contract(&envelope, None, Vec::new()).unwrap();
+        assert!(contract
+            .guards
+            .iter()
+            .any(|guard| guard.starts_with("artifact_quality.")));
     }
 
     #[test]
@@ -4315,7 +5903,7 @@ review_status: pending
     }
 
     #[test]
-    fn workflow_envelope_serializes_optional_artifact_quality_profile() {
+    fn workflow_envelope_serializes_typed_prompt_contract_from_same_ir() {
         let envelope = WorkflowEnvelope {
             action: "dispatch".to_string(),
             root: WorkflowNode {
@@ -4344,9 +5932,7 @@ review_status: pending
             },
             agent_prompt: "test".to_string(),
             requires_hitl: false,
-            artifact_quality_profile: Some(ArtifactQualityProfile::default_for_kind(
-                crate::models::ArtifactKind::CliSurface,
-            )),
+            artifact_quality_profile: None,
             hitl_question: None,
             persistence: None,
         };
@@ -4357,11 +5943,43 @@ review_status: pending
         assert_eq!(json["completion"]["requires_hitl"], false);
         assert_eq!(json["next"]["kind"], "run_command");
         assert_eq!(json["next"]["command"], "aw td create 3903");
-        assert!(json.get("artifact_quality_profile").is_some());
         assert_eq!(
-            json["artifact_quality_profile"]["artifact_kind"],
-            "cli_surface"
+            json["prompt_contract"]["schema_version"],
+            PROMPT_SCHEMA_VERSION
         );
+        assert_eq!(
+            json["prompt_contract"],
+            serde_json::json!({
+                "schema_version": "aw.prompt.v1",
+                "state": "td.authoring",
+                "artifact": {"kind": "td", "id": "3903"},
+                "scope": {
+                    "writable": ["tech-design/**"],
+                    "readonly": ["external-contracts/**", "src/**"]
+                },
+                "transition": {"command": "aw td create 3903", "next_state": "td"},
+                "verifier": {
+                    "command": "aw td create 3903",
+                    "predicate": "TD.compile == green"
+                },
+                "terminal": {"level": "stage", "predicate": "TD.compile == green"},
+                "guards": [
+                    "EC -> TD",
+                    "action == done != completion.workflow_complete",
+                    "completion.workflow_complete == true",
+                    "next.command in envelope"
+                ],
+                "guidance": ["test"]
+            })
+        );
+        let projected: AgentPromptSpec =
+            serde_json::from_value(json["prompt_contract"].clone()).unwrap();
+        assert_eq!(json["agent_prompt"], projected.render().unwrap());
+
+        let mut envelope = test_envelope("aw td create 3903", "test");
+        envelope.current.id.clear();
+        let error = serde_json::to_string(&envelope).unwrap_err().to_string();
+        assert!(error.contains("artifact.id must not be empty"), "{error}");
     }
 
     fn test_envelope(command: &str, reason: &str) -> WorkflowEnvelope {

@@ -18,10 +18,10 @@ fn aw_core_client_agent_first_cli_product_model() {
         "cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture";
     let id = "aw-core-client-agent-first-cli-product-model";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

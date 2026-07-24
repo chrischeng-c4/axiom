@@ -25,8 +25,13 @@ const SKILL_MAMBA_TEST_COVERAGE: &str =
 const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
+const SKILL_REVIEW: &str = include_str!("../../templates/cli/mainthread/skills/aw-review/SKILL.md");
 const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
 const SKILL_GOAL: &str = include_str!("../../templates/cli/mainthread/skills/aw-goal/SKILL.md");
+const SKILL_CHANGE_REVIEW: &str =
+    include_str!("../../templates/cli/mainthread/skills/aw-change-review/SKILL.md");
+const SKILL_CHANGE_REVIEW_OPENAI_YAML: &str =
+    include_str!("../../templates/cli/mainthread/skills/aw-change-review/agents/openai.yaml");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -1007,8 +1012,10 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-health", SKILL_HEALTH),
+        ("aw-review", SKILL_REVIEW),
         ("aw-guard", SKILL_GUARD),
         ("aw-goal", SKILL_GOAL),
+        ("aw-change-review", SKILL_CHANGE_REVIEW),
     ]
 }
 
@@ -1026,6 +1033,17 @@ fn skill_script_entries() -> &'static [(&'static str, &'static str, &'static str
         ),
         ("aw-build-release", "release.sh", SCRIPT_BUILD_RELEASE),
     ]
+}
+
+// Non-executable companion files projected with their owning skill. Keep UI
+// metadata producer-owned alongside SKILL.md so Codex discovery cannot drift
+// from the Claude/AGY workflow contract (#2279).
+fn skill_companion_file_entries() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[(
+        "aw-change-review",
+        "agents/openai.yaml",
+        SKILL_CHANGE_REVIEW_OPENAI_YAML,
+    )]
 }
 
 // Legacy/retired skill directory names pruned from a skills tree on every
@@ -1183,6 +1201,17 @@ fn install_skill_scripts(skills_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn install_skill_companion_files(skills_dir: &Path) -> Result<()> {
+    for (skill_name, relative_path, content) in skill_companion_file_entries() {
+        let output_path = skills_dir.join(skill_name).join(relative_path);
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(output_path, content)?;
+    }
+    Ok(())
+}
+
 // Install/refresh every `aw-*` skill under `.claude/skills/` from
 // `templates/cli/mainthread/skills/` verbatim (the `.claude` tree is the
 // untransformed install source; see [`install_agents_skills`] for the
@@ -1195,6 +1224,7 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         write_skill_file(skills_dir, name, content)?;
     }
     install_skill_scripts(skills_dir)?;
+    install_skill_companion_files(skills_dir)?;
     Ok(())
 }
 
@@ -1210,6 +1240,7 @@ fn install_agents_skills(skills_dir: &Path) -> Result<()> {
         write_skill_file(skills_dir, name, &projected)?;
     }
     install_skill_scripts(skills_dir)?;
+    install_skill_companion_files(skills_dir)?;
     Ok(())
 }
 
@@ -3232,6 +3263,58 @@ auth_method = "cli"
         }
     }
 
+    // #2169: the new `aw-review` skill projects into both skill trees, and
+    // states the `aw health`-owns-readiness / `aw review`-owns-architecture
+    // boundary in its own body.
+    #[test]
+    fn install_claude_skills_writes_aw_review_skill() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            fs::create_dir_all(&skills_dir).unwrap();
+
+            install(&skills_dir).unwrap();
+
+            let skill_path = skills_dir.join("aw-review").join("SKILL.md");
+            assert!(skill_path.exists(), "aw-review skill should be installed");
+            let content = fs::read_to_string(&skill_path).unwrap();
+            assert!(content.contains("aw review --project"));
+            assert!(
+                content.contains("aw health"),
+                "should state the aw health/aw review boundary"
+            );
+        }
+    }
+
+    // #2279: the independent change-review skill and its Codex UI metadata
+    // project from one canonical source into both host skill trees.
+    #[test]
+    fn test_install_skills_projects_aw_change_review() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            fs::create_dir_all(&skills_dir).unwrap();
+
+            install(&skills_dir).unwrap();
+
+            let skill_dir = skills_dir.join("aw-change-review");
+            let content = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+            assert!(content.contains("Review every cohesive author-owned change set"));
+            assert!(content.contains("does not replace tests, project architecture/"));
+            assert!(content.contains("different agent instance"));
+
+            let metadata = fs::read_to_string(skill_dir.join("agents/openai.yaml")).unwrap();
+            assert!(metadata.contains("display_name: \"AW Change Review\""));
+            assert!(metadata.contains("$aw-change-review"));
+        }
+    }
+
     #[test]
     fn test_install_claude_skills_preserves_unrelated_codex_review_skill() {
         let tmp = TempDir::new().unwrap();
@@ -3465,5 +3548,4 @@ fn install_shell_completions() -> Result<()> {
     println!("   ℹ Shell completions are not installed by this binary");
     Ok(())
 }
-
 // CODEGEN-END

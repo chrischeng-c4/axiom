@@ -25,7 +25,7 @@ capability_refs:
     gap: marker-free-post-fill-evidence
     claim: marker-free-post-fill-evidence
     coverage: full
-    rationale: "The real-binary fixture proves aw td fill brief mode commits declared marker-free Changes evidence (a test + doc) through the normal terminal Cb-Fill lifecycle commit while rejecting a dirty path outside that declared scope."
+    rationale: "The real-binary fixture proves aw cb fill brief mode commits declared marker-free Changes evidence (a test + doc) through the normal terminal Cb-Fill lifecycle commit while rejecting a dirty path outside that declared scope."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/cb_fill_test.rs
@@ -69,1421 +69,900 @@ issue backend unconditionally on every mutating `aw td`/`aw wi` verb.
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-handwrite -->
-
-<!-- source-snapshot: path=apps/agentic-workflow/tests/cli/tests/cb_fill_test.rs -->
-````rust
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/validate/tests/cb_fill_test.md#source
-// CODEGEN-BEGIN
-//! Integration tests for `aw td fill` (Phase 3).
-//!
-//! Smoke tests for CLI registration, brief mode envelope shape, marker
-//! enumeration, and `--apply --marker` block replacement, plus a real-binary
-//! round trip (`test_apply_marker_replaces_block`, issue #1096 AC1) proving
-//! the payload lives under `/tmp/aw/workspaces/<workspace>/payloads/` and
-//! that apply reads it back. The remaining e2e integration scenarios (code
-//! check gate + Cb-Fill trailer + phase advance) are #[ignore]d because they
-//! require a real worktree, real payload files, and the agent loop
-//! infrastructure.
-//!
-//! @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#test-plan
-
-use agentic_workflow::cli::Commands;
-use clap::{CommandFactory, Parser};
-
-#[derive(Parser)]
-#[command(name = "aw")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-fn marker(source_path: &str) -> agentic_workflow::cli::cb_fill::HandwriteMarkerEntry {
-    agentic_workflow::cli::cb_fill::HandwriteMarkerEntry {
-        id: source_path.replace(['/', '.'], "-"),
-        source_path: source_path.to_string(),
-        start_line: 1,
-        end_line: 3,
-        reason: "test marker".to_string(),
-        spec_ref: None,
-        adopt_existing: false,
-    }
-}
-
-fn handwrite_begin(attrs: &str) -> String {
-    format!("// HANDWRITE-{} {}", "BEGIN", attrs)
-}
-
-fn handwrite_end() -> &'static str {
-    concat!("// HANDWRITE-", "END")
-}
-
-// ── R1 / R14(1) ─────────────────────────────────────────────────────────
-
-/// R1: `aw td fill` is registered as a first-class subcommand under td.
-#[test]
-fn test_cb_fill_registered() {
-    let cmd = Cli::command();
-    let td = cmd.find_subcommand("td").expect("td namespace");
-    let fill = td.find_subcommand("fill").expect("td fill subcommand");
-    let positionals: Vec<String> = fill
-        .get_positionals()
-        .map(|p: &clap::Arg| p.get_id().as_str().to_string())
-        .collect();
-    assert!(positionals.iter().any(|p| p == "slug"));
-}
-
-#[test]
-fn test_cb_fill_apply_flag() {
-    let cmd = Cli::command();
-    let fill = cmd
-        .find_subcommand("td")
-        .and_then(|c| c.find_subcommand("fill"))
-        .expect("td fill");
-    fill.get_arguments()
-        .find(|a: &&clap::Arg| a.get_id().as_str() == "apply")
-        .expect("--apply flag");
-    fill.get_arguments()
-        .find(|a: &&clap::Arg| a.get_id().as_str() == "marker")
-        .expect("--marker flag");
-}
-
-#[test]
-fn test_cb_fill_spec_path_flag() {
-    let cmd = Cli::command();
-    let fill = cmd
-        .find_subcommand("td")
-        .and_then(|c| c.find_subcommand("fill"))
-        .expect("td fill");
-    fill.get_arguments()
-        .find(|a: &&clap::Arg| a.get_id().as_str() == "spec_path")
-        .expect("--spec-path flag");
-}
-
-// ── R9 / R14(0) — enum extensions ────────────────────────────────────────
-
-/// R9: `cb_filled` phase const exists in agentic_workflow::issues::types::td_phase.
-#[test]
-fn test_issue_phase_cb_filled_variant() {
-    use agentic_workflow::issues::types::td_phase;
-    assert_eq!(td_phase::CB_FILLED, "cb_filled");
-    assert!(td_phase::is_terminal_code_checkable("cb_filled"));
-    assert!(td_phase::is_terminal_code_checkable("cb_genned"));
-    assert!(!td_phase::is_terminal_code_checkable("td_reviewed"));
-}
-
-/// R9: `Cb-Fill` trailer const exists in lifecycle_trailer module.
-#[test]
-fn test_lifecycle_trailer_cb_fill_variant() {
-    use agentic_workflow::issues::types::lifecycle_trailer;
-    assert_eq!(lifecycle_trailer::CB_FILL, "Cb-Fill");
-}
-
-/// R10: terminal `aw td code-check` accepts `cb_filled` as a valid phase.
-/// We verify this at the helper-level:
-/// `is_terminal_code_checkable("cb_filled") == true`.
-#[test]
-fn test_td_code_check_accepts_cb_filled() {
-    use agentic_workflow::issues::types::td_phase;
-    assert!(td_phase::is_terminal_code_checkable(td_phase::CB_FILLED));
-}
-
-// ── R2 / R14(1) — brief mode envelope shape ─────────────────────────────
-
-/// R2: brief-mode envelope shape — verified via the helper that builds
-/// the envelope JSON. We construct a fake marker list and assert the
-/// emitted envelope has action="dispatch" and agent=null (mainthread-only
-/// execution model: mainthread runs invoke.command directly).
-#[test]
-fn test_brief_mode_envelope_shape() {
-    // Synthesize the envelope JSON the same way `run_brief` does.
-    let env = serde_json::json!({
-        "action": "dispatch",
-        "agent": null,
-        "slug": "demo",
-        "invoke": {
-            "command": "aw td fill",
-            "args": {
-                "slug": "demo",
-                "marker_list": [{
-                    "id": "cb-fill-issue-phase-enum",
-                    "source_path": "apps/agentic-workflow/src/issues/types.rs",
-                    "start_line": 10,
-                    "end_line": 14,
-                    "reason": "issue-phase enum gap",
-                }],
-                "spec_path": "",
-            },
-        },
-    });
-    assert_eq!(env["action"], "dispatch");
-    assert!(env["agent"].is_null());
-    assert!(env["invoke"]["args"]["marker_list"].is_array());
-}
-
-/// R2: marker list element shape is the spec-defined HandwriteMarkerEntry.
-#[test]
-fn test_brief_mode_marker_list_present() {
-    let entry = agentic_workflow::cli::cb_fill::HandwriteMarkerEntry {
-        id: "marker-1".into(),
-        source_path: "src/x.rs".into(),
-        start_line: 1,
-        end_line: 5,
-        reason: "test".into(),
-        spec_ref: None,
-        adopt_existing: false,
-    };
-    let v = serde_json::to_value(&entry).unwrap();
-    assert!(v.get("id").is_some());
-    assert!(v.get("source_path").is_some());
-    assert!(v.get("start_line").is_some());
-    assert!(v.get("end_line").is_some());
-    assert!(v.get("reason").is_some());
-}
-
-/// R2: agent address for brief envelope MUST be null under the
-/// mainthread-only execution model (score-mainthread-only-execution.md).
-#[test]
-fn test_brief_mode_agent_address() {
-    let env = serde_json::json!({
-        "action": "dispatch",
-        "agent": null,
-    });
-    assert!(env["agent"].is_null());
-}
-
-// ── R4 — apply mode marker replacement ──────────────────────────────────
-
-/// R4: enumeration finds a HANDWRITE block in a file. Uses tempdir.
-#[test]
-fn test_apply_marker_enumerates_block() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let src_dir = tmp.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    let src_file = src_dir.join("x.rs");
-    let body = format!(
-        "fn before() {{}}\n{}\nTODO: hand-write content\n{}\nfn after() {{}}\n",
-        handwrite_begin("gap=\"my-marker\" tracker=\"none\" reason=\"because\""),
-        handwrite_end()
-    );
-    std::fs::write(&src_file, body).unwrap();
-
-    let markers = agentic_workflow::cli::cb_fill::enumerate_worktree_markers(tmp.path());
-    assert_eq!(markers.len(), 1);
-    assert_eq!(markers[0].id, "my-marker");
-    assert_eq!(markers[0].reason, "because");
-}
-
-/// R4: enumerating two distinct HANDWRITE blocks in one file returns both.
-#[test]
-fn test_apply_marker_no_adjacent_disturbance() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let src_dir = tmp.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    let src_file = src_dir.join("x.rs");
-    let body = format!(
-        "fn a() {{}}\n{}\nTODO: hand-write content\n{}\nfn b() {{}}\n{}\nTODO: hand-write content\n{}\nfn c() {{}}\n",
-        handwrite_begin("gap=\"first\" tracker=\"t\" reason=\"r1\""),
-        handwrite_end(),
-        handwrite_begin("gap=\"second\" tracker=\"t\" reason=\"r2\""),
-        handwrite_end()
-    );
-    std::fs::write(&src_file, body).unwrap();
-    let markers = agentic_workflow::cli::cb_fill::enumerate_worktree_markers(tmp.path());
-    let ids: Vec<&str> = markers.iter().map(|m| m.id.as_str()).collect();
-    assert!(ids.contains(&"first"));
-    assert!(ids.contains(&"second"));
-}
-
-/// R11: 0-marker fast-path — when no HANDWRITE markers exist, the
-/// enumerator returns empty.
-#[test]
-fn test_zero_marker_fastpath_no_markers() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let src_dir = tmp.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(src_dir.join("clean.rs"), "fn ok() {}\n").unwrap();
-    let markers = agentic_workflow::cli::cb_fill::enumerate_worktree_markers(tmp.path());
-    assert!(markers.is_empty());
-}
-
-/// R11: count helper agrees with enumeration (used by td.rs for the
-/// post-codegen dispatch decision).
-#[test]
-fn test_count_matches_enumeration() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let src_dir = tmp.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    let body = format!(
-        "{}\nTODO: hand-write content\n{}\n",
-        handwrite_begin("gap=\"x\" tracker=\"t\" reason=\"r\""),
-        handwrite_end()
-    );
-    std::fs::write(src_dir.join("a.rs"), body).unwrap();
-    let n = agentic_workflow::cli::cb_fill::count_worktree_handwrite_markers(tmp.path());
-    assert_eq!(n, 1);
-}
-
-/// R1/R2: TD Changes YAML supports both `changes:` and legacy `files:`,
-/// and accepts either `path:` or `file:` entries.
-#[test]
-fn test_extract_change_paths_supports_changes_and_files() {
-    let spec = concat!(
-        "\n",
-        "#",
-        "# Logic\n\n",
-        "not parsed\n\n",
-        "#",
-        "# Changes\n\n",
-        "```yaml\n",
-        "changes:\n",
-        "  - path: ./apps/agentic-workflow/src/cli/cb_fill.rs\n",
-        "  - file: apps/agentic-workflow/src/issues/types.rs\n",
-        "files:\n",
-        "  - path: ignored/by/changes.rs\n",
-        "```\n\n",
-        "#",
-        "# Test Plan\n\n",
-        "```yaml\n",
-        "files:\n",
-        "  - file: ignored/outside/changes.rs\n",
-        "```\n",
-    );
-
-    let paths = agentic_workflow::cli::cb_fill::extract_change_paths_from_spec(spec);
-    assert_eq!(
-        paths,
-        vec![
-            "apps/agentic-workflow/src/cli/cb_fill.rs".to_string(),
-            "apps/agentic-workflow/src/issues/types.rs".to_string(),
-        ],
-    );
-
-    let legacy_spec = concat!(
-        "\n",
-        "#",
-        "# Changes\n\n",
-        "```yaml\n",
-        "files:\n",
-        "  - file: ./apps/agentic-workflow/tests/cb_fill_test.rs\n",
-        "```\n",
-    );
-    let paths = agentic_workflow::cli::cb_fill::extract_change_paths_from_spec(legacy_spec);
-    assert_eq!(
-        paths,
-        vec!["apps/agentic-workflow/tests/cb_fill_test.rs".to_string()],
-    );
-}
-
-/// R2: inherited markers outside the active TD Changes paths are filtered
-/// out of the brief-mode marker list.
-#[test]
-fn test_scope_filters_to_changed_source_paths() {
-    let markers = vec![
-        marker("apps/agentic-workflow/src/cli/cb_fill.rs"),
-        marker("apps/agentic-workflow/src/cli/cb.rs"),
-        marker("apps/agentic-workflow/src/issues/types.rs"),
-    ];
-    let change_paths = vec![
-        "apps/agentic-workflow/src/cli".to_string(),
-        "apps/agentic-workflow/tests/*_test.rs".to_string(),
-    ];
-
-    let scoped =
-        agentic_workflow::cli::cb_fill::filter_markers_to_change_paths(&markers, &change_paths);
-    let paths: Vec<&str> = scoped.iter().map(|m| m.source_path.as_str()).collect();
-    assert_eq!(
-        paths,
-        vec![
-            "apps/agentic-workflow/src/cli/cb_fill.rs",
-            "apps/agentic-workflow/src/cli/cb.rs",
-        ],
-    );
-}
-
-/// R1: when the active TD only changes spec files, source HANDWRITE markers
-/// are outside scope and the brief path can dispatch directly to merge.
-#[test]
-fn test_scope_zero_marker_for_spec_only_change() {
-    let markers = vec![
-        marker("apps/agentic-workflow/src/cli/cb_fill.rs"),
-        marker("apps/agentic-workflow/src/issues/types.rs"),
-    ];
-    let change_paths =
-        vec!["apps/agentic-workflow/tech-design/surface/specs/spec-only-change.md".to_string()];
-
-    let scoped =
-        agentic_workflow::cli::cb_fill::filter_markers_to_change_paths(&markers, &change_paths);
-    assert!(scoped.is_empty());
-}
-
-/// R1 fallback: when no active spec is resolved, brief mode keeps the legacy
-/// all-marker behavior instead of silently dropping inherited markers.
-#[test]
-fn test_scope_missing_spec_uses_legacy_all_markers() {
-    let markers = vec![
-        marker("apps/agentic-workflow/src/cli/cb_fill.rs"),
-        marker("apps/agentic-workflow/src/issues/types.rs"),
-    ];
-
-    let scoped = agentic_workflow::cli::cb_fill::scope_markers_for_change_paths(&markers, None);
-    assert_eq!(scoped.len(), markers.len());
-    assert_eq!(scoped[0].source_path, markers[0].source_path);
-    assert_eq!(scoped[1].source_path, markers[1].source_path);
-}
-
-/// #2535: `aw goal wi` may resolve a GitHub WI after the ephemeral local
-/// projection was lost. The exact emitted `aw td fill <id>` command must
-/// hydrate that projection before creating the marker-fill lock.
-#[tokio::test]
-async fn td_fill_brief_hydrates_missing_remote_projection() {
-    use agentic_workflow::issues::{IssueBackend, LocalBackend};
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
-
-    let Some(git) = agentic_workflow::git::find_git_bin() else {
-        eprintln!("skipping: git binary not on PATH");
-        return;
-    };
-    let root = tempfile::tempdir().expect("tempdir");
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root.path())
-        .args(["init", "-b", "project-test"])
-        .status()
-        .expect("git init");
-    for (key, value) in [
-        ("user.email", "test@test"),
-        ("user.name", "test"),
-        ("commit.gpgsign", "false"),
-    ] {
-        Command::new(&git)
-            .arg("-C")
-            .arg(root.path())
-            .args(["config", key, value])
-            .status()
-            .unwrap();
-    }
-
-    std::fs::write(
-        root.path().join("aw.toml"),
-        concat!(
-            "[agentic_workflow.issue_platform]\n",
-            "type = \"github\"\n",
-            "repo = \"fixture/configured\"\n",
-        ),
-    )
-    .unwrap();
-    let spec_rel = "apps/demo/tech-design/logic/remote-fill.md";
-    let source_rel = "apps/demo/src/lib.rs";
-    let spec = root.path().join(spec_rel);
-    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
-    std::fs::write(
-        &spec,
-        format!(
-            "## Changes\n```yaml\nchanges:\n  - path: {source_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
-        ),
-    )
-    .unwrap();
-    let source = root.path().join(source_rel);
-    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-    std::fs::write(
-        &source,
-        format!(
-            "{}\n// TODO: hand-write content for `{source_rel}`.\n{}\n",
-            handwrite_begin(
-                "gap=\"remote-fill-marker\" tracker=\"pending-tracker\" reason=\"fixture\""
-            ),
-            handwrite_end(),
-        ),
-    )
-    .unwrap();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root.path())
-        .args(["add", "."])
-        .status()
-        .unwrap();
-    Command::new(&git)
-        .arg("-C")
-        .arg(root.path())
-        .args(["commit", "-m", "seed remote fill fixture"])
-        .status()
-        .unwrap();
-
-    let tool_home = tempfile::tempdir().expect("tool home");
-    let home = tool_home.path();
-    let gh = home.join(".rustup/toolchains/stable-aarch64-apple-darwin/bin/gh");
-    std::fs::create_dir_all(gh.parent().unwrap()).unwrap();
-    let issue_json = serde_json::json!({
-        "number": 2535,
-        "title": "remote fill hydration fixture",
-        "state": "OPEN",
-        "labels": [
-            {"name": "type:change"},
-            {"name": "phase:cb_genned"},
-            {"name": "project:agentic-workflow"}
-        ],
-        "author": {"login": "fixture"},
-        "createdAt": "2026-07-24T00:00:00Z",
-        "updatedAt": "2026-07-24T00:00:00Z",
-        "url": "https://example.invalid/fixture/issues/2535",
-        "body": "remote-only WI fixture"
-    })
-    .to_string();
-    let gh_script = format!(
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$AW_GH_LOG"
-case "$*" in
-  *" list "*) printf '%s\n' '[]' ;;
-  *" view 2535 "*) printf '%s\n' '{issue_json}' ;;
-  label\ create*) printf '%s\n' '{{}}' ;;
-  api\ -X\ PATCH*) printf '%s\n' '{{}}' ;;
-  *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 1 ;;
-esac
-"#
-    );
-    std::fs::write(&gh, gh_script).unwrap();
-    let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&gh, permissions).unwrap();
-    let gh_log = home.join("gh.log");
-
-    let backend = LocalBackend::from_project_root(root.path());
-    assert!(
-        backend.get("2535").await.unwrap().is_none(),
-        "fixture must begin without a local issue projection"
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aw"))
-        .args(["td", "fill", "2535", "--spec-path", spec_rel])
-        .current_dir(root.path())
-        .env("HOME", home)
-        .env("GH_TOKEN", "fixture-token")
-        .env("AW_GH_LOG", &gh_log)
-        .env("AW_DISABLE_CAP", "1")
-        .output()
-        .expect("run repo-built aw td fill");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "remote fill brief must succeed:\nstdout={stdout}\nstderr={stderr}"
-    );
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("fill envelope JSON");
-    assert_eq!(envelope["action"], "dispatch");
-    assert_eq!(envelope["slug"], "2535");
-    assert_eq!(
-        envelope["invoke"]["args"]["marker_list"][0]["id"],
-        "remote-fill-marker"
-    );
-
-    let hydrated = backend
-        .get("2535")
-        .await
-        .unwrap()
-        .expect("hydrated local issue projection");
-    assert_eq!(hydrated.phase.as_deref(), Some("cb_genned"));
-    assert_eq!(hydrated.github_id, Some(2535));
-    let calls = std::fs::read_to_string(&gh_log).unwrap();
-    assert!(calls.contains(" view 2535 "), "{calls}");
-    assert!(calls.contains("api -X PATCH"), "{calls}");
-
-    let _ = std::fs::remove_dir_all(backend.issues_dir());
-}
-
-// ── R6 — collision regression (bug-cb-fill-payload-routes-by-marker-id-alone-collides) ──
-
-/// R6: when two HANDWRITE markers in different files share the same base
-/// id, enumeration must surface BOTH entries (not silently drop one).
-/// Combined with the R5 ambiguous-id error in `cb fill --apply`, this
-/// prevents the silent mis-routing that motivated the bug.
-#[test]
-fn test_collision_enumerate_returns_both_entries() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let crates_dir = tmp.path().join("crates").join("a").join("src");
-    let projects_dir = tmp.path().join("projects").join("b").join("src");
-    std::fs::create_dir_all(&crates_dir).unwrap();
-    std::fs::create_dir_all(&projects_dir).unwrap();
-    // Both files use the legacy generic id pattern that the R1 scaffold
-    // disambiguator now prevents — but legacy markers in older files may
-    // still be present, so the enumerator must surface them all.
-    let shared_id = "missing-generator:hand-written";
-    let body = format!(
-        "{}\nTODO: hand-write content\n{}\n",
-        handwrite_begin(&format!("gap=\"{shared_id}\" tracker=\"t\" reason=\"r\"")),
-        handwrite_end()
-    );
-    std::fs::write(crates_dir.join("first.rs"), &body).unwrap();
-    std::fs::write(projects_dir.join("second.rs"), &body).unwrap();
-
-    let markers = agentic_workflow::cli::cb_fill::enumerate_worktree_markers(tmp.path());
-    let with_id: Vec<&agentic_workflow::cli::cb_fill::HandwriteMarkerEntry> =
-        markers.iter().filter(|m| m.id == shared_id).collect();
-    assert_eq!(
-        with_id.len(),
-        2,
-        "both colliding markers must be enumerated, not silently deduped",
-    );
-    let mut paths: Vec<&str> = with_id.iter().map(|m| m.source_path.as_str()).collect();
-    paths.sort();
-    assert!(paths[0].ends_with("first.rs"));
-    assert!(paths[1].ends_with("second.rs"));
-}
-
-// ── e2e gates (require real worktree + payload + check pipeline) ────────
-
-/// AC1 (#1096, #1559, #1717): a real `aw td fill` brief + apply round trip writes and
-/// reads the marker payload under `/tmp/aw/workspaces/<workspace>/payloads/`
-/// (never under the repo's `.aw/payloads/`), quoting the absolute path in
-/// the dispatch envelope, and the apply step actually reads that file back
-/// into app- and lib-root HANDWRITE blocks even when a root `crates/` exists.
-/// A foreign marker outside the active TD Changes paths remains untouched and
-/// cannot replace terminal code-check dispatch.
-#[tokio::test]
-async fn test_apply_marker_replaces_block() {
-    use agentic_workflow::issues::types::{td_phase, IssueType};
-    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
-    use std::process::Command;
-
-    let Some(git) = agentic_workflow::git::find_git_bin() else {
-        eprintln!("skipping: git binary not on PATH");
-        return;
-    };
-    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
-        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
-        return;
-    };
-
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-
-    // Seed a minimal git repo on a non-"main" branch: TD/CB verbs only
-    // require a provisioned `td-<slug>` branch when launched from `main`
-    // (`should_use_td_branch` in td.rs); every real project branch (e.g.
-    // `project-<name>`) runs TD/CB commands in place instead.
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["init", "-b", "project-test"])
-        .status()
-        .expect("git init");
-    for (k, v) in [
-        ("user.email", "test@test"),
-        ("user.name", "test"),
-        ("commit.gpgsign", "false"),
-    ] {
-        Command::new(&git)
-            .arg("-C")
-            .arg(root)
-            .args(["config", k, v])
-            .status()
-            .unwrap();
-    }
-    std::fs::write(root.join("README.md"), "seed\n").unwrap();
-    std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
-    // backend unconditionally via `guard_issue_mutation`, so this fully
-    // offline sandbox needs a resolvable `local` backend, gated behind the
-    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
-    // set on every spawned `aw` command below.
-    std::fs::write(
-        root.join("aw.toml"),
-        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
-    )
-    .unwrap();
-    let existing_crate = root.join("crates/existing/src/lib.rs");
-    std::fs::create_dir_all(existing_crate.parent().unwrap()).unwrap();
-    std::fs::write(existing_crate, "pub fn existing_crate() {}\n").unwrap();
-
-    // Seed a TD spec whose Changes section names app- and lib-root markers
-    // (so brief mode's spec-scoped enumeration must include both even though
-    // this checkout also has a root crates/ directory).
-    let spec_rel = ".aw/tech-design/specs/demo.md";
-    let app_marker_rel = "apps/vat/tests/vat_microvm_published_port.rs";
-    let lib_marker_rel = "libs/openapi-codegen/src/target.rs";
-    let spec_content = format!(
-        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {app_marker_rel}\n    action: create\n    impl_mode: hand-written\n  - path: {lib_marker_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
-    );
-    let spec_dir = root.join(".aw/tech-design/specs");
-    std::fs::create_dir_all(&spec_dir).unwrap();
-    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
-
-    // Seed both active markers without embedding marker-shaped literals in
-    // this test source itself.
-    for (path, id) in [
-        (app_marker_rel, "app-marker"),
-        (lib_marker_rel, "lib-marker"),
-    ] {
-        let marker_path = root.join(path);
-        std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            marker_path,
-            format!(
-                "{}\n// TODO: hand-write content for `{path}`.\n{}\n",
-                handwrite_begin(&format!(
-                    "gap=\"{id}\" tracker=\"none\" reason=\"unfilled\""
-                )),
-                handwrite_end(),
-            ),
-        )
-        .unwrap();
-    }
-
-    let foreign_marker_rel = "projects/mamba/src/foreign.rs";
-    let foreign_marker_path = root.join(foreign_marker_rel);
-    std::fs::create_dir_all(foreign_marker_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &foreign_marker_path,
-        format!(
-            "{}\n// TODO: hand-write content for `{foreign_marker_rel}`.\n{}\n",
-            handwrite_begin("gap=\"foreign-marker\" tracker=\"none\" reason=\"unrelated\""),
-            handwrite_end(),
-        ),
-    )
-    .unwrap();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .status()
-        .unwrap();
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", "seed"])
-        .status()
-        .unwrap();
-
-    // Seed the open issue at cb_genned (the phase `aw td fill` expects).
-    let slug = "cb-fill-payload-roundtrip-test";
-    let backend = LocalBackend::from_project_root(root);
-    let issue = Issue {
-        issue_type: IssueType::Enhancement,
-        title: format!("{slug} WI"),
-        state: IssueState::Open,
-        id: None,
-        github_id: None,
-        gitlab_id: None,
-        url: None,
-        author: None,
-        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-        slug: slug.to_string(),
-        body: format!("# {slug} WI\n"),
-        related: Vec::new(),
-        implements: vec![spec_rel.to_string()],
-        phase: Some(td_phase::CB_GENNED.to_string()),
-        branch: None,
-        target_branch: None,
-        git_workflow: None,
-        change_id: None,
-        iteration: None,
-        current_task_id: None,
-        impl_spec_phase: None,
-        task_revisions: None,
-        revision_counts: None,
-        last_action: None,
-        session_id: None,
-        validation_errors: Vec::new(),
-        review_count: None,
-        flagged_sections: None,
-        fill_retry_count: None,
-        ship_status: None,
-        ship_commit: None,
-        regen_verified_at: None,
-    };
-    backend.create(&issue).await.expect("seed open issue");
-
-    // Brief mode: enumerate + dispatch. Assert the envelope's payload path
-    // is an ABSOLUTE path under /tmp/aw/workspaces/ — never the old
-    // repo-relative `.aw/payloads/`.
-    let brief_output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("fill")
-        .arg(slug)
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill (brief)");
-    let brief_stdout = String::from_utf8_lossy(&brief_output.stdout);
-    let brief_stderr = String::from_utf8_lossy(&brief_output.stderr);
-    assert!(
-        brief_output.status.success(),
-        "brief mode should exit 0:\nstdout:\n{}\nstderr:\n{}",
-        brief_stdout,
-        brief_stderr
-    );
-    let envelope: serde_json::Value =
-        serde_json::from_str(brief_stdout.trim()).expect("brief envelope is valid JSON");
-    let payload_path = envelope["next"]["payload_path"]
-        .as_str()
-        .expect("next.payload_path present")
-        .to_string();
-    assert!(
-        payload_path.starts_with("/tmp/aw/workspaces/"),
-        "payload path must live under /tmp/aw/workspaces/, got: {}",
-        payload_path
-    );
-    assert!(
-        payload_path.contains("/payloads/"),
-        "payload path must be under a payloads/ directory, got: {}",
-        payload_path
-    );
-    assert!(
-        !payload_path.contains(".aw/payloads"),
-        "payload path must not reference the retired repo-root .aw/payloads/, got: {}",
-        payload_path
-    );
-    let first_marker_id = envelope["invoke"]["args"]["marker_list"][0]["id"]
-        .as_str()
-        .expect("marker_list[0].id present")
-        .to_string();
-    let marker_list = envelope["invoke"]["args"]["marker_list"]
-        .as_array()
-        .expect("marker_list is an array");
-    assert_eq!(
-        marker_list.len(),
-        2,
-        "brief queue must include app/lib markers and exclude the foreign marker"
-    );
-    let mut queued_paths: Vec<&str> = marker_list
-        .iter()
-        .map(|marker| marker["source_path"].as_str().unwrap())
-        .collect();
-    queued_paths.sort_unstable();
-    assert_eq!(queued_paths, vec![app_marker_rel, lib_marker_rel]);
-    assert_eq!(first_marker_id, "app-marker");
-
-    // The CLI already initialized the payload template at that absolute
-    // path; overwrite it with the marker's real fill content, proving the
-    // apply step reads back from /tmp, not from the repo tree.
-    let app_payload_body = "// filled app marker\n";
-    std::fs::write(&payload_path, app_payload_body).expect("write app payload at /tmp/aw path");
-
-    // Apply the app marker. The continuation must remain in fill and point at
-    // the lib marker rather than skipping straight to code-check.
-    let app_apply_output = Command::new(&aw_bin)
-        .arg("td")
-        .arg("fill")
-        .arg(slug)
-        .arg("--apply")
-        .arg("--marker")
-        .arg(&first_marker_id)
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill --apply for app marker");
-    let app_apply_stdout = String::from_utf8_lossy(&app_apply_output.stdout);
-    let app_apply_stderr = String::from_utf8_lossy(&app_apply_output.stderr);
-    assert!(
-        app_apply_output.status.success(),
-        "app apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
-        app_apply_stdout,
-        app_apply_stderr
-    );
-    let app_apply_envelope: serde_json::Value =
-        serde_json::from_str(app_apply_stdout.trim()).expect("app apply envelope is valid JSON");
-    assert!(
-        app_apply_envelope["next"]["command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with("aw td fill")),
-        "first apply must dispatch to the remaining lib marker, got:\n{}",
-        app_apply_stdout
-    );
-    assert_eq!(app_apply_envelope["invoke"]["args"]["marker"], "lib-marker");
-    let lib_payload_path = app_apply_envelope["next"]["payload_path"]
-        .as_str()
-        .expect("lib payload path present");
-    std::fs::write(lib_payload_path, "// filled lib marker\n")
-        .expect("write lib payload at /tmp/aw path");
-
-    let lib_apply_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", "lib-marker"])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill --apply for lib marker");
-    let lib_apply_stdout = String::from_utf8_lossy(&lib_apply_output.stdout);
-    let lib_apply_stderr = String::from_utf8_lossy(&lib_apply_output.stderr);
-    assert!(
-        lib_apply_output.status.success(),
-        "lib apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
-        lib_apply_stdout,
-        lib_apply_stderr
-    );
-    assert!(
-        lib_apply_stdout.contains("\"command\":\"aw td code-check"),
-        "last active marker must dispatch to terminal code-check, got:\n{}",
-        lib_apply_stdout
-    );
-    assert!(
-        !lib_apply_stdout.contains("foreign-marker"),
-        "post-apply dispatch must not leak a foreign marker, got:\n{}",
-        lib_apply_stdout
-    );
-
-    let updated_app =
-        std::fs::read_to_string(root.join(app_marker_rel)).expect("read updated app source");
-    assert!(
-        updated_app.contains("filled app marker") && !updated_app.contains("TODO: hand-write"),
-        "app source must contain its payload body in place of the stub, got:\n{}",
-        updated_app
-    );
-    let updated_lib =
-        std::fs::read_to_string(root.join(lib_marker_rel)).expect("read updated lib source");
-    assert!(
-        updated_lib.contains("filled lib marker") && !updated_lib.contains("TODO: hand-write"),
-        "lib source must contain its payload body in place of the stub, got:\n{}",
-        updated_lib
-    );
-    let foreign_source =
-        std::fs::read_to_string(&foreign_marker_path).expect("read foreign marker source");
-    assert!(
-        foreign_source.contains(&format!(
-            "TODO: hand-write content for `{foreign_marker_rel}`"
-        )),
-        "foreign marker must remain untouched, got:\n{}",
-        foreign_source
-    );
-
-    let filled_issue = backend
-        .get(slug)
-        .await
-        .expect("read filled issue")
-        .expect("filled issue remains");
-    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
-
-    // The payload directory itself must never have been created inside the
-    // repo tree.
-    assert!(
-        !root.join(".aw/payloads").exists(),
-        "apply must never write payload state under the repo's .aw/payloads/"
-    );
-}
-
-/// #1901 AC1/AC2: the lifecycle dirty-tree guard that `td fill --apply` runs
-/// before staging the current target must permit a dirty edit to the active
-/// marker's own declared source path (the implementation diff an adoption
-/// payload is meant to carry) while still rejecting a dirty edit anywhere
-/// else in the tree.
-#[tokio::test]
-async fn test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_dirty_path() {
-    use agentic_workflow::issues::types::{td_phase, IssueType};
-    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
-    use std::process::Command;
-
-    let Some(git) = agentic_workflow::git::find_git_bin() else {
-        eprintln!("skipping: git binary not on PATH");
-        return;
-    };
-    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
-        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
-        return;
-    };
-
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["init", "-b", "project-test"])
-        .status()
-        .expect("git init");
-    for (k, v) in [
-        ("user.email", "test@test"),
-        ("user.name", "test"),
-        ("commit.gpgsign", "false"),
-    ] {
-        Command::new(&git)
-            .arg("-C")
-            .arg(root)
-            .args(["config", k, v])
-            .status()
-            .unwrap();
-    }
-    std::fs::write(root.join("README.md"), "seed\n").unwrap();
-    std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
-    // backend unconditionally via `guard_issue_mutation`, so this fully
-    // offline sandbox needs a resolvable `local` backend, gated behind the
-    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
-    // set on every spawned `aw` command below.
-    std::fs::write(
-        root.join("aw.toml"),
-        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
-    )
-    .unwrap();
-
-    // A single pre-existing XML HANDWRITE marker with an existing body —
-    // exactly the #1900 adoption shape.
-    let marker_rel = "crates/existing/src/lib.rs";
-    let marker_path = root.join(marker_rel);
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &marker_path,
-        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
-pub fn existing() { 1; }\n\
-// </HANDWRITE>\n",
-    )
-    .unwrap();
-
-    let spec_rel = ".aw/tech-design/specs/demo.md";
-    let spec_content = format!(
-        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {marker_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
-    );
-    let spec_dir = root.join(".aw/tech-design/specs");
-    std::fs::create_dir_all(&spec_dir).unwrap();
-    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .status()
-        .unwrap();
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", "seed"])
-        .status()
-        .unwrap();
-
-    let slug = "cb-fill-adoption-dirty-guard-test";
-    let backend = LocalBackend::from_project_root(root);
-    let issue = Issue {
-        issue_type: IssueType::Enhancement,
-        title: format!("{slug} WI"),
-        state: IssueState::Open,
-        id: None,
-        github_id: None,
-        gitlab_id: None,
-        url: None,
-        author: None,
-        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-        slug: slug.to_string(),
-        body: format!("# {slug} WI\n"),
-        related: Vec::new(),
-        implements: vec![spec_rel.to_string()],
-        phase: Some(td_phase::CB_GENNED.to_string()),
-        branch: None,
-        target_branch: None,
-        git_workflow: None,
-        change_id: None,
-        iteration: None,
-        current_task_id: None,
-        impl_spec_phase: None,
-        task_revisions: None,
-        revision_counts: None,
-        last_action: None,
-        session_id: None,
-        validation_errors: Vec::new(),
-        review_count: None,
-        flagged_sections: None,
-        fill_retry_count: None,
-        ship_status: None,
-        ship_commit: None,
-        regen_verified_at: None,
-    };
-    backend.create(&issue).await.expect("seed open issue");
-
-    // Brief mode from a clean tree enumerates the single adoption marker and
-    // (as an adoption payload) auto-initializes its payload to the adopt
-    // sentinel — no payload write needed before apply.
-    let brief_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill (brief)");
-    assert!(
-        brief_output.status.success(),
-        "brief mode should exit 0:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&brief_output.stdout),
-        String::from_utf8_lossy(&brief_output.stderr)
-    );
-    let brief_envelope: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&brief_output.stdout).trim())
-            .expect("brief envelope is valid JSON");
-    let marker_id = brief_envelope["invoke"]["args"]["marker_list"][0]["id"]
-        .as_str()
-        .expect("marker_list[0].id present")
-        .to_string();
-
-    // AC2: dirty an unrelated untracked file, then attempt apply. The
-    // lifecycle dirty-tree guard must still reject it before touching the
-    // marker source or committing anything.
-    let unrelated_path = root.join("unrelated.txt");
-    std::fs::write(&unrelated_path, "not part of this marker\n").unwrap();
-
-    let rejected_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill --apply with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "apply must reject an unrelated dirty path instead of applying:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let unchanged_marker_source =
-        std::fs::read_to_string(&marker_path).expect("read marker source after rejected apply");
-    assert!(
-        unchanged_marker_source.contains("tracker=\"pending-tracker\""),
-        "a rejected apply must never touch the marker source, got:\n{}",
-        unchanged_marker_source
-    );
-
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the active marker's own declared source path — the
-    // bounded implementation edit an adoption payload is meant to carry —
-    // then apply. It must be accepted and folded into the normal lifecycle
-    // commit alongside the tracker update.
-    std::fs::write(
-        &marker_path,
-        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
-pub fn existing() { 42; }\n\
-// </HANDWRITE>\n",
-    )
-    .unwrap();
-
-    let accepted_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill --apply with a dirty current-marker source file");
-    assert!(
-        accepted_output.status.success(),
-        "apply must accept a dirty current-marker source path:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&accepted_output.stdout),
-        String::from_utf8_lossy(&accepted_output.stderr)
-    );
-
-    let adopted_source =
-        std::fs::read_to_string(&marker_path).expect("read marker source after accepted apply");
-    assert!(
-        adopted_source.contains("pub fn existing() { 42; }"),
-        "the author's dirty implementation edit must survive the adoption apply, got:\n{}",
-        adopted_source
-    );
-    assert!(
-        adopted_source.contains(&format!("tracker=\"#{slug}\"")),
-        "the adoption apply must still bind the marker tracker to the work item, got:\n{}",
-        adopted_source
-    );
-
-    // The dirty source path and the lifecycle state landed in the same
-    // commit: the working tree is clean again, and the last commit's stat
-    // includes the marker source path.
-    let status_output = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .expect("git status after accepted apply");
-    assert!(
-        String::from_utf8_lossy(&status_output.stdout)
-            .trim()
-            .is_empty(),
-        "the marker-fill commit must stage the accepted source diff and lifecycle state together, \
-         leaving the tree clean:\n{}",
-        String::from_utf8_lossy(&status_output.stdout)
-    );
-    let show_output = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["show", "--stat", "HEAD"])
-        .output()
-        .expect("git show --stat HEAD");
-    assert!(
-        String::from_utf8_lossy(&show_output.stdout).contains(marker_rel),
-        "the normal marker-fill commit must include the accepted marker source path, got:\n{}",
-        String::from_utf8_lossy(&show_output.stdout)
-    );
-
-    let filled_issue = backend
-        .get(slug)
-        .await
-        .expect("read filled issue")
-        .expect("filled issue remains");
-    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
-}
-
-/// #1904 AC1/AC2/AC3: once the active TD's declared `## Changes` paths carry
-/// zero HANDWRITE markers (a marker-free integration test + semantic doc
-/// accompanying already-filled source), `aw td fill <id>` brief mode must
-/// permit only those declared paths to be dirty, stage and commit them
-/// through the normal terminal Cb-Fill lifecycle commit, and advance the
-/// phase — while a dirty path outside that declared scope stays a hard
-/// rejection.
-#[tokio::test]
-async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_dirty_path() {
-    use agentic_workflow::issues::types::{td_phase, IssueType};
-    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
-    use std::process::Command;
-
-    let Some(git) = agentic_workflow::git::find_git_bin() else {
-        eprintln!("skipping: git binary not on PATH");
-        return;
-    };
-    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
-        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
-        return;
-    };
-
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["init", "-b", "project-test"])
-        .status()
-        .expect("git init");
-    for (k, v) in [
-        ("user.email", "test@test"),
-        ("user.name", "test"),
-        ("commit.gpgsign", "false"),
-    ] {
-        Command::new(&git)
-            .arg("-C")
-            .arg(root)
-            .args(["config", k, v])
-            .status()
-            .unwrap();
-    }
-    std::fs::write(root.join("README.md"), "seed\n").unwrap();
-    std::fs::create_dir_all(root.join(".aw")).unwrap();
-    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
-    // backend unconditionally via `guard_issue_mutation`, so this fully
-    // offline sandbox needs a resolvable `local` backend, gated behind the
-    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
-    // set on every spawned `aw` command below.
-    std::fs::write(
-        root.join("aw.toml"),
-        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
-    )
-    .unwrap();
-
-    // Two declared Changes paths that intentionally carry no HANDWRITE
-    // marker: an integration test and a semantic doc accompanying
-    // marker-backed source landed elsewhere.
-    let test_rel = "apps/demo/tests/example_test.rs";
-    let doc_rel = "apps/demo/tech-design/semantic/example.md";
-    for rel in [test_rel, doc_rel] {
-        let p = root.join(rel);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, "seed content\n").unwrap();
-    }
-
-    let spec_rel = ".aw/tech-design/specs/demo.md";
-    let spec_content = format!(
-        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {test_rel}\n    action: modify\n    impl_mode: hand-written\n  - path: {doc_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
-    );
-    let spec_dir = root.join(".aw/tech-design/specs");
-    std::fs::create_dir_all(&spec_dir).unwrap();
-    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
-
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .status()
-        .unwrap();
-    Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", "seed"])
-        .status()
-        .unwrap();
-
-    let slug = "cb-fill-marker-free-evidence-test";
-    let backend = LocalBackend::from_project_root(root);
-    let issue = Issue {
-        issue_type: IssueType::Enhancement,
-        title: format!("{slug} WI"),
-        state: IssueState::Open,
-        id: None,
-        github_id: None,
-        gitlab_id: None,
-        url: None,
-        author: None,
-        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-        slug: slug.to_string(),
-        body: format!("# {slug} WI\n"),
-        related: Vec::new(),
-        implements: vec![spec_rel.to_string()],
-        phase: Some(td_phase::CB_GENNED.to_string()),
-        branch: None,
-        target_branch: None,
-        git_workflow: None,
-        change_id: None,
-        iteration: None,
-        current_task_id: None,
-        impl_spec_phase: None,
-        task_revisions: None,
-        revision_counts: None,
-        last_action: None,
-        session_id: None,
-        validation_errors: Vec::new(),
-        review_count: None,
-        flagged_sections: None,
-        fill_retry_count: None,
-        ship_status: None,
-        ship_commit: None,
-        regen_verified_at: None,
-    };
-    backend.create(&issue).await.expect("seed open issue");
-
-    // AC2: dirty a path outside the TD's declared Changes scope, then run
-    // brief. The zero-marker fast path must still reject it before staging
-    // or committing anything.
-    let unrelated_path = root.join("unrelated.txt");
-    std::fs::write(&unrelated_path, "not part of this TD's declared scope\n").unwrap();
-
-    let rejected_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill (brief) with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "brief must reject a dirty path outside the declared Changes scope:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let status_after_reject = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .expect("git status after rejected brief");
-    assert!(
-        String::from_utf8_lossy(&status_after_reject.stdout).contains("unrelated.txt"),
-        "a rejected brief must never stage or commit the unrelated dirty file"
-    );
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the two declared marker-free Changes paths — the
-    // bounded implementation evidence a hand-written test/doc edit is meant
-    // to carry — then run brief. It must be accepted, staged, and committed
-    // through the normal terminal Cb-Fill lifecycle commit, advancing the
-    // issue phase.
-    std::fs::write(root.join(test_rel), "// updated test evidence\n").unwrap();
-    std::fs::write(root.join(doc_rel), "updated doc evidence\n").unwrap();
-
-    let accepted_output = Command::new(&aw_bin)
-        .args(["td", "fill", slug])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw td fill (brief) with only declared paths dirty");
-    assert!(
-        accepted_output.status.success(),
-        "brief must accept dirty declared Changes paths once no markers remain:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&accepted_output.stdout),
-        String::from_utf8_lossy(&accepted_output.stderr)
-    );
-    let accepted_stdout = String::from_utf8_lossy(&accepted_output.stdout);
-    assert!(
-        accepted_stdout.contains("\"command\":\"aw td code-check"),
-        "the zero-marker fast path must dispatch to terminal code-check, got:\n{}",
-        accepted_stdout
-    );
-
-    let status_after_accept = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .expect("git status after accepted brief");
-    assert!(
-        String::from_utf8_lossy(&status_after_accept.stdout)
-            .trim()
-            .is_empty(),
-        "the declared-evidence commit must leave the tree clean:\n{}",
-        String::from_utf8_lossy(&status_after_accept.stdout)
-    );
-    let show_output = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["show", "--stat", "HEAD"])
-        .output()
-        .expect("git show --stat HEAD");
-    let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-    assert!(
-        show_stdout.contains(test_rel) && show_stdout.contains(doc_rel),
-        "the terminal Cb-Fill commit must include both declared marker-free paths, got:\n{}",
-        show_stdout
-    );
-
-    let filled_issue = backend
-        .get(slug)
-        .await
-        .expect("read filled issue")
-        .expect("filled issue remains");
-    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
-}
-
-#[test]
-#[ignore = "requires real worktree + git history"]
-fn test_cb_fill_trailer_committed() {
-    // Reserved: assert git log contains `Lifecycle-Stage: Cb-Fill` after a
-    // successful apply-last-marker run.
-}
-
-#[test]
-#[ignore = "requires real worktree + issue file"]
-fn test_cb_filled_phase_written() {
-    // Reserved: assert issue frontmatter has phase: cb_filled after success.
-}
-
-#[test]
-#[ignore = "requires real cb check pipeline + drift fixture"]
-fn test_cb_check_gate_rejection() {
-    // Reserved: leave one HANDWRITE block in place, invoke --apply on
-    // another marker last, assert error envelope action == "error" and
-    // phase remains cb_genned.
-}
-
-// CODEGEN-END
-````
+<!-- type: rust-source-unit lang: rust -->
+<!-- aw-source-partitions: version=1 count=2 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:682e08ccccde777883ede9dd41a12a33e253680a1ae48c8dc618c02adbdd8451 -->
+
+```rust
+// AW source partition manifest v1: 2 ordered rust chunks, max 48128 decoded / 65536 encoded bytes, digest sha256:682e08ccccde777883ede9dd41a12a33e253680a1ae48c8dc618c02adbdd8451
+```
+### Source Partition 0001
+<!-- aw-source-partition: index=1 count=2 bytes=42049 payload_bytes=56805 encoding=base64 digest=sha256:6301332583d5bdb94d7e08c320b1fd3f98d913754fab569e4cf6939937c9ecf6 boundary=ast terminal_newline=true -->
+
+```text
+Ly8gU1BFQy1NQU5BR0VEOiBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vc3VyZmFj
+ZS92YWxpZGF0ZS90ZXN0cy9jYl9maWxsX3Rlc3QubWQjc291cmNlCi8vIENPREVHRU4tQkVHSU4K
+Ly8hIEludGVncmF0aW9uIHRlc3RzIGZvciBgYXcgY2IgZmlsbGAgKFBoYXNlIDMpLgovLyEKLy8h
+IFNtb2tlIHRlc3RzIGZvciBDTEkgcmVnaXN0cmF0aW9uLCBicmllZiBtb2RlIGVudmVsb3BlIHNo
+YXBlLCBtYXJrZXIKLy8hIGVudW1lcmF0aW9uLCBhbmQgYC0tYXBwbHkgLS1tYXJrZXJgIGJsb2Nr
+IHJlcGxhY2VtZW50LCBwbHVzIGEgcmVhbC1iaW5hcnkKLy8hIHJvdW5kIHRyaXAgKGB0ZXN0X2Fw
+cGx5X21hcmtlcl9yZXBsYWNlc19ibG9ja2AsIGlzc3VlICMxMDk2IEFDMSkgcHJvdmluZwovLyEg
+dGhlIHBheWxvYWQgbGl2ZXMgdW5kZXIgYC90bXAvYXcvd29ya3NwYWNlcy88d29ya3NwYWNlPi9w
+YXlsb2Fkcy9gIGFuZAovLyEgdGhhdCBhcHBseSByZWFkcyBpdCBiYWNrLiBUaGUgcmVtYWluaW5n
+IGUyZSBpbnRlZ3JhdGlvbiBzY2VuYXJpb3MgKGNvZGUKLy8hIGNoZWNrIGdhdGUgKyBDYi1GaWxs
+IHRyYWlsZXIgKyBwaGFzZSBhZHZhbmNlKSBhcmUgI1tpZ25vcmVdZCBiZWNhdXNlIHRoZXkKLy8h
+IHJlcXVpcmUgYSByZWFsIHdvcmt0cmVlLCByZWFsIHBheWxvYWQgZmlsZXMsIGFuZCB0aGUgYWdl
+bnQgbG9vcAovLyEgaW5mcmFzdHJ1Y3R1cmUuCi8vIQovLyEgQHNwZWMgYXBwcy9hZ2VudGljLXdv
+cmtmbG93L3RlY2gtZGVzaWduL3N1cmZhY2Uvc3BlY3Mvc2NvcmUtY2ItZmlsbC13b3JrZmxvdy5t
+ZCN0ZXN0LXBsYW4KCnVzZSBhZ2VudGljX3dvcmtmbG93OjpjbGk6OkNvbW1hbmRzOwp1c2UgY2xh
+cDo6e0NvbW1hbmRGYWN0b3J5LCBQYXJzZXJ9OwoKI1tkZXJpdmUoUGFyc2VyKV0KI1tjb21tYW5k
+KG5hbWUgPSAiYXciKV0Kc3RydWN0IENsaSB7CiAgICAjW2NvbW1hbmQoc3ViY29tbWFuZCldCiAg
+ICBjb21tYW5kOiBDb21tYW5kcywKfQoKZm4gbWFya2VyKHNvdXJjZV9wYXRoOiAmc3RyKSAtPiBh
+Z2VudGljX3dvcmtmbG93OjpjbGk6OmNiX2ZpbGw6OkhhbmR3cml0ZU1hcmtlckVudHJ5IHsKICAg
+IGFnZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6SGFuZHdyaXRlTWFya2VyRW50cnkgewog
+ICAgICAgIGlkOiBzb3VyY2VfcGF0aC5yZXBsYWNlKFsnLycsICcuJ10sICItIiksCiAgICAgICAg
+c291cmNlX3BhdGg6IHNvdXJjZV9wYXRoLnRvX3N0cmluZygpLAogICAgICAgIHN0YXJ0X2xpbmU6
+IDEsCiAgICAgICAgZW5kX2xpbmU6IDMsCiAgICAgICAgcmVhc29uOiAidGVzdCBtYXJrZXIiLnRv
+X3N0cmluZygpLAogICAgICAgIHNwZWNfcmVmOiBOb25lLAogICAgICAgIGFkb3B0X2V4aXN0aW5n
+OiBmYWxzZSwKICAgIH0KfQoKZm4gaGFuZHdyaXRlX2JlZ2luKGF0dHJzOiAmc3RyKSAtPiBTdHJp
+bmcgewogICAgZm9ybWF0ISgiLy8gSEFORFdSSVRFLXt9IHt9IiwgIkJFR0lOIiwgYXR0cnMpCn0K
+CmZuIGhhbmR3cml0ZV9lbmQoKSAtPiAmJ3N0YXRpYyBzdHIgewogICAgY29uY2F0ISgiLy8gSEFO
+RFdSSVRFLSIsICJFTkQiKQp9CgovLyDilIDilIAgUjEgLyBSMTQoMSkg4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgovLy8gUjE6IGBhdyBj
+YiBmaWxsYCBpcyByZWdpc3RlcmVkIGFzIGEgZmlyc3QtY2xhc3Mgc3ViY29tbWFuZCB1bmRlciBj
+Yi4KI1t0ZXN0XQpmbiB0ZXN0X2NiX2ZpbGxfcmVnaXN0ZXJlZCgpIHsKICAgIGxldCBjbWQgPSBD
+bGk6OmNvbW1hbmQoKTsKICAgIGxldCBjYiA9IGNtZC5maW5kX3N1YmNvbW1hbmQoImNiIikuZXhw
+ZWN0KCJjYiBuYW1lc3BhY2UiKTsKICAgIGxldCBmaWxsID0gY2IuZmluZF9zdWJjb21tYW5kKCJm
+aWxsIikuZXhwZWN0KCJjYiBmaWxsIHN1YmNvbW1hbmQiKTsKICAgIGxldCBwb3NpdGlvbmFsczog
+VmVjPFN0cmluZz4gPSBmaWxsCiAgICAgICAgLmdldF9wb3NpdGlvbmFscygpCiAgICAgICAgLm1h
+cCh8cDogJmNsYXA6OkFyZ3wgcC5nZXRfaWQoKS5hc19zdHIoKS50b19zdHJpbmcoKSkKICAgICAg
+ICAuY29sbGVjdCgpOwogICAgYXNzZXJ0IShwb3NpdGlvbmFscy5pdGVyKCkuYW55KHxwfCBwID09
+ICJzbHVnIikpOwp9CgojW3Rlc3RdCmZuIHRlc3RfY2JfZmlsbF9hcHBseV9mbGFnKCkgewogICAg
+bGV0IGNtZCA9IENsaTo6Y29tbWFuZCgpOwogICAgbGV0IGZpbGwgPSBjbWQKICAgICAgICAuZmlu
+ZF9zdWJjb21tYW5kKCJjYiIpCiAgICAgICAgLmFuZF90aGVuKHxjfCBjLmZpbmRfc3ViY29tbWFu
+ZCgiZmlsbCIpKQogICAgICAgIC5leHBlY3QoImNiIGZpbGwiKTsKICAgIGZpbGwuZ2V0X2FyZ3Vt
+ZW50cygpCiAgICAgICAgLmZpbmQofGE6ICYmY2xhcDo6QXJnfCBhLmdldF9pZCgpLmFzX3N0cigp
+ID09ICJhcHBseSIpCiAgICAgICAgLmV4cGVjdCgiLS1hcHBseSBmbGFnIik7CiAgICBmaWxsLmdl
+dF9hcmd1bWVudHMoKQogICAgICAgIC5maW5kKHxhOiAmJmNsYXA6OkFyZ3wgYS5nZXRfaWQoKS5h
+c19zdHIoKSA9PSAibWFya2VyIikKICAgICAgICAuZXhwZWN0KCItLW1hcmtlciBmbGFnIik7Cn0K
+CiNbdGVzdF0KZm4gdGVzdF9jYl9maWxsX3NwZWNfcGF0aF9mbGFnKCkgewogICAgbGV0IGNtZCA9
+IENsaTo6Y29tbWFuZCgpOwogICAgbGV0IGZpbGwgPSBjbWQKICAgICAgICAuZmluZF9zdWJjb21t
+YW5kKCJjYiIpCiAgICAgICAgLmFuZF90aGVuKHxjfCBjLmZpbmRfc3ViY29tbWFuZCgiZmlsbCIp
+KQogICAgICAgIC5leHBlY3QoImNiIGZpbGwiKTsKICAgIGZpbGwuZ2V0X2FyZ3VtZW50cygpCiAg
+ICAgICAgLmZpbmQofGE6ICYmY2xhcDo6QXJnfCBhLmdldF9pZCgpLmFzX3N0cigpID09ICJzcGVj
+X3BhdGgiKQogICAgICAgIC5leHBlY3QoIi0tc3BlYy1wYXRoIGZsYWciKTsKfQoKLy8g4pSA4pSA
+IFI5IC8gUjE0KDApIOKAlCBlbnVtIGV4dGVuc2lvbnMg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgovLy8gUjk6IGBjYl9maWxs
+ZWRgIHBoYXNlIGNvbnN0IGV4aXN0cyBpbiBhZ2VudGljX3dvcmtmbG93Ojppc3N1ZXM6OnR5cGVz
+Ojp0ZF9waGFzZS4KI1t0ZXN0XQpmbiB0ZXN0X2lzc3VlX3BoYXNlX2NiX2ZpbGxlZF92YXJpYW50
+KCkgewogICAgdXNlIGFnZW50aWNfd29ya2Zsb3c6Omlzc3Vlczo6dHlwZXM6OnRkX3BoYXNlOwog
+ICAgYXNzZXJ0X2VxISh0ZF9waGFzZTo6Q0JfRklMTEVELCAiY2JfZmlsbGVkIik7CiAgICBhc3Nl
+cnQhKHRkX3BoYXNlOjppc190ZXJtaW5hbF9jb2RlX2NoZWNrYWJsZSgiY2JfZmlsbGVkIikpOwog
+ICAgYXNzZXJ0ISh0ZF9waGFzZTo6aXNfdGVybWluYWxfY29kZV9jaGVja2FibGUoImNiX2dlbm5l
+ZCIpKTsKICAgIGFzc2VydCEoIXRkX3BoYXNlOjppc190ZXJtaW5hbF9jb2RlX2NoZWNrYWJsZSgi
+dGRfcmV2aWV3ZWQiKSk7Cn0KCi8vLyBSOTogYENiLUZpbGxgIHRyYWlsZXIgY29uc3QgZXhpc3Rz
+IGluIGxpZmVjeWNsZV90cmFpbGVyIG1vZHVsZS4KI1t0ZXN0XQpmbiB0ZXN0X2xpZmVjeWNsZV90
+cmFpbGVyX2NiX2ZpbGxfdmFyaWFudCgpIHsKICAgIHVzZSBhZ2VudGljX3dvcmtmbG93Ojppc3N1
+ZXM6OnR5cGVzOjpsaWZlY3ljbGVfdHJhaWxlcjsKICAgIGFzc2VydF9lcSEobGlmZWN5Y2xlX3Ry
+YWlsZXI6OkNCX0ZJTEwsICJDYi1GaWxsIik7Cn0KCi8vLyBSMTA6IHRlcm1pbmFsIGBhdyBjYiBj
+aGVja2AgYWNjZXB0cyBgY2JfZmlsbGVkYCBhcyBhIHZhbGlkIHBoYXNlLgovLy8gV2UgdmVyaWZ5
+IHRoaXMgYXQgdGhlIGhlbHBlci1sZXZlbDoKLy8vIGBpc190ZXJtaW5hbF9jb2RlX2NoZWNrYWJs
+ZSgiY2JfZmlsbGVkIikgPT0gdHJ1ZWAuCiNbdGVzdF0KZm4gdGVzdF90ZF9jb2RlX2NoZWNrX2Fj
+Y2VwdHNfY2JfZmlsbGVkKCkgewogICAgdXNlIGFnZW50aWNfd29ya2Zsb3c6Omlzc3Vlczo6dHlw
+ZXM6OnRkX3BoYXNlOwogICAgYXNzZXJ0ISh0ZF9waGFzZTo6aXNfdGVybWluYWxfY29kZV9jaGVj
+a2FibGUodGRfcGhhc2U6OkNCX0ZJTExFRCkpOwp9CgovLyDilIDilIAgUjIgLyBSMTQoMSkg4oCU
+IGJyaWVmIG1vZGUgZW52ZWxvcGUgc2hhcGUg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA
+CgovLy8gUjI6IGJyaWVmLW1vZGUgZW52ZWxvcGUgc2hhcGUg4oCUIHZlcmlmaWVkIHZpYSB0aGUg
+aGVscGVyIHRoYXQgYnVpbGRzCi8vLyB0aGUgZW52ZWxvcGUgSlNPTi4gV2UgY29uc3RydWN0IGEg
+ZmFrZSBtYXJrZXIgbGlzdCBhbmQgYXNzZXJ0IHRoZQovLy8gZW1pdHRlZCBlbnZlbG9wZSBoYXMg
+YWN0aW9uPSJkaXNwYXRjaCIgYW5kIGFnZW50PW51bGwgKG1haW50aHJlYWQtb25seQovLy8gZXhl
+Y3V0aW9uIG1vZGVsOiBtYWludGhyZWFkIHJ1bnMgaW52b2tlLmNvbW1hbmQgZGlyZWN0bHkpLgoj
+W3Rlc3RdCmZuIHRlc3RfYnJpZWZfbW9kZV9lbnZlbG9wZV9zaGFwZSgpIHsKICAgIC8vIFN5bnRo
+ZXNpemUgdGhlIGVudmVsb3BlIEpTT04gdGhlIHNhbWUgd2F5IGBydW5fYnJpZWZgIGRvZXMuCiAg
+ICBsZXQgZW52ID0gc2VyZGVfanNvbjo6anNvbiEoewogICAgICAgICJhY3Rpb24iOiAiZGlzcGF0
+Y2giLAogICAgICAgICJhZ2VudCI6IG51bGwsCiAgICAgICAgInNsdWciOiAiZGVtbyIsCiAgICAg
+ICAgImludm9rZSI6IHsKICAgICAgICAgICAgImNvbW1hbmQiOiAiYXcgY2IgZmlsbCIsCiAgICAg
+ICAgICAgICJhcmdzIjogewogICAgICAgICAgICAgICAgInNsdWciOiAiZGVtbyIsCiAgICAgICAg
+ICAgICAgICAibWFya2VyX2xpc3QiOiBbewogICAgICAgICAgICAgICAgICAgICJpZCI6ICJjYi1m
+aWxsLWlzc3VlLXBoYXNlLWVudW0iLAogICAgICAgICAgICAgICAgICAgICJzb3VyY2VfcGF0aCI6
+ICJhcHBzL2FnZW50aWMtd29ya2Zsb3cvc3JjL2lzc3Vlcy90eXBlcy5ycyIsCiAgICAgICAgICAg
+ICAgICAgICAgInN0YXJ0X2xpbmUiOiAxMCwKICAgICAgICAgICAgICAgICAgICAiZW5kX2xpbmUi
+OiAxNCwKICAgICAgICAgICAgICAgICAgICAicmVhc29uIjogImlzc3VlLXBoYXNlIGVudW0gZ2Fw
+IiwKICAgICAgICAgICAgICAgIH1dLAogICAgICAgICAgICAgICAgInNwZWNfcGF0aCI6ICIiLAog
+ICAgICAgICAgICB9LAogICAgICAgIH0sCiAgICB9KTsKICAgIGFzc2VydF9lcSEoZW52WyJhY3Rp
+b24iXSwgImRpc3BhdGNoIik7CiAgICBhc3NlcnQhKGVudlsiYWdlbnQiXS5pc19udWxsKCkpOwog
+ICAgYXNzZXJ0IShlbnZbImludm9rZSJdWyJhcmdzIl1bIm1hcmtlcl9saXN0Il0uaXNfYXJyYXko
+KSk7Cn0KCi8vLyBSMjogbWFya2VyIGxpc3QgZWxlbWVudCBzaGFwZSBpcyB0aGUgc3BlYy1kZWZp
+bmVkIEhhbmR3cml0ZU1hcmtlckVudHJ5LgojW3Rlc3RdCmZuIHRlc3RfYnJpZWZfbW9kZV9tYXJr
+ZXJfbGlzdF9wcmVzZW50KCkgewogICAgbGV0IGVudHJ5ID0gYWdlbnRpY193b3JrZmxvdzo6Y2xp
+OjpjYl9maWxsOjpIYW5kd3JpdGVNYXJrZXJFbnRyeSB7CiAgICAgICAgaWQ6ICJtYXJrZXItMSIu
+aW50bygpLAogICAgICAgIHNvdXJjZV9wYXRoOiAic3JjL3gucnMiLmludG8oKSwKICAgICAgICBz
+dGFydF9saW5lOiAxLAogICAgICAgIGVuZF9saW5lOiA1LAogICAgICAgIHJlYXNvbjogInRlc3Qi
+LmludG8oKSwKICAgICAgICBzcGVjX3JlZjogTm9uZSwKICAgICAgICBhZG9wdF9leGlzdGluZzog
+ZmFsc2UsCiAgICB9OwogICAgbGV0IHYgPSBzZXJkZV9qc29uOjp0b192YWx1ZSgmZW50cnkpLnVu
+d3JhcCgpOwogICAgYXNzZXJ0ISh2LmdldCgiaWQiKS5pc19zb21lKCkpOwogICAgYXNzZXJ0ISh2
+LmdldCgic291cmNlX3BhdGgiKS5pc19zb21lKCkpOwogICAgYXNzZXJ0ISh2LmdldCgic3RhcnRf
+bGluZSIpLmlzX3NvbWUoKSk7CiAgICBhc3NlcnQhKHYuZ2V0KCJlbmRfbGluZSIpLmlzX3NvbWUo
+KSk7CiAgICBhc3NlcnQhKHYuZ2V0KCJyZWFzb24iKS5pc19zb21lKCkpOwp9CgovLy8gUjI6IGFn
+ZW50IGFkZHJlc3MgZm9yIGJyaWVmIGVudmVsb3BlIE1VU1QgYmUgbnVsbCB1bmRlciB0aGUKLy8v
+IG1haW50aHJlYWQtb25seSBleGVjdXRpb24gbW9kZWwgKHNjb3JlLW1haW50aHJlYWQtb25seS1l
+eGVjdXRpb24ubWQpLgojW3Rlc3RdCmZuIHRlc3RfYnJpZWZfbW9kZV9hZ2VudF9hZGRyZXNzKCkg
+ewogICAgbGV0IGVudiA9IHNlcmRlX2pzb246Ompzb24hKHsKICAgICAgICAiYWN0aW9uIjogImRp
+c3BhdGNoIiwKICAgICAgICAiYWdlbnQiOiBudWxsLAogICAgfSk7CiAgICBhc3NlcnQhKGVudlsi
+YWdlbnQiXS5pc19udWxsKCkpOwp9CgovLyDilIDilIAgUjQg4oCUIGFwcGx5IG1vZGUgbWFya2Vy
+IHJlcGxhY2VtZW50IOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKU
+gOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKU
+gAoKLy8vIFI0OiBlbnVtZXJhdGlvbiBmaW5kcyBhIEhBTkRXUklURSBibG9jayBpbiBhIGZpbGUu
+IFVzZXMgdGVtcGRpci4KI1t0ZXN0XQpmbiB0ZXN0X2FwcGx5X21hcmtlcl9lbnVtZXJhdGVzX2Js
+b2NrKCkgewogICAgbGV0IHRtcCA9IHRlbXBmaWxlOjpUZW1wRGlyOjpuZXcoKS51bndyYXAoKTsK
+ICAgIGxldCBzcmNfZGlyID0gdG1wLnBhdGgoKS5qb2luKCJzcmMiKTsKICAgIHN0ZDo6ZnM6OmNy
+ZWF0ZV9kaXJfYWxsKCZzcmNfZGlyKS51bndyYXAoKTsKICAgIGxldCBzcmNfZmlsZSA9IHNyY19k
+aXIuam9pbigieC5ycyIpOwogICAgbGV0IGJvZHkgPSBmb3JtYXQhKAogICAgICAgICJmbiBiZWZv
+cmUoKSB7e319XG57fVxuVE9ETzogaGFuZC13cml0ZSBjb250ZW50XG57fVxuZm4gYWZ0ZXIoKSB7
+e319XG4iLAogICAgICAgIGhhbmR3cml0ZV9iZWdpbigiZ2FwPVwibXktbWFya2VyXCIgdHJhY2tl
+cj1cIm5vbmVcIiByZWFzb249XCJiZWNhdXNlXCIiKSwKICAgICAgICBoYW5kd3JpdGVfZW5kKCkK
+ICAgICk7CiAgICBzdGQ6OmZzOjp3cml0ZSgmc3JjX2ZpbGUsIGJvZHkpLnVud3JhcCgpOwoKICAg
+IGxldCBtYXJrZXJzID0gYWdlbnRpY193b3JrZmxvdzo6Y2xpOjpjYl9maWxsOjplbnVtZXJhdGVf
+d29ya3RyZWVfbWFya2Vycyh0bXAucGF0aCgpKTsKICAgIGFzc2VydF9lcSEobWFya2Vycy5sZW4o
+KSwgMSk7CiAgICBhc3NlcnRfZXEhKG1hcmtlcnNbMF0uaWQsICJteS1tYXJrZXIiKTsKICAgIGFz
+c2VydF9lcSEobWFya2Vyc1swXS5yZWFzb24sICJiZWNhdXNlIik7Cn0KCi8vLyBSNDogZW51bWVy
+YXRpbmcgdHdvIGRpc3RpbmN0IEhBTkRXUklURSBibG9ja3MgaW4gb25lIGZpbGUgcmV0dXJucyBi
+b3RoLgojW3Rlc3RdCmZuIHRlc3RfYXBwbHlfbWFya2VyX25vX2FkamFjZW50X2Rpc3R1cmJhbmNl
+KCkgewogICAgbGV0IHRtcCA9IHRlbXBmaWxlOjpUZW1wRGlyOjpuZXcoKS51bndyYXAoKTsKICAg
+IGxldCBzcmNfZGlyID0gdG1wLnBhdGgoKS5qb2luKCJzcmMiKTsKICAgIHN0ZDo6ZnM6OmNyZWF0
+ZV9kaXJfYWxsKCZzcmNfZGlyKS51bndyYXAoKTsKICAgIGxldCBzcmNfZmlsZSA9IHNyY19kaXIu
+am9pbigieC5ycyIpOwogICAgbGV0IGJvZHkgPSBmb3JtYXQhKAogICAgICAgICJmbiBhKCkge3t9
+fVxue31cblRPRE86IGhhbmQtd3JpdGUgY29udGVudFxue31cbmZuIGIoKSB7e319XG57fVxuVE9E
+TzogaGFuZC13cml0ZSBjb250ZW50XG57fVxuZm4gYygpIHt7fX1cbiIsCiAgICAgICAgaGFuZHdy
+aXRlX2JlZ2luKCJnYXA9XCJmaXJzdFwiIHRyYWNrZXI9XCJ0XCIgcmVhc29uPVwicjFcIiIpLAog
+ICAgICAgIGhhbmR3cml0ZV9lbmQoKSwKICAgICAgICBoYW5kd3JpdGVfYmVnaW4oImdhcD1cInNl
+Y29uZFwiIHRyYWNrZXI9XCJ0XCIgcmVhc29uPVwicjJcIiIpLAogICAgICAgIGhhbmR3cml0ZV9l
+bmQoKQogICAgKTsKICAgIHN0ZDo6ZnM6OndyaXRlKCZzcmNfZmlsZSwgYm9keSkudW53cmFwKCk7
+CiAgICBsZXQgbWFya2VycyA9IGFnZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6ZW51bWVy
+YXRlX3dvcmt0cmVlX21hcmtlcnModG1wLnBhdGgoKSk7CiAgICBsZXQgaWRzOiBWZWM8JnN0cj4g
+PSBtYXJrZXJzLml0ZXIoKS5tYXAofG18IG0uaWQuYXNfc3RyKCkpLmNvbGxlY3QoKTsKICAgIGFz
+c2VydCEoaWRzLmNvbnRhaW5zKCYiZmlyc3QiKSk7CiAgICBhc3NlcnQhKGlkcy5jb250YWlucygm
+InNlY29uZCIpKTsKfQoKLy8vIFIxMTogMC1tYXJrZXIgZmFzdC1wYXRoIOKAlCB3aGVuIG5vIEhB
+TkRXUklURSBtYXJrZXJzIGV4aXN0LCB0aGUKLy8vIGVudW1lcmF0b3IgcmV0dXJucyBlbXB0eS4K
+I1t0ZXN0XQpmbiB0ZXN0X3plcm9fbWFya2VyX2Zhc3RwYXRoX25vX21hcmtlcnMoKSB7CiAgICBs
+ZXQgdG1wID0gdGVtcGZpbGU6OlRlbXBEaXI6Om5ldygpLnVud3JhcCgpOwogICAgbGV0IHNyY19k
+aXIgPSB0bXAucGF0aCgpLmpvaW4oInNyYyIpOwogICAgc3RkOjpmczo6Y3JlYXRlX2Rpcl9hbGwo
+JnNyY19kaXIpLnVud3JhcCgpOwogICAgc3RkOjpmczo6d3JpdGUoc3JjX2Rpci5qb2luKCJjbGVh
+bi5ycyIpLCAiZm4gb2soKSB7fVxuIikudW53cmFwKCk7CiAgICBsZXQgbWFya2VycyA9IGFnZW50
+aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6ZW51bWVyYXRlX3dvcmt0cmVlX21hcmtlcnModG1w
+LnBhdGgoKSk7CiAgICBhc3NlcnQhKG1hcmtlcnMuaXNfZW1wdHkoKSk7Cn0KCi8vLyBSMTE6IGNv
+dW50IGhlbHBlciBhZ3JlZXMgd2l0aCBlbnVtZXJhdGlvbiAodXNlZCBieSB0ZC5ycyBmb3IgdGhl
+Ci8vLyBwb3N0LWNvZGVnZW4gZGlzcGF0Y2ggZGVjaXNpb24pLgojW3Rlc3RdCmZuIHRlc3RfY291
+bnRfbWF0Y2hlc19lbnVtZXJhdGlvbigpIHsKICAgIGxldCB0bXAgPSB0ZW1wZmlsZTo6VGVtcERp
+cjo6bmV3KCkudW53cmFwKCk7CiAgICBsZXQgc3JjX2RpciA9IHRtcC5wYXRoKCkuam9pbigic3Jj
+Iik7CiAgICBzdGQ6OmZzOjpjcmVhdGVfZGlyX2FsbCgmc3JjX2RpcikudW53cmFwKCk7CiAgICBs
+ZXQgYm9keSA9IGZvcm1hdCEoCiAgICAgICAgInt9XG5UT0RPOiBoYW5kLXdyaXRlIGNvbnRlbnRc
+bnt9XG4iLAogICAgICAgIGhhbmR3cml0ZV9iZWdpbigiZ2FwPVwieFwiIHRyYWNrZXI9XCJ0XCIg
+cmVhc29uPVwiclwiIiksCiAgICAgICAgaGFuZHdyaXRlX2VuZCgpCiAgICApOwogICAgc3RkOjpm
+czo6d3JpdGUoc3JjX2Rpci5qb2luKCJhLnJzIiksIGJvZHkpLnVud3JhcCgpOwogICAgbGV0IG4g
+PSBhZ2VudGljX3dvcmtmbG93OjpjbGk6OmNiX2ZpbGw6OmNvdW50X3dvcmt0cmVlX2hhbmR3cml0
+ZV9tYXJrZXJzKHRtcC5wYXRoKCkpOwogICAgYXNzZXJ0X2VxIShuLCAxKTsKfQoKLy8vIFIxL1Iy
+OiBURCBDaGFuZ2VzIFlBTUwgc3VwcG9ydHMgYm90aCBgY2hhbmdlczpgIGFuZCBsZWdhY3kgYGZp
+bGVzOmAsCi8vLyBhbmQgYWNjZXB0cyBlaXRoZXIgYHBhdGg6YCBvciBgZmlsZTpgIGVudHJpZXMu
+CiNbdGVzdF0KZm4gdGVzdF9leHRyYWN0X2NoYW5nZV9wYXRoc19zdXBwb3J0c19jaGFuZ2VzX2Fu
+ZF9maWxlcygpIHsKICAgIGxldCBzcGVjID0gY29uY2F0ISgKICAgICAgICAiXG4iLAogICAgICAg
+ICIjIiwKICAgICAgICAiIyBMb2dpY1xuXG4iLAogICAgICAgICJub3QgcGFyc2VkXG5cbiIsCiAg
+ICAgICAgIiMiLAogICAgICAgICIjIENoYW5nZXNcblxuIiwKICAgICAgICAiYGBgeWFtbFxuIiwK
+ICAgICAgICAiY2hhbmdlczpcbiIsCiAgICAgICAgIiAgLSBwYXRoOiAuL2FwcHMvYWdlbnRpYy13
+b3JrZmxvdy9zcmMvY2xpL2NiX2ZpbGwucnNcbiIsCiAgICAgICAgIiAgLSBmaWxlOiBhcHBzL2Fn
+ZW50aWMtd29ya2Zsb3cvc3JjL2lzc3Vlcy90eXBlcy5yc1xuIiwKICAgICAgICAiZmlsZXM6XG4i
+LAogICAgICAgICIgIC0gcGF0aDogaWdub3JlZC9ieS9jaGFuZ2VzLnJzXG4iLAogICAgICAgICJg
+YGBcblxuIiwKICAgICAgICAiIyIsCiAgICAgICAgIiMgVGVzdCBQbGFuXG5cbiIsCiAgICAgICAg
+ImBgYHlhbWxcbiIsCiAgICAgICAgImZpbGVzOlxuIiwKICAgICAgICAiICAtIGZpbGU6IGlnbm9y
+ZWQvb3V0c2lkZS9jaGFuZ2VzLnJzXG4iLAogICAgICAgICJgYGBcbiIsCiAgICApOwoKICAgIGxl
+dCBwYXRocyA9IGFnZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6ZXh0cmFjdF9jaGFuZ2Vf
+cGF0aHNfZnJvbV9zcGVjKHNwZWMpOwogICAgYXNzZXJ0X2VxISgKICAgICAgICBwYXRocywKICAg
+ICAgICB2ZWMhWwogICAgICAgICAgICAiYXBwcy9hZ2VudGljLXdvcmtmbG93L3NyYy9jbGkvY2Jf
+ZmlsbC5ycyIudG9fc3RyaW5nKCksCiAgICAgICAgICAgICJhcHBzL2FnZW50aWMtd29ya2Zsb3cv
+c3JjL2lzc3Vlcy90eXBlcy5ycyIudG9fc3RyaW5nKCksCiAgICAgICAgXSwKICAgICk7CgogICAg
+bGV0IGxlZ2FjeV9zcGVjID0gY29uY2F0ISgKICAgICAgICAiXG4iLAogICAgICAgICIjIiwKICAg
+ICAgICAiIyBDaGFuZ2VzXG5cbiIsCiAgICAgICAgImBgYHlhbWxcbiIsCiAgICAgICAgImZpbGVz
+OlxuIiwKICAgICAgICAiICAtIGZpbGU6IC4vYXBwcy9hZ2VudGljLXdvcmtmbG93L3Rlc3RzL2Ni
+X2ZpbGxfdGVzdC5yc1xuIiwKICAgICAgICAiYGBgXG4iLAogICAgKTsKICAgIGxldCBwYXRocyA9
+IGFnZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6ZXh0cmFjdF9jaGFuZ2VfcGF0aHNfZnJv
+bV9zcGVjKGxlZ2FjeV9zcGVjKTsKICAgIGFzc2VydF9lcSEoCiAgICAgICAgcGF0aHMsCiAgICAg
+ICAgdmVjIVsiYXBwcy9hZ2VudGljLXdvcmtmbG93L3Rlc3RzL2NiX2ZpbGxfdGVzdC5ycyIudG9f
+c3RyaW5nKCldLAogICAgKTsKfQoKLy8vIFIyOiBpbmhlcml0ZWQgbWFya2VycyBvdXRzaWRlIHRo
+ZSBhY3RpdmUgVEQgQ2hhbmdlcyBwYXRocyBhcmUgZmlsdGVyZWQKLy8vIG91dCBvZiB0aGUgYnJp
+ZWYtbW9kZSBtYXJrZXIgbGlzdC4KI1t0ZXN0XQpmbiB0ZXN0X3Njb3BlX2ZpbHRlcnNfdG9fY2hh
+bmdlZF9zb3VyY2VfcGF0aHMoKSB7CiAgICBsZXQgbWFya2VycyA9IHZlYyFbCiAgICAgICAgbWFy
+a2VyKCJhcHBzL2FnZW50aWMtd29ya2Zsb3cvc3JjL2NsaS9jYl9maWxsLnJzIiksCiAgICAgICAg
+bWFya2VyKCJhcHBzL2FnZW50aWMtd29ya2Zsb3cvc3JjL2NsaS9jYi5ycyIpLAogICAgICAgIG1h
+cmtlcigiYXBwcy9hZ2VudGljLXdvcmtmbG93L3NyYy9pc3N1ZXMvdHlwZXMucnMiKSwKICAgIF07
+CiAgICBsZXQgY2hhbmdlX3BhdGhzID0gdmVjIVsKICAgICAgICAiYXBwcy9hZ2VudGljLXdvcmtm
+bG93L3NyYy9jbGkiLnRvX3N0cmluZygpLAogICAgICAgICJhcHBzL2FnZW50aWMtd29ya2Zsb3cv
+dGVzdHMvKl90ZXN0LnJzIi50b19zdHJpbmcoKSwKICAgIF07CgogICAgbGV0IHNjb3BlZCA9CiAg
+ICAgICAgYWdlbnRpY193b3JrZmxvdzo6Y2xpOjpjYl9maWxsOjpmaWx0ZXJfbWFya2Vyc190b19j
+aGFuZ2VfcGF0aHMoJm1hcmtlcnMsICZjaGFuZ2VfcGF0aHMpOwogICAgbGV0IHBhdGhzOiBWZWM8
+JnN0cj4gPSBzY29wZWQuaXRlcigpLm1hcCh8bXwgbS5zb3VyY2VfcGF0aC5hc19zdHIoKSkuY29s
+bGVjdCgpOwogICAgYXNzZXJ0X2VxISgKICAgICAgICBwYXRocywKICAgICAgICB2ZWMhWwogICAg
+ICAgICAgICAiYXBwcy9hZ2VudGljLXdvcmtmbG93L3NyYy9jbGkvY2JfZmlsbC5ycyIsCiAgICAg
+ICAgICAgICJhcHBzL2FnZW50aWMtd29ya2Zsb3cvc3JjL2NsaS9jYi5ycyIsCiAgICAgICAgXSwK
+ICAgICk7Cn0KCi8vLyBSMTogd2hlbiB0aGUgYWN0aXZlIFREIG9ubHkgY2hhbmdlcyBzcGVjIGZp
+bGVzLCBzb3VyY2UgSEFORFdSSVRFIG1hcmtlcnMKLy8vIGFyZSBvdXRzaWRlIHNjb3BlIGFuZCB0
+aGUgYnJpZWYgcGF0aCBjYW4gZGlzcGF0Y2ggZGlyZWN0bHkgdG8gbWVyZ2UuCiNbdGVzdF0KZm4g
+dGVzdF9zY29wZV96ZXJvX21hcmtlcl9mb3Jfc3BlY19vbmx5X2NoYW5nZSgpIHsKICAgIGxldCBt
+YXJrZXJzID0gdmVjIVsKICAgICAgICBtYXJrZXIoImFwcHMvYWdlbnRpYy13b3JrZmxvdy9zcmMv
+Y2xpL2NiX2ZpbGwucnMiKSwKICAgICAgICBtYXJrZXIoImFwcHMvYWdlbnRpYy13b3JrZmxvdy9z
+cmMvaXNzdWVzL3R5cGVzLnJzIiksCiAgICBdOwogICAgbGV0IGNoYW5nZV9wYXRocyA9CiAgICAg
+ICAgdmVjIVsiYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL3N1cmZhY2Uvc3BlY3Mv
+c3BlYy1vbmx5LWNoYW5nZS5tZCIudG9fc3RyaW5nKCldOwoKICAgIGxldCBzY29wZWQgPQogICAg
+ICAgIGFnZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6ZmlsdGVyX21hcmtlcnNfdG9fY2hh
+bmdlX3BhdGhzKCZtYXJrZXJzLCAmY2hhbmdlX3BhdGhzKTsKICAgIGFzc2VydCEoc2NvcGVkLmlz
+X2VtcHR5KCkpOwp9CgovLy8gUjEgZmFsbGJhY2s6IHdoZW4gbm8gYWN0aXZlIHNwZWMgaXMgcmVz
+b2x2ZWQsIGJyaWVmIG1vZGUga2VlcHMgdGhlIGxlZ2FjeQovLy8gYWxsLW1hcmtlciBiZWhhdmlv
+ciBpbnN0ZWFkIG9mIHNpbGVudGx5IGRyb3BwaW5nIGluaGVyaXRlZCBtYXJrZXJzLgojW3Rlc3Rd
+CmZuIHRlc3Rfc2NvcGVfbWlzc2luZ19zcGVjX3VzZXNfbGVnYWN5X2FsbF9tYXJrZXJzKCkgewog
+ICAgbGV0IG1hcmtlcnMgPSB2ZWMhWwogICAgICAgIG1hcmtlcigiYXBwcy9hZ2VudGljLXdvcmtm
+bG93L3NyYy9jbGkvY2JfZmlsbC5ycyIpLAogICAgICAgIG1hcmtlcigiYXBwcy9hZ2VudGljLXdv
+cmtmbG93L3NyYy9pc3N1ZXMvdHlwZXMucnMiKSwKICAgIF07CgogICAgbGV0IHNjb3BlZCA9IGFn
+ZW50aWNfd29ya2Zsb3c6OmNsaTo6Y2JfZmlsbDo6c2NvcGVfbWFya2Vyc19mb3JfY2hhbmdlX3Bh
+dGhzKCZtYXJrZXJzLCBOb25lKTsKICAgIGFzc2VydF9lcSEoc2NvcGVkLmxlbigpLCBtYXJrZXJz
+LmxlbigpKTsKICAgIGFzc2VydF9lcSEoc2NvcGVkWzBdLnNvdXJjZV9wYXRoLCBtYXJrZXJzWzBd
+LnNvdXJjZV9wYXRoKTsKICAgIGFzc2VydF9lcSEoc2NvcGVkWzFdLnNvdXJjZV9wYXRoLCBtYXJr
+ZXJzWzFdLnNvdXJjZV9wYXRoKTsKfQoKLy8vICMyNTM1OiBgYXcgZ29hbCB3aWAgbWF5IHJlc29s
+dmUgYSBHaXRIdWIgV0kgYWZ0ZXIgdGhlIGVwaGVtZXJhbCBsb2NhbAovLy8gcHJvamVjdGlvbiB3
+YXMgbG9zdC4gVGhlIGV4YWN0IGVtaXR0ZWQgYGF3IHRkIGZpbGwgPGlkPmAgY29tbWFuZCBtdXN0
+Ci8vLyBoeWRyYXRlIHRoYXQgcHJvamVjdGlvbiBiZWZvcmUgY3JlYXRpbmcgdGhlIG1hcmtlci1m
+aWxsIGxvY2suCiNbdG9raW86OnRlc3RdCmFzeW5jIGZuIHRkX2ZpbGxfYnJpZWZfaHlkcmF0ZXNf
+bWlzc2luZ19yZW1vdGVfcHJvamVjdGlvbigpIHsKICAgIHVzZSBhZ2VudGljX3dvcmtmbG93Ojpp
+c3N1ZXM6OntJc3N1ZUJhY2tlbmQsIExvY2FsQmFja2VuZH07CiAgICB1c2Ugc3RkOjpvczo6dW5p
+eDo6ZnM6OlBlcm1pc3Npb25zRXh0OwogICAgdXNlIHN0ZDo6cHJvY2Vzczo6Q29tbWFuZDsKCiAg
+ICBsZXQgU29tZShnaXQpID0gYWdlbnRpY193b3JrZmxvdzo6Z2l0OjpmaW5kX2dpdF9iaW4oKSBl
+bHNlIHsKICAgICAgICBlcHJpbnRsbiEoInNraXBwaW5nOiBnaXQgYmluYXJ5IG5vdCBvbiBQQVRI
+Iik7CiAgICAgICAgcmV0dXJuOwogICAgfTsKICAgIGxldCByb290ID0gdGVtcGZpbGU6OnRlbXBk
+aXIoKS5leHBlY3QoInRlbXBkaXIiKTsKCiAgICBDb21tYW5kOjpuZXcoJmdpdCkKICAgICAgICAu
+YXJnKCItQyIpCiAgICAgICAgLmFyZyhyb290LnBhdGgoKSkKICAgICAgICAuYXJncyhbImluaXQi
+LCAiLWIiLCAicHJvamVjdC10ZXN0Il0pCiAgICAgICAgLnN0YXR1cygpCiAgICAgICAgLmV4cGVj
+dCgiZ2l0IGluaXQiKTsKICAgIGZvciAoa2V5LCB2YWx1ZSkgaW4gWwogICAgICAgICgidXNlci5l
+bWFpbCIsICJ0ZXN0QHRlc3QiKSwKICAgICAgICAoInVzZXIubmFtZSIsICJ0ZXN0IiksCiAgICAg
+ICAgKCJjb21taXQuZ3Bnc2lnbiIsICJmYWxzZSIpLAogICAgXSB7CiAgICAgICAgQ29tbWFuZDo6
+bmV3KCZnaXQpCiAgICAgICAgICAgIC5hcmcoIi1DIikKICAgICAgICAgICAgLmFyZyhyb290LnBh
+dGgoKSkKICAgICAgICAgICAgLmFyZ3MoWyJjb25maWciLCBrZXksIHZhbHVlXSkKICAgICAgICAg
+ICAgLnN0YXR1cygpCiAgICAgICAgICAgIC51bndyYXAoKTsKICAgIH0KCiAgICBzdGQ6OmZzOjp3
+cml0ZSgKICAgICAgICByb290LnBhdGgoKS5qb2luKCJhdy50b21sIiksCiAgICAgICAgY29uY2F0
+ISgKICAgICAgICAgICAgIlthZ2VudGljX3dvcmtmbG93Lmlzc3VlX3BsYXRmb3JtXVxuIiwKICAg
+ICAgICAgICAgInR5cGUgPSBcImdpdGh1YlwiXG4iLAogICAgICAgICAgICAicmVwbyA9IFwiZml4
+dHVyZS9jb25maWd1cmVkXCJcbiIsCiAgICAgICAgKSwKICAgICkKICAgIC51bndyYXAoKTsKICAg
+IGxldCBzcGVjX3JlbCA9ICJhcHBzL2RlbW8vdGVjaC1kZXNpZ24vbG9naWMvcmVtb3RlLWZpbGwu
+bWQiOwogICAgbGV0IHNvdXJjZV9yZWwgPSAiYXBwcy9kZW1vL3NyYy9saWIucnMiOwogICAgbGV0
+IHNwZWMgPSByb290LnBhdGgoKS5qb2luKHNwZWNfcmVsKTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9k
+aXJfYWxsKHNwZWMucGFyZW50KCkudW53cmFwKCkpLnVud3JhcCgpOwogICAgc3RkOjpmczo6d3Jp
+dGUoCiAgICAgICAgJnNwZWMsCiAgICAgICAgZm9ybWF0ISgKICAgICAgICAgICAgIiMjIENoYW5n
+ZXNcbmBgYHlhbWxcbmNoYW5nZXM6XG4gIC0gcGF0aDoge3NvdXJjZV9yZWx9XG4gICAgYWN0aW9u
+OiBtb2RpZnlcbiAgICBpbXBsX21vZGU6IGhhbmQtd3JpdHRlblxuYGBgXG4iCiAgICAgICAgKSwK
+ICAgICkKICAgIC51bndyYXAoKTsKICAgIGxldCBzb3VyY2UgPSByb290LnBhdGgoKS5qb2luKHNv
+dXJjZV9yZWwpOwogICAgc3RkOjpmczo6Y3JlYXRlX2Rpcl9hbGwoc291cmNlLnBhcmVudCgpLnVu
+d3JhcCgpKS51bndyYXAoKTsKICAgIHN0ZDo6ZnM6OndyaXRlKAogICAgICAgICZzb3VyY2UsCiAg
+ICAgICAgZm9ybWF0ISgKICAgICAgICAgICAgInt9XG4vLyBUT0RPOiBoYW5kLXdyaXRlIGNvbnRl
+bnQgZm9yIGB7c291cmNlX3JlbH1gLlxue31cbiIsCiAgICAgICAgICAgIGhhbmR3cml0ZV9iZWdp
+bigKICAgICAgICAgICAgICAgICJnYXA9XCJyZW1vdGUtZmlsbC1tYXJrZXJcIiB0cmFja2VyPVwi
+cGVuZGluZy10cmFja2VyXCIgcmVhc29uPVwiZml4dHVyZVwiIgogICAgICAgICAgICApLAogICAg
+ICAgICAgICBoYW5kd3JpdGVfZW5kKCksCiAgICAgICAgKSwKICAgICkKICAgIC51bndyYXAoKTsK
+CiAgICBDb21tYW5kOjpuZXcoJmdpdCkKICAgICAgICAuYXJnKCItQyIpCiAgICAgICAgLmFyZyhy
+b290LnBhdGgoKSkKICAgICAgICAuYXJncyhbImFkZCIsICIuIl0pCiAgICAgICAgLnN0YXR1cygp
+CiAgICAgICAgLnVud3JhcCgpOwogICAgQ29tbWFuZDo6bmV3KCZnaXQpCiAgICAgICAgLmFyZygi
+LUMiKQogICAgICAgIC5hcmcocm9vdC5wYXRoKCkpCiAgICAgICAgLmFyZ3MoWyJjb21taXQiLCAi
+LW0iLCAic2VlZCByZW1vdGUgZmlsbCBmaXh0dXJlIl0pCiAgICAgICAgLnN0YXR1cygpCiAgICAg
+ICAgLnVud3JhcCgpOwoKICAgIGxldCB0b29sX2hvbWUgPSB0ZW1wZmlsZTo6dGVtcGRpcigpLmV4
+cGVjdCgidG9vbCBob21lIik7CiAgICBsZXQgaG9tZSA9IHRvb2xfaG9tZS5wYXRoKCk7CiAgICBs
+ZXQgZ2ggPSBob21lLmpvaW4oIi5ydXN0dXAvdG9vbGNoYWlucy9zdGFibGUtYWFyY2g2NC1hcHBs
+ZS1kYXJ3aW4vYmluL2doIik7CiAgICBzdGQ6OmZzOjpjcmVhdGVfZGlyX2FsbChnaC5wYXJlbnQo
+KS51bndyYXAoKSkudW53cmFwKCk7CiAgICBsZXQgaXNzdWVfanNvbiA9IHNlcmRlX2pzb246Ompz
+b24hKHsKICAgICAgICAibnVtYmVyIjogMjUzNSwKICAgICAgICAidGl0bGUiOiAicmVtb3RlIGZp
+bGwgaHlkcmF0aW9uIGZpeHR1cmUiLAogICAgICAgICJzdGF0ZSI6ICJPUEVOIiwKICAgICAgICAi
+bGFiZWxzIjogWwogICAgICAgICAgICB7Im5hbWUiOiAidHlwZTpjaGFuZ2UifSwKICAgICAgICAg
+ICAgeyJuYW1lIjogInBoYXNlOmNiX2dlbm5lZCJ9LAogICAgICAgICAgICB7Im5hbWUiOiAicHJv
+amVjdDphZ2VudGljLXdvcmtmbG93In0KICAgICAgICBdLAogICAgICAgICJhdXRob3IiOiB7Imxv
+Z2luIjogImZpeHR1cmUifSwKICAgICAgICAiY3JlYXRlZEF0IjogIjIwMjYtMDctMjRUMDA6MDA6
+MDBaIiwKICAgICAgICAidXBkYXRlZEF0IjogIjIwMjYtMDctMjRUMDA6MDA6MDBaIiwKICAgICAg
+ICAidXJsIjogImh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2ZpeHR1cmUvaXNzdWVzLzI1MzUiLAog
+ICAgICAgICJib2R5IjogInJlbW90ZS1vbmx5IFdJIGZpeHR1cmUiCiAgICB9KQogICAgLnRvX3N0
+cmluZygpOwogICAgbGV0IGdoX3NjcmlwdCA9IGZvcm1hdCEoCiAgICAgICAgciMiIyEvYmluL3No
+CnByaW50ZiAnJXNcbicgIiQqIiA+PiAiJEFXX0dIX0xPRyIKY2FzZSAiJCoiIGluCiAgKiIgbGlz
+dCAiKikgcHJpbnRmICclc1xuJyAnW10nIDs7CiAgKiIgdmlldyAyNTM1ICIqKSBwcmludGYgJyVz
+XG4nICd7aXNzdWVfanNvbn0nIDs7CiAgbGFiZWxcIGNyZWF0ZSopIHByaW50ZiAnJXNcbicgJ3t7
+fX0nIDs7CiAgYXBpXCAtWFwgUEFUQ0gqKSBwcmludGYgJyVzXG4nICd7e319JyA7OwogICopIHBy
+aW50ZiAndW5leHBlY3RlZCBnaCBpbnZvY2F0aW9uOiAlc1xuJyAiJCoiID4mMjsgZXhpdCAxIDs7
+CmVzYWMKIiMKICAgICk7CiAgICBzdGQ6OmZzOjp3cml0ZSgmZ2gsIGdoX3NjcmlwdCkudW53cmFw
+KCk7CiAgICBsZXQgbXV0IHBlcm1pc3Npb25zID0gc3RkOjpmczo6bWV0YWRhdGEoJmdoKS51bndy
+YXAoKS5wZXJtaXNzaW9ucygpOwogICAgcGVybWlzc2lvbnMuc2V0X21vZGUoMG83NTUpOwogICAg
+c3RkOjpmczo6c2V0X3Blcm1pc3Npb25zKCZnaCwgcGVybWlzc2lvbnMpLnVud3JhcCgpOwogICAg
+bGV0IGdoX2xvZyA9IGhvbWUuam9pbigiZ2gubG9nIik7CgogICAgbGV0IGJhY2tlbmQgPSBMb2Nh
+bEJhY2tlbmQ6OmZyb21fcHJvamVjdF9yb290KHJvb3QucGF0aCgpKTsKICAgIGFzc2VydCEoCiAg
+ICAgICAgYmFja2VuZC5nZXQoIjI1MzUiKS5hd2FpdC51bndyYXAoKS5pc19ub25lKCksCiAgICAg
+ICAgImZpeHR1cmUgbXVzdCBiZWdpbiB3aXRob3V0IGEgbG9jYWwgaXNzdWUgcHJvamVjdGlvbiIK
+ICAgICk7CgogICAgbGV0IG91dHB1dCA9IENvbW1hbmQ6Om5ldyhlbnYhKCJDQVJHT19CSU5fRVhF
+X2F3IikpCiAgICAgICAgLmFyZ3MoWyJjYiIsICJmaWxsIiwgIjI1MzUiLCAiLS1zcGVjLXBhdGgi
+LCBzcGVjX3JlbF0pCiAgICAgICAgLmN1cnJlbnRfZGlyKHJvb3QucGF0aCgpKQogICAgICAgIC5l
+bnYoIkhPTUUiLCBob21lKQogICAgICAgIC5lbnYoIkdIX1RPS0VOIiwgImZpeHR1cmUtdG9rZW4i
+KQogICAgICAgIC5lbnYoIkFXX0dIX0xPRyIsICZnaF9sb2cpCiAgICAgICAgLmVudigiQVdfRElT
+QUJMRV9DQVAiLCAiMSIpCiAgICAgICAgLm91dHB1dCgpCiAgICAgICAgLmV4cGVjdCgicnVuIHJl
+cG8tYnVpbHQgYXcgY2IgZmlsbCIpOwogICAgbGV0IHN0ZG91dCA9IFN0cmluZzo6ZnJvbV91dGY4
+X2xvc3N5KCZvdXRwdXQuc3Rkb3V0KTsKICAgIGxldCBzdGRlcnIgPSBTdHJpbmc6OmZyb21fdXRm
+OF9sb3NzeSgmb3V0cHV0LnN0ZGVycik7CiAgICBhc3NlcnQhKAogICAgICAgIG91dHB1dC5zdGF0
+dXMuc3VjY2VzcygpLAogICAgICAgICJyZW1vdGUgZmlsbCBicmllZiBtdXN0IHN1Y2NlZWQ6XG5z
+dGRvdXQ9e3N0ZG91dH1cbnN0ZGVycj17c3RkZXJyfSIKICAgICk7CiAgICBsZXQgZW52ZWxvcGU6
+IHNlcmRlX2pzb246OlZhbHVlID0KICAgICAgICBzZXJkZV9qc29uOjpmcm9tX3N0cihzdGRvdXQu
+dHJpbSgpKS5leHBlY3QoImZpbGwgZW52ZWxvcGUgSlNPTiIpOwogICAgYXNzZXJ0X2VxIShlbnZl
+bG9wZVsiYWN0aW9uIl0sICJkaXNwYXRjaCIpOwogICAgYXNzZXJ0X2VxIShlbnZlbG9wZVsic2x1
+ZyJdLCAiMjUzNSIpOwogICAgYXNzZXJ0X2VxISgKICAgICAgICBlbnZlbG9wZVsiaW52b2tlIl1b
+ImFyZ3MiXVsibWFya2VyX2xpc3QiXVswXVsiaWQiXSwKICAgICAgICAicmVtb3RlLWZpbGwtbWFy
+a2VyIgogICAgKTsKCiAgICBsZXQgaHlkcmF0ZWQgPSBiYWNrZW5kCiAgICAgICAgLmdldCgiMjUz
+NSIpCiAgICAgICAgLmF3YWl0CiAgICAgICAgLnVud3JhcCgpCiAgICAgICAgLmV4cGVjdCgiaHlk
+cmF0ZWQgbG9jYWwgaXNzdWUgcHJvamVjdGlvbiIpOwogICAgYXNzZXJ0X2VxIShoeWRyYXRlZC5w
+aGFzZS5hc19kZXJlZigpLCBTb21lKCJjYl9nZW5uZWQiKSk7CiAgICBhc3NlcnRfZXEhKGh5ZHJh
+dGVkLmdpdGh1Yl9pZCwgU29tZSgyNTM1KSk7CiAgICBsZXQgY2FsbHMgPSBzdGQ6OmZzOjpyZWFk
+X3RvX3N0cmluZygmZ2hfbG9nKS51bndyYXAoKTsKICAgIGFzc2VydCEoY2FsbHMuY29udGFpbnMo
+IiB2aWV3IDI1MzUgIiksICJ7Y2FsbHN9Iik7CiAgICBhc3NlcnQhKGNhbGxzLmNvbnRhaW5zKCJh
+cGkgLVggUEFUQ0giKSwgIntjYWxsc30iKTsKCiAgICBsZXQgXyA9IHN0ZDo6ZnM6OnJlbW92ZV9k
+aXJfYWxsKGJhY2tlbmQuaXNzdWVzX2RpcigpKTsKfQoKLy8g4pSA4pSAIFI2IOKAlCBjb2xsaXNp
+b24gcmVncmVzc2lvbiAoYnVnLWNiLWZpbGwtcGF5bG9hZC1yb3V0ZXMtYnktbWFya2VyLWlkLWFs
+b25lLWNvbGxpZGVzKSDilIDilIAKCi8vLyBSNjogd2hlbiB0d28gSEFORFdSSVRFIG1hcmtlcnMg
+aW4gZGlmZmVyZW50IGZpbGVzIHNoYXJlIHRoZSBzYW1lIGJhc2UKLy8vIGlkLCBlbnVtZXJhdGlv
+biBtdXN0IHN1cmZhY2UgQk9USCBlbnRyaWVzIChub3Qgc2lsZW50bHkgZHJvcCBvbmUpLgovLy8g
+Q29tYmluZWQgd2l0aCB0aGUgUjUgYW1iaWd1b3VzLWlkIGVycm9yIGluIGBjYiBmaWxsIC0tYXBw
+bHlgLCB0aGlzCi8vLyBwcmV2ZW50cyB0aGUgc2lsZW50IG1pcy1yb3V0aW5nIHRoYXQgbW90aXZh
+dGVkIHRoZSBidWcuCiNbdGVzdF0KZm4gdGVzdF9jb2xsaXNpb25fZW51bWVyYXRlX3JldHVybnNf
+Ym90aF9lbnRyaWVzKCkgewogICAgbGV0IHRtcCA9IHRlbXBmaWxlOjpUZW1wRGlyOjpuZXcoKS51
+bndyYXAoKTsKICAgIGxldCBjcmF0ZXNfZGlyID0gdG1wLnBhdGgoKS5qb2luKCJjcmF0ZXMiKS5q
+b2luKCJhIikuam9pbigic3JjIik7CiAgICBsZXQgcHJvamVjdHNfZGlyID0gdG1wLnBhdGgoKS5q
+b2luKCJwcm9qZWN0cyIpLmpvaW4oImIiKS5qb2luKCJzcmMiKTsKICAgIHN0ZDo6ZnM6OmNyZWF0
+ZV9kaXJfYWxsKCZjcmF0ZXNfZGlyKS51bndyYXAoKTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJf
+YWxsKCZwcm9qZWN0c19kaXIpLnVud3JhcCgpOwogICAgLy8gQm90aCBmaWxlcyB1c2UgdGhlIGxl
+Z2FjeSBnZW5lcmljIGlkIHBhdHRlcm4gdGhhdCB0aGUgUjEgc2NhZmZvbGQKICAgIC8vIGRpc2Ft
+YmlndWF0b3Igbm93IHByZXZlbnRzIOKAlCBidXQgbGVnYWN5IG1hcmtlcnMgaW4gb2xkZXIgZmls
+ZXMgbWF5CiAgICAvLyBzdGlsbCBiZSBwcmVzZW50LCBzbyB0aGUgZW51bWVyYXRvciBtdXN0IHN1
+cmZhY2UgdGhlbSBhbGwuCiAgICBsZXQgc2hhcmVkX2lkID0gIm1pc3NpbmctZ2VuZXJhdG9yOmhh
+bmQtd3JpdHRlbiI7CiAgICBsZXQgYm9keSA9IGZvcm1hdCEoCiAgICAgICAgInt9XG5UT0RPOiBo
+YW5kLXdyaXRlIGNvbnRlbnRcbnt9XG4iLAogICAgICAgIGhhbmR3cml0ZV9iZWdpbigmZm9ybWF0
+ISgiZ2FwPVwie3NoYXJlZF9pZH1cIiB0cmFja2VyPVwidFwiIHJlYXNvbj1cInJcIiIpKSwKICAg
+ICAgICBoYW5kd3JpdGVfZW5kKCkKICAgICk7CiAgICBzdGQ6OmZzOjp3cml0ZShjcmF0ZXNfZGly
+LmpvaW4oImZpcnN0LnJzIiksICZib2R5KS51bndyYXAoKTsKICAgIHN0ZDo6ZnM6OndyaXRlKHBy
+b2plY3RzX2Rpci5qb2luKCJzZWNvbmQucnMiKSwgJmJvZHkpLnVud3JhcCgpOwoKICAgIGxldCBt
+YXJrZXJzID0gYWdlbnRpY193b3JrZmxvdzo6Y2xpOjpjYl9maWxsOjplbnVtZXJhdGVfd29ya3Ry
+ZWVfbWFya2Vycyh0bXAucGF0aCgpKTsKICAgIGxldCB3aXRoX2lkOiBWZWM8JmFnZW50aWNfd29y
+a2Zsb3c6OmNsaTo6Y2JfZmlsbDo6SGFuZHdyaXRlTWFya2VyRW50cnk+ID0KICAgICAgICBtYXJr
+ZXJzLml0ZXIoKS5maWx0ZXIofG18IG0uaWQgPT0gc2hhcmVkX2lkKS5jb2xsZWN0KCk7CiAgICBh
+c3NlcnRfZXEhKAogICAgICAgIHdpdGhfaWQubGVuKCksCiAgICAgICAgMiwKICAgICAgICAiYm90
+aCBjb2xsaWRpbmcgbWFya2VycyBtdXN0IGJlIGVudW1lcmF0ZWQsIG5vdCBzaWxlbnRseSBkZWR1
+cGVkIiwKICAgICk7CiAgICBsZXQgbXV0IHBhdGhzOiBWZWM8JnN0cj4gPSB3aXRoX2lkLml0ZXIo
+KS5tYXAofG18IG0uc291cmNlX3BhdGguYXNfc3RyKCkpLmNvbGxlY3QoKTsKICAgIHBhdGhzLnNv
+cnQoKTsKICAgIGFzc2VydCEocGF0aHNbMF0uZW5kc193aXRoKCJmaXJzdC5ycyIpKTsKICAgIGFz
+c2VydCEocGF0aHNbMV0uZW5kc193aXRoKCJzZWNvbmQucnMiKSk7Cn0KCi8vIOKUgOKUgCBlMmUg
+Z2F0ZXMgKHJlcXVpcmUgcmVhbCB3b3JrdHJlZSArIHBheWxvYWQgKyBjaGVjayBwaXBlbGluZSkg
+4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgovLy8gQUMxICgjMTA5NiwgIzE1NTksICMxNzE3KTog
+YSByZWFsIGBhdyBjYiBmaWxsYCBicmllZiArIGFwcGx5IHJvdW5kIHRyaXAgd3JpdGVzIGFuZAov
+Ly8gcmVhZHMgdGhlIG1hcmtlciBwYXlsb2FkIHVuZGVyIGAvdG1wL2F3L3dvcmtzcGFjZXMvPHdv
+cmtzcGFjZT4vcGF5bG9hZHMvYAovLy8gKG5ldmVyIHVuZGVyIHRoZSByZXBvJ3MgYC5hdy9wYXls
+b2Fkcy9gKSwgcXVvdGluZyB0aGUgYWJzb2x1dGUgcGF0aCBpbgovLy8gdGhlIGRpc3BhdGNoIGVu
+dmVsb3BlLCBhbmQgdGhlIGFwcGx5IHN0ZXAgYWN0dWFsbHkgcmVhZHMgdGhhdCBmaWxlIGJhY2sK
+Ly8vIGludG8gYXBwLSBhbmQgbGliLXJvb3QgSEFORFdSSVRFIGJsb2NrcyBldmVuIHdoZW4gYSBy
+b290IGBjcmF0ZXMvYCBleGlzdHMuCi8vLyBBIGZvcmVpZ24gbWFya2VyIG91dHNpZGUgdGhlIGFj
+dGl2ZSBURCBDaGFuZ2VzIHBhdGhzIHJlbWFpbnMgdW50b3VjaGVkIGFuZAovLy8gY2Fubm90IHJl
+cGxhY2UgdGVybWluYWwgY29kZS1jaGVjayBkaXNwYXRjaC4KI1t0b2tpbzo6dGVzdF0KYXN5bmMg
+Zm4gdGVzdF9hcHBseV9tYXJrZXJfcmVwbGFjZXNfYmxvY2soKSB7CiAgICB1c2UgYWdlbnRpY193
+b3JrZmxvdzo6aXNzdWVzOjp0eXBlczo6e3RkX3BoYXNlLCBJc3N1ZVR5cGV9OwogICAgdXNlIGFn
+ZW50aWNfd29ya2Zsb3c6Omlzc3Vlczo6e0lzc3VlLCBJc3N1ZUJhY2tlbmQsIElzc3VlU3RhdGUs
+IExvY2FsQmFja2VuZH07CiAgICB1c2Ugc3RkOjpwcm9jZXNzOjpDb21tYW5kOwoKICAgIGxldCBT
+b21lKGdpdCkgPSBhZ2VudGljX3dvcmtmbG93OjpnaXQ6OmZpbmRfZ2l0X2JpbigpIGVsc2Ugewog
+ICAgICAgIGVwcmludGxuISgic2tpcHBpbmc6IGdpdCBiaW5hcnkgbm90IG9uIFBBVEgiKTsKICAg
+ICAgICByZXR1cm47CiAgICB9OwogICAgbGV0IE9rKGF3X2JpbikgPSBzdGQ6OmVudjo6dmFyKCJD
+QVJHT19CSU5fRVhFX2F3IikgZWxzZSB7CiAgICAgICAgZXByaW50bG4hKCJza2lwcGluZzogQ0FS
+R09fQklOX0VYRV9hdyBub3Qgc2V0Iik7CiAgICAgICAgcmV0dXJuOwogICAgfTsKCiAgICBsZXQg
+dG1wID0gdGVtcGZpbGU6OnRlbXBkaXIoKS5leHBlY3QoInRlbXBkaXIiKTsKICAgIGxldCByb290
+ID0gdG1wLnBhdGgoKTsKCiAgICAvLyBTZWVkIGEgbWluaW1hbCBnaXQgcmVwbyBvbiBhIG5vbi0i
+bWFpbiIgYnJhbmNoOiBURC9DQiB2ZXJicyBvbmx5CiAgICAvLyByZXF1aXJlIGEgcHJvdmlzaW9u
+ZWQgYHRkLTxzbHVnPmAgYnJhbmNoIHdoZW4gbGF1bmNoZWQgZnJvbSBgbWFpbmAKICAgIC8vIChg
+c2hvdWxkX3VzZV90ZF9icmFuY2hgIGluIHRkLnJzKTsgZXZlcnkgcmVhbCBwcm9qZWN0IGJyYW5j
+aCAoZS5nLgogICAgLy8gYHByb2plY3QtPG5hbWU+YCkgcnVucyBURC9DQiBjb21tYW5kcyBpbiBw
+bGFjZSBpbnN0ZWFkLgogICAgQ29tbWFuZDo6bmV3KCZnaXQpCiAgICAgICAgLmFyZygiLUMiKQog
+ICAgICAgIC5hcmcocm9vdCkKICAgICAgICAuYXJncyhbImluaXQiLCAiLWIiLCAicHJvamVjdC10
+ZXN0Il0pCiAgICAgICAgLnN0YXR1cygpCiAgICAgICAgLmV4cGVjdCgiZ2l0IGluaXQiKTsKICAg
+IGZvciAoaywgdikgaW4gWwogICAgICAgICgidXNlci5lbWFpbCIsICJ0ZXN0QHRlc3QiKSwKICAg
+ICAgICAoInVzZXIubmFtZSIsICJ0ZXN0IiksCiAgICAgICAgKCJjb21taXQuZ3Bnc2lnbiIsICJm
+YWxzZSIpLAogICAgXSB7CiAgICAgICAgQ29tbWFuZDo6bmV3KCZnaXQpCiAgICAgICAgICAgIC5h
+cmcoIi1DIikKICAgICAgICAgICAgLmFyZyhyb290KQogICAgICAgICAgICAuYXJncyhbImNvbmZp
+ZyIsIGssIHZdKQogICAgICAgICAgICAuc3RhdHVzKCkKICAgICAgICAgICAgLnVud3JhcCgpOwog
+ICAgfQogICAgc3RkOjpmczo6d3JpdGUocm9vdC5qb2luKCJSRUFETUUubWQiKSwgInNlZWRcbiIp
+LnVud3JhcCgpOwogICAgc3RkOjpmczo6Y3JlYXRlX2Rpcl9hbGwocm9vdC5qb2luKCIuYXciKSku
+dW53cmFwKCk7CiAgICAvLyAjMTkyMTogYGF3IGNiIGZpbGxgJ3MgbXV0YXRpbmcgdmVyYnMgcmVz
+b2x2ZSB0aGUgY29uZmlndXJlZCBpc3N1ZQogICAgLy8gYmFja2VuZCB1bmNvbmRpdGlvbmFsbHkg
+dmlhIGBndWFyZF9pc3N1ZV9tdXRhdGlvbmAsIHNvIHRoaXMgZnVsbHkKICAgIC8vIG9mZmxpbmUg
+c2FuZGJveCBuZWVkcyBhIHJlc29sdmFibGUgYGxvY2FsYCBiYWNrZW5kLCBnYXRlZCBiZWhpbmQg
+dGhlCiAgICAvLyBzYW5jdGlvbmVkIGBBV19GSVhUVVJFX0xPQ0FMX0JBQ0tFTkQ9MWAgZml4dHVy
+ZSBlc2NhcGUgaGF0Y2ggKCMxMzQ4KQogICAgLy8gc2V0IG9uIGV2ZXJ5IHNwYXduZWQgYGF3YCBj
+b21tYW5kIGJlbG93LgogICAgc3RkOjpmczo6d3JpdGUoCiAgICAgICAgcm9vdC5qb2luKCJhdy50
+b21sIiksCiAgICAgICAgIlthZ2VudGljX3dvcmtmbG93Lmlzc3VlX3BsYXRmb3JtXVxudHlwZSA9
+IFwibG9jYWxcIlxuIiwKICAgICkKICAgIC51bndyYXAoKTsKICAgIGxldCBleGlzdGluZ19jcmF0
+ZSA9IHJvb3Quam9pbigiY3JhdGVzL2V4aXN0aW5nL3NyYy9saWIucnMiKTsKICAgIHN0ZDo6ZnM6
+OmNyZWF0ZV9kaXJfYWxsKGV4aXN0aW5nX2NyYXRlLnBhcmVudCgpLnVud3JhcCgpKS51bndyYXAo
+KTsKICAgIHN0ZDo6ZnM6OndyaXRlKGV4aXN0aW5nX2NyYXRlLCAicHViIGZuIGV4aXN0aW5nX2Ny
+YXRlKCkge31cbiIpLnVud3JhcCgpOwoKICAgIC8vIFNlZWQgYSBURCBzcGVjIHdob3NlIENoYW5n
+ZXMgc2VjdGlvbiBuYW1lcyBhcHAtIGFuZCBsaWItcm9vdCBtYXJrZXJzCiAgICAvLyAoc28gYnJp
+ZWYgbW9kZSdzIHNwZWMtc2NvcGVkIGVudW1lcmF0aW9uIG11c3QgaW5jbHVkZSBib3RoIGV2ZW4g
+dGhvdWdoCiAgICAvLyB0aGlzIGNoZWNrb3V0IGFsc28gaGFzIGEgcm9vdCBjcmF0ZXMvIGRpcmVj
+dG9yeSkuCiAgICBsZXQgc3BlY19yZWwgPSAiLmF3L3RlY2gtZGVzaWduL3NwZWNzL2RlbW8ubWQi
+OwogICAgbGV0IGFwcF9tYXJrZXJfcmVsID0gImFwcHMvdmF0L3Rlc3RzL3ZhdF9taWNyb3ZtX3B1
+Ymxpc2hlZF9wb3J0LnJzIjsKICAgIGxldCBsaWJfbWFya2VyX3JlbCA9ICJsaWJzL29wZW5hcGkt
+Y29kZWdlbi9zcmMvdGFyZ2V0LnJzIjsKICAgIGxldCBzcGVjX2NvbnRlbnQgPSBmb3JtYXQhKAog
+ICAgICAgICItLS1cbmlkOiBkZW1vXG5maWxsX3NlY3Rpb25zOiBbY2hhbmdlc11cbi0tLVxuXG4j
+IERlbW9cblxuIyMgQ2hhbmdlc1xuPCEtLSB0eXBlOiBjaGFuZ2VzIGxhbmc6IHlhbWwgLS0+XG5c
+bmBgYHlhbWxcbmNoYW5nZXM6XG4gIC0gcGF0aDoge2FwcF9tYXJrZXJfcmVsfVxuICAgIGFjdGlv
+bjogY3JlYXRlXG4gICAgaW1wbF9tb2RlOiBoYW5kLXdyaXR0ZW5cbiAgLSBwYXRoOiB7bGliX21h
+cmtlcl9yZWx9XG4gICAgYWN0aW9uOiBtb2RpZnlcbiAgICBpbXBsX21vZGU6IGhhbmQtd3JpdHRl
+blxuYGBgXG4iCiAgICApOwogICAgbGV0IHNwZWNfZGlyID0gcm9vdC5qb2luKCIuYXcvdGVjaC1k
+ZXNpZ24vc3BlY3MiKTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJfYWxsKCZzcGVjX2RpcikudW53
+cmFwKCk7CiAgICBzdGQ6OmZzOjp3cml0ZShzcGVjX2Rpci5qb2luKCJkZW1vLm1kIiksIHNwZWNf
+Y29udGVudCkudW53cmFwKCk7CgogICAgLy8gU2VlZCBib3RoIGFjdGl2ZSBtYXJrZXJzIHdpdGhv
+dXQgZW1iZWRkaW5nIG1hcmtlci1zaGFwZWQgbGl0ZXJhbHMgaW4KICAgIC8vIHRoaXMgdGVzdCBz
+b3VyY2UgaXRzZWxmLgogICAgZm9yIChwYXRoLCBpZCkgaW4gWwogICAgICAgIChhcHBfbWFya2Vy
+X3JlbCwgImFwcC1tYXJrZXIiKSwKICAgICAgICAobGliX21hcmtlcl9yZWwsICJsaWItbWFya2Vy
+IiksCiAgICBdIHsKICAgICAgICBsZXQgbWFya2VyX3BhdGggPSByb290LmpvaW4ocGF0aCk7CiAg
+ICAgICAgc3RkOjpmczo6Y3JlYXRlX2Rpcl9hbGwobWFya2VyX3BhdGgucGFyZW50KCkudW53cmFw
+KCkpLnVud3JhcCgpOwogICAgICAgIHN0ZDo6ZnM6OndyaXRlKAogICAgICAgICAgICBtYXJrZXJf
+cGF0aCwKICAgICAgICAgICAgZm9ybWF0ISgKICAgICAgICAgICAgICAgICJ7fVxuLy8gVE9ETzog
+aGFuZC13cml0ZSBjb250ZW50IGZvciBge3BhdGh9YC5cbnt9XG4iLAogICAgICAgICAgICAgICAg
+aGFuZHdyaXRlX2JlZ2luKCZmb3JtYXQhKAogICAgICAgICAgICAgICAgICAgICJnYXA9XCJ7aWR9
+XCIgdHJhY2tlcj1cIm5vbmVcIiByZWFzb249XCJ1bmZpbGxlZFwiIgogICAgICAgICAgICAgICAg
+KSksCiAgICAgICAgICAgICAgICBoYW5kd3JpdGVfZW5kKCksCiAgICAgICAgICAgICksCiAgICAg
+ICAgKQogICAgICAgIC51bndyYXAoKTsKICAgIH0KCiAgICBsZXQgZm9yZWlnbl9tYXJrZXJfcmVs
+ID0gInByb2plY3RzL21hbWJhL3NyYy9mb3JlaWduLnJzIjsKICAgIGxldCBmb3JlaWduX21hcmtl
+cl9wYXRoID0gcm9vdC5qb2luKGZvcmVpZ25fbWFya2VyX3JlbCk7CiAgICBzdGQ6OmZzOjpjcmVh
+dGVfZGlyX2FsbChmb3JlaWduX21hcmtlcl9wYXRoLnBhcmVudCgpLnVud3JhcCgpKS51bndyYXAo
+KTsKICAgIHN0ZDo6ZnM6OndyaXRlKAogICAgICAgICZmb3JlaWduX21hcmtlcl9wYXRoLAogICAg
+ICAgIGZvcm1hdCEoCiAgICAgICAgICAgICJ7fVxuLy8gVE9ETzogaGFuZC13cml0ZSBjb250ZW50
+IGZvciBge2ZvcmVpZ25fbWFya2VyX3JlbH1gLlxue31cbiIsCiAgICAgICAgICAgIGhhbmR3cml0
+ZV9iZWdpbigiZ2FwPVwiZm9yZWlnbi1tYXJrZXJcIiB0cmFja2VyPVwibm9uZVwiIHJlYXNvbj1c
+InVucmVsYXRlZFwiIiksCiAgICAgICAgICAgIGhhbmR3cml0ZV9lbmQoKSwKICAgICAgICApLAog
+ICAgKQogICAgLnVud3JhcCgpOwoKICAgIENvbW1hbmQ6Om5ldygmZ2l0KQogICAgICAgIC5hcmco
+Ii1DIikKICAgICAgICAuYXJnKHJvb3QpCiAgICAgICAgLmFyZ3MoWyJhZGQiLCAiLiJdKQogICAg
+ICAgIC5zdGF0dXMoKQogICAgICAgIC51bndyYXAoKTsKICAgIENvbW1hbmQ6Om5ldygmZ2l0KQog
+ICAgICAgIC5hcmcoIi1DIikKICAgICAgICAuYXJnKHJvb3QpCiAgICAgICAgLmFyZ3MoWyJjb21t
+aXQiLCAiLW0iLCAic2VlZCJdKQogICAgICAgIC5zdGF0dXMoKQogICAgICAgIC51bndyYXAoKTsK
+CiAgICAvLyBTZWVkIHRoZSBvcGVuIGlzc3VlIGF0IGNiX2dlbm5lZCAodGhlIHBoYXNlIGBhdyBj
+YiBmaWxsYCBleHBlY3RzKS4KICAgIGxldCBzbHVnID0gImNiLWZpbGwtcGF5bG9hZC1yb3VuZHRy
+aXAtdGVzdCI7CiAgICBsZXQgYmFja2VuZCA9IExvY2FsQmFja2VuZDo6ZnJvbV9wcm9qZWN0X3Jv
+b3Qocm9vdCk7CiAgICBsZXQgaXNzdWUgPSBJc3N1ZSB7CiAgICAgICAgaXNzdWVfdHlwZTogSXNz
+dWVUeXBlOjpFbmhhbmNlbWVudCwKICAgICAgICB0aXRsZTogZm9ybWF0ISgie3NsdWd9IFdJIiks
+CiAgICAgICAgc3RhdGU6IElzc3VlU3RhdGU6Ok9wZW4sCiAgICAgICAgaWQ6IE5vbmUsCiAgICAg
+ICAgZ2l0aHViX2lkOiBOb25lLAogICAgICAgIGdpdGxhYl9pZDogTm9uZSwKICAgICAgICB1cmw6
+IE5vbmUsCiAgICAgICAgYXV0aG9yOiBOb25lLAogICAgICAgIGxhYmVsczogdmVjIVtmb3JtYXQh
+KCJwaGFzZTp7fSIsIHRkX3BoYXNlOjpDQl9HRU5ORUQpXSwKICAgICAgICBjcmVhdGVkX2F0OiBT
+b21lKGNocm9ubzo6VXRjOjpub3coKS50b19yZmMzMzM5KCkpLAogICAgICAgIHVwZGF0ZWRfYXQ6
+IFNvbWUoY2hyb25vOjpVdGM6Om5vdygpLnRvX3JmYzMzMzkoKSksCiAgICAgICAgc2x1Zzogc2x1
+Zy50b19zdHJpbmcoKSwKICAgICAgICBib2R5OiBmb3JtYXQhKCIjIHtzbHVnfSBXSVxuIiksCiAg
+ICAgICAgcmVsYXRlZDogVmVjOjpuZXcoKSwKICAgICAgICBpbXBsZW1lbnRzOiB2ZWMhW3NwZWNf
+cmVsLnRvX3N0cmluZygpXSwKICAgICAgICBwaGFzZTogU29tZSh0ZF9waGFzZTo6Q0JfR0VOTkVE
+LnRvX3N0cmluZygpKSwKICAgICAgICBicmFuY2g6IE5vbmUsCiAgICAgICAgdGFyZ2V0X2JyYW5j
+aDogTm9uZSwKICAgICAgICBnaXRfd29ya2Zsb3c6IE5vbmUsCiAgICAgICAgY2hhbmdlX2lkOiBO
+b25lLAogICAgICAgIGl0ZXJhdGlvbjogTm9uZSwKICAgICAgICBjdXJyZW50X3Rhc2tfaWQ6IE5v
+bmUsCiAgICAgICAgaW1wbF9zcGVjX3BoYXNlOiBOb25lLAogICAgICAgIHRhc2tfcmV2aXNpb25z
+OiBOb25lLAogICAgICAgIHJldmlzaW9uX2NvdW50czogTm9uZSwKICAgICAgICBsYXN0X2FjdGlv
+bjogTm9uZSwKICAgICAgICBzZXNzaW9uX2lkOiBOb25lLAogICAgICAgIHZhbGlkYXRpb25fZXJy
+b3JzOiBWZWM6Om5ldygpLAogICAgICAgIHJldmlld19jb3VudDogTm9uZSwKICAgICAgICBmbGFn
+Z2VkX3NlY3Rpb25zOiBOb25lLAogICAgICAgIGZpbGxfcmV0cnlfY291bnQ6IE5vbmUsCiAgICAg
+ICAgc2hpcF9zdGF0dXM6IE5vbmUsCiAgICAgICAgc2hpcF9jb21taXQ6IE5vbmUsCiAgICAgICAg
+cmVnZW5fdmVyaWZpZWRfYXQ6IE5vbmUsCiAgICB9OwogICAgYmFja2VuZC5jcmVhdGUoJmlzc3Vl
+KS5hd2FpdC5leHBlY3QoInNlZWQgb3BlbiBpc3N1ZSIpOwoKICAgIC8vIEJyaWVmIG1vZGU6IGVu
+dW1lcmF0ZSArIGRpc3BhdGNoLiBBc3NlcnQgdGhlIGVudmVsb3BlJ3MgcGF5bG9hZCBwYXRoCiAg
+ICAvLyBpcyBhbiBBQlNPTFVURSBwYXRoIHVuZGVyIC90bXAvYXcvd29ya3NwYWNlcy8g4oCUIG5l
+dmVyIHRoZSBvbGQKICAgIC8vIHJlcG8tcmVsYXRpdmUgYC5hdy9wYXlsb2Fkcy9gLgogICAgbGV0
+IGJyaWVmX291dHB1dCA9IENvbW1hbmQ6Om5ldygmYXdfYmluKQogICAgICAgIC5hcmcoImNiIikK
+ICAgICAgICAuYXJnKCJmaWxsIikKICAgICAgICAuYXJnKHNsdWcpCiAgICAgICAgLmN1cnJlbnRf
+ZGlyKHJvb3QpCiAgICAgICAgLmVudigiQVdfRklYVFVSRV9MT0NBTF9CQUNLRU5EIiwgIjEiKQog
+ICAgICAgIC5vdXRwdXQoKQogICAgICAgIC5leHBlY3QoInJ1biBhdyBjYiBmaWxsIChicmllZiki
+KTsKICAgIGxldCBicmllZl9zdGRvdXQgPSBTdHJpbmc6OmZyb21fdXRmOF9sb3NzeSgmYnJpZWZf
+b3V0cHV0LnN0ZG91dCk7CiAgICBsZXQgYnJpZWZfc3RkZXJyID0gU3RyaW5nOjpmcm9tX3V0Zjhf
+bG9zc3koJmJyaWVmX291dHB1dC5zdGRlcnIpOwogICAgYXNzZXJ0ISgKICAgICAgICBicmllZl9v
+dXRwdXQuc3RhdHVzLnN1Y2Nlc3MoKSwKICAgICAgICAiYnJpZWYgbW9kZSBzaG91bGQgZXhpdCAw
+Olxuc3Rkb3V0Olxue31cbnN0ZGVycjpcbnt9IiwKICAgICAgICBicmllZl9zdGRvdXQsCiAgICAg
+ICAgYnJpZWZfc3RkZXJyCiAgICApOwogICAgbGV0IGVudmVsb3BlOiBzZXJkZV9qc29uOjpWYWx1
+ZSA9CiAgICAgICAgc2VyZGVfanNvbjo6ZnJvbV9zdHIoYnJpZWZfc3Rkb3V0LnRyaW0oKSkuZXhw
+ZWN0KCJicmllZiBlbnZlbG9wZSBpcyB2YWxpZCBKU09OIik7CiAgICBsZXQgcGF5bG9hZF9wYXRo
+ID0gZW52ZWxvcGVbIm5leHQiXVsicGF5bG9hZF9wYXRoIl0KICAgICAgICAuYXNfc3RyKCkKICAg
+ICAgICAuZXhwZWN0KCJuZXh0LnBheWxvYWRfcGF0aCBwcmVzZW50IikKICAgICAgICAudG9fc3Ry
+aW5nKCk7CiAgICBhc3NlcnQhKAogICAgICAgIHBheWxvYWRfcGF0aC5zdGFydHNfd2l0aCgiL3Rt
+cC9hdy93b3Jrc3BhY2VzLyIpLAogICAgICAgICJwYXlsb2FkIHBhdGggbXVzdCBsaXZlIHVuZGVy
+IC90bXAvYXcvd29ya3NwYWNlcy8sIGdvdDoge30iLAogICAgICAgIHBheWxvYWRfcGF0aAogICAg
+KTsKICAgIGFzc2VydCEoCiAgICAgICAgcGF5bG9hZF9wYXRoLmNvbnRhaW5zKCIvcGF5bG9hZHMv
+IiksCiAgICAgICAgInBheWxvYWQgcGF0aCBtdXN0IGJlIHVuZGVyIGEgcGF5bG9hZHMvIGRpcmVj
+dG9yeSwgZ290OiB7fSIsCiAgICAgICAgcGF5bG9hZF9wYXRoCiAgICApOwogICAgYXNzZXJ0ISgK
+ICAgICAgICAhcGF5bG9hZF9wYXRoLmNvbnRhaW5zKCIuYXcvcGF5bG9hZHMiKSwKICAgICAgICAi
+cGF5bG9hZCBwYXRoIG11c3Qgbm90IHJlZmVyZW5jZSB0aGUgcmV0aXJlZCByZXBvLXJvb3QgLmF3
+L3BheWxvYWRzLywgZ290OiB7fSIsCiAgICAgICAgcGF5bG9hZF9wYXRoCiAgICApOwogICAgbGV0
+IGZpcnN0X21hcmtlcl9pZCA9IGVudmVsb3BlWyJpbnZva2UiXVsiYXJncyJdWyJtYXJrZXJfbGlz
+dCJdWzBdWyJpZCJdCiAgICAgICAgLmFzX3N0cigpCiAgICAgICAgLmV4cGVjdCgibWFya2VyX2xp
+c3RbMF0uaWQgcHJlc2VudCIpCiAgICAgICAgLnRvX3N0cmluZygpOwogICAgbGV0IG1hcmtlcl9s
+aXN0ID0gZW52ZWxvcGVbImludm9rZSJdWyJhcmdzIl1bIm1hcmtlcl9saXN0Il0KICAgICAgICAu
+YXNfYXJyYXkoKQogICAgICAgIC5leHBlY3QoIm1hcmtlcl9saXN0IGlzIGFuIGFycmF5Iik7CiAg
+ICBhc3NlcnRfZXEhKAogICAgICAgIG1hcmtlcl9saXN0LmxlbigpLAogICAgICAgIDIsCiAgICAg
+ICAgImJyaWVmIHF1ZXVlIG11c3QgaW5jbHVkZSBhcHAvbGliIG1hcmtlcnMgYW5kIGV4Y2x1ZGUg
+dGhlIGZvcmVpZ24gbWFya2VyIgogICAgKTsKICAgIGxldCBtdXQgcXVldWVkX3BhdGhzOiBWZWM8
+JnN0cj4gPSBtYXJrZXJfbGlzdAogICAgICAgIC5pdGVyKCkKICAgICAgICAubWFwKHxtYXJrZXJ8
+IG1hcmtlclsic291cmNlX3BhdGgiXS5hc19zdHIoKS51bndyYXAoKSkKICAgICAgICAuY29sbGVj
+dCgpOwogICAgcXVldWVkX3BhdGhzLnNvcnRfdW5zdGFibGUoKTsKICAgIGFzc2VydF9lcSEocXVl
+dWVkX3BhdGhzLCB2ZWMhW2FwcF9tYXJrZXJfcmVsLCBsaWJfbWFya2VyX3JlbF0pOwogICAgYXNz
+ZXJ0X2VxIShmaXJzdF9tYXJrZXJfaWQsICJhcHAtbWFya2VyIik7CgogICAgLy8gVGhlIENMSSBh
+bHJlYWR5IGluaXRpYWxpemVkIHRoZSBwYXlsb2FkIHRlbXBsYXRlIGF0IHRoYXQgYWJzb2x1dGUK
+ICAgIC8vIHBhdGg7IG92ZXJ3cml0ZSBpdCB3aXRoIHRoZSBtYXJrZXIncyByZWFsIGZpbGwgY29u
+dGVudCwgcHJvdmluZyB0aGUKICAgIC8vIGFwcGx5IHN0ZXAgcmVhZHMgYmFjayBmcm9tIC90bXAs
+IG5vdCBmcm9tIHRoZSByZXBvIHRyZWUuCiAgICBsZXQgYXBwX3BheWxvYWRfYm9keSA9IGZvcm1h
+dCEoCiAgICAgICAgIi8vIGZpbGxlZCBhcHAgbWFya2VyXG5cbnt9IG1hcmtlcjoge30gcGF0aDog
+e30gcmVhc29uOiB1bmZpbGxlZCAtLT5cbiIsCiAgICAgICAgIjwhLS0iLCBmaXJzdF9tYXJrZXJf
+aWQsIGFwcF9tYXJrZXJfcmVsCiAgICApOwogICAgc3RkOjpmczo6d3JpdGUoJnBheWxvYWRfcGF0
+aCwgYXBwX3BheWxvYWRfYm9keSkuZXhwZWN0KCJ3cml0ZSBhcHAgcGF5bG9hZCBhdCAvdG1wL2F3
+IHBhdGgiKTsKCiAgICAvLyBBcHBseSB0aGUgYXBwIG1hcmtlci4gVGhlIGNvbnRpbnVhdGlvbiBt
+dXN0IHJlbWFpbiBpbiBmaWxsIGFuZCBwb2ludCBhdAogICAgLy8gdGhlIGxpYiBtYXJrZXIgcmF0
+aGVyIHRoYW4gc2tpcHBpbmcgc3RyYWlnaHQgdG8gY29kZS1jaGVjay4KICAgIGxldCBhcHBfYXBw
+bHlfb3V0cHV0ID0gQ29tbWFuZDo6bmV3KCZhd19iaW4pCiAgICAgICAgLmFyZygiY2IiKQogICAg
+ICAgIC5hcmcoImZpbGwiKQogICAgICAgIC5hcmcoc2x1ZykKICAgICAgICAuYXJnKCItLWFwcGx5
+IikKICAgICAgICAuYXJnKCItLW1hcmtlciIpCiAgICAgICAgLmFyZygmZmlyc3RfbWFya2VyX2lk
+KQogICAgICAgIC5jdXJyZW50X2Rpcihyb290KQogICAgICAgIC5lbnYoIkFXX0ZJWFRVUkVfTE9D
+QUxfQkFDS0VORCIsICIxIikKICAgICAgICAub3V0cHV0KCkKICAgICAgICAuZXhwZWN0KCJydW4g
+YXcgY2IgZmlsbCAtLWFwcGx5IGZvciBhcHAgbWFya2VyIik7CiAgICBsZXQgYXBwX2FwcGx5X3N0
+ZG91dCA9IFN0cmluZzo6ZnJvbV91dGY4X2xvc3N5KCZhcHBfYXBwbHlfb3V0cHV0LnN0ZG91dCk7
+CiAgICBsZXQgYXBwX2FwcGx5X3N0ZGVyciA9IFN0cmluZzo6ZnJvbV91dGY4X2xvc3N5KCZhcHBf
+YXBwbHlfb3V0cHV0LnN0ZGVycik7CiAgICBhc3NlcnQhKAogICAgICAgIGFwcF9hcHBseV9vdXRw
+dXQuc3RhdHVzLnN1Y2Nlc3MoKSwKICAgICAgICAiYXBwIGFwcGx5IHNob3VsZCBleGl0IDA6XG5z
+dGRvdXQ6XG57fVxuc3RkZXJyOlxue30iLAogICAgICAgIGFwcF9hcHBseV9zdGRvdXQsCiAgICAg
+ICAgYXBwX2FwcGx5X3N0ZGVycgogICAgKTsKICAgIGxldCBhcHBfYXBwbHlfZW52ZWxvcGU6IHNl
+cmRlX2pzb246OlZhbHVlID0KICAgICAgICBzZXJkZV9qc29uOjpmcm9tX3N0cihhcHBfYXBwbHlf
+c3Rkb3V0LnRyaW0oKSkuZXhwZWN0KCJhcHAgYXBwbHkgZW52ZWxvcGUgaXMgdmFsaWQgSlNPTiIp
+OwogICAgYXNzZXJ0ISgKICAgICAgICBhcHBfYXBwbHlfZW52ZWxvcGVbIm5leHQiXVsiY29tbWFu
+ZCJdCiAgICAgICAgICAgIC5hc19zdHIoKQogICAgICAgICAgICAuaXNfc29tZV9hbmQofGNvbW1h
+bmR8IGNvbW1hbmQuc3RhcnRzX3dpdGgoImF3IGNiIGZpbGwiKSksCiAgICAgICAgImZpcnN0IGFw
+cGx5IG11c3QgZGlzcGF0Y2ggdG8gdGhlIHJlbWFpbmluZyBsaWIgbWFya2VyLCBnb3Q6XG57fSIs
+CiAgICAgICAgYXBwX2FwcGx5X3N0ZG91dAogICAgKTsKICAgIGFzc2VydF9lcSEoYXBwX2FwcGx5
+X2VudmVsb3BlWyJpbnZva2UiXVsiYXJncyJdWyJtYXJrZXIiXSwgImxpYi1tYXJrZXIiKTsKICAg
+IGxldCBsaWJfcGF5bG9hZF9wYXRoID0gYXBwX2FwcGx5X2VudmVsb3BlWyJuZXh0Il1bInBheWxv
+YWRfcGF0aCJdCiAgICAgICAgLmFzX3N0cigpCiAgICAgICAgLmV4cGVjdCgibGliIHBheWxvYWQg
+cGF0aCBwcmVzZW50Iik7CiAgICBzdGQ6OmZzOjp3cml0ZShsaWJfcGF5bG9hZF9wYXRoLCAiLy8g
+ZmlsbGVkIGxpYiBtYXJrZXJcbiIpCiAgICAgICAgLmV4cGVjdCgid3JpdGUgbGliIHBheWxvYWQg
+YXQgL3RtcC9hdyBwYXRoIik7CgogICAgbGV0IGxpYl9hcHBseV9vdXRwdXQgPSBDb21tYW5kOjpu
+ZXcoJmF3X2JpbikKICAgICAgICAuYXJncyhbImNiIiwgImZpbGwiLCBzbHVnLCAiLS1hcHBseSIs
+ICItLW1hcmtlciIsICJsaWItbWFya2VyIl0pCiAgICAgICAgLmN1cnJlbnRfZGlyKHJvb3QpCiAg
+ICAgICAgLmVudigiQVdfRklYVFVSRV9MT0NBTF9CQUNLRU5EIiwgIjEiKQogICAgICAgIC5vdXRw
+dXQoKQogICAgICAgIC5leHBlY3QoInJ1biBhdyBjYiBmaWxsIC0tYXBwbHkgZm9yIGxpYiBtYXJr
+ZXIiKTsKICAgIGxldCBsaWJfYXBwbHlfc3Rkb3V0ID0gU3RyaW5nOjpmcm9tX3V0ZjhfbG9zc3ko
+JmxpYl9hcHBseV9vdXRwdXQuc3Rkb3V0KTsKICAgIGxldCBsaWJfYXBwbHlfc3RkZXJyID0gU3Ry
+aW5nOjpmcm9tX3V0ZjhfbG9zc3koJmxpYl9hcHBseV9vdXRwdXQuc3RkZXJyKTsKICAgIGFzc2Vy
+dCEoCiAgICAgICAgbGliX2FwcGx5X291dHB1dC5zdGF0dXMuc3VjY2VzcygpLAogICAgICAgICJs
+aWIgYXBwbHkgc2hvdWxkIGV4aXQgMDpcbnN0ZG91dDpcbnt9XG5zdGRlcnI6XG57fSIsCiAgICAg
+ICAgbGliX2FwcGx5X3N0ZG91dCwKICAgICAgICBsaWJfYXBwbHlfc3RkZXJyCiAgICApOwogICAg
+YXNzZXJ0ISgKICAgICAgICBsaWJfYXBwbHlfc3Rkb3V0LmNvbnRhaW5zKCJcImNvbW1hbmRcIjpc
+ImF3IGNiIGNoZWNrIiksCiAgICAgICAgImxhc3QgYWN0aXZlIG1hcmtlciBtdXN0IGRpc3BhdGNo
+IHRvIHRlcm1pbmFsIGNvZGUtY2hlY2ssIGdvdDpcbnt9IiwKICAgICAgICBsaWJfYXBwbHlfc3Rk
+b3V0CiAgICApOwogICAgYXNzZXJ0ISgKICAgICAgICAhbGliX2FwcGx5X3N0ZG91dC5jb250YWlu
+cygiZm9yZWlnbi1tYXJrZXIiKSwKICAgICAgICAicG9zdC1hcHBseSBkaXNwYXRjaCBtdXN0IG5v
+dCBsZWFrIGEgZm9yZWlnbiBtYXJrZXIsIGdvdDpcbnt9IiwKICAgICAgICBsaWJfYXBwbHlfc3Rk
+b3V0CiAgICApOwoKICAgIGxldCB1cGRhdGVkX2FwcCA9CiAgICAgICAgc3RkOjpmczo6cmVhZF90
+b19zdHJpbmcocm9vdC5qb2luKGFwcF9tYXJrZXJfcmVsKSkuZXhwZWN0KCJyZWFkIHVwZGF0ZWQg
+YXBwIHNvdXJjZSIpOwogICAgYXNzZXJ0ISgKICAgICAgICB1cGRhdGVkX2FwcC5jb250YWlucygi
+ZmlsbGVkIGFwcCBtYXJrZXIiKSAmJiAhdXBkYXRlZF9hcHAuY29udGFpbnMoIlRPRE86IGhhbmQt
+d3JpdGUiKSwKICAgICAgICAiYXBwIHNvdXJjZSBtdXN0IGNvbnRhaW4gaXRzIHBheWxvYWQgYm9k
+eSBpbiBwbGFjZSBvZiB0aGUgc3R1YiwgZ290Olxue30iLAogICAgICAgIHVwZGF0ZWRfYXBwCiAg
+ICApOwogICAgYXNzZXJ0ISgKICAgICAgICAhdXBkYXRlZF9hcHAuY29udGFpbnMoIjwhLS0gbWFy
+a2VyOiIpLAogICAgICAgICJnZW5lcmF0ZWQgcGF5bG9hZCBtZXRhZGF0YSBtdXN0IG5ldmVyIGJl
+IGNvcGllZCBpbnRvIHNvdXJjZSwgZ290Olxue30iLAogICAgICAgIHVwZGF0ZWRfYXBwCiAgICAp
+OwogICAgbGV0IHVwZGF0ZWRfbGliID0KICAgICAgICBzdGQ6OmZzOjpyZWFkX3RvX3N0cmluZyhy
+b290LmpvaW4obGliX21hcmtlcl9yZWwpKS5leHBlY3QoInJlYWQgdXBkYXRlZCBsaWIgc291cmNl
+Iik7CiAgICBhc3NlcnQhKAogICAgICAgIHVwZGF0ZWRfbGliLmNvbnRhaW5zKCJmaWxsZWQgbGli
+IG1hcmtlciIpICYmICF1cGRhdGVkX2xpYi5jb250YWlucygiVE9ETzogaGFuZC13cml0ZSIpLAog
+ICAgICAgICJsaWIgc291cmNlIG11c3QgY29udGFpbiBpdHMgcGF5bG9hZCBib2R5IGluIHBsYWNl
+IG9mIHRoZSBzdHViLCBnb3Q6XG57fSIsCiAgICAgICAgdXBkYXRlZF9saWIKICAgICk7CiAgICBs
+ZXQgZm9yZWlnbl9zb3VyY2UgPQogICAgICAgIHN0ZDo6ZnM6OnJlYWRfdG9fc3RyaW5nKCZmb3Jl
+aWduX21hcmtlcl9wYXRoKS5leHBlY3QoInJlYWQgZm9yZWlnbiBtYXJrZXIgc291cmNlIik7CiAg
+ICBhc3NlcnQhKAogICAgICAgIGZvcmVpZ25fc291cmNlLmNvbnRhaW5zKCZmb3JtYXQhKAogICAg
+ICAgICAgICAiVE9ETzogaGFuZC13cml0ZSBjb250ZW50IGZvciBge2ZvcmVpZ25fbWFya2VyX3Jl
+bH1gIgogICAgICAgICkpLAogICAgICAgICJmb3JlaWduIG1hcmtlciBtdXN0IHJlbWFpbiB1bnRv
+dWNoZWQsIGdvdDpcbnt9IiwKICAgICAgICBmb3JlaWduX3NvdXJjZQogICAgKTsKCiAgICBsZXQg
+ZmlsbGVkX2lzc3VlID0gYmFja2VuZAogICAgICAgIC5nZXQoc2x1ZykKICAgICAgICAuYXdhaXQK
+ICAgICAgICAuZXhwZWN0KCJyZWFkIGZpbGxlZCBpc3N1ZSIpCiAgICAgICAgLmV4cGVjdCgiZmls
+bGVkIGlzc3VlIHJlbWFpbnMiKTsKICAgIGFzc2VydF9lcSEoZmlsbGVkX2lzc3VlLnBoYXNlLmFz
+X2RlcmVmKCksIFNvbWUodGRfcGhhc2U6OkNCX0ZJTExFRCkpOwoKICAgIC8vIFRoZSBwYXlsb2Fk
+IGRpcmVjdG9yeSBpdHNlbGYgbXVzdCBuZXZlciBoYXZlIGJlZW4gY3JlYXRlZCBpbnNpZGUgdGhl
+CiAgICAvLyByZXBvIHRyZWUuCiAgICBhc3NlcnQhKAogICAgICAgICFyb290LmpvaW4oIi5hdy9w
+YXlsb2FkcyIpLmV4aXN0cygpLAogICAgICAgICJhcHBseSBtdXN0IG5ldmVyIHdyaXRlIHBheWxv
+YWQgc3RhdGUgdW5kZXIgdGhlIHJlcG8ncyAuYXcvcGF5bG9hZHMvIgogICAgKTsKfQoKLy8vICMx
+OTAxIEFDMS9BQzI6IHRoZSBsaWZlY3ljbGUgZGlydHktdHJlZSBndWFyZCB0aGF0IGB0ZCBmaWxs
+IC0tYXBwbHlgIHJ1bnMKLy8vIGJlZm9yZSBzdGFnaW5nIHRoZSBjdXJyZW50IHRhcmdldCBtdXN0
+IHBlcm1pdCBhIGRpcnR5IGVkaXQgdG8gdGhlIGFjdGl2ZQovLy8gbWFya2VyJ3Mgb3duIGRlY2xh
+cmVkIHNvdXJjZSBwYXRoICh0aGUgaW1wbGVtZW50YXRpb24gZGlmZiBhbiBhZG9wdGlvbgovLy8g
+cGF5bG9hZCBpcyBtZWFudCB0byBjYXJyeSkgd2hpbGUgc3RpbGwgcmVqZWN0aW5nIGEgZGlydHkg
+ZWRpdCBhbnl3aGVyZQovLy8gZWxzZSBpbiB0aGUgdHJlZS4KI1t0b2tpbzo6dGVzdF0KYXN5bmMg
+Zm4gdGVzdF9hcHBseV9jb21taXRzX2N1cnJlbnRfbWFya2VyX2FuZF9wcmVzZXJ2ZXNfdW5yZWxh
+dGVkX2RpcnR5X3BhdGgoKSB7CiAgICB1c2UgYWdlbnRpY193b3JrZmxvdzo6aXNzdWVzOjp0eXBl
+czo6e3RkX3BoYXNlLCBJc3N1ZVR5cGV9OwogICAgdXNlIGFnZW50aWNfd29ya2Zsb3c6Omlzc3Vl
+czo6e0lzc3VlLCBJc3N1ZUJhY2tlbmQsIElzc3VlU3RhdGUsIExvY2FsQmFja2VuZH07CiAgICB1
+c2Ugc3RkOjpwcm9jZXNzOjpDb21tYW5kOwoKICAgIGxldCBTb21lKGdpdCkgPSBhZ2VudGljX3dv
+cmtmbG93OjpnaXQ6OmZpbmRfZ2l0X2JpbigpIGVsc2UgewogICAgICAgIGVwcmludGxuISgic2tp
+cHBpbmc6IGdpdCBiaW5hcnkgbm90IG9uIFBBVEgiKTsKICAgICAgICByZXR1cm47CiAgICB9Owog
+ICAgbGV0IE9rKGF3X2JpbikgPSBzdGQ6OmVudjo6dmFyKCJDQVJHT19CSU5fRVhFX2F3IikgZWxz
+ZSB7CiAgICAgICAgZXByaW50bG4hKCJza2lwcGluZzogQ0FSR09fQklOX0VYRV9hdyBub3Qgc2V0
+Iik7CiAgICAgICAgcmV0dXJuOwogICAgfTsKCiAgICBsZXQgdG1wID0gdGVtcGZpbGU6OnRlbXBk
+aXIoKS5leHBlY3QoInRlbXBkaXIiKTsKICAgIGxldCByb290ID0gdG1wLnBhdGgoKTsKCiAgICBD
+b21tYW5kOjpuZXcoJmdpdCkKICAgICAgICAuYXJnKCItQyIpCiAgICAgICAgLmFyZyhyb290KQog
+ICAgICAgIC5hcmdzKFsiaW5pdCIsICItYiIsICJwcm9qZWN0LXRlc3QiXSkKICAgICAgICAuc3Rh
+dHVzKCkKICAgICAgICAuZXhwZWN0KCJnaXQgaW5pdCIpOwogICAgZm9yIChrLCB2KSBpbiBbCiAg
+ICAgICAgKCJ1c2VyLmVtYWlsIiwgInRlc3RAdGVzdCIpLAogICAgICAgICgidXNlci5uYW1lIiwg
+InRlc3QiKSwKICAgICAgICAoImNvbW1pdC5ncGdzaWduIiwgImZhbHNlIiksCiAgICBdIHsKICAg
+ICAgICBDb21tYW5kOjpuZXcoJmdpdCkKICAgICAgICAgICAgLmFyZygiLUMiKQogICAgICAgICAg
+ICAuYXJnKHJvb3QpCiAgICAgICAgICAgIC5hcmdzKFsiY29uZmlnIiwgaywgdl0pCiAgICAgICAg
+ICAgIC5zdGF0dXMoKQogICAgICAgICAgICAudW53cmFwKCk7CiAgICB9CiAgICBzdGQ6OmZzOjp3
+cml0ZShyb290LmpvaW4oIlJFQURNRS5tZCIpLCAic2VlZFxuIikudW53cmFwKCk7CiAgICBzdGQ6
+OmZzOjpjcmVhdGVfZGlyX2FsbChyb290LmpvaW4oIi5hdyIpKS51bndyYXAoKTsKICAgIC8vICMx
+OTIxOiBgYXcgY2IgZmlsbGAncyBtdXRhdGluZyB2ZXJicyByZXNvbHZlIHRoZSBjb25maWd1cmVk
+IGlzc3VlCiAgICAvLyBiYWNrZW5kIHVuY29uZGl0aW9uYWxseSB2aWEgYGd1YXJkX2lzc3VlX211
+dGF0aW9uYCwgc28gdGhpcyBmdWxseQogICAgLy8gb2ZmbGluZSBzYW5kYm94IG5lZWRzIGEgcmVz
+b2x2YWJsZSBgbG9jYWxgIGJhY2tlbmQsIGdhdGVkIGJlaGluZCB0aGUKICAgIC8vIHNhbmN0aW9u
+ZWQgYEFXX0ZJWFRVUkVfTE9DQUxfQkFDS0VORD0xYCBmaXh0dXJlIGVzY2FwZSBoYXRjaCAoIzEz
+NDgpCiAgICAvLyBzZXQgb24gZXZlcnkgc3Bhd25lZCBgYXdgIGNvbW1hbmQgYmVsb3cuCiAgICBz
+dGQ6OmZzOjp3cml0ZSgKICAgICAgICByb290LmpvaW4oImF3LnRvbWwiKSwKICAgICAgICAiW2Fn
+ZW50aWNfd29ya2Zsb3cuaXNzdWVfcGxhdGZvcm1dXG50eXBlID0gXCJsb2NhbFwiXG4iLAogICAg
+KQogICAgLnVud3JhcCgpOwoKICAgIC8vIEEgc2luZ2xlIHByZS1leGlzdGluZyBYTUwgSEFORFdS
+SVRFIG1hcmtlciB3aXRoIGFuIGV4aXN0aW5nIGJvZHkg4oCUCiAgICAvLyBleGFjdGx5IHRoZSAj
+MTkwMCBhZG9wdGlvbiBzaGFwZS4KICAgIGxldCBtYXJrZXJfcmVsID0gImNyYXRlcy9leGlzdGlu
+Zy9zcmMvbGliLnJzIjsKICAgIGxldCBtYXJrZXJfcGF0aCA9IHJvb3Quam9pbihtYXJrZXJfcmVs
+KTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJfYWxsKG1hcmtlcl9wYXRoLnBhcmVudCgpLnVud3Jh
+cCgpKS51bndyYXAoKTsKICAgIHN0ZDo6ZnM6OndyaXRlKAogICAgICAgICZtYXJrZXJfcGF0aCwK
+ICAgICAgICAiLy8gPEhBTkRXUklURSBnYXA9XCJtaXNzaW5nLWdlbmVyYXRvcjpsb2dpY1wiIHRy
+YWNrZXI9XCJwZW5kaW5nLXRyYWNrZXJcIiByZWFzb249XCJmaXh0dXJlXCI+XG5cCnB1YiBmbiBl
+eGlzdGluZygpIHsgMTsgfVxuXAovLyA8L0hBTkRXUklURT5cbiIsCiAgICApCiAgICAudW53cmFw
+KCk7CgogICAgbGV0IHNwZWNfcmVsID0gIi5hdy90ZWNoLWRlc2lnbi9zcGVjcy9kZW1vLm1kIjsK
+ICAgIGxldCBzcGVjX2NvbnRlbnQgPSBmb3JtYXQhKAogICAgICAgICItLS1cbmlkOiBkZW1vXG5m
+aWxsX3NlY3Rpb25zOiBbY2hhbmdlc11cbi0tLVxuXG4jIERlbW9cblxuIyMgQ2hhbmdlc1xuPCEt
+LSB0eXBlOiBjaGFuZ2VzIGxhbmc6IHlhbWwgLS0+XG5cbmBgYHlhbWxcbmNoYW5nZXM6XG4gIC0g
+cGF0aDoge21hcmtlcl9yZWx9XG4gICAgYWN0aW9uOiBtb2RpZnlcbiAgICBpbXBsX21vZGU6IGhh
+bmQtd3JpdHRlblxuYGBgXG4iCiAgICApOwogICAgbGV0IHNwZWNfZGlyID0gcm9vdC5qb2luKCIu
+YXcvdGVjaC1kZXNpZ24vc3BlY3MiKTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJfYWxsKCZzcGVj
+X2RpcikudW53cmFwKCk7CiAgICBzdGQ6OmZzOjp3cml0ZShzcGVjX2Rpci5qb2luKCJkZW1vLm1k
+IiksIHNwZWNfY29udGVudCkudW53cmFwKCk7CgogICAgQ29tbWFuZDo6bmV3KCZnaXQpCiAgICAg
+ICAgLmFyZygiLUMiKQogICAgICAgIC5hcmcocm9vdCkKICAgICAgICAuYXJncyhbImFkZCIsICIu
+Il0pCiAgICAgICAgLnN0YXR1cygpCiAgICAgICAgLnVud3JhcCgpOwogICAgQ29tbWFuZDo6bmV3
+KCZnaXQpCiAgICAgICAgLmFyZygiLUMiKQogICAgICAgIC5hcmcocm9vdCkKICAgICAgICAuYXJn
+cyhbImNvbW1pdCIsICItbSIsICJzZWVkIl0pCiAgICAgICAgLnN0YXR1cygpCiAgICAgICAgLnVu
+d3JhcCgpOwoKICAgIGxldCBzbHVnID0gImNiLWZpbGwtYWRvcHRpb24tZGlydHktZ3VhcmQtdGVz
+dCI7CiAgICBsZXQgYmFja2VuZCA9IExvY2FsQmFja2VuZDo6ZnJvbV9wcm9qZWN0X3Jvb3Qocm9v
+dCk7CiAgICBsZXQgaXNzdWUgPSBJc3N1ZSB7CiAgICAgICAgaXNzdWVfdHlwZTogSXNzdWVUeXBl
+OjpFbmhhbmNlbWVudCwKICAgICAgICB0aXRsZTogZm9ybWF0ISgie3NsdWd9IFdJIiksCiAgICAg
+ICAgc3RhdGU6IElzc3VlU3RhdGU6Ok9wZW4sCiAgICAgICAgaWQ6IE5vbmUsCiAgICAgICAgZ2l0
+aHViX2lkOiBOb25lLAogICAgICAgIGdpdGxhYl9pZDogTm9uZSwKICAgICAgICB1cmw6IE5vbmUs
+CiAgICAgICAgYXV0aG9yOiBOb25lLAogICAgICAgIGxhYmVsczogdmVjIVtmb3JtYXQhKCJwaGFz
+ZTp7fSIsIHRkX3BoYXNlOjpDQl9HRU5ORUQpXSwKICAgICAgICBjcmVhdGVkX2F0OiBTb21lKGNo
+cm9ubzo6VXRjOjpub3coKS50b19yZmMzMzM5KCkpLAogICAgICAgIHVwZGF0ZWRfYXQ6IFNvbWUo
+Y2hyb25vOjpVdGM6Om5vdygpLnRvX3JmYzMzMzkoKSksCiAgICAgICAgc2x1Zzogc2x1Zy50b19z
+dHJpbmcoKSwKICAgICAgICBib2R5OiBmb3JtYXQhKCIjIHtzbHVnfSBXSVxuIiksCiAgICAgICAg
+cmVsYXRlZDogVmVjOjpuZXcoKSwKICAgICAgICBpbXBsZW1lbnRzOiB2ZWMhW3NwZWNfcmVsLnRv
+X3N0cmluZygpXSwKICAgICAgICBwaGFzZTogU29tZSh0ZF9waGFzZTo6Q0JfR0VOTkVELnRvX3N0
+cmluZygpKSwKICAgICAgICBicmFuY2g6IE5vbmUsCiAgICAgICAgdGFyZ2V0X2JyYW5jaDogTm9u
+ZSwKICAgICAgICBnaXRfd29ya2Zsb3c6IE5vbmUsCiAgICAgICAgY2hhbmdlX2lkOiBOb25lLAog
+ICAgICAgIGl0ZXJhdGlvbjogTm9uZSwKICAgICAgICBjdXJyZW50X3Rhc2tfaWQ6IE5vbmUsCiAg
+ICAgICAgaW1wbF9zcGVjX3BoYXNlOiBOb25lLAogICAgICAgIHRhc2tfcmV2aXNpb25zOiBOb25l
+LAogICAgICAgIHJldmlzaW9uX2NvdW50czogTm9uZSwKICAgICAgICBsYXN0X2FjdGlvbjogTm9u
+ZSwKICAgICAgICBzZXNzaW9uX2lkOiBOb25lLAogICAgICAgIHZhbGlkYXRpb25fZXJyb3JzOiBW
+ZWM6Om5ldygpLAogICAgICAgIHJldmlld19jb3VudDogTm9uZSwKICAgICAgICBmbGFnZ2VkX3Nl
+Y3Rpb25zOiBOb25lLAogICAgICAgIGZpbGxfcmV0cnlfY291bnQ6IE5vbmUsCiAgICAgICAgc2hp
+cF9zdGF0dXM6IE5vbmUsCiAgICAgICAgc2hpcF9jb21taXQ6IE5vbmUsCiAgICAgICAgcmVnZW5f
+dmVyaWZpZWRfYXQ6IE5vbmUsCiAgICB9OwogICAgYmFja2VuZC5jcmVhdGUoJmlzc3VlKS5hd2Fp
+dC5leHBlY3QoInNlZWQgb3BlbiBpc3N1ZSIpOwoKICAgIC8vIEJyaWVmIG1vZGUgZnJvbSBhIGNs
+ZWFuIHRyZWUgZW51bWVyYXRlcyB0aGUgc2luZ2xlIGFkb3B0aW9uIG1hcmtlciBhbmQKICAgIC8v
+IChhcyBhbiBhZG9wdGlvbiBwYXlsb2FkKSBhdXRvLWluaXRpYWxpemVzIGl0cyBwYXlsb2FkIHRv
+IHRoZSBhZG9wdAogICAgLy8gc2VudGluZWwg4oCUIG5vIHBheWxvYWQgd3JpdGUgbmVlZGVkIGJl
+Zm9yZSBhcHBseS4KICAgIGxldCBicmllZl9vdXRwdXQgPSBDb21tYW5kOjpuZXcoJmF3X2JpbikK
+ICAgICAgICAuYXJncyhbImNiIiwgImZpbGwiLCBzbHVnXSkKICAgICAgICAuY3VycmVudF9kaXIo
+cm9vdCkKICAgICAgICAuZW52KCJBV19GSVhUVVJFX0xPQ0FMX0JBQ0tFTkQiLCAiMSIpCiAgICAg
+ICAgLm91dHB1dCgpCiAgICAgICAgLmV4cGVjdCgicnVuIGF3IGNiIGZpbGwgKGJyaWVmKSIpOwog
+ICAgYXNzZXJ0ISgKICAgICAgICBicmllZl9vdXRwdXQuc3RhdHVzLnN1Y2Nlc3MoKSwKICAgICAg
+ICAiYnJpZWYgbW9kZSBzaG91bGQgZXhpdCAwOlxuc3Rkb3V0Olxue31cbnN0ZGVycjpcbnt9IiwK
+ICAgICAgICBTdHJpbmc6OmZyb21fdXRmOF9sb3NzeSgmYnJpZWZfb3V0cHV0LnN0ZG91dCksCiAg
+ICAgICAgU3RyaW5nOjpmcm9tX3V0ZjhfbG9zc3koJmJyaWVmX291dHB1dC5zdGRlcnIpCiAgICAp
+OwogICAgbGV0IGJyaWVmX2VudmVsb3BlOiBzZXJkZV9qc29uOjpWYWx1ZSA9CiAgICAgICAgc2Vy
+ZGVfanNvbjo6ZnJvbV9zdHIoU3RyaW5nOjpmcm9tX3V0ZjhfbG9zc3koJmJyaWVmX291dHB1dC5z
+dGRvdXQpLnRyaW0oKSkKICAgICAgICAgICAgLmV4cGVjdCgiYnJpZWYgZW52ZWxvcGUgaXMgdmFs
+aWQgSlNPTiIpOwogICAgbGV0IG1hcmtlcl9pZCA9IGJyaWVmX2VudmVsb3BlWyJpbnZva2UiXVsi
+YXJncyJdWyJtYXJrZXJfbGlzdCJdWzBdWyJpZCJdCiAgICAgICAgLmFzX3N0cigpCiAgICAgICAg
+LmV4cGVjdCgibWFya2VyX2xpc3RbMF0uaWQgcHJlc2VudCIpCiAgICAgICAgLnRvX3N0cmluZygp
+OwoKICAgIC8vIERpcnR5IGFuIHVucmVsYXRlZCB1bnRyYWNrZWQgZmlsZSwgdGhlbiBhcHBseS4g
+VGhlIGJvdW5kZWQgbGlmZWN5Y2xlCiAgICAvLyBjb21taXQgbXVzdCB1cGRhdGUgYW5kIGNvbW1p
+dCBvbmx5IHRoZSBhY3RpdmUgbWFya2VyIHNvdXJjZSB3aGlsZQogICAgLy8gcHJlc2VydmluZyB0
+aGUgdW5yZWxhdGVkIHdvcmt0cmVlIGNoYW5nZS4KICAgIGxldCB1bnJlbGF0ZWRfcGF0aCA9IHJv
+b3Quam9pbigidW5yZWxhdGVkLnR4dCIpOwogICAgc3RkOjpmczo6d3JpdGUoJnVucmVsYXRlZF9w
+YXRoLCAibm90IHBhcnQgb2YgdGhpcyBtYXJrZXJcbiIpLnVud3JhcCgpOwoKICAgIGxldCBhY2Nl
+cHRlZF9vdXRwdXQgPSBDb21tYW5kOjpuZXcoJmF3X2JpbikKICAgICAgICAuYXJncyhbImNiIiwg
+ImZpbGwiLCBzbHVnLCAiLS1hcHBseSIsICItLW1hcmtlciIsICZtYXJrZXJfaWRdKQogICAgICAg
+IC5jdXJyZW50X2Rpcihyb290KQogICAgICAgIC5lbnYoIkFXX0ZJWFRVUkVfTE9DQUxfQkFDS0VO
+RCIsICIxIikKICAgICAgICAub3V0cHV0KCkKICAgICAgICAuZXhwZWN0KCJydW4gYXcgY2IgZmls
+bCAtLWFwcGx5IHdpdGggYW4gdW5yZWxhdGVkIGRpcnR5IGZpbGUiKTsKICAgIGFzc2VydCEoCiAg
+ICAgICAgYWNjZXB0ZWRfb3V0cHV0LnN0YXR1cy5zdWNjZXNzKCksCiAgICAgICAgImFwcGx5IG11
+c3QgcHJlc2VydmUgdW5yZWxhdGVkIGRpcnR5IHdvcmsgd2hpbGUgY29tbWl0dGluZyBpdHMgYm91
+bmRlZCBzb3VyY2U6XG5zdGRvdXQ6XG57fVxuc3RkZXJyOlxue30iLAogICAgICAgIFN0cmluZzo6
+ZnJvbV91dGY4X2xvc3N5KCZhY2NlcHRlZF9vdXRwdXQuc3Rkb3V0KSwKICAgICAgICBTdHJpbmc6
+OmZyb21fdXRmOF9sb3NzeSgmYWNjZXB0ZWRfb3V0cHV0LnN0ZGVycikKICAgICk7CgogICAgbGV0
+IGFkb3B0ZWRfc291cmNlID0KICAgICAgICBzdGQ6OmZzOjpyZWFkX3RvX3N0cmluZygmbWFya2Vy
+X3BhdGgpLmV4cGVjdCgicmVhZCBtYXJrZXIgc291cmNlIGFmdGVyIGFjY2VwdGVkIGFwcGx5Iik7
+CiAgICBhc3NlcnQhKAogICAgICAgIGFkb3B0ZWRfc291cmNlLmNvbnRhaW5zKCJwdWIgZm4gZXhp
+c3RpbmcoKSB7IDE7IH0iKSwKICAgICAgICAidGhlIGFkb3B0ZWQgaW1wbGVtZW50YXRpb24gYm9k
+eSBtdXN0IHN1cnZpdmUgdGhlIHRyYWNrZXIgdXBkYXRlLCBnb3Q6XG57fSIsCiAgICAgICAgYWRv
+cHRlZF9zb3VyY2UKICAgICk7CiAgICBhc3NlcnQhKAogICAgICAgIGFkb3B0ZWRfc291cmNlLmNv
+bnRhaW5zKCZmb3JtYXQhKCJ0cmFja2VyPVwiI3tzbHVnfVwiIikpLAogICAgICAgICJ0aGUgYWRv
+cHRpb24gYXBwbHkgbXVzdCBzdGlsbCBiaW5kIHRoZSBtYXJrZXIgdHJhY2tlciB0byB0aGUgd29y
+ayBpdGVtLCBnb3Q6XG57fSIsCiAgICAgICAgYWRvcHRlZF9zb3VyY2UKICAgICk7CgogICAgLy8g
+VGhlIG1hcmtlciBzb3VyY2UgYW5kIGxpZmVjeWNsZSBzdGF0ZSBsYW5kIHRvZ2V0aGVyOyB1bnJl
+bGF0ZWQgd29yayBpcwogICAgLy8gbmVpdGhlciBzdGFnZWQgbm9yIGNvbW1pdHRlZC4KICAgIGxl
+dCBzdGF0dXNfb3V0cHV0ID0gQ29tbWFuZDo6bmV3KCZnaXQpCiAgICAgICAgLmFyZygiLUMiKQog
+ICAgICAgIC5hcmcocm9vdCkKICAgICAgICAuYXJncyhbInN0YXR1cyIsICItLXBvcmNlbGFpbiJd
+KQogICAgICAgIC5vdXRwdXQoKQogICAgICAgIC5leHBlY3QoImdpdCBzdGF0dXMgYWZ0ZXIgYWNj
+ZXB0ZWQgYXBwbHkiKTsKICAgIGFzc2VydCEoCiAgICAgICAgU3RyaW5nOjpmcm9tX3V0ZjhfbG9z
+c3koJnN0YXR1c19vdXRwdXQuc3Rkb3V0KS5jb250YWlucygidW5yZWxhdGVkLnR4dCIpLAogICAg
+ICAgICJ0aGUgbWFya2VyLWZpbGwgY29tbWl0IG11c3QgcHJlc2VydmUgdGhlIHVucmVsYXRlZCBk
+aXJ0eSBwYXRoOlxue30iLAogICAgICAgIFN0cmluZzo6ZnJvbV91dGY4X2xvc3N5KCZzdGF0dXNf
+b3V0cHV0LnN0ZG91dCkKICAgICk7CiAgICBsZXQgc2hvd19vdXRwdXQgPSBDb21tYW5kOjpuZXco
+JmdpdCkKICAgICAgICAuYXJnKCItQyIpCiAgICAgICAgLmFyZyhyb290KQogICAgICAgIC5hcmdz
+KFsic2hvdyIsICItLXN0YXQiLCAiSEVBRCJdKQogICAgICAgIC5vdXRwdXQoKQogICAgICAgIC5l
+eHBlY3QoImdpdCBzaG93IC0tc3RhdCBIRUFEIik7CiAgICBhc3NlcnQhKAogICAgICAgIFN0cmlu
+Zzo6ZnJvbV91dGY4X2xvc3N5KCZzaG93X291dHB1dC5zdGRvdXQpLmNvbnRhaW5zKG1hcmtlcl9y
+ZWwpLAogICAgICAgICJ0aGUgbm9ybWFsIG1hcmtlci1maWxsIGNvbW1pdCBtdXN0IGluY2x1ZGUg
+dGhlIGFjY2VwdGVkIG1hcmtlciBzb3VyY2UgcGF0aCwgZ290Olxue30iLAogICAgICAgIFN0cmlu
+Zzo6ZnJvbV91dGY4X2xvc3N5KCZzaG93X291dHB1dC5zdGRvdXQpCiAgICApOwoKICAgIGxldCBm
+aWxsZWRfaXNzdWUgPSBiYWNrZW5kCiAgICAgICAgLmdldChzbHVnKQogICAgICAgIC5hd2FpdAog
+ICAgICAgIC5leHBlY3QoInJlYWQgZmlsbGVkIGlzc3VlIikKICAgICAgICAuZXhwZWN0KCJmaWxs
+ZWQgaXNzdWUgcmVtYWlucyIpOwogICAgYXNzZXJ0X2VxIShmaWxsZWRfaXNzdWUucGhhc2UuYXNf
+ZGVyZWYoKSwgU29tZSh0ZF9waGFzZTo6Q0JfRklMTEVEKSk7Cn0KCg==
+```
+
+### Source Partition 0002
+<!-- aw-source-partition: index=2 count=2 bytes=7914 payload_bytes=10690 encoding=base64 digest=sha256:856b5bb7c00da517bccec92a98ef341b2232b831492230aeb073062ce015793a boundary=ast terminal_newline=true -->
+
+```text
+Ly8vICMxOTA0IEFDMS9BQzIvQUMzOiBvbmNlIHRoZSBhY3RpdmUgVEQncyBkZWNsYXJlZCBgIyMg
+Q2hhbmdlc2AgcGF0aHMgY2FycnkKLy8vIHplcm8gSEFORFdSSVRFIG1hcmtlcnMgKGEgbWFya2Vy
+LWZyZWUgaW50ZWdyYXRpb24gdGVzdCArIHNlbWFudGljIGRvYwovLy8gYWNjb21wYW55aW5nIGFs
+cmVhZHktZmlsbGVkIHNvdXJjZSksIGBhdyBjYiBmaWxsIDxpZD5gIGJyaWVmIG1vZGUgbXVzdAov
+Ly8gcGVybWl0IG9ubHkgdGhvc2UgZGVjbGFyZWQgcGF0aHMgdG8gYmUgZGlydHksIHN0YWdlIGFu
+ZCBjb21taXQgdGhlbQovLy8gdGhyb3VnaCB0aGUgbm9ybWFsIHRlcm1pbmFsIENiLUZpbGwgbGlm
+ZWN5Y2xlIGNvbW1pdCwgYW5kIGFkdmFuY2UgdGhlCi8vLyBwaGFzZSDigJQgd2hpbGUgYSBkaXJ0
+eSBwYXRoIG91dHNpZGUgdGhhdCBkZWNsYXJlZCBzY29wZSBzdGF5cyBhIGhhcmQKLy8vIHJlamVj
+dGlvbi4KI1t0b2tpbzo6dGVzdF0KYXN5bmMgZm4gdGVzdF9tYXJrZXJfZnJlZV9icmllZl9jb21t
+aXRzX2RlY2xhcmVkX2V2aWRlbmNlX2FuZF9wcmVzZXJ2ZXNfdW5yZWxhdGVkX2RpcnR5X3BhdGgo
+KSB7CiAgICB1c2UgYWdlbnRpY193b3JrZmxvdzo6aXNzdWVzOjp0eXBlczo6e3RkX3BoYXNlLCBJ
+c3N1ZVR5cGV9OwogICAgdXNlIGFnZW50aWNfd29ya2Zsb3c6Omlzc3Vlczo6e0lzc3VlLCBJc3N1
+ZUJhY2tlbmQsIElzc3VlU3RhdGUsIExvY2FsQmFja2VuZH07CiAgICB1c2Ugc3RkOjpwcm9jZXNz
+OjpDb21tYW5kOwoKICAgIGxldCBTb21lKGdpdCkgPSBhZ2VudGljX3dvcmtmbG93OjpnaXQ6OmZp
+bmRfZ2l0X2JpbigpIGVsc2UgewogICAgICAgIGVwcmludGxuISgic2tpcHBpbmc6IGdpdCBiaW5h
+cnkgbm90IG9uIFBBVEgiKTsKICAgICAgICByZXR1cm47CiAgICB9OwogICAgbGV0IE9rKGF3X2Jp
+bikgPSBzdGQ6OmVudjo6dmFyKCJDQVJHT19CSU5fRVhFX2F3IikgZWxzZSB7CiAgICAgICAgZXBy
+aW50bG4hKCJza2lwcGluZzogQ0FSR09fQklOX0VYRV9hdyBub3Qgc2V0Iik7CiAgICAgICAgcmV0
+dXJuOwogICAgfTsKCiAgICBsZXQgdG1wID0gdGVtcGZpbGU6OnRlbXBkaXIoKS5leHBlY3QoInRl
+bXBkaXIiKTsKICAgIGxldCByb290ID0gdG1wLnBhdGgoKTsKCiAgICBDb21tYW5kOjpuZXcoJmdp
+dCkKICAgICAgICAuYXJnKCItQyIpCiAgICAgICAgLmFyZyhyb290KQogICAgICAgIC5hcmdzKFsi
+aW5pdCIsICItYiIsICJwcm9qZWN0LXRlc3QiXSkKICAgICAgICAuc3RhdHVzKCkKICAgICAgICAu
+ZXhwZWN0KCJnaXQgaW5pdCIpOwogICAgZm9yIChrLCB2KSBpbiBbCiAgICAgICAgKCJ1c2VyLmVt
+YWlsIiwgInRlc3RAdGVzdCIpLAogICAgICAgICgidXNlci5uYW1lIiwgInRlc3QiKSwKICAgICAg
+ICAoImNvbW1pdC5ncGdzaWduIiwgImZhbHNlIiksCiAgICBdIHsKICAgICAgICBDb21tYW5kOjpu
+ZXcoJmdpdCkKICAgICAgICAgICAgLmFyZygiLUMiKQogICAgICAgICAgICAuYXJnKHJvb3QpCiAg
+ICAgICAgICAgIC5hcmdzKFsiY29uZmlnIiwgaywgdl0pCiAgICAgICAgICAgIC5zdGF0dXMoKQog
+ICAgICAgICAgICAudW53cmFwKCk7CiAgICB9CiAgICBzdGQ6OmZzOjp3cml0ZShyb290LmpvaW4o
+IlJFQURNRS5tZCIpLCAic2VlZFxuIikudW53cmFwKCk7CiAgICBzdGQ6OmZzOjpjcmVhdGVfZGly
+X2FsbChyb290LmpvaW4oIi5hdyIpKS51bndyYXAoKTsKICAgIC8vICMxOTIxOiBgYXcgY2IgZmls
+bGAncyBtdXRhdGluZyB2ZXJicyByZXNvbHZlIHRoZSBjb25maWd1cmVkIGlzc3VlCiAgICAvLyBi
+YWNrZW5kIHVuY29uZGl0aW9uYWxseSB2aWEgYGd1YXJkX2lzc3VlX211dGF0aW9uYCwgc28gdGhp
+cyBmdWxseQogICAgLy8gb2ZmbGluZSBzYW5kYm94IG5lZWRzIGEgcmVzb2x2YWJsZSBgbG9jYWxg
+IGJhY2tlbmQsIGdhdGVkIGJlaGluZCB0aGUKICAgIC8vIHNhbmN0aW9uZWQgYEFXX0ZJWFRVUkVf
+TE9DQUxfQkFDS0VORD0xYCBmaXh0dXJlIGVzY2FwZSBoYXRjaCAoIzEzNDgpCiAgICAvLyBzZXQg
+b24gZXZlcnkgc3Bhd25lZCBgYXdgIGNvbW1hbmQgYmVsb3cuCiAgICBzdGQ6OmZzOjp3cml0ZSgK
+ICAgICAgICByb290LmpvaW4oImF3LnRvbWwiKSwKICAgICAgICAiW2FnZW50aWNfd29ya2Zsb3cu
+aXNzdWVfcGxhdGZvcm1dXG50eXBlID0gXCJsb2NhbFwiXG4iLAogICAgKQogICAgLnVud3JhcCgp
+OwoKICAgIC8vIFR3byBkZWNsYXJlZCBDaGFuZ2VzIHBhdGhzIHRoYXQgaW50ZW50aW9uYWxseSBj
+YXJyeSBubyBIQU5EV1JJVEUKICAgIC8vIG1hcmtlcjogYW4gaW50ZWdyYXRpb24gdGVzdCBhbmQg
+YSBzZW1hbnRpYyBkb2MgYWNjb21wYW55aW5nCiAgICAvLyBtYXJrZXItYmFja2VkIHNvdXJjZSBs
+YW5kZWQgZWxzZXdoZXJlLgogICAgbGV0IHRlc3RfcmVsID0gImFwcHMvZGVtby90ZXN0cy9leGFt
+cGxlX3Rlc3QucnMiOwogICAgbGV0IGRvY19yZWwgPSAiYXBwcy9kZW1vL3RlY2gtZGVzaWduL3Nl
+bWFudGljL2V4YW1wbGUubWQiOwogICAgZm9yIHJlbCBpbiBbdGVzdF9yZWwsIGRvY19yZWxdIHsK
+ICAgICAgICBsZXQgcCA9IHJvb3Quam9pbihyZWwpOwogICAgICAgIHN0ZDo6ZnM6OmNyZWF0ZV9k
+aXJfYWxsKHAucGFyZW50KCkudW53cmFwKCkpLnVud3JhcCgpOwogICAgICAgIHN0ZDo6ZnM6Ondy
+aXRlKCZwLCAic2VlZCBjb250ZW50XG4iKS51bndyYXAoKTsKICAgIH0KCiAgICBsZXQgc3BlY19y
+ZWwgPSAiLmF3L3RlY2gtZGVzaWduL3NwZWNzL2RlbW8ubWQiOwogICAgbGV0IHNwZWNfY29udGVu
+dCA9IGZvcm1hdCEoCiAgICAgICAgIi0tLVxuaWQ6IGRlbW9cbmZpbGxfc2VjdGlvbnM6IFtjaGFu
+Z2VzXVxuLS0tXG5cbiMgRGVtb1xuXG4jIyBDaGFuZ2VzXG48IS0tIHR5cGU6IGNoYW5nZXMgbGFu
+ZzogeWFtbCAtLT5cblxuYGBgeWFtbFxuY2hhbmdlczpcbiAgLSBwYXRoOiB7dGVzdF9yZWx9XG4g
+ICAgYWN0aW9uOiBtb2RpZnlcbiAgICBpbXBsX21vZGU6IGhhbmQtd3JpdHRlblxuICAtIHBhdGg6
+IHtkb2NfcmVsfVxuICAgIGFjdGlvbjogbW9kaWZ5XG4gICAgaW1wbF9tb2RlOiBoYW5kLXdyaXR0
+ZW5cbmBgYFxuIgogICAgKTsKICAgIGxldCBzcGVjX2RpciA9IHJvb3Quam9pbigiLmF3L3RlY2gt
+ZGVzaWduL3NwZWNzIik7CiAgICBzdGQ6OmZzOjpjcmVhdGVfZGlyX2FsbCgmc3BlY19kaXIpLnVu
+d3JhcCgpOwogICAgc3RkOjpmczo6d3JpdGUoc3BlY19kaXIuam9pbigiZGVtby5tZCIpLCBzcGVj
+X2NvbnRlbnQpLnVud3JhcCgpOwoKICAgIENvbW1hbmQ6Om5ldygmZ2l0KQogICAgICAgIC5hcmco
+Ii1DIikKICAgICAgICAuYXJnKHJvb3QpCiAgICAgICAgLmFyZ3MoWyJhZGQiLCAiLiJdKQogICAg
+ICAgIC5zdGF0dXMoKQogICAgICAgIC51bndyYXAoKTsKICAgIENvbW1hbmQ6Om5ldygmZ2l0KQog
+ICAgICAgIC5hcmcoIi1DIikKICAgICAgICAuYXJnKHJvb3QpCiAgICAgICAgLmFyZ3MoWyJjb21t
+aXQiLCAiLW0iLCAic2VlZCJdKQogICAgICAgIC5zdGF0dXMoKQogICAgICAgIC51bndyYXAoKTsK
+CiAgICBsZXQgc2x1ZyA9ICJjYi1maWxsLW1hcmtlci1mcmVlLWV2aWRlbmNlLXRlc3QiOwogICAg
+bGV0IGJhY2tlbmQgPSBMb2NhbEJhY2tlbmQ6OmZyb21fcHJvamVjdF9yb290KHJvb3QpOwogICAg
+bGV0IGlzc3VlID0gSXNzdWUgewogICAgICAgIGlzc3VlX3R5cGU6IElzc3VlVHlwZTo6RW5oYW5j
+ZW1lbnQsCiAgICAgICAgdGl0bGU6IGZvcm1hdCEoIntzbHVnfSBXSSIpLAogICAgICAgIHN0YXRl
+OiBJc3N1ZVN0YXRlOjpPcGVuLAogICAgICAgIGlkOiBOb25lLAogICAgICAgIGdpdGh1Yl9pZDog
+Tm9uZSwKICAgICAgICBnaXRsYWJfaWQ6IE5vbmUsCiAgICAgICAgdXJsOiBOb25lLAogICAgICAg
+IGF1dGhvcjogTm9uZSwKICAgICAgICBsYWJlbHM6IHZlYyFbZm9ybWF0ISgicGhhc2U6e30iLCB0
+ZF9waGFzZTo6Q0JfR0VOTkVEKV0sCiAgICAgICAgY3JlYXRlZF9hdDogU29tZShjaHJvbm86OlV0
+Yzo6bm93KCkudG9fcmZjMzMzOSgpKSwKICAgICAgICB1cGRhdGVkX2F0OiBTb21lKGNocm9ubzo6
+VXRjOjpub3coKS50b19yZmMzMzM5KCkpLAogICAgICAgIHNsdWc6IHNsdWcudG9fc3RyaW5nKCks
+CiAgICAgICAgYm9keTogZm9ybWF0ISgiIyB7c2x1Z30gV0lcbiIpLAogICAgICAgIHJlbGF0ZWQ6
+IFZlYzo6bmV3KCksCiAgICAgICAgaW1wbGVtZW50czogdmVjIVtzcGVjX3JlbC50b19zdHJpbmco
+KV0sCiAgICAgICAgcGhhc2U6IFNvbWUodGRfcGhhc2U6OkNCX0dFTk5FRC50b19zdHJpbmcoKSks
+CiAgICAgICAgYnJhbmNoOiBOb25lLAogICAgICAgIHRhcmdldF9icmFuY2g6IE5vbmUsCiAgICAg
+ICAgZ2l0X3dvcmtmbG93OiBOb25lLAogICAgICAgIGNoYW5nZV9pZDogTm9uZSwKICAgICAgICBp
+dGVyYXRpb246IE5vbmUsCiAgICAgICAgY3VycmVudF90YXNrX2lkOiBOb25lLAogICAgICAgIGlt
+cGxfc3BlY19waGFzZTogTm9uZSwKICAgICAgICB0YXNrX3JldmlzaW9uczogTm9uZSwKICAgICAg
+ICByZXZpc2lvbl9jb3VudHM6IE5vbmUsCiAgICAgICAgbGFzdF9hY3Rpb246IE5vbmUsCiAgICAg
+ICAgc2Vzc2lvbl9pZDogTm9uZSwKICAgICAgICB2YWxpZGF0aW9uX2Vycm9yczogVmVjOjpuZXco
+KSwKICAgICAgICByZXZpZXdfY291bnQ6IE5vbmUsCiAgICAgICAgZmxhZ2dlZF9zZWN0aW9uczog
+Tm9uZSwKICAgICAgICBmaWxsX3JldHJ5X2NvdW50OiBOb25lLAogICAgICAgIHNoaXBfc3RhdHVz
+OiBOb25lLAogICAgICAgIHNoaXBfY29tbWl0OiBOb25lLAogICAgICAgIHJlZ2VuX3ZlcmlmaWVk
+X2F0OiBOb25lLAogICAgfTsKICAgIGJhY2tlbmQuY3JlYXRlKCZpc3N1ZSkuYXdhaXQuZXhwZWN0
+KCJzZWVkIG9wZW4gaXNzdWUiKTsKCiAgICAvLyBEaXJ0eSBib3RoIGRlY2xhcmVkIGV2aWRlbmNl
+IGFuZCBhbiB1bnJlbGF0ZWQgcGF0aC4gVGhlIHplcm8tbWFya2VyCiAgICAvLyBmYXN0IHBhdGgg
+bXVzdCBjb21taXQgb25seSB0aGUgZGVjbGFyZWQgc2NvcGUgYW5kIHByZXNlcnZlIHVucmVsYXRl
+ZAogICAgLy8gd29ya3RyZWUgc3RhdGUuCiAgICBsZXQgdW5yZWxhdGVkX3BhdGggPSByb290Lmpv
+aW4oInVucmVsYXRlZC50eHQiKTsKICAgIHN0ZDo6ZnM6OndyaXRlKCZ1bnJlbGF0ZWRfcGF0aCwg
+Im5vdCBwYXJ0IG9mIHRoaXMgVEQncyBkZWNsYXJlZCBzY29wZVxuIikudW53cmFwKCk7CiAgICBz
+dGQ6OmZzOjp3cml0ZShyb290LmpvaW4odGVzdF9yZWwpLCAiLy8gdXBkYXRlZCB0ZXN0IGV2aWRl
+bmNlXG4iKS51bndyYXAoKTsKICAgIHN0ZDo6ZnM6OndyaXRlKHJvb3Quam9pbihkb2NfcmVsKSwg
+InVwZGF0ZWQgZG9jIGV2aWRlbmNlXG4iKS51bndyYXAoKTsKCiAgICBsZXQgYWNjZXB0ZWRfb3V0
+cHV0ID0gQ29tbWFuZDo6bmV3KCZhd19iaW4pCiAgICAgICAgLmFyZ3MoWyJjYiIsICJmaWxsIiwg
+c2x1Z10pCiAgICAgICAgLmN1cnJlbnRfZGlyKHJvb3QpCiAgICAgICAgLmVudigiQVdfRklYVFVS
+RV9MT0NBTF9CQUNLRU5EIiwgIjEiKQogICAgICAgIC5vdXRwdXQoKQogICAgICAgIC5leHBlY3Qo
+InJ1biBhdyBjYiBmaWxsIChicmllZikgd2l0aCBkZWNsYXJlZCBhbmQgdW5yZWxhdGVkIGRpcnR5
+IGZpbGVzIik7CiAgICBhc3NlcnQhKAogICAgICAgIGFjY2VwdGVkX291dHB1dC5zdGF0dXMuc3Vj
+Y2VzcygpLAogICAgICAgICJicmllZiBtdXN0IGNvbW1pdCBpdHMgZGVjbGFyZWQgQ2hhbmdlcyBz
+Y29wZSB3aXRob3V0IGNvbnN1bWluZyB1bnJlbGF0ZWQgd29yazpcbnN0ZG91dDpcbnt9XG5zdGRl
+cnI6XG57fSIsCiAgICAgICAgU3RyaW5nOjpmcm9tX3V0ZjhfbG9zc3koJmFjY2VwdGVkX291dHB1
+dC5zdGRvdXQpLAogICAgICAgIFN0cmluZzo6ZnJvbV91dGY4X2xvc3N5KCZhY2NlcHRlZF9vdXRw
+dXQuc3RkZXJyKQogICAgKTsKICAgIGxldCBhY2NlcHRlZF9zdGRvdXQgPSBTdHJpbmc6OmZyb21f
+dXRmOF9sb3NzeSgmYWNjZXB0ZWRfb3V0cHV0LnN0ZG91dCk7CiAgICBhc3NlcnQhKAogICAgICAg
+IGFjY2VwdGVkX3N0ZG91dC5jb250YWlucygiXCJjb21tYW5kXCI6XCJhdyBjYiBjaGVjayIpLAog
+ICAgICAgICJ0aGUgemVyby1tYXJrZXIgZmFzdCBwYXRoIG11c3QgZGlzcGF0Y2ggdG8gdGVybWlu
+YWwgY29kZS1jaGVjaywgZ290Olxue30iLAogICAgICAgIGFjY2VwdGVkX3N0ZG91dAogICAgKTsK
+CiAgICBsZXQgc3RhdHVzX2FmdGVyX2FjY2VwdCA9IENvbW1hbmQ6Om5ldygmZ2l0KQogICAgICAg
+IC5hcmcoIi1DIikKICAgICAgICAuYXJnKHJvb3QpCiAgICAgICAgLmFyZ3MoWyJzdGF0dXMiLCAi
+LS1wb3JjZWxhaW4iXSkKICAgICAgICAub3V0cHV0KCkKICAgICAgICAuZXhwZWN0KCJnaXQgc3Rh
+dHVzIGFmdGVyIGFjY2VwdGVkIGJyaWVmIik7CiAgICBhc3NlcnQhKAogICAgICAgIFN0cmluZzo6
+ZnJvbV91dGY4X2xvc3N5KCZzdGF0dXNfYWZ0ZXJfYWNjZXB0LnN0ZG91dCkuY29udGFpbnMoInVu
+cmVsYXRlZC50eHQiKSwKICAgICAgICAidGhlIGRlY2xhcmVkLWV2aWRlbmNlIGNvbW1pdCBtdXN0
+IHByZXNlcnZlIHVucmVsYXRlZCBkaXJ0eSB3b3JrOlxue30iLAogICAgICAgIFN0cmluZzo6ZnJv
+bV91dGY4X2xvc3N5KCZzdGF0dXNfYWZ0ZXJfYWNjZXB0LnN0ZG91dCkKICAgICk7CiAgICBsZXQg
+c2hvd19vdXRwdXQgPSBDb21tYW5kOjpuZXcoJmdpdCkKICAgICAgICAuYXJnKCItQyIpCiAgICAg
+ICAgLmFyZyhyb290KQogICAgICAgIC5hcmdzKFsic2hvdyIsICItLXN0YXQiLCAiSEVBRCJdKQog
+ICAgICAgIC5vdXRwdXQoKQogICAgICAgIC5leHBlY3QoImdpdCBzaG93IC0tc3RhdCBIRUFEIik7
+CiAgICBsZXQgc2hvd19zdGRvdXQgPSBTdHJpbmc6OmZyb21fdXRmOF9sb3NzeSgmc2hvd19vdXRw
+dXQuc3Rkb3V0KTsKICAgIGFzc2VydCEoCiAgICAgICAgc2hvd19zdGRvdXQuY29udGFpbnModGVz
+dF9yZWwpICYmIHNob3dfc3Rkb3V0LmNvbnRhaW5zKGRvY19yZWwpLAogICAgICAgICJ0aGUgdGVy
+bWluYWwgQ2ItRmlsbCBjb21taXQgbXVzdCBpbmNsdWRlIGJvdGggZGVjbGFyZWQgbWFya2VyLWZy
+ZWUgcGF0aHMsIGdvdDpcbnt9IiwKICAgICAgICBzaG93X3N0ZG91dAogICAgKTsKCiAgICBsZXQg
+ZmlsbGVkX2lzc3VlID0gYmFja2VuZAogICAgICAgIC5nZXQoc2x1ZykKICAgICAgICAuYXdhaXQK
+ICAgICAgICAuZXhwZWN0KCJyZWFkIGZpbGxlZCBpc3N1ZSIpCiAgICAgICAgLmV4cGVjdCgiZmls
+bGVkIGlzc3VlIHJlbWFpbnMiKTsKICAgIGFzc2VydF9lcSEoZmlsbGVkX2lzc3VlLnBoYXNlLmFz
+X2RlcmVmKCksIFNvbWUodGRfcGhhc2U6OkNCX0ZJTExFRCkpOwp9CgojW3Rlc3RdCiNbaWdub3Jl
+ID0gInJlcXVpcmVzIHJlYWwgd29ya3RyZWUgKyBnaXQgaGlzdG9yeSJdCmZuIHRlc3RfY2JfZmls
+bF90cmFpbGVyX2NvbW1pdHRlZCgpIHsKICAgIC8vIFJlc2VydmVkOiBhc3NlcnQgZ2l0IGxvZyBj
+b250YWlucyBgTGlmZWN5Y2xlLVN0YWdlOiBDYi1GaWxsYCBhZnRlciBhCiAgICAvLyBzdWNjZXNz
+ZnVsIGFwcGx5LWxhc3QtbWFya2VyIHJ1bi4KfQoKI1t0ZXN0XQojW2lnbm9yZSA9ICJyZXF1aXJl
+cyByZWFsIHdvcmt0cmVlICsgaXNzdWUgZmlsZSJdCmZuIHRlc3RfY2JfZmlsbGVkX3BoYXNlX3dy
+aXR0ZW4oKSB7CiAgICAvLyBSZXNlcnZlZDogYXNzZXJ0IGlzc3VlIGZyb250bWF0dGVyIGhhcyBw
+aGFzZTogY2JfZmlsbGVkIGFmdGVyIHN1Y2Nlc3MuCn0KCiNbdGVzdF0KI1tpZ25vcmUgPSAicmVx
+dWlyZXMgcmVhbCBjYiBjaGVjayBwaXBlbGluZSArIGRyaWZ0IGZpeHR1cmUiXQpmbiB0ZXN0X2Ni
+X2NoZWNrX2dhdGVfcmVqZWN0aW9uKCkgewogICAgLy8gUmVzZXJ2ZWQ6IGxlYXZlIG9uZSBIQU5E
+V1JJVEUgYmxvY2sgaW4gcGxhY2UsIGludm9rZSAtLWFwcGx5IG9uCiAgICAvLyBhbm90aGVyIG1h
+cmtlciBsYXN0LCBhc3NlcnQgZXJyb3IgZW52ZWxvcGUgYWN0aW9uID09ICJlcnJvciIgYW5kCiAg
+ICAvLyBwaGFzZSByZW1haW5zIGNiX2dlbm5lZC4KfQoKLy8gQ09ERUdFTi1FTkQK
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

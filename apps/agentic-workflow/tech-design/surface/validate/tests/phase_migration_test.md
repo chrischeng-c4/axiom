@@ -64,7 +64,7 @@ fn test_retired_pre_gen_phase_normalizes_to_td_created() {
 fn test_retired_post_fill_phases_normalize_to_cb_filled() {
     // cb_reviewed / cb_revised / cb_arbitrated are all post-fill CRRR
     // states, so they migrate to cb_filled — ready for terminal
-    // `aw td code-check`, which now accepts them.
+    // `aw cb check`, which now accepts them.
     for phase in ["cb_reviewed", "cb_revised", "cb_arbitrated"] {
         assert_eq!(
             td_phase::normalize(phase),
@@ -114,7 +114,7 @@ fn test_trailer_writer_emits_canonical() {
 }
 
 /// #850 AC1/AC2 end-to-end: a WI persisted at the retired `cb_reviewed`
-/// phase used to be routed straight into `aw td code-check` by the
+/// phase used to be routed straight into `aw cb check` by the
 /// capability loop (`lifecycle_action_for_work_item`), which the terminal
 /// code-check phase guard (`td_phase::is_terminal_code_checkable`) then
 /// rejected outright — an unrecoverable dispatch-loop with no HITL
@@ -241,7 +241,7 @@ async fn test_code_check_accepts_retired_cb_reviewed_phase() {
         .arg("--allow-empty-impl")
         .current_dir(root)
         .output()
-        .expect("run aw td code-check");
+        .expect("run aw cb check");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

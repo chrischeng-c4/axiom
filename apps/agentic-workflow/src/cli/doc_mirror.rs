@@ -281,6 +281,7 @@ fn first_brief_sentence(readme_text: &str) -> Option<String> {
         .lines()
         .skip_while(|l| l.trim().is_empty())
         .take_while(|l| !l.trim().is_empty())
+        .filter(|line| !line.trim_start().starts_with("<!--"))
         .collect::<Vec<_>>()
         .join(" ");
     let joined = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");

@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/interfaces/src/cb.md#source
 // CODEGEN-BEGIN
-//! Code-artifact workflow verb implementations inherited by `aw td`.
+//! `aw cb` CLI — codebase materialization lifecycle.
 //!
 //! `cb` is the canonical namespace for code generation, code checks, and
 //! HANDWRITE marker fill/review flows. The lifecycle phase written by `td gen`
@@ -9,9 +9,7 @@
 //! @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 
 use anyhow::{Context, Result};
-use clap::Args;
-#[cfg(test)]
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,15 +17,18 @@ use crate::cli::td::{self, AuditArgs, AuditGroupBy, GenCodeArgs};
 
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
-// Kept test-only (issue #860 cleanup): the production `CbArgs`/`run`
-// dispatcher this enum backed had zero callers (no `aw cb` CLI surface
-// remains; `aw td` mounts `run_gen`/`run_gen_source`/`run_check`/`run_claim`/
-// `cb_fill::run` directly) and was deleted. This enum is retained only as
-// the `#[command(subcommand)]` type for the `TestCbCli` clap-parsing test
-// harness below (see `cb_gen_force_regen_parses_without_slug` and friends).
-#[cfg(test)]
+/// Codebase materialization: generate, fill, check, and promote target code.
+#[derive(Debug, Args)]
+pub struct CbArgs {
+    /// Project name for project-scoped codebase actions.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
+    #[command(subcommand)]
+    pub command: CbCommand,
+}
+
 #[derive(Debug, Subcommand)]
-enum CbCommand {
+pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
     // Forward-generate a target source file from a per-file rust-source-unit
@@ -36,11 +37,58 @@ enum CbCommand {
     // Audit code-space files for CODEGEN drift, MarkerGap, Uncovered,
     // and Handwrite items.
     Check(CbCheckArgs),
-    // Adopt existing code into score by generating a TD spec via the
-    // fillback pipeline.
-    Claim(CbClaimArgs),
     // Fill handwrite marker blocks in generated code (Phase 3).
     Fill(CbFillArgs),
+    /// Promote a HANDWRITE marker block to CODEGEN after its generator gap closes.
+    Promote(td::PromoteArgs),
+}
+
+/// Dispatch `aw cb`. TD remains authoring-only; all codebase changes route
+/// through this namespace so the visible lifecycle is EC -> TD -> CB -> EC.
+pub async fn run(args: CbArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    match &args.command {
+        CbCommand::Check(args) => {
+            if let Some(target) = args.target.as_deref() {
+                if code_check_target_is_slug(&project_root, target) {
+                    super::workflow_guard::guard_issue_mutation(
+                        &project_root,
+                        Some(("td", target)),
+                    )
+                    .await?;
+                }
+            }
+        }
+        CbCommand::Gen(args) => {
+            if args.target.is_none() {
+                super::workflow_guard::guard_issue_mutation(
+                    &project_root,
+                    args.slug.as_deref().map(|slug| ("td", slug)),
+                )
+                .await?;
+            }
+        }
+        CbCommand::GenSource(args) => {
+            if !args.dry_run {
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            }
+        }
+        CbCommand::Fill(args) => {
+            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &args.slug)))
+                .await?;
+        }
+        CbCommand::Promote(_) => {
+            super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+        }
+    }
+    let project = args.project.as_deref();
+    match args.command {
+        CbCommand::Gen(args) => run_gen(args).await,
+        CbCommand::GenSource(args) => run_gen_source(args),
+        CbCommand::Check(args) => run_check(args, project).await,
+        CbCommand::Fill(args) => super::cb_fill::run(args).await,
+        CbCommand::Promote(args) => td::run_promote(args),
+    }
 }
 
 // Args for `aw td fill <slug>` — Phase 3 marker-fill workflow.
@@ -111,14 +159,28 @@ pub struct CbClaimArgs {
     pub project: Option<String>,
 }
 
-// Args for `aw td gen <slug>` or
-// `aw td gen --force-regen --project <project>`.
+// Args for `aw cb gen <slug>` or
+// `aw cb gen --force-regen --project <project>`.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 #[derive(Debug, Args)]
 pub struct CbGenArgs {
     // Issue slug identifying the approved tech-design.
     pub slug: Option<String>,
+    // Target-native generator to run. Rust, Python, and TypeScript consume a
+    // Python TD project source tree and emit a native package plus unit tests.
+    #[arg(long)]
+    pub target: Option<String>,
+    // Input project root for a target-native generator.
+    #[arg(long)]
+    pub source_root: Option<String>,
+    // Output root for a target-native generator.
+    #[arg(long)]
+    pub output_dir: Option<String>,
+    /// Root-owned Python-artifact lifecycle WI. Target-native generation
+    /// records the CB fill handoff only when this explicit owner is present.
+    #[arg(long)]
+    pub wi: Option<String>,
     // Path to the spec file (relative to the current checkout root).
     #[arg(long)]
     pub spec_path: Option<String>,
@@ -178,7 +240,7 @@ pub struct CbCheckArgs {
     pub allow_empty_impl: bool,
 }
 
-// Args for `aw td gen-source --spec <td> --target <source-file>`.
+// Args for `aw cb gen-source --spec <td> --target <source-file>`.
 #[derive(Debug, Args)]
 pub struct CbGenSourceArgs {
     // Repo-relative path to the per-file source TD (with a lossless
@@ -208,7 +270,7 @@ pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
                 false,
                 &message,
                 None,
-                Some("aw td gen-source --help"),
+                Some("aw cb gen-source --help"),
             )?;
             anyhow::bail!(message);
         }
@@ -224,7 +286,7 @@ pub fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
                 false,
                 &message,
                 None,
-                Some("aw td gen-source --help"),
+                Some("aw cb gen-source --help"),
             )?;
             anyhow::bail!(message);
         }
@@ -313,7 +375,7 @@ fn print_gen_source_terminal(
         } else if validate_gen_source_cli_path("spec", &args.spec).is_ok() {
             format!("aw td check {}", shell_quote_cli_arg(&args.spec))
         } else {
-            "aw td gen-source --help".to_string()
+            "aw cb gen-source --help".to_string()
         }
     });
     let env = serde_json::json!({
@@ -348,7 +410,7 @@ fn print_gen_source_terminal(
     Ok(())
 }
 
-// Implementation of `aw td gen`.
+// Implementation of `aw cb gen`.
 ///
 // Slug mode delegates to the approved-TD lifecycle pipeline. `--force-regen`
 // replays canonical source TD entries for codegen-owned files under a
@@ -357,6 +419,12 @@ fn print_gen_source_terminal(
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub async fn run_gen(args: CbGenArgs) -> Result<()> {
+    if let Some(target) = args.target.as_deref() {
+        return run_target_native_gen(target, &args);
+    }
+    if args.source_root.is_some() || args.output_dir.is_some() {
+        anyhow::bail!("--source-root and --output-dir require --target rust|python|typescript");
+    }
     if args.force_regen {
         if args.slug.is_some() || args.spec_path.is_some() {
             anyhow::bail!("--force-regen cannot be combined with slug or --spec-path");
@@ -439,7 +507,72 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
     td::run_gen_code(td_args).await
 }
 
-/// Re-run only the accepted TD's touched CODEGEN targets when `aw td gen`
+fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
+    if !matches!(target, "python" | "rust" | "typescript") {
+        anyhow::bail!("unsupported td generation target {target:?}; supported targets: python, rust, typescript");
+    }
+    if args.slug.is_some()
+        || args.spec_path.is_some()
+        || args.force_regen
+        || args.workspace.is_some()
+        || args.dry_run
+        || args.verify
+        || args.verify_cold
+        || args.semantic_sample.is_some()
+        || args.sync_public_api
+    {
+        anyhow::bail!(
+            "--target {target} accepts --source-root/--output-dir plus optional --project/--wi lifecycle ownership"
+        );
+    }
+    let source_root = args
+        .source_root
+        .as_deref()
+        .context("--target requires --source-root <python-project>")?;
+    let output_dir = args
+        .output_dir
+        .as_deref()
+        .context("--target requires --output-dir <target>")?;
+    let lifecycle_project_root = if args.wi.is_some() {
+        args.project
+            .as_deref()
+            .context("--target --wi requires --project <project>")?;
+        Some(crate::find_project_root()?)
+    } else {
+        None
+    };
+    let ir =
+        crate::services::python_td::compile_python_td_project(std::path::Path::new(source_root))?;
+    let output_root = std::path::Path::new(output_dir);
+    let manifest = match target {
+        "python" => serde_json::to_value(
+            crate::services::python_td_target::emit_python_td_target(&ir, output_root)?,
+        )?,
+        "rust" => serde_json::to_value(
+            crate::services::python_td_rust_target::emit_python_td_rust_target(&ir, output_root)?,
+        )?,
+        "typescript" => serde_json::to_value(
+            crate::services::python_td_typescript_target::emit_python_td_typescript_target(
+                &ir,
+                output_root,
+            )?,
+        )?,
+        _ => unreachable!("validated target"),
+    };
+    if let Some(wi) = args.wi.as_deref() {
+        crate::cli::ec::persist_ec_first_next_action(
+            lifecycle_project_root
+                .as_deref()
+                .expect("WI lifecycle project root resolved before materialization"),
+            wi,
+            format!("aw cb fill {wi}"),
+        )?;
+    }
+    println!("{}", serde_json::to_string_pretty(&manifest)?);
+    Ok(())
+}
+
+/// Re-run only the accepted TD's touched CODEGEN targets when `aw cb gen`
 /// is invoked from a fresh terminal phase. Normal authoring still delegates
 /// to `td::run_gen_code`; this branch is the executable remediation emitted
 /// by terminal drift detection and deliberately leaves WI phase/state alone.
@@ -521,7 +654,7 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
     let committed = crate::git::commit_scoped_paths(&project_root, &changed_paths, &message)?;
     if !committed {
         anyhow::bail!(
-            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw td code-check {slug}`"
+            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw cb check {slug}`"
         );
     }
 
@@ -539,7 +672,7 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
         "slug": slug,
         "artifacts": artifacts,
         "message": "touched CODEGEN targets regenerated and committed; rerun terminal code-check",
-        "next": { "command": format!("aw td code-check {slug}") },
+        "next": { "command": format!("aw cb check {slug}") },
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)
@@ -4562,7 +4695,7 @@ pub fn signature_only() -> Result<()>
 
     #[test]
     fn fillback_next_envelopes_are_chain_followable() {
-        let command = "aw td gen-source --spec spec.md --target src/lib.rs --dry-run";
+        let command = "aw cb gen-source --spec spec.md --target src/lib.rs --dry-run";
         let dispatch = fillback_dispatch_next(command);
         assert_eq!(dispatch["kind"], "dispatch");
         assert_eq!(dispatch["command"], command);
@@ -4583,13 +4716,13 @@ pub fn signature_only() -> Result<()>
     // fields, not a freeform body, so `run_create`'s own structured skeleton
     // fills in the description.
     #[test]
-    fn claim_issue_create_args_uses_typed_refactor_fields_and_bounded_skeleton() {
+    fn claim_issue_create_args_uses_typed_change_fields_and_bounded_skeleton() {
         let title = claim_issue_title("projects/tool/src/lib.rs");
         let args = claim_issue_create_args(&title, "tool".to_string());
         assert_eq!(args.title.as_deref(), Some(title.as_str()));
         assert!(matches!(
             args.issue_type,
-            Some(crate::cli::issues::TypeFilter::Refactor)
+            Some(crate::cli::issues::TypeFilter::Change)
         ));
         assert_eq!(args.projects, vec!["tool".to_string()]);
         assert!(args.body.is_none(), "no free-form body");
@@ -4956,7 +5089,7 @@ fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
     serde_json::json!({
         "action": "guidance",
         "message": format!(
-            "`aw td code-check` requires a slug or target path. Whole-project CODEGEN drift \
+            "`aw cb check` requires a slug or target path. Whole-project CODEGEN drift \
              and HANDWRITE marker-gap reporting now lives in `aw health --project {project}` \
              (see the `drift_marker` axis; add `-v/--verbose` or `drift-marker` section for \
              per-file detail)."
@@ -5024,7 +5157,7 @@ fn terminal_ec_failure_envelope(
     let remediation = if semantic_review_required {
         format!("aw ec review --project {}", summary.project)
     } else {
-        format!("aw td code-check {slug}")
+        format!("aw cb check {slug}")
     };
     serde_json::json!({
         "action": if semantic_review_required { "hitl" } else { "error" },
@@ -5169,8 +5302,8 @@ async fn run_check_lifecycle_terminal(
             format!(
                 "no local work-item '{slug}' found (the local issue cache is ephemeral and may \
                  have been cleared); this slug has prior lifecycle commits in this worktree — \
-                 re-run `aw td gen {slug}` (or `aw td create {slug}` if gen was never reached) \
-                 to rehydrate the local issue before retrying `aw td code-check {slug}`"
+                 re-run `aw cb gen {slug}` (or `aw td create {slug}` if generation was never reached) \
+                 to rehydrate the local issue before retrying `aw cb check {slug}`"
             )
         } else {
             format!(
@@ -5186,6 +5319,59 @@ async fn run_check_lifecycle_terminal(
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
     };
+    if let Some(project) = project_label_for_wi(&issue) {
+        let is_python = !crate::models::project::test_only_legacy_artifact_model_enabled()
+            && crate::services::project_registry::resolve_project_config_row(project_root, project)
+                .map(|row| {
+                    row.effective_artifact_model()
+                        == crate::models::project::ProjectArtifactModel::PythonV1
+                })
+                .unwrap_or(false);
+        if is_python {
+            let report =
+                crate::services::python_artifact_code_check::verify_python_artifact_code_check(
+                    project_root,
+                    project,
+                )?
+                .expect("python-v1 project must return a Python artifact code-check report");
+            if !report.clean {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "python_artifact_code_check_failed",
+                    "slug": slug,
+                    "project": report.project,
+                    "findings": report.findings,
+                    "next": { "command": report.next_command },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+            let next = format!(
+                "aw ec verify --project {} --required-only --stage cb --wi {slug}",
+                report.project
+            );
+            crate::cli::ec::persist_ec_first_next_action(project_root, slug, next.clone())?;
+            let env = serde_json::json!({
+                "action": "dispatch",
+                "slug": slug,
+                "project": report.project,
+                "next": {
+                    "kind": "run_command",
+                    "command": next,
+                    "reason": "Python target-native unit and cold artifact checks are green; run terminal CB-stage EC verification",
+                },
+                "completion": {
+                    "root_complete": false,
+                    "workflow_complete": false,
+                    "requires_hitl": false,
+                    "criteria": ["Python TD/EC locks, cold target, DDD identity, and native unit inventory are green"],
+                    "missing": ["CB-stage behavior, security, stability, and efficiency EC evidence"],
+                },
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+    }
     let initial_phase = issue.phase.as_deref().unwrap_or("");
     let initial_is_retry = td_phase::is_terminal_code_check_retry(initial_phase);
     if !td_phase::is_terminal_code_checkable(initial_phase) && !initial_is_retry {
@@ -5233,9 +5419,9 @@ async fn run_check_lifecycle_terminal(
                         "error_kind": "terminal_ec_stale_work_item",
                         "slug": slug,
                         "message": format!(
-                            "td code-check refused: work-item `{slug}` disappeared after the terminal EC lease was acquired; rehydrate it, then retry `aw td code-check {slug}`"
+                            "cb check refused: work-item `{slug}` disappeared after the terminal EC lease was acquired; rehydrate it, then retry `aw cb check {slug}`"
                         ),
-                        "next": { "command": format!("aw td code-check {slug}") },
+                        "next": { "command": format!("aw cb check {slug}") },
                     });
                     println!("{}", serde_json::to_string(&env)?);
                     return Ok(true);
@@ -5253,7 +5439,7 @@ async fn run_check_lifecycle_terminal(
             "action": "error",
             "slug": slug,
             "message": format!(
-                "cannot complete code-check after terminal EC lease acquisition: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'; retry `aw td code-check {}`",
+                "cannot complete code-check after terminal EC lease acquisition: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'; retry `aw cb check {}`",
                 phase,
                 td_phase::CB_FILLED,
                 td_phase::CB_GENNED,
@@ -5261,7 +5447,7 @@ async fn run_check_lifecycle_terminal(
                 td_phase::TD_MERGED,
                 slug,
             ),
-            "next": { "command": format!("aw td code-check {slug}") },
+            "next": { "command": format!("aw cb check {slug}") },
         });
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
@@ -5381,7 +5567,7 @@ async fn run_check_lifecycle_terminal(
                     "message": format!(
                         "td code-check refused because touched CODEGEN parity could not be verified: {error:#}"
                     ),
-                    "next": { "command": format!("aw td gen {slug}") },
+                    "next": { "command": format!("aw cb gen {slug}") },
                 });
                 println!("{}", serde_json::to_string(&env)?);
                 return Ok(true);
@@ -5399,12 +5585,12 @@ async fn run_check_lifecycle_terminal(
                 "error_kind": "terminal_touched_codegen_drift",
                 "slug": slug,
                 "message": format!(
-                    "td code-check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw td gen {slug}`, then follow its emitted retry command",
+                    "cb check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw cb gen {slug}`, then follow its emitted retry command",
                     codegen_findings.len(),
                 ),
                 "files": files,
                 "findings": codegen_findings,
-                "next": { "command": format!("aw td gen {slug}") },
+                "next": { "command": format!("aw cb gen {slug}") },
             });
             println!("{}", serde_json::to_string(&env)?);
             return Ok(true);
@@ -5490,6 +5676,49 @@ async fn run_check_lifecycle_terminal(
             });
             println!("{}", serde_json::to_string(&env)?);
             return Ok(true);
+        }
+
+        // Python-v1 has an explicit terminal graph rather than the legacy
+        // path-anchor closure: verify its TD/EC locks, DDD identity edges,
+        // cold target manifest, and target-native unit inventory before any
+        // EC evaluation or lifecycle/tracker mutation can close this WI.
+        if !crate::models::project::test_only_legacy_artifact_model_enabled() {
+            if let Some(project) = project_label_for_wi(&issue) {
+                match crate::services::python_artifact_code_check::verify_python_artifact_code_check(
+                    project_root,
+                    project,
+                ) {
+                    Ok(Some(report)) if !report.clean => {
+                        let next = if report.next_command.starts_with("aw cb gen --project ") {
+                            format!("aw cb gen {slug}")
+                        } else {
+                            report.next_command.clone()
+                        };
+                        let env = serde_json::json!({
+                            "action": "error",
+                            "error_kind": "python_artifact_code_check_failed",
+                            "slug": slug,
+                            "project": report.project,
+                            "findings": report.findings,
+                            "next": { "command": next },
+                        });
+                        println!("{}", serde_json::to_string(&env)?);
+                        return Ok(true);
+                    }
+                    Ok(Some(_)) | Ok(None) => {}
+                    Err(error) => {
+                        let env = serde_json::json!({
+                            "action": "error",
+                            "error_kind": "python_artifact_code_check_unverifiable",
+                            "slug": slug,
+                            "message": format!("td code-check refused because the Python artifact graph could not be verified: {error:#}"),
+                            "next": { "command": format!("aw cb gen {slug}") },
+                        });
+                        println!("{}", serde_json::to_string(&env)?);
+                        return Ok(true);
+                    }
+                }
+            }
         }
 
         // EC gate (issue #858, epic #1270 R1b): "the gate is EC" is the
@@ -5606,7 +5835,7 @@ async fn run_check_lifecycle_terminal(
                 "action": "error",
                 "slug": slug,
                 "message": format!(
-                    "td code-check landing failed: {}; resolve and re-run `aw td code-check {}`",
+                    "cb check landing failed: {}; resolve and re-run `aw cb check {}`",
                     e, slug
                 ),
             });
@@ -5905,7 +6134,7 @@ fn dirty_touched_scope_gate_message(
     Some(format!(
         "td code-check refused: {} touched file(s) have uncommitted changes in git and must be \
          committed or restored before '{slug}' can close: {}; run `git add <path> && git commit` \
-         (or `git restore <path>` to discard) for each, then re-run `aw td code-check {slug}`",
+         (or `git restore <path>` to discard) for each, then re-run `aw cb check {slug}`",
         dirty.len(),
         dirty.join(", "),
     ))
@@ -5930,7 +6159,8 @@ fn normalize_touched_rel_path(path: &str) -> String {
 fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
     issue.labels.iter().find_map(|label| {
         let project = label
-            .strip_prefix("app:")
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
             .or_else(|| label.strip_prefix("lib:"))?
             .trim();
         (!project.is_empty()).then_some(project)
@@ -5988,7 +6218,7 @@ fn touched_scope_standardization_gate_message(
     for path in &verdict.attr_gap {
         lines.push(format!(
             "  - {path}: HANDWRITE marker missing required gap/tracker attrs — fill them in, \
-             or `aw td promote` once the gap-blocker is closed"
+             or `aw cb promote` once the gap-blocker is closed"
         ));
     }
     let message = format!(
@@ -6065,7 +6295,7 @@ fn empty_implementation_gate_message(
     if block {
         Some(format!(
             "refusing to complete code-check: spec lists {} file(s) but {} are missing on disk \
-             (codegen likely skipped; run `aw td gen {}` then implement, \
+             (codegen likely skipped; run `aw cb gen {}` then implement, \
              or pass --allow-empty-impl for spec-only completions).\n{}",
             entries_total,
             total_missing,
@@ -6413,7 +6643,7 @@ fn hand_written_implementation_gate_message(
     Some(format!(
         "refusing to complete code-check: {} of {} hand-written create/modify path(s) lack \
          required implementation evidence: {}; create, implement, and commit every listed path, \
-         then re-run `aw td code-check {slug}` (or pass --allow-empty-impl for an intentional \
+         then re-run `aw cb check {slug}` (or pass --allow-empty-impl for an intentional \
          spec-only completion)",
         incomplete.len(),
         promised.len(),
@@ -7064,12 +7294,10 @@ impl ClaimIssueRef {
 // never fails the claim, since `aw td code-claim` has to keep working
 // offline / with no issue backend configured.
 //
-// `--type refactor`, not `enhancement`: adopting already-written code into
-// the spec-driven regenerability lifecycle is maintenance/tech-debt work
-// on existing code, not a new user-facing capability — matching
-// `IssueType::Refactor`'s "maintenance" bucket in `issues.rs`'s planning
-// groups (`groups.maintenance.push(issue)`), as distinct from
-// `ensure_gap_issue`'s `enhancement` (a genuine HANDWRITE-coverage gap).
+// `--type change`: adopting already-written code into the spec-driven
+// regenerability lifecycle is executable maintenance work. The bounded body
+// carries the maintenance context; the WI type stays within the canonical
+// epic/change taxonomy.
 //
 // Backend/durability note: this lands in whatever backend
 // `aw.toml` resolves for the project that owns `code_path_rel`
@@ -7119,7 +7347,7 @@ fn ensure_claim_issue(
             let backend = crate::issues::make_backend(&kind, project_root, repo, host)?;
             let filter = crate::issues::IssueFilter {
                 state: None,
-                issue_type: Some(crate::issues::IssueType::Refactor),
+                issue_type: Some(crate::issues::IssueType::Change),
                 label: None,
                 author: None,
             };
@@ -7166,7 +7394,7 @@ fn claim_issue_title(code_path_rel: &str) -> String {
 
 // Build the exact `CreateArgs` `ensure_claim_issue` hands to the real
 // `aw wi create` internal path (`crate::cli::issues::run`) for adopted
-// code — typed `--type refactor` + `--project <project_name>` fields, no
+// code — typed `--type change` + `--project <project_name>` fields, no
 // free-form `--body` (so `run_create`'s own canonical structured skeleton
 // is what gets filed). Split out from `ensure_claim_issue` so the
 // field/skeleton shape is unit-testable without a configured issue
@@ -7175,7 +7403,7 @@ fn claim_issue_create_args(title: &str, project_name: String) -> crate::cli::iss
     crate::cli::issues::CreateArgs {
         draft_path: None,
         title: Some(title.to_string()),
-        issue_type: Some(crate::cli::issues::TypeFilter::Refactor),
+        issue_type: Some(crate::cli::issues::TypeFilter::Change),
         body: None,
         body_file: None,
         projects: vec![project_name],

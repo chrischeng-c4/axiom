@@ -442,10 +442,10 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: aw-health-default-full-verification-smoke
-    name: "aw health defaults to full verification"
+    name: "aw health full streams full verification"
     capability_id: existing-project-standardization
     claim_id: aw-health-default-full-verification-smoke
-    command: "./target/debug/aw health --project agentic-workflow | tail -n 1 | grep -q payload_path"
+    command: "cargo test -p agentic-workflow --test cli_tests health_verbose_stdout_streams_progress_before_result -- --nocapture"
     assertions:
       - "stdout includes progress JSONL events before the final result when long gates run"
       - "the final result includes payload_path"

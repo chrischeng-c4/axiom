@@ -27,6 +27,7 @@ command_refs:
   - command: aw wi epicize
   - command: aw wi fill-section
   - command: aw wi find
+  - command: aw wi graph
   - command: aw wi list
   - command: aw wi plan
   - command: aw wi plan-review
@@ -88,6 +89,7 @@ including when a discovered project-local row supplies the stale override.
 | `EpicizeArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 425 |  |
 | `FillSectionArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 528 |  |
 | `FindArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 382 |  |
+| `GraphArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 202 |  |
 | `IssuesArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 26 |  |
 | `IssuesCommand` | apps/agentic-workflow/src/cli/issues.rs | enum | pub | 35 |  |
 | `ListArgs` | apps/agentic-workflow/src/cli/issues.rs | struct | pub | 184 |  |
@@ -129,8 +131,11 @@ including when a discovered project-local row supplies the stale override.
 //! machine-parseable JSON; `--human` keeps legacy prose where available.
 
 use crate::issues::{
-    make_backend, remote_read_cache_backend, resolve_default_backend, Issue, IssueBackend,
-    IssueErrorCode, IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend, ShipStatus,
+    apply_planning_transaction, build_planning_transaction_manifest, build_project_plan,
+    build_work_item_graph, looks_too_large_for_atomic_wi, make_backend,
+    planning_transaction_source_digest, remote_read_cache_backend, resolve_default_backend, Issue,
+    IssueBackend, IssueErrorCode, IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend,
+    PlanningTransactionManifest, PlanningTransactionResult, ProjectPlan, ShipStatus, WorkItemGraph,
 };
 use crate::parser::frontmatter::parse_document;
 use crate::services::issue_parser::{validate_structured_issue, ValidationError};
@@ -138,7 +143,6 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -160,6 +164,8 @@ pub enum IssuesCommand {
     Draft(DraftArgs),
     /// List work-items from a backend.
     List(ListArgs),
+    /// Project the deterministic epic/change ownership graph without writing tracker state.
+    Graph(GraphArgs),
     /// Show a single work-item by slug or numeric id.
     Show(ShowArgs),
     /// Retired (#1899): emits a structured redirect to `aw goal wi <id>`,
@@ -173,15 +179,15 @@ pub enum IssuesCommand {
     Close(CloseArgs),
     /// Search work-items by text query.
     Find(FindArgs),
-    /// Plan work-item candidates from a confirmed capability map / README.
+    /// Build the canonical two-stage epic/change project plan.
     Plan(PlanArgs),
     /// Submit independent review evidence for a capability WI plan.
     PlanReview(PlanReviewArgs),
-    /// Plan a project phase from the current work-item inventory.
+    /// Compatibility alias for the canonical two-stage project plan.
     Epicize(EpicizeArgs),
-    /// Split epic/roadmap-sized work into atomic work-item candidates.
+    /// Compatibility alias for the canonical two-stage project plan.
     Atomize(AtomizeArgs),
-    /// Re-rank issue backlog by priority, dependency, and readiness.
+    /// Compatibility alias for the canonical two-stage project plan.
     Prioritize(PrioritizeArgs),
     /// Fill the Reference Context section via agent exploration.
     Enrich(EnrichArgs),
@@ -289,7 +295,7 @@ pub struct ListArgs {
     #[arg(long)]
     pub state: Option<StateFilter>,
 
-    /// Filter by type (matches the `type:*` label).
+    /// Filter by canonical type. `change` also matches legacy non-epic labels.
     #[arg(long = "type")]
     pub issue_type: Option<TypeFilter>,
 
@@ -306,6 +312,22 @@ pub struct ListArgs {
     pub author: Option<String>,
 
     /// Output machine-readable JSON instead of a pretty table.
+    #[arg(long)]
+    pub json: bool,
+
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+// @spec apps/agentic-workflow/tech-design/core/logic/issues/epic-change-graph.md#cli
+pub struct GraphArgs {
+    /// Configured project name whose epic/change graph should be validated.
+    #[arg(long)]
+    pub project: String,
+
+    /// Output the complete aw.wi.graph.v1 projection as JSON.
     #[arg(long)]
     pub json: bool,
 
@@ -366,8 +388,8 @@ pub struct CreateArgs {
     #[arg(long, required_unless_present = "draft_path")]
     pub title: Option<String>,
 
-    /// Work-item type. Closed enum: bug | enhancement | refactor | test | epic.
-    /// Emits a `type::<value>` scoped label.
+    /// Work-item type. Closed enum: epic | change.
+    /// Emits a canonical `type:<value>` label.
     #[arg(long = "type", required_unless_present = "draft_path")]
     pub issue_type: Option<TypeFilter>,
 
@@ -525,12 +547,11 @@ pub struct PlanArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Capability map path. Defaults to [[projects]].cap_path or [[projects]].path/README.md.
+    /// Compatibility input; project planning now starts from the complete epic/change inventory.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
 
-    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
-    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
+    /// Must name the canonical project-plan directory under /tmp/aw when supplied.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -546,7 +567,7 @@ pub struct PlanArgs {
 #[derive(Debug, Args)]
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md#cli
 pub struct PlanReviewArgs {
-    /// Agent- or human-backed digest-bound capability-plan review payload.
+    /// Agent- or human-backed digest-bound capability or inventory-plan review payload.
     #[arg(long = "evidence-file")]
     pub evidence_file: PathBuf,
 
@@ -566,8 +587,7 @@ pub struct EpicizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
-    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
+    /// Must name the canonical project-plan directory under /tmp/aw when supplied.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -591,8 +611,7 @@ pub struct AtomizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
-    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
+    /// Must name the canonical project-plan directory under /tmp/aw when supplied.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -616,8 +635,7 @@ pub struct PrioritizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
-    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
+    /// Must name the canonical project-plan directory under /tmp/aw when supplied.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -730,10 +748,6 @@ impl From<StateFilter> for IssueState {
 pub enum TypeFilter {
     Epic,
     Change,
-    Bug,
-    Enhancement,
-    Refactor,
-    Test,
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
@@ -741,11 +755,7 @@ impl From<TypeFilter> for IssueType {
     fn from(t: TypeFilter) -> Self {
         match t {
             TypeFilter::Epic => IssueType::Epic,
-            TypeFilter::Change => IssueType::Enhancement,
-            TypeFilter::Bug => IssueType::Bug,
-            TypeFilter::Enhancement => IssueType::Enhancement,
-            TypeFilter::Refactor => IssueType::Refactor,
-            TypeFilter::Test => IssueType::Test,
+            TypeFilter::Change => IssueType::Change,
         }
     }
 }
@@ -1109,6 +1119,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
     match args.command {
         IssuesCommand::Draft(a) => run_draft(a).await,
         IssuesCommand::List(a) => run_list(a).await,
+        IssuesCommand::Graph(a) => run_graph(a).await,
         IssuesCommand::Show(a) => run_show(a).await,
         IssuesCommand::Run(a) => run_wi_run(a).await,
         IssuesCommand::Create(a) => run_create(a).await,
@@ -1184,6 +1195,75 @@ async fn run_list(args: ListArgs) -> Result<()> {
         print_table(&issues, backend.name());
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Epic/change graph (read-only, deterministic, fail-closed)
+// ---------------------------------------------------------------------------
+
+// @spec apps/agentic-workflow/tech-design/core/logic/issues/epic-change-graph.md#cli
+async fn run_graph(args: GraphArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let project_label = resolve_project_label(&project_root, &args.project)
+        .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+    let (kind, repo, host) = resolve_backend(args.repo, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)
+        .context("Failed to create issue backend for work-item graph")?;
+    // Load the complete inventory so missing and cross-project relation targets
+    // remain distinguishable. This command never calls a backend write method.
+    let issues = backend.list(&IssueFilter::default()).await?;
+    let graph = build_work_item_graph(&args.project, &project_label, &issues);
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&graph)?);
+    } else {
+        print_work_item_graph(&graph);
+    }
+
+    if !graph.valid {
+        anyhow::bail!(
+            "work-item graph for '{}' is invalid ({} diagnostic(s)); apply the emitted remediation targets and rerun `aw wi graph --project {}`",
+            graph.project,
+            graph.diagnostics.len(),
+            graph.project
+        );
+    }
+    Ok(())
+}
+
+fn print_work_item_graph(graph: &WorkItemGraph) {
+    println!(
+        "work-item graph: action={} project={} label={} valid={} digest={}",
+        graph.action, graph.project, graph.project_label, graph.valid, graph.digest
+    );
+    for epic in &graph.epics {
+        println!(
+            "epic {} priority={} children=[{}] {}",
+            epic.id,
+            epic.priority.as_deref().unwrap_or("unset"),
+            epic.children.join(","),
+            epic.title
+        );
+    }
+    for change in &graph.changes {
+        println!(
+            "change {} parent={} priority={}({}) {}",
+            change.id,
+            change.parent.as_deref().unwrap_or("unset"),
+            change.priority.value.as_deref().unwrap_or("unset"),
+            change.priority.source,
+            change.title
+        );
+    }
+    for diagnostic in &graph.diagnostics {
+        println!(
+            "diagnostic {} issue={} target={} next={}",
+            diagnostic.code,
+            diagnostic.issue,
+            diagnostic.remediation_target,
+            diagnostic.next_command
+        );
+    }
 }
 
 fn resolve_list_label_filter(
@@ -2369,21 +2449,13 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         let cache = remote_read_cache_backend(&kind, repo.as_deref(), host.as_deref());
         cache.write(&created).await?;
 
-        if emit_output {
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&created)?);
-            } else {
-                let id_str = created
-                    .github_id
-                    .or(created.gitlab_id)
-                    .map(|n| format!("#{}", n))
-                    .unwrap_or_default();
-                println!("Created {} ({})", created.slug, id_str);
-                if let Some(url) = &created.url {
-                    println!("{}", url);
-                }
-            }
-        }
+        // Remote creation must enter the same linear authoring loop as a
+        // local draft. Keep an ephemeral lifecycle mirror under /tmp so the
+        // emitted fill-section command can resolve the just-created numeric
+        // tracker id, while the read-through cache remains backend-scoped.
+        let lifecycle = LocalBackend::from_project_root(&project_root);
+        lifecycle.write(&created).await?;
+        emit_wi_fill_dispatch(&project_root, &created, emit_output)?;
     } else {
         // In-place local draft.
         let slug = if issue.slug.is_empty() {
@@ -2424,46 +2496,46 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
             }
         }
 
-        // @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R1 #R2 #R3
-        // Always emit the canonical JSON envelope on stdout — the
-        // `--json` flag is retained above only as a deprecated no-op for
-        // callers that still pass it. Mainthread reads this envelope and
-        // dispatches the named subagent per CLAUDE.md protocol.
-        // Linear fill dispatch: the create envelope kicks off ONE
-        // author invocation that fills the full structured body, including
-        // capability alignment, scope, and reference context gates. The
-        // mainthread runs `--apply --section all`, then runs `validate` once
-        // after the full-body merge.
-        let payload = fill_section_payload_path(&active_path, &created.slug);
-        let payload_initialized =
-            initialize_payload_file(&payload, &fill_section_payload_template("all")?)?;
-        let issue_path = backend.issue_path(&created);
-        let artifact = super::artifact_producer::wi_contract(
-            &created.slug,
-            &issue_path.to_string_lossy(),
-            &payload.to_string_lossy(),
-            "all",
-            true,
-        )?;
-        let envelope = IssueEnvelope::Dispatch {
-            agent: None,
-            slug: &created.slug,
-            artifact: Some(artifact),
-            invoke: Invoke {
-                command: "aw wi fill-section",
-                args: serde_json::json!({
-                    "slug": created.slug,
-                    "sections": ["all"],
-                    "payload_path": payload,
-                    "payload_initialized": payload_initialized,
-                }),
-            },
-        };
-        if emit_output {
-            print_envelope(&envelope)?;
-        }
+        emit_wi_fill_dispatch(&active_path, &created, emit_output)?;
     }
 
+    Ok(())
+}
+
+// Emit the one canonical WI authoring dispatch after either local or remote
+// creation. The lifecycle mirror is always the workspace-scoped LocalBackend,
+// so the returned `aw wi fill-section` command is immediately executable.
+// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R1 #R2 #R3
+fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool) -> Result<()> {
+    let backend = LocalBackend::from_project_root(project_root);
+    let payload = fill_section_payload_path(project_root, &created.slug);
+    let payload_initialized =
+        initialize_payload_file(&payload, &fill_section_payload_template("all")?)?;
+    let issue_path = backend.issue_path(created);
+    let artifact = super::artifact_producer::wi_contract(
+        &created.slug,
+        &issue_path.to_string_lossy(),
+        &payload.to_string_lossy(),
+        "all",
+        true,
+    )?;
+    let envelope = IssueEnvelope::Dispatch {
+        agent: None,
+        slug: &created.slug,
+        artifact: Some(artifact),
+        invoke: Invoke {
+            command: "aw wi fill-section",
+            args: serde_json::json!({
+                "slug": created.slug,
+                "sections": ["all"],
+                "payload_path": payload,
+                "payload_initialized": payload_initialized,
+            }),
+        },
+    };
+    if emit_output {
+        print_envelope(&envelope)?;
+    }
     Ok(())
 }
 
@@ -2903,7 +2975,7 @@ fn validate_wi_fill_payload_scope(
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R5 #R8 #R9
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 async fn run_fill_section_apply(
-    _project_root: &std::path::Path,
+    project_root: &std::path::Path,
     slug: &str,
     section_arg: &str,
     worktree_abs: &std::path::Path,
@@ -3007,10 +3079,11 @@ async fn run_fill_section_apply(
     }
 
     let patch = IssuePatch {
-        body: Some(merged_body),
+        body: Some(merged_body.clone()),
         ..Default::default()
     };
     backend.update(slug, &patch).await?;
+    sync_filled_remote_issue(project_root, &existing, merged_body).await?;
 
     let _ = std::fs::remove_file(&payload);
     if let Some(parent) = payload.parent() {
@@ -3029,6 +3102,47 @@ async fn run_fill_section_apply(
     Ok(())
 }
 
+// A remotely created WI is authored through its ephemeral local lifecycle
+// mirror. Project the accepted full-body fill back to the configured tracker
+// before emitting validate, so validate observes exactly what was authored.
+// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R1 #R5 #R8
+async fn sync_filled_remote_issue(
+    project_root: &Path,
+    existing: &Issue,
+    body: String,
+) -> Result<()> {
+    let (kind, repo, host) = resolve_backend(None, project_root)?;
+    if !create_uses_remote_backend(&kind) {
+        return Ok(());
+    }
+    let remote_id = match kind.as_str() {
+        "github" => existing.github_id,
+        "gitlab" => existing.gitlab_id,
+        _ => existing.github_id.or(existing.gitlab_id),
+    };
+    let Some(remote_id) = remote_id else {
+        // Preserve legacy/local workspace drafts even when the repository is
+        // later configured with a remote backend. Only tracker-backed mirrors
+        // have a remote projection target.
+        return Ok(());
+    };
+    let remote = make_backend(&kind, project_root, repo.clone(), host.clone())
+        .context("Failed to create remote backend for filled WI projection")?;
+    let updated = remote
+        .update(
+            &remote_id.to_string(),
+            &IssuePatch {
+                body: Some(body),
+                ..Default::default()
+            },
+        )
+        .await?;
+    remote_read_cache_backend(&kind, repo.as_deref(), host.as_deref())
+        .write(&updated)
+        .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Update
 // ---------------------------------------------------------------------------
@@ -3039,10 +3153,15 @@ fn build_update_patch(
     body: Option<String>,
     current: Option<&Issue>,
 ) -> Result<IssuePatch> {
+    let add_labels = args
+        .add_labels
+        .iter()
+        .map(|label| canonicalize_type_label_for_write(label))
+        .collect::<Result<Vec<_>>>()?;
     let mut patch = IssuePatch {
         title: args.title.clone(),
         state: args.state.map(Into::into),
-        add_labels: args.add_labels.clone(),
+        add_labels,
         remove_labels: args.remove_labels.clone(),
         body,
         ..Default::default()
@@ -3063,6 +3182,18 @@ fn build_update_patch(
     }
 
     Ok(patch)
+}
+
+fn canonicalize_type_label_for_write(label: &str) -> Result<String> {
+    let Some(raw_type) = label.strip_prefix("type:") else {
+        return Ok(label.to_string());
+    };
+    let issue_type = IssueType::parse(raw_type).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported issue type label `{label}`; canonical values are type:epic or type:change"
+        )
+    })?;
+    Ok(format!("type:{}", issue_type.as_str()))
 }
 
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R2
@@ -3455,11 +3586,15 @@ struct CapabilityPlanReviewChecklist {
     #[serde(default)]
     capability_claim_coverage: bool,
     #[serde(default)]
+    scope_coverage: bool,
+    #[serde(default)]
     bounded_candidates: bool,
     #[serde(default)]
     tracker_reconciliation: bool,
     #[serde(default)]
     verification_specific: bool,
+    #[serde(default)]
+    priority_consistent: bool,
     #[serde(default)]
     no_duplicate_wis: bool,
     #[serde(default)]
@@ -3467,19 +3602,34 @@ struct CapabilityPlanReviewChecklist {
 }
 
 impl CapabilityPlanReviewChecklist {
-    fn all_satisfied(&self) -> bool {
-        self.capability_claim_coverage
-            && self.bounded_candidates
-            && self.tracker_reconciliation
-            && self.verification_specific
-            && self.no_duplicate_wis
-            && self.publication_safe
+    fn all_satisfied(&self, kind: &str) -> bool {
+        if kind == "capability_plan" {
+            self.capability_claim_coverage
+                && self.bounded_candidates
+                && self.tracker_reconciliation
+                && self.verification_specific
+                && self.no_duplicate_wis
+                && self.publication_safe
+        } else {
+            self.scope_coverage
+                && self.bounded_candidates
+                && self.tracker_reconciliation
+                && self.priority_consistent
+                && self.no_duplicate_wis
+                && self.publication_safe
+        }
     }
+}
+
+fn default_capability_plan_review_kind() -> String {
+    "capability_plan".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CapabilityPlanReviewRecord {
     version: u8,
+    #[serde(default = "default_capability_plan_review_kind")]
+    kind: String,
     project: String,
     plan_path: String,
     manifest_path: String,
@@ -3498,6 +3648,22 @@ struct CapabilityPlanReviewRecord {
     checklist: CapabilityPlanReviewChecklist,
     #[serde(default)]
     findings: Vec<String>,
+    #[serde(default)]
+    next_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct InventoryPlanReviewState {
+    status: String,
+    requires_hitl: bool,
+    hitl_status: String,
+    review_backing: String,
+    source_digest: String,
+    review_path: PathBuf,
+    payload_path: PathBuf,
+    next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_review_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3535,16 +3701,6 @@ struct CapabilityProjectRow {
     cap_path: Option<String>,
 }
 
-pub(crate) async fn load_project_open_issues(
-    project_root: &Path,
-    project: &str,
-    repo: Option<String>,
-) -> Result<(String, String, Vec<Issue>)> {
-    let (backend_name, project, issues, _) =
-        load_project_open_issues_with_backend(project_root, project, repo).await?;
-    Ok((backend_name, project, issues))
-}
-
 async fn load_project_open_issues_with_backend(
     project_root: &Path,
     project: &str,
@@ -3571,16 +3727,146 @@ async fn load_project_open_issues_with_backend(
     ))
 }
 
-async fn run_plan(args: PlanArgs) -> Result<()> {
-    let json = args.json;
-    let report = build_capability_wi_plan_report(args).await?;
+#[derive(Debug)]
+struct ProjectPlanInvocation {
+    invoked_as: &'static str,
+    project: Option<String>,
+    title: Option<String>,
+    output: Option<PathBuf>,
+    json: bool,
+    repo: Option<String>,
+    compatibility_note: Option<String>,
+}
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+// @spec apps/agentic-workflow/tech-design/core/logic/issues/two-stage-project-plan.md#cli
+async fn run_project_plan(args: ProjectPlanInvocation) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let project = resolve_single_project_name(&project_root, args.project.as_deref())
+        .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+    let project_label = resolve_project_label(&project_root, &project)
+        .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+    let (kind, repo, host) = resolve_backend(args.repo, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)
+        .context("Failed to create issue backend for project planning")?;
+    // The graph needs the complete inventory so legacy, closed dependency,
+    // missing-parent, and cross-project references remain distinguishable.
+    let mut inventory = backend.list(&IssueFilter::default()).await?;
+    sort_work_items_for_planning(&mut inventory);
+    let plan = build_project_plan(&project, &project_label, &inventory);
+    let path = write_project_plan_artifact(&project_root, &project, args.output.as_deref(), &plan)?;
+
+    if !plan.valid {
+        let output = serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "action": "blocked",
+            "kind": "project_plan",
+            "invoked_as": args.invoked_as,
+            "project": project,
+            "backend": backend.name(),
+            "path": path,
+            "plan_digest": plan.digest,
+            "diagnostics": plan.diagnostics,
+            "next": plan.next,
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!("{}", serde_json::to_string(&output)?);
+        }
+        anyhow::bail!(
+            "project plan is blocked by invalid epic/change graph; inspect {}",
+            path.display()
+        );
+    }
+
+    let project_issues = inventory
+        .iter()
+        .filter(|issue| issue.labels.iter().any(|label| label == &project_label))
+        .cloned()
+        .collect::<Vec<_>>();
+    let review = prepare_inventory_plan_review(
+        &project_root,
+        &project,
+        "project_plan",
+        &path,
+        &project_issues,
+        &format!("aw wi graph --project {project} --json"),
+    )?;
+    let output = serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "action": "planned",
+        "kind": "project_plan",
+        "invoked_as": args.invoked_as,
+        "compatibility_delegated": args.invoked_as != "plan",
+        "compatibility_note": args.compatibility_note,
+        "project": project,
+        "backend": backend.name(),
+        "path": path,
+        "title": args.title,
+        "plan_schema": plan.schema,
+        "plan_digest": plan.digest,
+        "source_graph_digest": plan.source_graph_digest,
+        "epic_count": plan.epics.len(),
+        "proposed_epic_count": plan.proposed_epics.len(),
+        "change_count": plan.changes.len(),
+        "proposed_change_count": plan.proposed_changes.len(),
+        "status": review.status,
+        "requires_hitl": review.requires_hitl,
+        "hitl_status": review.hitl_status,
+        "review_backing": review.review_backing,
+        "source_digest": review.source_digest,
+        "review_path": review.review_path,
+        "payload_path": review.payload_path,
+        "next": review.next,
+        "agent_review_prompt": review.agent_review_prompt,
+    });
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("{}", report.path.display());
+        println!("{}", path.display());
     }
     Ok(())
+}
+
+fn write_project_plan_artifact(
+    project_root: &Path,
+    project: &str,
+    output: Option<&Path>,
+    plan: &ProjectPlan,
+) -> Result<PathBuf> {
+    let directory = crate::shared::workspace::workitems_path(project_root)
+        .join(project)
+        .join("project-plan");
+    let canonical = directory.join("project-plan.json");
+    let path = output.unwrap_or(&canonical);
+    if !path.starts_with(&directory) {
+        anyhow::bail!(
+            "project planning is read-only and may write review artifacts only under {}; use {}",
+            directory.display(),
+            canonical.display()
+        );
+    }
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let body = format!("{}\n", serde_json::to_string_pretty(plan)?);
+    write_file_atomically(path, &body)?;
+    Ok(path.to_path_buf())
+}
+
+async fn run_plan(args: PlanArgs) -> Result<()> {
+    run_project_plan(ProjectPlanInvocation {
+        invoked_as: "plan",
+        project: args.project,
+        title: args.title,
+        output: args.output,
+        json: args.json,
+        repo: args.repo,
+        compatibility_note: args.cap_path.map(|_| {
+            "--cap-path is retained for compatibility; the canonical project plan reads the complete epic/change inventory"
+                .to_string()
+        }),
+    })
+    .await
 }
 
 pub(crate) async fn build_capability_wi_plan_report(
@@ -3716,6 +4002,7 @@ pub(crate) async fn build_capability_wi_plan_report(
     }
     let pending_record = CapabilityPlanReviewRecord {
         version: CAPABILITY_PLAN_REVIEW_VERSION,
+        kind: "capability_plan".to_string(),
         project: project.clone(),
         plan_path: path.display().to_string(),
         manifest_path: manifest_path.display().to_string(),
@@ -3731,6 +4018,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         summary: String::new(),
         checklist: CapabilityPlanReviewChecklist::default(),
         findings: Vec::new(),
+        next_command: String::new(),
     };
     write_file_atomically(
         &payload_path,
@@ -3864,24 +4152,48 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
     let plan_path = PathBuf::from(&record.plan_path);
     let review_path = capability_plan_sidecar_path(&plan_path, "review.json");
     record.reviewed_at = chrono::Utc::now().to_rfc3339();
+    let mut transaction_result: Option<PlanningTransactionResult> = None;
 
     let (status, next, published_issue_count) = match record.decision {
         CapabilityPlanReviewDecision::Accepted => {
-            let manifest_body = std::fs::read_to_string(&record.manifest_path)?;
-            let manifest: CapabilityPlanManifest = serde_json::from_str(&manifest_body)?;
-            let published = publish_capability_plan_candidates(&record.project, &manifest).await?;
-            (
-                "accepted",
-                format!(
-                    "aw goal capability --project {} --non-interactive",
-                    record.project
-                ),
-                published,
-            )
+            if record.kind == "capability_plan" {
+                let manifest_body = std::fs::read_to_string(&record.manifest_path)?;
+                let manifest: CapabilityPlanManifest = serde_json::from_str(&manifest_body)?;
+                let published =
+                    publish_capability_plan_candidates(&record.project, &manifest).await?;
+                (
+                    "accepted",
+                    format!(
+                        "aw goal capability --project {} --non-interactive",
+                        record.project
+                    ),
+                    published,
+                )
+            } else if record.kind == "project_plan" {
+                let manifest_body = std::fs::read_to_string(&record.manifest_path)?;
+                let manifest: PlanningTransactionManifest = serde_json::from_str(&manifest_body)?;
+                let (backend_kind, repo, host) = resolve_backend(None, &project_root)?;
+                let backend = make_backend(&backend_kind, &project_root, repo, host)
+                    .context("create issue backend for reviewed planning transaction")?;
+                let checkpoint_path = capability_plan_sidecar_path(&plan_path, "transaction.json");
+                let result = apply_planning_transaction(
+                    backend.as_ref(),
+                    &manifest,
+                    &record.source_digest,
+                    &checkpoint_path,
+                )
+                .await?;
+                let published = result.created_issue_count;
+                let next = result.next.clone();
+                transaction_result = Some(result);
+                ("accepted", next, published)
+            } else {
+                ("accepted", record.next_command.clone(), 0)
+            }
         }
         CapabilityPlanReviewDecision::NeedsRevision => (
             "needs_revision",
-            format!("aw wi plan --project {}", record.project),
+            planning_review_rebuild_command(&record.kind, &record.project),
             0,
         ),
         CapabilityPlanReviewDecision::Pending => unreachable!("pending rejected by validation"),
@@ -3893,10 +4205,13 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
         &review_path,
         &format!("{}\n", serde_json::to_string_pretty(&record)?),
     )?;
-    let _ = std::fs::remove_file(&args.evidence_file);
+    if args.evidence_file != review_path {
+        let _ = std::fs::remove_file(&args.evidence_file);
+    }
     let output = serde_json::json!({
         "schema_version": "aw.cli.v1",
-        "action": "capability_plan_review",
+        "action": format!("{}_review", record.kind),
+        "kind": record.kind,
         "project": record.project,
         "status": status,
         "clean": status == "accepted",
@@ -3906,6 +4221,7 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
         "backing": record.reviewer_kind,
         "findings": record.findings,
         "published_issue_count": published_issue_count,
+        "transaction": transaction_result,
         "next": { "kind": "run_command", "command": next },
     });
     if args.json {
@@ -3937,7 +4253,7 @@ fn validate_capability_plan_review_record(
     let manifest_path = PathBuf::from(&record.manifest_path);
     let expected_plan_root = crate::shared::workspace::workitems_path(project_root)
         .join(&record.project)
-        .join("capability-plan");
+        .join(planning_review_bucket(&record.kind)?);
     if !plan_path.starts_with(&expected_plan_root)
         || manifest_path != capability_plan_sidecar_path(&plan_path, "manifest.json")
     {
@@ -3955,15 +4271,48 @@ fn validate_capability_plan_review_record(
     let actual_digest = capability_plan_source_digest(&plan_body, &manifest_body);
     if actual_digest != record.source_digest {
         anyhow::bail!(
-            "capability-plan review evidence is stale; rerun `aw wi plan --project {}`",
-            record.project
+            "planning review evidence is stale; rerun `{}`",
+            planning_review_rebuild_command(&record.kind, &record.project)
         );
     }
-    let manifest: CapabilityPlanManifest = serde_json::from_str(&manifest_body)?;
-    if manifest.project != record.project {
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_body)?;
+    if manifest.get("project").and_then(serde_json::Value::as_str) != Some(record.project.as_str())
+    {
         anyhow::bail!("capability-plan review project does not match its manifest");
     }
-    let backing = capability_plan_review_backing(project_root, &record.project);
+    if record.kind != "capability_plan"
+        && record.kind != "project_plan"
+        && (manifest.get("kind").and_then(serde_json::Value::as_str) != Some(record.kind.as_str())
+            || manifest
+                .get("next_command")
+                .and_then(serde_json::Value::as_str)
+                != Some(record.next_command.as_str()))
+    {
+        anyhow::bail!(
+            "inventory-plan review kind and next_command must match the digest-bound manifest"
+        );
+    }
+    if record.kind == "project_plan" {
+        let transaction: PlanningTransactionManifest = serde_json::from_str(&manifest_body)
+            .context("decode project planning transaction manifest")?;
+        let plan: ProjectPlan =
+            serde_json::from_str(&plan_body).context("decode reviewed canonical project plan")?;
+        if transaction.plan_digest != plan.digest
+            || transaction.project != record.project
+            || transaction.apply_command != record.next_command
+        {
+            anyhow::bail!(
+                "project planning transaction plan, project, and apply command must match the digest-bound manifest"
+            );
+        }
+        validate_inventory_review_next_command(&transaction.apply_command)?;
+        validate_inventory_review_next_command(&transaction.terminal_next)?;
+    }
+    let backing = if record.kind == "capability_plan" {
+        capability_plan_review_backing(project_root, &record.project)
+    } else {
+        inventory_plan_review_backing(project_root, &record.project)
+    };
     match record.reviewer_kind.as_str() {
         "human" => {}
         "agent" if backing != "human" => {
@@ -4001,8 +4350,11 @@ fn validate_capability_plan_review_record(
             if !record.findings.is_empty() {
                 anyhow::bail!("accepted capability-plan review must not contain findings");
             }
-            if !record.checklist.all_satisfied() {
+            if !record.checklist.all_satisfied(&record.kind) {
                 anyhow::bail!("accepted capability-plan review requires every checklist item");
+            }
+            if record.kind != "capability_plan" {
+                validate_inventory_review_next_command(&record.next_command)?;
             }
         }
         CapabilityPlanReviewDecision::NeedsRevision => {
@@ -4015,6 +4367,40 @@ fn validate_capability_plan_review_record(
         }
     }
     Ok(())
+}
+
+fn planning_review_bucket(kind: &str) -> Result<&'static str> {
+    match kind {
+        "capability_plan" => Ok("capability-plan"),
+        "project_plan" => Ok("project-plan"),
+        "epicize" => Ok("epics"),
+        "atomize" => Ok("atomize"),
+        "prioritize" => Ok("priorities"),
+        other => anyhow::bail!(
+            "planning review kind `{other}` is unsupported; expected capability_plan or project_plan"
+        ),
+    }
+}
+
+fn planning_review_rebuild_command(kind: &str, project: &str) -> String {
+    match kind {
+        "capability_plan" => {
+            "aw capability sweep --include-issue-inventory --write-wi-plans".to_string()
+        }
+        "project_plan" => format!("aw wi plan --project {project}"),
+        "epicize" => format!("aw wi epicize --project {project}"),
+        "atomize" => format!("aw wi atomize --project {project}"),
+        "prioritize" => format!("aw wi prioritize --project {project}"),
+        _ => format!("aw wi plan --project {project}"),
+    }
+}
+
+fn validate_inventory_review_next_command(command: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        anyhow::bail!("accepted inventory-plan review requires next_command");
+    }
+    crate::cli::chain::validate_aw_command_string(command)
+        .map_err(|error| anyhow::anyhow!("inventory-plan next_command is not executable: {error}"))
 }
 
 async fn publish_capability_plan_candidates(
@@ -4033,12 +4419,7 @@ async fn publish_capability_plan_candidates(
         {
             continue;
         }
-        let issue_type = match candidate.issue_type.as_str() {
-            "bug" => TypeFilter::Bug,
-            "refactor" => TypeFilter::Refactor,
-            "test" => TypeFilter::Test,
-            _ => TypeFilter::Enhancement,
-        };
+        let issue_type = TypeFilter::Change;
         run_create_silent(CreateArgs {
             draft_path: None,
             title: Some(candidate.title.clone()),
@@ -4113,34 +4494,58 @@ fn open_issue_serves_capability_candidate(issue: &Issue, candidate: &CapabilityC
 }
 
 fn capability_plan_review_backing(project_root: &Path, project: &str) -> String {
-    let configured =
-        crate::services::project_registry::resolve_project_config_row(project_root, project)
-            .ok()
-            .and_then(|row| {
-                let local = project_root.join(row.path).join("aw.toml");
-                let value = std::fs::read_to_string(local)
-                    .ok()?
-                    .parse::<toml::Value>()
-                    .ok()?;
-                value
-                    .get("capability_plan_review_backing")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_string)
-            })
-            .or_else(|| {
-                let value = std::fs::read_to_string(project_root.join("aw.toml"))
-                    .ok()?
-                    .parse::<toml::Value>()
-                    .ok()?;
-                value
-                    .get("projects")?
-                    .as_array()?
-                    .iter()
-                    .find(|row| row.get("name").and_then(toml::Value::as_str) == Some(project))?
-                    .get("capability_plan_review_backing")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_string)
-            });
+    normalize_plan_review_backing(project_review_backing_value(
+        project_root,
+        project,
+        "capability_plan_review_backing",
+    ))
+}
+
+fn inventory_plan_review_backing(project_root: &Path, project: &str) -> String {
+    normalize_plan_review_backing(
+        project_review_backing_value(project_root, project, "planning_review_backing").or_else(
+            || {
+                project_review_backing_value(
+                    project_root,
+                    project,
+                    "capability_plan_review_backing",
+                )
+            },
+        ),
+    )
+}
+
+fn project_review_backing_value(project_root: &Path, project: &str, key: &str) -> Option<String> {
+    crate::services::project_registry::resolve_project_config_row(project_root, project)
+        .ok()
+        .and_then(|row| {
+            let local = project_root.join(row.path).join("aw.toml");
+            let value = std::fs::read_to_string(local)
+                .ok()?
+                .parse::<toml::Value>()
+                .ok()?;
+            value
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            let value = std::fs::read_to_string(project_root.join("aw.toml"))
+                .ok()?
+                .parse::<toml::Value>()
+                .ok()?;
+            value
+                .get("projects")?
+                .as_array()?
+                .iter()
+                .find(|row| row.get("name").and_then(toml::Value::as_str) == Some(project))?
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn normalize_plan_review_backing(configured: Option<String>) -> String {
     match configured.as_deref().map(str::trim) {
         Some("human") => "human".to_string(),
         Some("agent") => "agent".to_string(),
@@ -4148,12 +4553,154 @@ fn capability_plan_review_backing(project_root: &Path, project: &str) -> String 
     }
 }
 
+fn prepare_inventory_plan_review(
+    project_root: &Path,
+    project: &str,
+    kind: &str,
+    plan_path: &Path,
+    issues: &[Issue],
+    next_command: &str,
+) -> Result<InventoryPlanReviewState> {
+    planning_review_bucket(kind)?;
+    validate_inventory_review_next_command(next_command)?;
+    let plan_body = std::fs::read_to_string(plan_path)
+        .with_context(|| format!("failed to read planning artifact {}", plan_path.display()))?;
+    let stable_payload_path = capability_plan_sidecar_path(plan_path, "review-payload.json");
+    let apply_command = capability_plan_review_command(&stable_payload_path);
+    let manifest_path = capability_plan_sidecar_path(plan_path, "manifest.json");
+    let manifest_body = if kind == "project_plan" {
+        let plan: ProjectPlan = serde_json::from_str(&plan_body)
+            .context("decode canonical project plan for transaction manifest")?;
+        let manifest =
+            build_planning_transaction_manifest(&plan, issues, &apply_command, next_command);
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?)
+    } else {
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "version": CAPABILITY_PLAN_REVIEW_VERSION,
+                "kind": kind,
+                "project": project,
+                "issue_refs": issues.iter().map(issue_ref).collect::<Vec<_>>(),
+                "next_command": next_command,
+            }))?
+        )
+    };
+    write_file_atomically(&manifest_path, &manifest_body)?;
+    let source_digest = capability_plan_source_digest(&plan_body, &manifest_body);
+    let review_path = capability_plan_sidecar_path(plan_path, "review.json");
+    let author_path = capability_plan_sidecar_path(plan_path, "author.json");
+    let author_record = CapabilityPlanAuthorRecord {
+        version: CAPABILITY_PLAN_REVIEW_VERSION,
+        project: project.to_string(),
+        source_digest: source_digest.clone(),
+        author: current_plan_actor_identity(),
+        recorded_at: chrono::Utc::now().to_rfc3339(),
+    };
+    write_file_atomically(
+        &author_path,
+        &format!("{}\n", serde_json::to_string_pretty(&author_record)?),
+    )?;
+    let payload_path = if kind == "project_plan" {
+        stable_payload_path
+    } else {
+        inventory_plan_review_payload_path(project_root, project, kind, &source_digest)
+    };
+    if let Some(parent) = payload_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let review_command = capability_plan_review_command(&payload_path);
+    let review_backing = inventory_plan_review_backing(project_root, project);
+    let pending_record = CapabilityPlanReviewRecord {
+        version: CAPABILITY_PLAN_REVIEW_VERSION,
+        kind: kind.to_string(),
+        project: project.to_string(),
+        plan_path: plan_path.display().to_string(),
+        manifest_path: manifest_path.display().to_string(),
+        source_digest: source_digest.clone(),
+        decision: CapabilityPlanReviewDecision::Pending,
+        reviewer_kind: if review_backing == "human" {
+            "human".to_string()
+        } else {
+            "agent".to_string()
+        },
+        reviewed_by: String::new(),
+        reviewed_at: String::new(),
+        summary: String::new(),
+        checklist: CapabilityPlanReviewChecklist::default(),
+        findings: Vec::new(),
+        next_command: if kind == "project_plan" {
+            review_command.clone()
+        } else {
+            next_command.to_string()
+        },
+    };
+    write_file_atomically(
+        &payload_path,
+        &format!("{}\n", serde_json::to_string_pretty(&pending_record)?),
+    )?;
+    let requires_hitl = review_backing == "human";
+    Ok(InventoryPlanReviewState {
+        status: if requires_hitl {
+            "pending_human_review".to_string()
+        } else {
+            "pending_agent_review".to_string()
+        },
+        requires_hitl,
+        hitl_status: if requires_hitl {
+            "pending_human".to_string()
+        } else {
+            "pending_agent_review".to_string()
+        },
+        review_backing,
+        source_digest: source_digest.clone(),
+        review_path,
+        payload_path: payload_path.clone(),
+        next: review_command,
+        agent_review_prompt: (!requires_hitl).then(|| {
+            inventory_plan_agent_review_prompt(
+                project,
+                kind,
+                plan_path,
+                &payload_path,
+                &source_digest,
+            )
+        }),
+    })
+}
+
+fn inventory_plan_review_payload_path(
+    project_root: &Path,
+    project: &str,
+    kind: &str,
+    source_digest: &str,
+) -> PathBuf {
+    crate::shared::workspace::payloads_path(project_root)
+        .join("planning-review")
+        .join(project)
+        .join(kind)
+        .join(source_digest)
+        .join("review.json")
+}
+
+fn inventory_plan_agent_review_prompt(
+    project: &str,
+    kind: &str,
+    plan_path: &Path,
+    payload_path: &Path,
+    source_digest: &str,
+) -> String {
+    format!(
+        "Independently review `{kind}` inventory plan `{}` for project `{project}` at digest `{source_digest}`. Review the exact tracker snapshot, ordered mutation manifest, scope_coverage, bounded_candidates, tracker_reconciliation, priority_consistent, no_duplicate_wis, and publication_safe. Fill `{}` with reviewer_kind=agent, an identity independent from the recorded author, decision=accepted with every inventory checklist value true, no findings, and preserve the exact executable apply command in next_command; or decision=needs_revision with concrete findings. Then run `{}`.",
+        plan_path.display(),
+        payload_path.display(),
+        capability_plan_review_command(payload_path)
+    )
+}
+
 fn capability_plan_source_digest(plan_body: &str, manifest_body: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(plan_body.as_bytes());
-    hasher.update([0]);
-    hasher.update(manifest_body.as_bytes());
-    format!("{:x}", hasher.finalize())
+    planning_transaction_source_digest(plan_body, manifest_body)
 }
 
 fn capability_plan_sidecar_path(plan_path: &Path, extension: &str) -> PathBuf {
@@ -4206,12 +4753,8 @@ fn current_plan_actor_identity() -> String {
 }
 
 fn capability_wi_plan_command(project: &str, cap_path_override: Option<&Path>) -> String {
-    let mut command = format!("aw wi plan --project {project}");
-    if let Some(path) = cap_path_override {
-        command.push_str(" --cap-path ");
-        command.push_str(&shell_quote(&path.display().to_string()));
-    }
-    command
+    let _ = (project, cap_path_override);
+    "aw capability sweep --include-issue-inventory --write-wi-plans".to_string()
 }
 
 fn shell_quote(value: &str) -> String {
@@ -4219,56 +4762,21 @@ fn shell_quote(value: &str) -> String {
 }
 
 async fn run_epicize(args: EpicizeArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_single_project_name(&project_root, args.project.as_deref())
-        .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
-    let (backend_name, project, issues) =
-        load_project_open_issues(&project_root, &project, args.repo.clone()).await?;
-    let capability_document = load_markdown_capability_document(&project_root, &project);
-    let title = args
-        .title
-        .clone()
-        .unwrap_or_else(|| format!("{} next phase", project));
-    let body = render_epicize_plan(
-        &project,
-        &title,
-        &backend_name,
-        &issues,
-        capability_document.as_ref(),
-    );
-    let path = write_planning_artifact(
-        &project_root,
-        &project,
-        "epics",
-        &title,
-        args.output.as_deref(),
-        &body,
-    )?;
-
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "epicized",
-                "project": project,
-                "backend": backend_name,
-                "path": path,
-                "issue_count": issues.len(),
-                "capability_count": capability_document
-                    .as_ref()
-                    .map(|document| document.capabilities.len())
-                    .unwrap_or(0),
-                "title": title,
-                "requires_hitl": true,
-                "hitl_status": "pending",
-            }))?
-        );
-    } else {
-        println!("{}", path.display());
-    }
-    Ok(())
+    run_project_plan(ProjectPlanInvocation {
+        invoked_as: "epicize",
+        project: args.project,
+        title: args.title,
+        output: args.output,
+        json: args.json,
+        repo: args.repo,
+        compatibility_note: Some(
+            "epicize delegates to the canonical two-stage project plan".to_string(),
+        ),
+    })
+    .await
 }
 
+#[cfg(test)]
 fn load_markdown_capability_document(
     project_root: &Path,
     project: &str,
@@ -4284,99 +4792,33 @@ fn load_markdown_capability_document(
 }
 
 async fn run_atomize(args: AtomizeArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_single_project_name(&project_root, args.project.as_deref())
-        .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
-    let (backend_name, project, issues) =
-        load_project_open_issues(&project_root, &project, args.repo.clone()).await?;
-    let title = args
-        .title
-        .clone()
-        .unwrap_or_else(|| format!("{} atomization", project));
-    let candidates = atomize_candidates(&issues);
-    let body = render_atomize_plan(&project, &title, &backend_name, &issues, &candidates);
-    let path = write_planning_artifact(
-        &project_root,
-        &project,
-        "atomize",
-        &title,
-        args.output.as_deref(),
-        &body,
-    )?;
-
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "atomized",
-                "project": project,
-                "backend": backend_name,
-                "path": path,
-                "issue_count": issues.len(),
-                "candidate_count": candidates.len(),
-                "requires_hitl": true,
-                "hitl_status": "pending",
-            }))?
-        );
-    } else {
-        println!("{}", path.display());
-    }
-    Ok(())
+    run_project_plan(ProjectPlanInvocation {
+        invoked_as: "atomize",
+        project: args.project,
+        title: args.title,
+        output: args.output,
+        json: args.json,
+        repo: args.repo,
+        compatibility_note: Some(
+            "atomize delegates to the canonical two-stage project plan".to_string(),
+        ),
+    })
+    .await
 }
 
 async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_single_project_name(&project_root, args.project.as_deref())
-        .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
-    let (backend_name, project, issues) =
-        load_project_open_issues(&project_root, &project, args.repo.clone()).await?;
-    let lanes = prioritize_lanes(&issues);
-    let epic_count = issues
-        .iter()
-        .filter(|issue| issue.issue_type == IssueType::Epic)
-        .count();
-    let title = args
-        .title
-        .clone()
-        .unwrap_or_else(|| format!("{} priority plan", project));
-    let body = render_prioritize_plan(&project, &title, &backend_name, &lanes, &issues);
-    let path = write_planning_artifact(
-        &project_root,
-        &project,
-        "priorities",
-        &title,
-        args.output.as_deref(),
-        &body,
-    )?;
-
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "prioritized",
-                "project": project,
-                "backend": backend_name,
-                "path": path,
-                "ready_now": issue_refs_json(&lanes.ready_now),
-                "blocked_by_dependency": issue_refs_json(&lanes.blocked_by_dependency),
-                "needs_atomize": issue_refs_json(&lanes.needs_atomize),
-                "needs_triage": issue_refs_json(&lanes.needs_triage),
-                "deferred": issue_refs_json(&lanes.deferred),
-                "ready_now_count": lanes.ready_now.len(),
-                "blocked_by_dependency_count": lanes.blocked_by_dependency.len(),
-                "needs_atomize_count": lanes.needs_atomize.len(),
-                "needs_triage_count": lanes.needs_triage.len(),
-                "deferred_count": lanes.deferred.len(),
-                "epic_count": epic_count,
-                "issue_count": issues.len(),
-                "requires_hitl": true,
-                "hitl_status": "pending",
-            }))?
-        );
-    } else {
-        println!("{}", path.display());
-    }
-    Ok(())
+    run_project_plan(ProjectPlanInvocation {
+        invoked_as: "prioritize",
+        project: args.project,
+        title: args.title,
+        output: args.output,
+        json: args.json,
+        repo: args.repo,
+        compatibility_note: Some(
+            "prioritize delegates to the canonical two-stage project plan".to_string(),
+        ),
+    })
+    .await
 }
 
 fn sort_work_items_for_planning(issues: &mut [Issue]) {
@@ -4396,11 +4838,9 @@ fn sort_work_items_for_planning(issues: &mut [Issue]) {
     });
 }
 
-// #1899 R7: `pub(crate)` so `aw goal backlog`'s priority-first WI ordering
-// (`crate::cli::run::list_open_project_issues`) shares the exact same rank
-// function `aw wi prioritize`/`aw wi plan` use, instead of a second copy
-// that could silently drift.
-pub(crate) fn priority_rank(issue: &Issue) -> u8 {
+// Stable flat-inventory priority used only while producing planning artifacts.
+// Goal scheduling consumes the hierarchical reviewed graph instead (#2389).
+fn priority_rank(issue: &Issue) -> u8 {
     for label in &issue.labels {
         match label.as_str() {
             "priority:p0" => return 0,
@@ -4425,11 +4865,12 @@ fn priority_label(issue: &Issue) -> &'static str {
 
 fn type_rank(issue_type: IssueType) -> u8 {
     match issue_type {
-        IssueType::Bug => 0,
-        IssueType::Enhancement => 1,
-        IssueType::Refactor => 2,
-        IssueType::Test => 3,
-        IssueType::Epic => 4,
+        IssueType::Epic => 1,
+        IssueType::Change
+        | IssueType::Bug
+        | IssueType::Enhancement
+        | IssueType::Refactor
+        | IssueType::Test => 0,
     }
 }
 
@@ -4493,7 +4934,7 @@ fn validate_planning_alignment(issue: &Issue) -> Vec<String> {
     let mut errors = Vec::new();
     if looks_too_large_for_atomic_wi(issue) {
         errors.push(
-            "too-large: non-epic work-item appears roadmap-sized; run `aw wi atomize` or create `--type epic` first".to_string(),
+            "too-large: non-epic work-item appears roadmap-sized; run `aw wi plan` or create `--type epic` first".to_string(),
         );
     }
 
@@ -4525,112 +4966,7 @@ fn validate_planning_alignment(issue: &Issue) -> Vec<String> {
     errors
 }
 
-// Multi-word phrases that are unambiguous roadmap-scale signals on their own
-// (no surrounding-noun context needed): they either name a whole product
-// ("google maps"), or already pair a scale word with a big-scope noun/verb
-// so a raw substring match cannot collide with a hyphenated technical term.
-const TOO_LARGE_HARD_PHRASES: &[&str] = &[
-    "google map",
-    "google maps",
-    "full platform",
-    "complete platform",
-    "from scratch",
-    "end-to-end product",
-    "rewrite all",
-    "rewrite everything",
-    "all projects",
-    "every project",
-    "every crate",
-    "across the fleet",
-];
-
-// Bare scale words that only signal roadmap scope when they sit next to a
-// big-scope noun ("the whole platform", "rewrite the entire codebase").
-// Matched against standalone word tokens, so hyphenated compounds like
-// "whole-doc" or "always-send-everything" never trigger them.
-const TOO_LARGE_CONTEXT_SCALE_WORDS: &[&str] = &["entire", "whole", "everything"];
-
-const TOO_LARGE_SCOPE_NOUNS: &[&str] = &[
-    "project",
-    "projects",
-    "codebase",
-    "codebases",
-    "repo",
-    "repos",
-    "repository",
-    "repositories",
-    "platform",
-    "platforms",
-    "system",
-    "systems",
-    "product",
-    "products",
-    "application",
-    "applications",
-    "app",
-    "apps",
-    "service",
-    "services",
-    "monorepo",
-    "monorepos",
-    "ecosystem",
-    "ecosystems",
-    "organization",
-    "organizations",
-    "org",
-    "orgs",
-    "roadmap",
-    "roadmaps",
-    "stack",
-    "stacks",
-    "suite",
-    "suites",
-    "fleet",
-    "fleets",
-    "company",
-    "companies",
-    "business",
-    "businesses",
-];
-
-/// Split text into standalone word tokens, keeping internal hyphens intact
-/// so a compound like "whole-doc" or "always-send-everything" stays one
-/// token distinct from the bare word "whole"/"everything".
-fn too_large_word_tokens(text: &str) -> Vec<&str> {
-    text.split(|c: char| c.is_whitespace())
-        .map(|raw| raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
-        .filter(|w| !w.is_empty())
-        .collect()
-}
-
-/// True when the scale word at `idx` has a big-scope noun within a small
-/// window around it, e.g. "the whole platform" or "rewrite the entire
-/// codebase" -- but not "own the whole row".
-fn too_large_scale_word_in_scope_context(words: &[&str], idx: usize) -> bool {
-    let window_start = idx.saturating_sub(2);
-    let window_end = (idx + 4).min(words.len());
-    words[window_start..window_end]
-        .iter()
-        .any(|word| TOO_LARGE_SCOPE_NOUNS.contains(word))
-}
-
-fn looks_too_large_for_atomic_wi(issue: &Issue) -> bool {
-    let text = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
-
-    if TOO_LARGE_HARD_PHRASES
-        .iter()
-        .any(|phrase| text.contains(phrase))
-    {
-        return true;
-    }
-
-    let words = too_large_word_tokens(&text);
-    words.iter().enumerate().any(|(idx, word)| {
-        TOO_LARGE_CONTEXT_SCALE_WORDS.contains(word)
-            && too_large_scale_word_in_scope_context(&words, idx)
-    })
-}
-
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 pub(crate) struct PrioritizeLanes {
@@ -4642,6 +4978,7 @@ pub(crate) struct PrioritizeLanes {
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+#[cfg(test)]
 pub(crate) fn prioritize_lanes(issues: &[Issue]) -> PrioritizeLanes {
     let open_numbers = issues
         .iter()
@@ -4686,6 +5023,7 @@ pub(crate) fn prioritize_lanes(issues: &[Issue]) -> PrioritizeLanes {
     lanes
 }
 
+#[cfg(test)]
 fn is_deferred_issue(issue: &Issue) -> bool {
     issue
         .labels
@@ -4695,12 +5033,14 @@ fn is_deferred_issue(issue: &Issue) -> bool {
             .is_some_and(|value| value.eq_ignore_ascii_case("deferred"))
 }
 
+#[cfg(test)]
 fn has_open_dependency(issue: &Issue, open_numbers: &std::collections::HashSet<u64>) -> bool {
     dependency_numbers(issue)
         .iter()
         .any(|number| open_numbers.contains(number))
 }
 
+#[cfg(test)]
 fn dependency_numbers(issue: &Issue) -> std::collections::HashSet<u64> {
     let mut numbers = std::collections::HashSet::new();
     for line in issue.body.lines() {
@@ -4717,6 +5057,7 @@ fn dependency_numbers(issue: &Issue) -> std::collections::HashSet<u64> {
     numbers
 }
 
+#[cfg(test)]
 fn issue_refs_json(issues: &[Issue]) -> Vec<String> {
     issues.iter().map(issue_ref).collect()
 }
@@ -4740,6 +5081,7 @@ fn issue_line(issue: &Issue) -> String {
     )
 }
 
+#[cfg(test)]
 struct EpicizeGroups<'a> {
     existing_epics: Vec<&'a Issue>,
     urgent_fixes: Vec<&'a Issue>,
@@ -4749,6 +5091,7 @@ struct EpicizeGroups<'a> {
     needs_triage: Vec<&'a Issue>,
 }
 
+#[cfg(test)]
 fn group_issues_for_epicize(issues: &[Issue]) -> EpicizeGroups<'_> {
     let mut groups = EpicizeGroups {
         existing_epics: Vec::new(),
@@ -4762,6 +5105,7 @@ fn group_issues_for_epicize(issues: &[Issue]) -> EpicizeGroups<'_> {
     for issue in issues {
         match issue.issue_type {
             IssueType::Epic => groups.existing_epics.push(issue),
+            IssueType::Change => groups.capability_work.push(issue),
             IssueType::Bug if priority_rank(issue) <= 1 => groups.urgent_fixes.push(issue),
             IssueType::Bug => groups.quality.push(issue),
             IssueType::Enhancement => groups.capability_work.push(issue),
@@ -4782,6 +5126,7 @@ fn group_issues_for_epicize(issues: &[Issue]) -> EpicizeGroups<'_> {
     groups
 }
 
+#[cfg(test)]
 fn push_issue_group(out: &mut String, title: &str, issues: &[&Issue]) {
     out.push_str(&format!("### {}\n\n", title));
     if issues.is_empty() {
@@ -5465,7 +5810,7 @@ fn capability_plan_summary_rows(
         let operator = if row_candidates.is_empty() {
             suggested_capability_operator(row, issues)
         } else {
-            "epicize -> atomize"
+            "project plan"
         };
         summary.next_operator = merge_capability_plan_operator(&summary.next_operator, operator);
         if summary.first_action == "monitor" {
@@ -5567,9 +5912,7 @@ fn extract_active_wi_numbers(text: &str) -> Vec<u64> {
 
 fn merge_capability_plan_operator(current: &str, next: &str) -> String {
     let priority = |operator: &str| match operator {
-        "epicize -> atomize" => 4,
-        "atomize -> prioritize" => 3,
-        "prioritize" => 2,
+        "project plan" => 4,
         "reconcile tracker ref" => 2,
         "monitor" => 1,
         _ => 0,
@@ -5609,14 +5952,8 @@ fn has_actionable_gap(row: &CapabilityRow) -> bool {
 }
 
 fn infer_candidate_issue_type(gap: &str) -> &'static str {
-    let lower = gap.to_ascii_lowercase();
-    if lower.contains("test") || lower.contains("coverage") || lower.contains("verify") {
-        "test"
-    } else if lower.contains("refactor") || lower.contains("rename") || lower.contains("migrate") {
-        "refactor"
-    } else {
-        "enhancement"
-    }
+    let _ = gap;
+    "change"
 }
 
 fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) -> Vec<&'a Issue> {
@@ -5749,20 +6086,12 @@ fn capability_keywords(row: &CapabilityRow) -> Vec<String> {
 }
 
 fn suggested_capability_operator(row: &CapabilityRow, issues: &[Issue]) -> &'static str {
-    let matches = matching_issues_for_capability(row, issues);
     if !has_actionable_gap(row) {
         "monitor"
     } else if !missing_wi_refs_for_row(row, issues).is_empty() {
         "reconcile tracker ref"
-    } else if matches.is_empty() {
-        "epicize -> atomize"
-    } else if matches
-        .iter()
-        .any(|issue| issue.issue_type == IssueType::Epic || looks_too_large_for_atomic_wi(issue))
-    {
-        "atomize -> prioritize"
     } else {
-        "prioritize"
+        "project plan"
     }
 }
 
@@ -5778,6 +6107,7 @@ fn issue_refs(matches: &[&Issue]) -> String {
     }
 }
 
+#[cfg(test)]
 fn push_epic_candidate(out: &mut String, name: &str, goal: &str, issues: &[&Issue]) {
     if issues.is_empty() {
         return;
@@ -6028,7 +6358,7 @@ fn render_capability_wi_plan(
     }
 
     out.push_str("\n## Recommended CLI Sequence\n\n");
-    out.push_str("1. Complete the digest-bound review payload emitted by `aw wi plan`.\n");
+    out.push_str("1. Complete the digest-bound review payload emitted by `aw capability sweep --include-issue-inventory --write-wi-plans`.\n");
     out.push_str("2. Run the emitted `aw wi plan-review --evidence-file <path>` command; accepted review publishes only bounded, deduplicated candidates.\n");
     out.push_str(&format!(
         "3. `aw goal capability --project {} --non-interactive`\n",
@@ -6166,12 +6496,14 @@ fn capability_candidate_spec_id(candidate: &CapabilityCandidate) -> String {
     slug.trim_matches('-').to_string()
 }
 
+#[cfg(test)]
 fn render_epicize_plan(
     project: &str,
     title: &str,
     backend_name: &str,
     issues: &[Issue],
     capability_document: Option<&crate::cli::capability::CapabilityDocument>,
+    review_backing: &str,
 ) -> String {
     let groups = group_issues_for_epicize(issues);
     let mut out = String::new();
@@ -6182,8 +6514,7 @@ fn render_epicize_plan(
     out.push_str(&format!("title: {}\n", yaml_quote(title)));
     out.push_str(&format!("backend: {}\n", yaml_quote(backend_name)));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
-    out.push_str("requires_hitl: true\n");
-    out.push_str("hitl_status: pending\n");
+    push_inventory_review_frontmatter(&mut out, review_backing);
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
@@ -6192,7 +6523,7 @@ fn render_epicize_plan(
     out.push_str(
         "- Identify duplicate, underspecified, or deferred requirements before prioritize.\n",
     );
-    out.push_str("- Keep this artifact local until a human confirms the candidate epics.\n\n");
+    out.push_str("- Keep this artifact local until an independent digest-bound review accepts the candidate epics.\n\n");
     if let Some(document) = capability_document {
         push_capability_epic_candidates(&mut out, document);
     }
@@ -6243,21 +6574,17 @@ fn render_epicize_plan(
     {
         out.push_str("- none\n\n");
     }
-    out.push_str("## Required HITL Brief\n\n");
-    out.push_str(
-        "This epic draft requires human confirmation before publishing tracker changes.\n\n",
-    );
+    push_inventory_review_brief(&mut out, "epicize", review_backing);
     out.push_str(
         "- Merge groups that are clearly one outcome; split groups that mix unrelated goals.\n",
     );
     out.push_str("- Mark duplicate work-items and choose one canonical issue per duplicate set.\n");
     out.push_str("- For each accepted epic candidate, produce title, problem statement, acceptance criteria, included issues, deferred issues, and execution order.\n");
-    out.push_str(
-        "- Do not publish tracker changes from this artifact without human confirmation.\n",
-    );
+    out.push_str("- Accepted review may authorize only the exact executable next command recorded in its digest-bound evidence.\n");
     out
 }
 
+#[cfg(test)]
 fn push_capability_epic_candidates(
     out: &mut String,
     document: &crate::cli::capability::CapabilityDocument,
@@ -6289,10 +6616,11 @@ fn push_capability_epic_candidates(
     out.push_str("- Every capability heading maps to an epic/subepic root candidate.\n");
     out.push_str("- Every capability work-root row maps to one WI root candidate, defaulting to epic/subepic granularity.\n");
     out.push_str(
-        "- Atomic change WIs are created by `aw wi atomize` after these roots are confirmed.\n\n",
+        "- Atomic change WIs are proposed by stage two of `aw wi plan` after these roots are confirmed.\n\n",
     );
 }
 
+#[cfg(test)]
 fn capability_root_wi(capability: &crate::cli::capability::CapabilitySection) -> String {
     capability
         .gaps
@@ -6303,6 +6631,7 @@ fn capability_root_wi(capability: &crate::cli::capability::CapabilitySection) ->
         .to_string()
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct AtomicCandidate {
     source_ref: String,
@@ -6311,6 +6640,7 @@ struct AtomicCandidate {
     verification: String,
 }
 
+#[cfg(test)]
 fn atomize_candidates(issues: &[Issue]) -> Vec<AtomicCandidate> {
     let mut candidates = Vec::new();
     for issue in issues {
@@ -6340,12 +6670,14 @@ fn atomize_candidates(issues: &[Issue]) -> Vec<AtomicCandidate> {
     candidates
 }
 
+#[cfg(test)]
 fn render_atomize_plan(
     project: &str,
     title: &str,
     backend_name: &str,
     issues: &[Issue],
     candidates: &[AtomicCandidate],
+    review_backing: &str,
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
@@ -6356,14 +6688,13 @@ fn render_atomize_plan(
     out.push_str(&format!("backend: {}\n", yaml_quote(backend_name)));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
-    out.push_str("requires_hitl: true\n");
-    out.push_str("hitl_status: pending\n");
+    push_inventory_review_frontmatter(&mut out, review_backing);
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
     out.push_str("- Split epic or roadmap-sized work into atomic work-item candidates.\n");
     out.push_str(
-        "- Keep this artifact local until a human confirms which candidates should publish.\n",
+        "- Keep this artifact local until an independent digest-bound review accepts which candidates should publish.\n",
     );
     out.push_str("- Atomic candidates must have one visible outcome, one main workspace/module, and one verification gate.\n\n");
 
@@ -6405,21 +6736,21 @@ fn render_atomize_plan(
         }
     }
 
-    out.push_str("\n## Required Human Confirmation\n\n");
+    push_inventory_review_brief(&mut out, "atomize", review_backing);
     out.push_str("- Choose which candidates become local `aw wi draft` artifacts.\n");
     out.push_str("- Rewrite generic candidates into concrete titles before publishing.\n");
-    out.push_str(
-        "- Do not publish tracker changes from this artifact without human confirmation.\n",
-    );
+    out.push_str("- Accepted review may authorize only the exact executable draft or publication command recorded in its digest-bound evidence.\n");
     out
 }
 
+#[cfg(test)]
 fn render_prioritize_plan(
     project: &str,
     title: &str,
     backend_name: &str,
     lanes: &PrioritizeLanes,
     issues: &[Issue],
+    review_backing: &str,
 ) -> String {
     let groups = group_issues_for_epicize(issues);
     let mut out = String::new();
@@ -6445,14 +6776,13 @@ fn render_prioritize_plan(
         lanes.needs_triage.len()
     ));
     out.push_str(&format!("deferred_count: {}\n", lanes.deferred.len()));
-    out.push_str("requires_hitl: true\n");
-    out.push_str("hitl_status: pending\n");
+    push_inventory_review_frontmatter(&mut out, review_backing);
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
     out.push_str("- Re-rank issue backlog by priority, dependency, and readiness.\n");
     out.push_str("- Identify ready work, blocked dependencies, atomization needs, triage blockers, and deferred work before tracker updates.\n");
-    out.push_str("- Keep this artifact local until a human confirms the proposed ordering.\n\n");
+    out.push_str("- Keep this artifact local until an independent digest-bound review accepts the proposed ordering.\n\n");
 
     push_prioritize_lane(&mut out, "Ready Now", &lanes.ready_now);
     push_prioritize_lane(
@@ -6472,17 +6802,14 @@ fn render_prioritize_plan(
     } else {
         for issue in issues {
             out.push_str(&format!(
-                "| {} | {} | TBD | Human confirmation required |\n",
+                "| {} | {} | TBD | Independent review required |\n",
                 issue_ref(issue),
                 priority_label(issue)
             ));
         }
     }
 
-    out.push_str("\n## Required HITL Brief\n\n");
-    out.push_str(
-        "This priority draft requires human confirmation before publishing tracker changes.\n\n",
-    );
+    push_inventory_review_brief(&mut out, "prioritize", review_backing);
     out.push_str("- Reorder ready work only when dependency or urgency overrides deterministic priority ordering.\n");
     out.push_str(
         "- Keep dependency-blocked work out of the ready lane until the blocker closes.\n",
@@ -6490,12 +6817,39 @@ fn render_prioritize_plan(
     out.push_str(
         "- Recommend concrete priority label changes in the matrix with one short reason each.\n",
     );
-    out.push_str(
-        "- Do not publish tracker changes from this artifact without human confirmation.\n",
-    );
+    out.push_str("- Accepted review may authorize only the exact executable update or backlog command recorded in its digest-bound evidence.\n");
     out
 }
 
+#[cfg(test)]
+fn push_inventory_review_frontmatter(out: &mut String, review_backing: &str) {
+    let requires_hitl = review_backing == "human";
+    out.push_str(&format!("review_backing: {}\n", yaml_quote(review_backing)));
+    out.push_str("agent_review_required: true\n");
+    out.push_str("review_status: pending\n");
+    out.push_str(&format!("requires_hitl: {requires_hitl}\n"));
+    out.push_str(if requires_hitl {
+        "hitl_status: pending_human\n"
+    } else {
+        "hitl_status: pending_agent_review\n"
+    });
+}
+
+#[cfg(test)]
+fn push_inventory_review_brief(out: &mut String, kind: &str, review_backing: &str) {
+    out.push_str("\n## Required Independent Review\n\n");
+    if review_backing == "human" {
+        out.push_str(&format!(
+            "This `{kind}` draft requires explicit human review under `planning_review_backing=human` before tracker changes.\n\n"
+        ));
+    } else {
+        out.push_str(&format!(
+            "This `{kind}` draft requires an independent agent-or-human review bound to the exact plan digest; same-agent self-review and stale evidence are rejected.\n\n"
+        ));
+    }
+}
+
+#[cfg(test)]
 fn push_prioritize_lane(out: &mut String, title: &str, issues: &[Issue]) {
     out.push_str(&format!("## {}\n\n", title));
     if issues.is_empty() {
@@ -6825,10 +7179,22 @@ async fn run_validate_legacy(
         }
     } else {
         let result = serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "event": "result",
+            "status": "done",
+            "action": "validate",
             "passed": true,
             "errors": [],
             "state_promoted": was_draft,
             "new_state": if was_draft { "open" } else { issue.state.as_str() },
+            "completion": {
+                "workflow_complete": true,
+                "requires_hitl": false,
+            },
+            "next": {
+                "kind": "done",
+                "reason": "work-item authoring validation passed",
+            },
         });
         if args.pretty {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -7071,6 +7437,7 @@ label = "app:jet"
         let accepted = decision == CapabilityPlanReviewDecision::Accepted;
         let record = CapabilityPlanReviewRecord {
             version: CAPABILITY_PLAN_REVIEW_VERSION,
+            kind: "capability_plan".to_string(),
             project: "jet".to_string(),
             plan_path: plan_path.display().to_string(),
             manifest_path: manifest_path.display().to_string(),
@@ -7082,9 +7449,11 @@ label = "app:jet"
             summary: "Independent semantic review completed.".to_string(),
             checklist: CapabilityPlanReviewChecklist {
                 capability_claim_coverage: accepted,
+                scope_coverage: false,
                 bounded_candidates: accepted,
                 tracker_reconciliation: accepted,
                 verification_specific: accepted,
+                priority_consistent: false,
                 no_duplicate_wis: accepted,
                 publication_safe: accepted,
             },
@@ -7093,6 +7462,7 @@ label = "app:jet"
             } else {
                 vec!["Candidate scope is not bounded.".to_string()]
             },
+            next_command: String::new(),
         };
         (tmp, record)
     }
@@ -7231,17 +7601,22 @@ label = "app:jet"
     }
 
     #[test]
-    fn epicize_artifact_requires_hitl() {
+    fn epicize_artifact_is_agent_first_and_human_only_by_explicit_policy() {
         let issues = vec![planning_issue(
             IssueType::Enhancement,
             "new capability",
             Some("p1"),
             1,
         )];
-        let body = render_epicize_plan("score", "Score phase", "github", &issues, None);
-        assert!(body.contains("requires_hitl: true"));
-        assert!(body.contains("hitl_status: pending"));
-        assert!(body.contains("## Required HITL Brief"));
+        let body = render_epicize_plan("score", "Score phase", "github", &issues, None, "either");
+        assert!(body.contains("requires_hitl: false"));
+        assert!(body.contains("hitl_status: pending_agent_review"));
+        assert!(body.contains("## Required Independent Review"));
+        assert!(!body.contains("Required HITL"));
+
+        let human = render_epicize_plan("score", "Score phase", "github", &issues, None, "human");
+        assert!(human.contains("requires_hitl: true"));
+        assert!(human.contains("hitl_status: pending_human"));
     }
 
     #[test]
@@ -7261,26 +7636,35 @@ label = "app:jet"
         let document =
             crate::cli::capability::parse_capability_document(cap_body, Path::new("README.md"))
                 .unwrap();
-        let body = render_epicize_plan("jet", "Jet epics", "github", &[], Some(&document));
+        let body =
+            render_epicize_plan("jet", "Jet epics", "github", &[], Some(&document), "either");
         assert!(body.contains("## Capability Epic Candidates"));
         assert!(body.contains("| Package Manager | epic | package-manager | #3779 | auditing |"));
         assert!(
             body.contains("| Lockfile parity | subepic | package-manager | #3779 | in_progress |")
         );
-        assert!(body.contains("Atomic change WIs are created by `aw wi atomize`"));
+        assert!(body.contains("Atomic change WIs are proposed by stage two of `aw wi plan`"));
     }
 
     #[test]
-    fn prioritize_artifact_requires_hitl_and_orders_all_layers() {
+    fn prioritize_artifact_is_agent_first_and_orders_all_layers() {
         let issues = vec![
             planning_issue(IssueType::Epic, "phase", Some("p1"), 3),
             planning_issue(IssueType::Bug, "urgent", Some("p0"), 1),
             planning_issue(IssueType::Enhancement, "capability", Some("p2"), 2),
         ];
         let lanes = prioritize_lanes(&issues);
-        let body = render_prioritize_plan("score", "Score priorities", "github", &lanes, &issues);
+        let body = render_prioritize_plan(
+            "score",
+            "Score priorities",
+            "github",
+            &lanes,
+            &issues,
+            "either",
+        );
         assert!(body.contains("kind: prioritize"));
-        assert!(body.contains("requires_hitl: true"));
+        assert!(body.contains("requires_hitl: false"));
+        assert!(body.contains("hitl_status: pending_agent_review"));
         assert!(body.contains("## Ready Now"));
         assert!(body.contains("## Blocked By Dependency"));
         assert!(body.contains("## Needs Atomize"));
@@ -7317,7 +7701,14 @@ label = "app:jet"
     fn wi_remove_agent_estimate_prioritize_output_omits_estimate_fields() {
         let issues = vec![planning_issue(IssueType::Bug, "ready bug", Some("p1"), 9)];
         let lanes = prioritize_lanes(&issues);
-        let body = render_prioritize_plan("score", "Score priorities", "github", &lanes, &issues);
+        let body = render_prioritize_plan(
+            "score",
+            "Score priorities",
+            "github",
+            &lanes,
+            &issues,
+            "either",
+        );
         assert!(body.contains("## Ready Now"));
         assert!(!body.contains("Agent Estimate"));
         assert!(!body.contains("agent_minutes"));
@@ -7413,7 +7804,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         };
         let candidates = capability_wi_candidates(&map.rows, &[]);
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].issue_type, "enhancement");
+        assert_eq!(candidates[0].issue_type, "change");
         let body = render_capability_wi_plan(
             "jet",
             "Jet capability plan",
@@ -7431,7 +7822,9 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("planning_row_count: 2"));
         assert!(body.contains("reconciliation_count: 0"));
         assert!(body.contains("## Confirmation Summary"));
-        assert!(body.contains("| Package manager | 1 | none | epicize -> atomize | Close capability gap: Package manager |"));
+        assert!(body.contains(
+            "| Package manager | 1 | none | project plan | Close capability gap: Package manager |"
+        ));
         assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
         assert!(body.contains("DeveloperTool"));
         assert!(body.contains("CLI: `jet install` - install dependencies"));
@@ -7674,7 +8067,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         issue.body = "## Capability Alignment\n\nCapability: `cli-interface`\nCapability Gap: `defer-cli-convention`\n".to_string();
         let mut candidate = CapabilityCandidate {
             title: "Close capability claim: CLI / defer-cli-convention".to_string(),
-            issue_type: "enhancement".to_string(),
+            issue_type: "change".to_string(),
             source_capability_id: "cli-interface".to_string(),
             source_capability: "CLI Interface".to_string(),
             related_capabilities: Vec::new(),
@@ -7826,7 +8219,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert_eq!(summary[0].capability, "Package Manager");
         assert_eq!(summary[0].candidate_count, 2);
         assert_eq!(summary[0].existing_wi_refs, vec!["#3779", "#3780"]);
-        assert_eq!(summary[0].next_operator, "epicize -> atomize");
+        assert_eq!(summary[0].next_operator, "project plan");
         assert_eq!(
             summary[0].first_action,
             "Close capability claim: Package Manager / package-manager-readiness"
@@ -7921,7 +8314,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
-    fn capability_wi_plan_command_preserves_cap_path_override() {
+    fn capability_wi_plan_command_routes_to_capability_sweep_producer() {
         let command = capability_wi_plan_command(
             "lumen",
             Some(Path::new("/tmp/aw/test/plan path/lumen README.md")),
@@ -7929,7 +8322,7 @@ Generator ownership is complete; package-manager roadmap remains open.
 
         assert_eq!(
             command,
-            "aw wi plan --project lumen --cap-path '/tmp/aw/test/plan path/lumen README.md'"
+            "aw capability sweep --include-issue-inventory --write-wi-plans"
         );
     }
 
@@ -7984,7 +8377,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
-    fn capability_claim_rows_do_not_match_broad_epic_by_keywords_only() {
+    fn capability_claim_rows_ignore_broad_epic_and_keep_stale_ref_change_candidate() {
         let row = CapabilityRow {
             capability_id: "package-manager".to_string(),
             capability: "Package Manager".to_string(),
@@ -8015,7 +8408,8 @@ Generator ownership is complete; package-manager roadmap remains open.
         let candidates = capability_wi_candidates(&[row.clone()], &issues);
         let reconciliations = capability_tracker_reconciliations(&[row], &issues, &BTreeMap::new());
 
-        assert!(candidates.is_empty());
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].issue_type, "change");
         assert_eq!(reconciliations.len(), 1);
         assert_eq!(reconciliations[0].active_wi, "#3779");
     }
@@ -9070,7 +9464,7 @@ labels:\n\
     #[test]
     fn build_create_label_vec_orders_type_project_priority_agent() {
         let labels = build_create_label_vec(
-            "type:bug",
+            "type:change",
             &["app:agentic-workflow".into()],
             Some("priority:p1"),
             Some("agent::claude-code"),
@@ -9078,7 +9472,7 @@ labels:\n\
         assert_eq!(
             labels,
             vec![
-                "type:bug",
+                "type:change",
                 "app:agentic-workflow",
                 "priority:p1",
                 "agent::claude-code"
@@ -9088,13 +9482,41 @@ labels:\n\
 
     #[test]
     fn build_create_label_vec_skips_optional_when_absent() {
-        let labels = build_create_label_vec(
-            "type:enhancement",
-            &["app:agentic-workflow".into()],
-            None,
-            None,
+        let labels =
+            build_create_label_vec("type:change", &["app:agentic-workflow".into()], None, None);
+        assert_eq!(labels, vec!["type:change", "app:agentic-workflow"]);
+    }
+
+    #[test]
+    fn type_filter_exposes_only_epic_and_change_for_authoring() {
+        use clap::ValueEnum as _;
+
+        let values = TypeFilter::value_variants()
+            .iter()
+            .filter_map(clap::ValueEnum::to_possible_value)
+            .map(|value| value.get_name().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["epic", "change"]);
+    }
+
+    #[test]
+    fn update_add_label_canonicalizes_legacy_work_item_types() {
+        for legacy in ["bug", "enhancement", "refactor", "test"] {
+            assert_eq!(
+                canonicalize_type_label_for_write(&format!("type:{legacy}")).unwrap(),
+                "type:change"
+            );
+        }
+        assert_eq!(
+            canonicalize_type_label_for_write("type:epic").unwrap(),
+            "type:epic"
         );
-        assert_eq!(labels, vec!["type:enhancement", "app:agentic-workflow"]);
+        assert_eq!(
+            canonicalize_type_label_for_write("priority:p1").unwrap(),
+            "priority:p1"
+        );
+        assert!(canonicalize_type_label_for_write("type:unknown").is_err());
     }
 
     #[test]
@@ -9146,7 +9568,7 @@ labels:\n\
                 "--title",
                 "Demo",
                 "--type",
-                "bug",
+                "change",
                 "--project",
                 "agentic-workflow",
                 "--remote",
@@ -9237,11 +9659,10 @@ changes:
     impl_mode: codegen
     section: source
     description: |
-      Issue #1899 R7: `priority_rank` widens from private to `pub(crate)` so
-      `aw goal backlog`'s priority-first open-WI ordering
-      (`run.rs::list_open_project_issues`) shares the exact same rank
-      function `aw wi prioritize`/`aw wi plan` use, instead of a second copy
-      that could silently drift.
+      Issue #1899 R7 originally shared flat issue priority with the backlog
+      root. Issue #2389 narrows `priority_rank` back to planning-artifact
+      production: goal scheduling now consumes the accepted hierarchical
+      graph and orders epic direction before effective child priority.
   - path: apps/agentic-workflow/src/cli/issues.rs
     action: modify
     impl_mode: codegen

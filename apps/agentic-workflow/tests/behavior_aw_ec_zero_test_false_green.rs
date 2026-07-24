@@ -20,10 +20,10 @@ fn aw_ec_zero_test_false_green() {
         "cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture";
     let id = "aw-ec-zero-test-false-green";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !root.join(".aw").is_dir() {
+    while !root.join("aw.toml").is_file() {
         assert!(
             root.pop(),
-            "AW EC {id}: no .aw/ project root above {}",
+            "AW EC {id}: no aw.toml repository root above {}",
             env!("CARGO_MANIFEST_DIR")
         );
     }

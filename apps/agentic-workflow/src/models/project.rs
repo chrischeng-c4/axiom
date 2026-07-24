@@ -76,6 +76,15 @@ pub struct Project {
     /// Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent.
     #[serde(default, alias = "td_path", skip_serializing_if = "Option::is_none")]
     pub tech_design_dir: Option<String>,
+    /// Explicit specification model. `spec_model` is canonical; the former
+    /// `artifact_model` spelling remains read-compatible during migration.
+    #[serde(
+        default,
+        rename = "spec_model",
+        alias = "artifact_model",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_model: Option<ProjectArtifactModel>,
     /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ec: BTreeMap<String, EcBinding>,
@@ -87,6 +96,56 @@ pub struct Project {
     pub ec_review_mode: Option<String>,
     /// Non-empty list of workspaces contained in this project.
     pub workspaces: Vec<Workspace>,
+}
+
+/// The project artifact lifecycle selected by `aw.toml`.
+///
+/// `legacy` retains Markdown-oriented readers. `python` opts a project into
+/// direct Python EC/TD authoring; the historical `python-v1` value is accepted
+/// only for reading existing configuration.
+/// @spec apps/agentic-workflow/tech-design/core/logic/python-artifact-model-selector.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectArtifactModel {
+    Legacy,
+    #[serde(rename = "python", alias = "python-v1")]
+    PythonV1,
+}
+
+impl Default for ProjectArtifactModel {
+    fn default() -> Self {
+        Self::PythonV1
+    }
+}
+
+/// Test-only seam that keeps the retired Markdown lifecycle's subprocess
+/// regression fixtures covered while the public selector remains
+/// unconditionally Python-first. This is intentionally not read from
+/// `aw.toml` and is never emitted or documented as a user-facing selector.
+pub const TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV: &str = "AW_TEST_ONLY_LEGACY_ARTIFACT_MODEL";
+
+pub(crate) fn test_only_legacy_artifact_model_enabled() -> bool {
+    std::env::var_os(TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+}
+
+pub(crate) fn effective_project_artifact_model(
+    _configured: Option<ProjectArtifactModel>,
+) -> ProjectArtifactModel {
+    if test_only_legacy_artifact_model_enabled() {
+        return ProjectArtifactModel::Legacy;
+    }
+    ProjectArtifactModel::PythonV1
+}
+
+impl Project {
+    /// The Python artifact lifecycle is canonical for every project.
+    ///
+    /// `spec_model` remains read-compatible while adopters remove legacy
+    /// configuration, but it no longer selects a different lifecycle.
+    pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
+        effective_project_artifact_model(self.artifact_model)
+    }
 }
 
 /// Container for the `[defaults]` table in `projects.toml`.

@@ -32,8 +32,8 @@ pub enum ScaffoldOutcome {
 
 /// Locate `anchor_symbol` in `target_path` and insert a HANDWRITE marker
 /// pair (XML-form `<HANDWRITE gap="..." tracker="..." reason="...">` /
-/// `</HANDWRITE>`) immediately surrounding the anchor's `pub fn` /
-/// `pub struct` / `pub enum` line. The `entry` carries optional overrides
+/// `</HANDWRITE>`) immediately surrounding the anchor's Rust item line
+/// (public or private `fn` / `struct` / `enum` / `trait`). The `entry` carries optional overrides
 /// for `gap`, `tracker`, and `reason`; absent fields are derived from
 /// `section_id` and the target filename per the spec.
 ///
@@ -230,10 +230,14 @@ fn line_matches_anchor(line: &str, anchor: &str) -> bool {
         format!("pub(crate) async fn {}(", anchor),
         format!("pub(crate) struct {}", anchor),
         format!("pub(crate) enum {}", anchor),
+        format!("pub(crate) trait {}", anchor),
         format!("fn {}(", anchor),
         format!("fn {}<", anchor),
         format!("async fn {}(", anchor),
         format!("async fn {}<", anchor),
+        format!("struct {}", anchor),
+        format!("enum {}", anchor),
+        format!("trait {}", anchor),
     ];
     needles.iter().any(|n| t.starts_with(n))
 }
@@ -338,6 +342,29 @@ mod tests {
         let r = derive_reason(&entry, Some("logic"), p);
         assert!(!r.is_empty());
         assert!(r.contains("foo.rs"));
+    }
+
+    #[test]
+    fn private_type_anchors_are_resolvable_and_scaffoldable() {
+        for (anchor, source) in [
+            (
+                "RhsNormalizationStats",
+                "struct RhsNormalizationStats { count: usize }\n",
+            ),
+            ("PrivateMode", "enum PrivateMode { Fast }\n"),
+            ("PrivateContract", "trait PrivateContract {}\n"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("source.rs");
+            std::fs::write(&path, source).unwrap();
+            assert!(anchor_present(&path, anchor).unwrap(), "anchor: {anchor}");
+            assert_eq!(
+                scaffold_handwrite(&HandwriteEntry::default(), &path, anchor, Some("logic"))
+                    .unwrap(),
+                ScaffoldOutcome::Inserted,
+                "anchor: {anchor}"
+            );
+        }
     }
 }
 

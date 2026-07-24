@@ -25,7 +25,7 @@ capability_refs:
     gap: "aw-epic-project-label-dispatch"
     claim: "aw-epic-project-label-dispatch"
     coverage: full
-    rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
+    rationale: "The CLI semantic domain owns run.rs project-label resolution, greenfield project-local configuration bootstrap, reviewed-graph admission and ready-leaf dispatch, terminal epic rollup, and fail-closed remediation envelopes."
   - id: workflow-root-runner
     role: primary
     gap: self-hosting-root-runner-policy
@@ -1062,10 +1062,25 @@ semantic_domain:
           - name: "ConfArgs"
             kind: "struct"
             public: true
+          - name: "ConfCommand"
+            kind: "enum"
+            public: true
+          - name: "ConfInitArgs"
+            kind: "struct"
+            public: true
+          - name: "BootstrapProjectIdentity"
+            kind: "struct"
+            public: false
           - name: "run"
             kind: "function"
             public: true
           - name: "run_at_root"
+            kind: "function"
+            public: false
+          - name: "bootstrap_project_identity"
+            kind: "function"
+            public: false
+          - name: "run_project_init"
             kind: "function"
             public: false
           - name: "run_drift_check"
@@ -1360,6 +1375,9 @@ semantic_domain:
           - name: "await_with_progress"
             kind: "function"
             public: false
+          - name: "cb_gen_writable_scope"
+            kind: "function"
+            public: false
           - name: "workflow_goal_envelope"
             kind: "function"
             public: false
@@ -1379,6 +1397,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "project_from_labels"
+            kind: "function"
+            public: false
+          - name: "project_identity_from_labels"
             kind: "function"
             public: false
           - name: "issue_is_self_hosting"
@@ -3742,6 +3763,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #2182 adds `aw conf init --project-label <identity>` as the
+      idempotent greenfield producer for monorepo projects: it validates the
+      tracker identity, creates a discoverable project-local `aw.toml` with an
+      honest schemas-only bootstrap workspace, refuses conflicting existing
+      configuration, and emits `aw meta init --project <name>` as the next
+      command.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/update.rs"
     action: modify
@@ -3828,6 +3855,24 @@ changes:
       `PROJECT` placeholder. Focused tests cover the historical #1511 pgpool
       label shape, app/lib compatibility, invalid values, and real-CLI chain
       parsing.
+      Issue #2182 extends that routing for a valid identity absent from the
+      live project registry: the root emits `aw conf init --project-label
+      <identity>`, follows the configuration producer's META-doc handoff, and
+      only then emits atomization. Registered project behavior remains
+      byte-for-byte compatible, while unsafe label tokens are rejected before
+      entering a command string.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2264 makes open-epic admission read the configured issue platform
+      across open and closed project WIs before proposing atomization. Durable
+      parent labels and the existing Parent Epic / Parent WI body contract map
+      non-epic children to their root: an open child dispatches through aw goal
+      wi, an all-closed child set emits the chain-valid parent close command,
+      and only a childless epic falls back to aw wi atomize. Inventory failure
+      blocks safely instead of proposing duplicate children.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/run.rs"
     action: modify
@@ -3853,6 +3898,9 @@ changes:
       Issue #1518 registers `run.rs:open_epic_envelope` in EMIT_REGISTRY with
       `aw wi atomize --project pgpool`, so the exact epic handoff is parsed
       against the real clap tree by the chain-conformance suite.
+      Issue #2182 additionally registers `aw conf init --project-label
+      app:workbench` and classifies `conf.init` as a mutating core verb, so the
+      greenfield bootstrap branch is checked against the same live clap tree.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/production.rs"
     action: modify
@@ -4505,30 +4553,36 @@ changes:
       `BacklogState` (workspace-scoped, `goal_state_path(root,
       "backlog-<project>")`, id `backlog-<project>`) records the `parked`
       set: WI id -> park reason, so a HITL/hard-blocked WI is not re-probed
-      every tick. `list_open_project_issues` resolves the project's
-      canonical tracker label, lists every open issue via the configured
-      `IssueBackend`, and sorts by the shared
-      `crate::cli::issues::priority_rank` (now `pub(crate)`), then numeric
-      id, then slug, for deterministic drain order.
+      every tick. Issue #2389 replaces the flat open-issue ordering with
+      `load_reviewed_project_graph` plus `select_ready_change_leaf`: both
+      backlog and epic WI roots load the exact accepted project-plan review,
+      completed publication checkpoint, current issue-platform inventory,
+      and canonical graph. Epic priority chooses project direction first;
+      dependency readiness and explicit/inherited child priority choose a
+      change only within that epic. Invalid ownership/parent metadata,
+      unresolved dependencies, stale graph labels, or review/publication
+      provenance drift fail closed with an executable inspection or replanning
+      command. Lifecycle state and non-graph metadata may advance normally.
       `probe_wi_root_envelope` builds the same `ResolvedRunRoot::Wi`
       envelope `aw goal wi <id>` would emit, with progress streaming
       disabled (a silent probe, not a real tick). `run_backlog_root`:
       short-circuits self-hosting projects via
-      `emit_self_hosting_policy_error`; drops parked entries whose WI
-      closed since the last drain; walks the priority-ordered open list,
-      skipping already-parked ids, probing each candidate, parking (never
-      emitting) any that reports `requires_hitl`/`action == "blocked"` with
-      the envelope's reason text, and selecting the first
-      still-not-terminal, still-not-blocked candidate; persists the updated
+      `emit_self_hosting_policy_error`; drops parked entries whose change
+      closed since the last drain; asks the shared selector for one ready
+      leaf, probes it, parks (never emits) any leaf that reports
+      `requires_hitl`/`action == "blocked"`, and reselects so a blocked
+      high-priority leaf cannot hide ready work; persists the updated
       `BacklogState`; and emits one `WorkflowEnvelope` (`kind: "backlog"`,
       `id: <project>`) per invocation -- `action: "dispatch"` with
       `next.command` set to the selected WI's `aw goal wi <id>` (the exact
       string `wi_run_command` builds, per the new `EMIT_REGISTRY` entry in
       `chain.rs`) when a candidate was selected, or a terminal `action:
       "done"` / `completion.workflow_complete: true` envelope reporting the
-      full parked set (id + reason) in `agent_prompt` when every open WI is
-      either closed or parked. One bounded CLI invocation performs at most
-      one probe-and-select tick (never a self-looping multi-WI executor);
+      full parked set (id + reason) in `agent_prompt` when no reviewed ready
+      leaf remains. If every child of an open epic is closed, the epic root
+      reuses #2264 terminal rollup and emits `aw wi close <epic> --push`;
+      reviewed epics are never re-atomized. One bounded CLI invocation
+      performs at most one dispatch tick (never a self-looping multi-WI executor);
       the host's normal per-WI loop drives the selected WI to its own
       terminal via the emitted `aw goal wi <id>`, and the next `aw goal
       backlog` invocation then advances the drain.
@@ -4624,5 +4678,14 @@ changes:
       Issue #2187: the WI orientation documents agent-first capability-plan
       review, explicit human-only opt-in, and accepted versus needs_revision
       publication behavior.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2545: target-native `aw cb gen` prompt contracts declare the
+      complete possible write surface for the selected Rust, Python, or
+      TypeScript emitter, including its package manifest, source tree, and
+      generated unit-test inventory.
     impl_mode: hand-written
 ```

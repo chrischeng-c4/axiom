@@ -45,8 +45,9 @@ impl std::fmt::Display for DirtyTreeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "working tree at {} is dirty (uncommitted changes); commit or stash before continuing.\n\
-             Run `git status` to inspect; `git stash` to set aside; then re-run the verb.\n\
+            "working tree at {} is dirty; a branch switch could overwrite those changes.\n\
+             Run `git status` to inspect, then commit the affected paths or move that work to a dedicated worktree before re-running.\n\
+             In a shared-gitdir repository, never use a bare `git stash pop`; stash refs are shared by every worktree.\n\
              porcelain output:\n{}",
             self.repo_root, self.porcelain
         )
@@ -281,6 +282,7 @@ mod tests {
         let s = err.to_string();
         assert!(s.contains("dirty"), "{s}");
         assert!(s.contains("scratch.txt"), "{s}");
+        assert!(s.contains("never use a bare `git stash pop`"), "{s}");
     }
 
     #[test]

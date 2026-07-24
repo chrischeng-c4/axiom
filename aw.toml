@@ -101,6 +101,20 @@ test_cmd = "cargo test -p agentic-workflow"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
+[[projects]]
+name = "todo-app"
+path = "examples/todo-app"
+td_path = "examples/todo-app/td"
+cap_path = "examples/todo-app/CAPABILITIES.md"
+label = "example:todo-app"
+spec_model = "python"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/todo-app/backend-rust/**"]
+target = "rust"
+test_cmd = "cargo test --offline --manifest-path examples/todo-app/backend-rust/Cargo.toml"
+
 
 [[projects]]
 name = "cap"

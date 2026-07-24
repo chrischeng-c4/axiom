@@ -916,7 +916,7 @@ fn project_health_next_command_routes_to_drift_marker_remediation_when_otherwise
     let summary = project_health_summary(&report);
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw td gen --force-regen --project demo")
+        Some("aw cb gen --force-regen --project demo")
     );
 }
 
@@ -1148,9 +1148,9 @@ fn project_health_next_command_stays_off_verify_ec_for_self_health_without_confi
 
     assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("advisory"));
     assert_eq!(summary["policy_mode"], "sanctioned_direct_commit");
-    assert!(summary["hard_gates"]
-        .as_array()
-        .is_some_and(|gates| gates.iter().any(|gate| gate == "capability_work_root_alignment")));
+    assert!(summary["hard_gates"].as_array().is_some_and(|gates| gates
+        .iter()
+        .any(|gate| gate == "capability_work_root_alignment")));
     let next_command = summary["next"]["command"].as_str().unwrap_or_default();
     assert!(!next_command.contains("--verify-ec"));
     assert_eq!(
@@ -1441,6 +1441,169 @@ fn regenerability_gaps_are_advisory_when_production_gates_clean() {
     );
     assert!(!report.regenerability_authority.required_for_production);
     assert_eq!(report.regenerability_authority.gap_count, 1);
+}
+
+fn run_authoritative_health_fixture() -> (tempfile::TempDir, std::process::Output) {
+    let root = tempfile::tempdir().expect("create authoritative health fixture");
+    std::fs::create_dir_all(root.path().join("projects/fixture/src"))
+        .expect("create fixture source directory");
+    std::fs::create_dir_all(root.path().join("projects/fixture/tech-design"))
+        .expect("create fixture tech-design directory");
+    std::fs::write(
+        root.path().join("aw.toml"),
+        r#"
+[[projects]]
+name = "fixture"
+path = "projects/fixture"
+td_path = "projects/fixture/tech-design"
+cap_path = "projects/fixture/CAPABILITIES.md"
+
+[projects.regenerability]
+authority = "generator_authoritative"
+reason = "fixture requires deterministic generator ownership"
+
+[[projects.workspaces]]
+name = "fixture"
+paths = ["projects/fixture/**"]
+target = "rust"
+test_cmd = "true"
+verify_cold = false
+"#,
+    )
+    .expect("write fixture aw.toml");
+    std::fs::write(
+        root.path().join("projects/fixture/CAPABILITIES.md"),
+        "# Fixture\n\n## Brief\n\nFixture health contract.\n\n## Capabilities\n\n### Capability Index\n",
+    )
+    .expect("write fixture capabilities");
+    std::fs::write(
+        root.path().join("projects/fixture/src/lib.rs"),
+        "// HANDWRITE-BEGIN gap=\"fixture\" tracker=\"#fixture\" reason=\"fixture generator gap\"\npub fn fixture() {}\n// HANDWRITE-END\n",
+    )
+    .expect("write tracked fixture generator gap");
+
+    let aw_bin = std::env::var("CARGO_BIN_EXE_aw")
+        .expect("cli_tests must receive the compiled aw binary for health fixture coverage");
+    let output = std::process::Command::new(aw_bin)
+        .args(["health", "--project", "fixture", "full", "--verbose"])
+        .current_dir(root.path())
+        .output()
+        .expect("run fixture aw health");
+    (root, output)
+}
+
+fn health_output_records(stdout: &[u8]) -> Vec<serde_json::Value> {
+    std::str::from_utf8(stdout)
+        .expect("health stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("health stdout is JSONL"))
+        .collect()
+}
+
+#[test]
+fn authoritative_regenerability_gaps_block_project_health() {
+    let (_fixture, output) = run_authoritative_health_fixture();
+    let records = health_output_records(&output.stdout);
+    let result = records
+        .last()
+        .expect("fixture health must emit a terminal result record");
+    assert_eq!(
+        result["event"].as_str(),
+        Some("result"),
+        "fixture health did not reach its terminal result:\nstderr={}\nstdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        result["readiness"]["production_ready"].as_bool(),
+        Some(false),
+        "a configured generator-authoritative fixture with a tracked gap is not production ready"
+    );
+    assert!(
+        result["next"]["command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("aw ")),
+        "the blocked fixture must expose a runnable remediation command: {result}"
+    );
+
+    let payload_path = result["payload_path"]
+        .as_str()
+        .expect("terminal result includes its health payload path");
+    let payload: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(payload_path).expect("read emitted fixture health payload"),
+    )
+    .expect("fixture health payload is JSON");
+    assert_eq!(
+        payload["regenerability_authority"]["authority"].as_str(),
+        Some("generator_authoritative")
+    );
+    assert_eq!(
+        payload["regenerability_authority"]["required_for_production"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        payload["production_blockers"]
+            .as_array()
+            .expect("health payload includes production blockers")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|blocker| blocker.contains("regenerability required for production")),
+        "the configured authority must project the tracked generator gap into production blockers"
+    );
+}
+
+#[test]
+fn health_verbose_stdout_streams_progress_before_result() {
+    let (_fixture, output) = run_authoritative_health_fixture();
+    let records = health_output_records(&output.stdout);
+    let Some(result_index) = records
+        .iter()
+        .position(|record| record["event"].as_str() == Some("result"))
+    else {
+        panic!(
+            "fixture health must emit a result record:\nstderr={}\nstdout={}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    };
+    assert_eq!(
+        result_index,
+        records.len() - 1,
+        "result terminates the JSONL stream"
+    );
+
+    let progress = &records[..result_index];
+    let phases = progress
+        .iter()
+        .map(|record| record["phase"].as_str().expect("progress phase"))
+        .collect::<Vec<_>>();
+    assert!(
+        phases.starts_with(&["start", "tests"]),
+        "the CLI must emit production progress before returning its result: {phases:?}"
+    );
+    assert!(phases.contains(&"summary"));
+    assert!(
+        progress.iter().any(|record| {
+            record["command"].as_str() == Some("true") && record["phase"].as_str() == Some("tests")
+        }),
+        "the configured test command must be observable in production stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let result = &records[result_index];
+    let payload_path = result["payload_path"]
+        .as_str()
+        .expect("terminal result includes its health payload path");
+    let payload: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(payload_path).expect("read emitted fixture health payload"),
+    )
+    .expect("fixture health payload is JSON");
+    assert_eq!(
+        payload["test_gates"]["commands"][0]["command"].as_str(),
+        Some("true"),
+        "the payload keeps complete configured-command evidence"
+    );
+    assert!(payload["blockers"].is_array());
 }
 
 #[test]
