@@ -225,15 +225,15 @@ pub fn router_with_admission(
             get(subscription_list).post(subscription_create),
         )
         .route(
-            "/topics/{topic}/subscriptions/{name}",
+            "/topics/{topic}/subscriptions/{subscription}",
             get(subscription_get).delete(subscription_delete),
         )
         .route(
-            "/topics/{topic}/subscriptions/{name}/pull",
+            "/topics/{topic}/subscriptions/{subscription}/pull",
             axum::routing::post(subscription_pull),
         )
         .route(
-            "/topics/{topic}/subscriptions/{name}/ack",
+            "/topics/{topic}/subscriptions/{subscription}/ack",
             axum::routing::post(subscription_ack),
         )
         .route(
@@ -714,10 +714,10 @@ pub async fn subscription_list(
 
 #[utoipa::path(
     get,
-    path = "/topics/{topic}/subscriptions/{name}",
+    path = "/topics/{topic}/subscriptions/{subscription}",
     params(
         ("topic" = String, Path, description = "Topic name"),
-        ("name" = String, Path, description = "Subscription name")
+        ("subscription" = String, Path, description = "Subscription name")
     ),
     responses((status = 200, description = "Subscription", body = Subscription))
 )]
@@ -743,10 +743,10 @@ pub async fn subscription_get(
 
 #[utoipa::path(
     delete,
-    path = "/topics/{topic}/subscriptions/{name}",
+    path = "/topics/{topic}/subscriptions/{subscription}",
     params(
         ("topic" = String, Path, description = "Topic name"),
-        ("name" = String, Path, description = "Subscription name")
+        ("subscription" = String, Path, description = "Subscription name")
     ),
     responses((status = 200, description = "Deleted subscription", body = Subscription))
 )]
@@ -790,10 +790,10 @@ pub async fn subscription_delete(
 
 #[utoipa::path(
     post,
-    path = "/topics/{topic}/subscriptions/{name}/pull",
+    path = "/topics/{topic}/subscriptions/{subscription}/pull",
     params(
         ("topic" = String, Path, description = "Topic name"),
-        ("name" = String, Path, description = "Subscription name")
+        ("subscription" = String, Path, description = "Subscription name")
     ),
     request_body = Option<SubscriptionPullRequest>,
     responses((status = 200, description = "Side-effect-free bounded replay window", body = PullSubscriptionBatch))
@@ -831,10 +831,10 @@ pub async fn subscription_pull(
 
 #[utoipa::path(
     post,
-    path = "/topics/{topic}/subscriptions/{name}/ack",
+    path = "/topics/{topic}/subscriptions/{subscription}/ack",
     params(
         ("topic" = String, Path, description = "Topic name"),
-        ("name" = String, Path, description = "Subscription name")
+        ("subscription" = String, Path, description = "Subscription name")
     ),
     request_body = SubscriptionAckRequest,
     responses((status = 200, description = "Explicitly advanced checkpoint", body = ConsumerCheckpoint))
