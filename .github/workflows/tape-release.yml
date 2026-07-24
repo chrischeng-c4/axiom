@@ -1,16 +1,39 @@
-# Build and publish portable Sift binaries for the installer and release image.
-name: sift-release
+# Build `tape` binaries for its supported targets.
+#
+# Triggers:
+#   - push of a tag matching `tape@*`   → build + attach to GitHub release
+#                                         (e.g. tape@0.4.10, tape@1.2.3)
+#   - workflow_dispatch                 → build artifacts only (manual smoke)
+#
+# Targets — 3, not the 5-target lumen matrix: tape's own release-asset
+# consumers only understand these three. `apps/tape/install.sh` maps
+# `uname -s`/`uname -m` to exactly `aarch64-apple-darwin` (rejecting Intel
+# macOS outright), `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu`
+# — no musl legs. `apps/tape/Dockerfile.release`'s fetch stage matches: its
+# TARGETARCH case only has `amd64 → x86_64-unknown-linux-gnu` and
+# `arm64 → aarch64-unknown-linux-gnu`, and its runtime base is
+# `gcr.io/distroless/cc-debian12` (glibc-based), not the musl-only
+# `static-debian12` lumen uses. Adding musl targets here would produce
+# tarballs neither consumer downloads. (`cargo tree -p tape --features
+# "operator self-update issue otel backup"` confirms tape's whole dependency
+# graph is rustls-based with no openssl-sys, so this is a target-convention
+# choice, not a musl-vs-openssl compatibility constraint.)
+#
+#   - aarch64-apple-darwin        (Apple Silicon,      macos-14 native)
+#   - x86_64-unknown-linux-gnu    (most Linux servers, ubuntu-latest native)
+#   - aarch64-unknown-linux-gnu   (Linux on ARM,       ubuntu-latest cross)
+name: tape-release
 
 on:
   push:
     tags:
-      - "sift@*"
+      - "tape@*"
   workflow_dispatch:
     inputs:
       image_version:
         description: >-
-          Existing sift release tag to containerize and push to GHCR
-          (e.g. sift@0.1.1). Leave empty for a build-only smoke run.
+          Existing tape release tag to containerize and push to GHCR
+          (e.g. tape@0.4.10). Leave empty for a build-only smoke run.
         required: false
         default: ""
 
@@ -29,23 +52,12 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             cross: false
-            musl: false
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false
-            musl: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
-            musl: false
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            cross: false
-            musl: true
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04-arm
-            cross: false
-            musl: true
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +66,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install Linux aarch64 cross linker
+      - name: Install cross-compilation toolchain (Linux aarch64)
         if: matrix.cross
         run: |
           sudo apt-get update
@@ -65,29 +77,38 @@ jobs:
           linker = "aarch64-linux-gnu-gcc"
           EOF
 
-      - name: Install musl toolchain
-        if: matrix.musl
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: sift-${{ matrix.target }}
+          shared-key: tape-${{ matrix.target }}
 
-      - name: Build Sift binary
-        run: cargo build --release --locked -p sift --bin sift --target ${{ matrix.target }}
+      - name: Build tape binary
+        # --bin tape: only the serving/CLI binary (skip tape-bench).
+        # Features mirror lumen-release.yml's non-backup subset: `operator`
+        # (k8s CRD/controller, matches apps/tape/Dockerfile's source-build
+        # feature set) plus `self-update`/`issue`/`otel` for the published
+        # CLI-convention trio and OTLP export. `backup` is deliberately
+        # excluded, same as lumen's release build (apps/lumen/Cargo.toml
+        # ships a `backup` feature that lumen-release.yml also does not
+        # enable).
+        run: cargo build --release --locked -p tape --bin tape --features "operator self-update issue otel" --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
         shell: bash
         run: |
           set -euo pipefail
-          name="sift-${{ matrix.target }}"
+          name="tape-${{ matrix.target }}"
+          # Build inside a `pkg/` staging dir, then tar with -C so the
+          # archive layout is `tape-<target>/{tape,README.md}` — matches
+          # what install.sh expects on extract.
           stage="pkg/${name}"
-          mkdir -p "${stage}" out
-          cp "target/${{ matrix.target }}/release/sift" "${stage}/sift"
-          cp projects/sift/README.md "${stage}/README.md"
+          mkdir -p "${stage}"
+          cp "target/${{ matrix.target }}/release/tape" "${stage}/tape"
+          cp apps/tape/README.md "${stage}/README.md"
+          # Emit the tarball + sha256 into `out/` (workspace root) so
+          # upload-artifact's preserved `out/` prefix is shallow and
+          # the release glob below is predictable.
+          mkdir -p out
           tarball="out/${name}.tar.gz"
           tar -C pkg -czf "${tarball}" "${name}"
           if command -v shasum >/dev/null; then
@@ -100,7 +121,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sift-${{ matrix.target }}
+          name: tape-${{ matrix.target }}
           path: |
             ${{ steps.package.outputs.tarball }}
             ${{ steps.package.outputs.sha }}
@@ -110,7 +131,7 @@ jobs:
   release:
     name: publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/sift@')
+    if: startsWith(github.ref, 'refs/tags/tape@')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,21 +141,32 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create or update release
+      # upload-artifact@v4 preserves the source path (`out/...`) inside
+      # the artifact, so after merge-multiple the layout is
+      # `dist/out/tape-*.tar.gz`. Glob with `**` so the release picks
+      # them up regardless of nesting depth.
+      - name: List artifacts (debug)
+        run: find dist -type f -maxdepth 4 -print
+
+      - name: Create / update release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/**/sift-*.tar.gz
-            dist/**/sift-*.tar.gz.sha256
+            dist/**/tape-*.tar.gz
+            dist/**/tape-*.tar.gz.sha256
           generate_release_notes: true
           body: |
-            `sift` release built from tag ${{ github.ref_name }}.
+            `tape` release built from tag ${{ github.ref_name }}.
 
             ## Install
 
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/projects/sift/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/apps/tape/install.sh | sh
             ```
+
+            Or pick a target tarball below and extract it manually.
+            macOS is Apple Silicon only; for Linux choose x86_64 or aarch64
+            (glibc, not musl).
 
   # #2462: durable, digest-pinned container images per release. Runs after
   # `release` because `Dockerfile.release` downloads the published tarballs;
@@ -146,7 +178,7 @@ jobs:
     needs: release
     if: >-
       !cancelled() && (
-        (startsWith(github.ref, 'refs/tags/sift@') && needs.release.result == 'success')
+        (startsWith(github.ref, 'refs/tags/tape@') && needs.release.result == 'success')
         || (github.event_name == 'workflow_dispatch' && inputs.image_version != '')
       )
     runs-on: ubuntu-latest
@@ -159,16 +191,16 @@ jobs:
         run: |
           set -euo pipefail
           raw="${{ inputs.image_version || github.ref_name }}"
-          [[ "$raw" == sift@* ]] || {
-            echo "expected a sift@<version> tag, got: $raw" >&2
+          [[ "$raw" == tape@* ]] || {
+            echo "expected a tape@<version> tag, got: $raw" >&2
             exit 1
           }
-          semver="${raw#sift@}"
-          tags="ghcr.io/${{ github.repository_owner }}/sift:${semver}"
+          semver="${raw#tape@}"
+          tags="ghcr.io/${{ github.repository_owner }}/tape:${semver}"
           # `latest` only when cutting a NEW release; a retro fill of an old
           # version must not steal the floating tag.
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            tags="${tags},ghcr.io/${{ github.repository_owner }}/sift:latest"
+            tags="${tags},ghcr.io/${{ github.repository_owner }}/tape:latest"
           fi
           echo "release_tag=${raw}" >> "$GITHUB_OUTPUT"
           echo "semver=${semver}" >> "$GITHUB_OUTPUT"
@@ -189,11 +221,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: projects/sift/Dockerfile.release
+          file: apps/tape/Dockerfile.release
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            SIFT_VERSION=${{ steps.ver.outputs.semver }}
+            TAPE_VERSION=${{ steps.ver.outputs.release_tag }}
           tags: ${{ steps.ver.outputs.tags }}
 
       - name: Append image digest to the release notes
@@ -203,7 +235,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.ver.outputs.release_tag }}"
-          image="ghcr.io/${{ github.repository_owner }}/sift:${{ steps.ver.outputs.semver }}@${{ steps.push.outputs.digest }}"
+          image="ghcr.io/${{ github.repository_owner }}/tape:${{ steps.ver.outputs.semver }}@${{ steps.push.outputs.digest }}"
           body="$(gh release view "$tag" --repo "${{ github.repository }}" --json body --jq .body)"
           if grep -qF "${{ steps.push.outputs.digest }}" <<<"$body"; then
             echo "digest already recorded"
