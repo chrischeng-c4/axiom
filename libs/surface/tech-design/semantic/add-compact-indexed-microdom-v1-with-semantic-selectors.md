@@ -65,19 +65,18 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: Element
-    description: Export the focused microdom module from the existing renderer-neutral Surface crate without changing the Element authoring contract.
+    description: Export pub mod microdom adjacent to the existing renderer-neutral Element contract; do not alter Element behavior.
   - path: libs/surface/src/microdom.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define the compact indexed MicroDOM v1 arena, typed node identity and semantics, deterministic traversal, indexed selectors, typed construction errors, and canonical snapshot.
+    description: Implement NodeId(u32), typed SemanticRole, compact NodeState and ActionSet, NodeSpec, contiguous Vec<MicroNode> storage, index-based parent/first-child/last-child/next-sibling links, stable-id and role indexes, SemanticSelector, typed atomic insertion errors, and schema-v1 canonical snapshot types.
   - path: libs/surface/tests/microdom_contract.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Prove stable node identity, insertion-order traversal, id and semantic selectors, canonical serialization, and atomic rejection of invalid parent or duplicate stable id.
+    description: Add the four contract tests named by the unit-test section, including exact canonical JSON evidence and pre/post mutation equality for error cases.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
