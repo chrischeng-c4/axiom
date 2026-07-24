@@ -218,7 +218,7 @@ credential rotation, and explicit negative gates for request limits and
 network policy before production readiness.
 Gate Inventory:
 - apps/relay/vat.toml; apps/relay/scripts/ec-evidence.sh; apps/relay/tests/auth.rs; apps/relay/tests/service_admission.rs
-- apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs
+- apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs; apps/relay/tests/http2_transport.rs
 - apps/relay/src/auth.rs; apps/relay/src/peer_tls.rs; libs/service-auth/src/reload.rs
 Surfaces:
 - HTTP: queue-scoped bearer RBAC with audited live registry rotation and bounded admission; peers: dedicated reloadable mTLS listener; K8s: read-only Secret projection, restricted pods, PDB and ingress NetworkPolicy.
@@ -233,7 +233,7 @@ EC Dimensions:
 | bearer-auth-token-registry | epic | 1206 | implemented | passing | conformance | apps/relay/tests/auth.rs; apps/relay/src/auth.rs |
 | peer-tls-material-validation | epic | 1209 | implemented | passing | conformance | `bash apps/relay/scripts/ec-evidence.sh security-boundaries && bash apps/relay/scripts/ec-evidence.sh security-stability`; apps/relay/src/peer_tls.rs; apps/relay/HA.md |
 | guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && vat run guard-security`; static scan plus a self-testing named-suite/zero-count oracle and auth/admission/peer-mTLS/K8s/reload Meter evidence |
-| request-limit-and-malformed-frame-negative-tests | epic | - | implemented | passing | negative | apps/relay/tests/service_admission.rs plus HTTP/auth/consume negative coverage |
+| request-limit-and-malformed-frame-negative-tests | epic | - | implemented | passing | negative | apps/relay/tests/service_admission.rs plus HTTP/auth/consume negative coverage; request-body cap (#2556, `4fcc593c7b`) in apps/relay/tests/http2_transport.rs — 413 with the structured `payload_too_large` envelope, the undersized-body counterpart, and the race-free invariant that a refused publish never reaches the engine |
 | network-policy-and-peer-mtls-termination | epic | - | implemented | passing | conformance | trusted replication and attacker-CA rejection in apps/relay/tests/raft_peer_mtls.rs; restricted workload and policy assertions in apps/relay/tests/direct_k8s_assets.rs |
 | securitytool-negative-runtime-evidence | change | #2175 | implemented | passing | negative | `bash apps/relay/scripts/ec-evidence.sh security-behavior && bash apps/relay/scripts/ec-evidence.sh security-boundaries && bash apps/relay/scripts/ec-evidence.sh security-stability && cd apps/relay && vat run guard-security`; behavior/security/stability EC cases and vat/guard dynamic dispatch close the independent false-green findings |
 
