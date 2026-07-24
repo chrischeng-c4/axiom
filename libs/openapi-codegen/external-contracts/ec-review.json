@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "openapi-codegen",
-  "source_digest": "sha256:8634a74df4485d726b0eb777d85932bcad100f128ddfe6587c4b4dd7844dd0b2",
+  "source_digest": "sha256:d4543757ced967676e1d6448cf5b661133cd16fe85034c19a86c5a5c5282fa82",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer",
-  "reviewed_at": "2026-07-24T10:12:45.632343+00:00",
-  "summary": "Accepted: the nine previously approved profile-specific cases remain intact, and the retained historical `multi-language-openapi-client-generation-contract` is a sound umbrella. Its unfiltered target_profile_matrix command executes the complete nine-test external matrix and fails on any case failure; the nine named exact-filter cases independently prevent a profile test from disappearing silently through AW's zero-test guard; and retaining the historical case id preserves EC lock lineage without weakening the concrete Python, TypeScript, Rust, legacy-compatibility, or deterministic-sidecar oracles.",
+  "reviewed_at": "2026-07-24T13:49:30.996294+00:00",
+  "summary": "The final Python EC exercises every WI #2537 rename/version boundary through exact repository observations: six identity checks, a 57,142-file active-reference scan, nine exact target-matrix cases, and seven consumer compilation/test cases. Assertions are concrete, the oracle is independent of the implementation and aw ec, known-failure paths are absent, nested tracked .aw content remains scanned, and zero-test or empty-implementation behavior cannot satisfy the complete gate.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,6 +15,5 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": [],
-  "target_path": "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md"
+  "findings": []
 }

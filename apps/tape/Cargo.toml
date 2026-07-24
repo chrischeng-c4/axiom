@@ -64,7 +64,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # Shared polyglot OpenAPI client codegen (#1329, relay #1209 pattern): `tape
 # spec gen` generates ts/py/rust clients from tape's own openapi_json()
 # document — offline, no external tool.
-cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+openapi-codegen = { path = "../../libs/openapi-codegen", version = "0.5" }
 # Shared backup contract (#1329, relay #1209 / lumen #808): destination/policy
 # schema, BackupSink, local + s3 sinks, run_backup_once. Unconditional — the
 # schema types and the local sink are cheap; only the HTTP fetch path of

@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+use openapi_codegen::{generate, GenOptions, HttpClient, Lang};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -128,7 +128,7 @@ fn unique_temp_dir(label: &str) -> PathBuf {
     ))
 }
 
-fn write_output(dir: &Path, output: cclab_openapi_codegen::GeneratedOutput) {
+fn write_output(dir: &Path, output: openapi_codegen::GeneratedOutput) {
     fs::create_dir_all(dir).expect("create generated output dir");
     for file in output.files {
         let path = dir.join(file.rel_path);

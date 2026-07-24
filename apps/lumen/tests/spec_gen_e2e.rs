@@ -30,12 +30,12 @@ fn gen_py_writes_pydantic_h2c_client() {
         "h2c_runtime.py",
         "client.py",
         "__init__.py",
-        ".cclab-openapi-codegen.json",
+        ".openapi-codegen.json",
     ] {
         assert!(dir.path().join(f).exists(), "missing {f}");
     }
     let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(dir.path().join(".cclab-openapi-codegen.json")).unwrap(),
+        &std::fs::read_to_string(dir.path().join(".openapi-codegen.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(manifest["target"], "python-3.14");
@@ -149,7 +149,7 @@ fn gen_target_override_writes_the_requested_contract() {
     assert!(status.success(), "spec gen target override failed");
 
     let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(dir.path().join(".cclab-openapi-codegen.json")).unwrap(),
+        &std::fs::read_to_string(dir.path().join(".openapi-codegen.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(manifest["target"], "python-3.11");

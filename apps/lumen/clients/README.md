@@ -42,7 +42,7 @@ Language clients are **not checked in** — they are regenerated on demand
 The generator is in-tree (`libs/openapi-codegen`), so the only requirement is
 a cargo/rustup toolchain. `codegen.toml` pins the default TypeScript, Python,
 and Rust contracts; every generated client contains
-`.cclab-openapi-codegen.json`. Use `--target <profile>` only for a deliberate
+`.openapi-codegen.json`. Use `--target <profile>` only for a deliberate
 one-off compatibility override.
 
 ## Why not commit the language clients?

@@ -1,6 +1,5 @@
 [project]
 name = "openapi-codegen"
-aliases = ["cclab-openapi-codegen"]
 cap_path = "README.md"
 label = "lib:openapi-codegen"
 
@@ -8,7 +7,7 @@ label = "lib:openapi-codegen"
 name = "openapi-codegen"
 paths = ["**"]
 target = "rust"
-test_cmd = "cargo test -p cclab-openapi-codegen"
+test_cmd = "cargo test -p openapi-codegen"
 verify_cold = true
 
 # AW-EC-BEGIN
@@ -25,7 +24,7 @@ contract_id = "deterministic-target-requirements-and-artifacts-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#deterministic-target-requirements-and-artifacts-contract"
 test_path = "libs/openapi-codegen/tests/behavior_deterministic_target_requirements_and_artifacts_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact"
 required_for_production = true
 assertions = [
     "All seven declared profiles reproduce identical ordered files, file bytes, target requirements, runtime-dependency order, and parsed on-disk manifest values across repeated runs.",
@@ -40,7 +39,7 @@ contract_id = "legacy-default-output-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#legacy-default-output-contract"
 test_path = "libs/openapi-codegen/tests/behavior_legacy_default_output_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact"
 required_for_production = true
 assertions = [
     "GenOptions target None reproduces fixed file lists and byte fingerprints for legacy TypeScript, Python, and Rust generation.",
@@ -55,7 +54,7 @@ contract_id = "multi-language-openapi-client-generation-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract"
 test_path = "libs/openapi-codegen/tests/behavior_multi_language_openapi_client_generation_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix"
+command = "cargo test -p openapi-codegen --test target_profile_matrix"
 required_for_production = true
 assertions = [
     "The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.",
@@ -70,7 +69,7 @@ contract_id = "python-311-generated-model-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-311-generated-model-contract"
 test_path = "libs/openapi-codegen/tests/behavior_python_311_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_311_generated_model_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix python_311_generated_model_contract -- --exact"
 required_for_production = true
 assertions = [
     "Python 3.11 output compiles, imports with Pydantic 2.12.5, and validates the generated Pet model under a fail-closed uv-managed Python 3.11 runtime.",
@@ -85,7 +84,7 @@ contract_id = "python-312-generated-model-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-312-generated-model-contract"
 test_path = "libs/openapi-codegen/tests/behavior_python_312_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_312_generated_model_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix python_312_generated_model_contract -- --exact"
 required_for_production = true
 assertions = [
     "Python 3.12 output uses a PEP 695 alias, compiles, imports, and validates the generated Pet model under Python 3.12.",
@@ -100,7 +99,7 @@ contract_id = "python-313-generated-model-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-313-generated-model-contract"
 test_path = "libs/openapi-codegen/tests/behavior_python_313_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact"
 required_for_production = true
 assertions = [
     "Python 3.13 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.13.",
@@ -115,7 +114,7 @@ contract_id = "python-314-generated-model-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-314-generated-model-contract"
 test_path = "libs/openapi-codegen/tests/behavior_python_314_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_314_generated_model_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix python_314_generated_model_contract -- --exact"
 required_for_production = true
 assertions = [
     "Python 3.14 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.14.",
@@ -130,7 +129,7 @@ contract_id = "rust-2021-generated-client-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#rust-2021-generated-client-contract"
 test_path = "libs/openapi-codegen/tests/behavior_rust_2021_generated_client_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2021_generated_client_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix rust_2021_generated_client_contract -- --exact"
 required_for_production = true
 assertions = [
     "The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2021 crate with its declared dependencies.",
@@ -145,7 +144,7 @@ contract_id = "rust-2024-generated-client-gen-property-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#rust-2024-generated-client-gen-property-contract"
 test_path = "libs/openapi-codegen/tests/behavior_rust_2024_generated_client_gen_property_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact"
 required_for_production = true
 assertions = [
     "The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2024 crate.",
@@ -160,7 +159,7 @@ contract_id = "typescript-50-strict-modern-module-contract"
 category = "behavior"
 td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#typescript-50-strict-modern-module-contract"
 test_path = "libs/openapi-codegen/tests/behavior_typescript_50_strict_modern_module_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact"
+command = "cargo test -p openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact"
 required_for_production = true
 assertions = [
     "Generated TypeScript artifacts have the exact types/runtime/client/index file set and type-check with TypeScript 5.0.4, target ES2022, module ESNext, moduleResolution Bundler, strict, and verbatimModuleSyntax.",

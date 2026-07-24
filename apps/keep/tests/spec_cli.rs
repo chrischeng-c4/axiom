@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:894ee1ab" tracker="#777" reason="Assert the keep::spec surface: openapi_json is valid OpenAPI 3.x with keep data-plane paths, openapi_yaml parses, json_schema exposes component schemas, request_shapes carry request bodies, value_catalog matches the KvValue variants, and cclab_openapi_codegen::generate composes on keep's OpenAPI for ts/py/rust."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:894ee1ab" tracker="#777" reason="Assert the keep::spec surface: openapi_json is valid OpenAPI 3.x with keep data-plane paths, openapi_yaml parses, json_schema exposes component schemas, request_shapes carry request bodies, value_catalog matches the KvValue variants, and openapi_codegen::generate composes on keep's OpenAPI for ts/py/rust."
 //! `keep spec` surface: the offline, machine-readable self-description an agent
 //! reads to wire keep into a pipeline. Each emitter must produce valid output
 //! with the expected shape (no server, no network), and `spec gen` must compose
@@ -195,7 +195,7 @@ fn every_ref_resolves_to_a_registered_component_schema() {
 /// codegen path, no external tool — and every language emits client files.
 #[test]
 fn spec_gen_composes_openapi_codegen_for_every_language() {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use openapi_codegen::{generate, GenOptions, HttpClient, Lang};
     let doc = openapi_json();
     for lang in [Lang::Ts, Lang::Py, Lang::Rust] {
         let opts = GenOptions {

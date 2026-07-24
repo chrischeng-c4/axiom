@@ -7,7 +7,7 @@
 // @contract rust-2024-generated-client-gen-property-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact
+// @command cargo test -p openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact
 // AW-EC-END
 
 // Contract: The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2024 crate.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn rust_2024_generated_client_gen_property_contract() {
     let command =
-        "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact";
+        "cargo test -p openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact";
     let id = "rust-2024-generated-client-gen-property-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

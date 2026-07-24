@@ -83,8 +83,7 @@ fn spec_gen_writes_a_client_for_every_language() {
             .collect();
         assert!(!files.is_empty(), "{lang} client emitted files");
         let manifest: Value = serde_json::from_str(
-            &std::fs::read_to_string(out.join(".cclab-openapi-codegen.json"))
-                .expect("target manifest"),
+            &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
         )
         .expect("valid target manifest");
         let expected_target = match lang {
@@ -127,7 +126,7 @@ fn spec_gen_target_override_writes_the_requested_contract() {
         out.to_str().expect("utf-8 path"),
     ]);
     let manifest: Value = serde_json::from_str(
-        &std::fs::read_to_string(out.join(".cclab-openapi-codegen.json")).expect("target manifest"),
+        &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
     )
     .expect("valid target manifest");
     assert_eq!(manifest["target"], "python-3.11");

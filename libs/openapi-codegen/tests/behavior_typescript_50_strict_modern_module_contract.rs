@@ -7,7 +7,7 @@
 // @contract typescript-50-strict-modern-module-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact
+// @command cargo test -p openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact
 // AW-EC-END
 
 // Contract: Generated TypeScript artifacts have the exact types/runtime/client/index file set and type-check with TypeScript 5.0.4, target ES2022, module ESNext, moduleResolution Bundler, strict, and verbatimModuleSyntax.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn typescript_50_strict_modern_module_contract() {
     let command =
-        "cargo test -p cclab-openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact";
+        "cargo test -p openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact";
     let id = "typescript-50-strict-modern-module-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

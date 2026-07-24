@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project": "openapi-codegen",
-  "source_digest": "sha256:8634a74df4485d726b0eb777d85932bcad100f128ddfe6587c4b4dd7844dd0b2",
-  "author": "unknown-actor",
-  "recorded_at": "2026-07-24T10:20:13.646180+00:00"
+  "source_digest": "sha256:d4543757ced967676e1d6448cf5b661133cd16fe85034c19a86c5a5c5282fa82",
+  "author": "agent:codex-openapi-codegen-2537",
+  "recorded_at": "2026-07-24T13:49:30.995760+00:00"
 }

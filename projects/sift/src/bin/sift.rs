@@ -1035,7 +1035,7 @@ fn write_artifact(
 }
 
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use openapi_codegen::{generate, GenOptions, HttpClient, Lang};
 
     let lang = match args.lang {
         GenLang::Ts => Lang::Ts,

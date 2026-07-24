@@ -1465,7 +1465,7 @@ auth-exempt.
 snapshot; the binary and live endpoint are the source of truth.
 
 `projects/lumen/clients/codegen.toml` pins the default TypeScript, Python, and
-Rust targets. `spec gen` writes `.cclab-openapi-codegen.json` beside every
+Rust targets. `spec gen` writes `.openapi-codegen.json` beside every
 generated client; use `--target python-3.11` (or another supported profile)
 only for a deliberate one-off compatibility override.
 

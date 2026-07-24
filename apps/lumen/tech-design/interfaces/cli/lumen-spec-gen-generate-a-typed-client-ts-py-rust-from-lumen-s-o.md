@@ -2,7 +2,7 @@
 id: lumen-spec-gen-client
 summary: >
   Add a `gen` subcommand under `lumen spec`: feed lumen's own offline OpenAPI
-  document (openapi_json()) into the cclab-openapi-codegen crate and write a typed
+  document (openapi_json()) into the openapi-codegen crate and write a typed
   client (TypeScript / Python / Rust, by --lang) into --out. `lumen spec` with no
   subcommand keeps printing the spec exactly as today.
 capability_refs:
@@ -28,7 +28,7 @@ nodes:
   has_gen:  { kind: decision, label: "gen subcommand?" }
   print:    { kind: terminal, label: "print spec (unchanged)" }
   spec:     { kind: process,  label: "openapi_json() (lumen's own spec)" }
-  gen:      { kind: process,  label: "TargetPolicy::resolve + cclab_openapi_codegen::generate_for_target(spec, opts, target)" }
+  gen:      { kind: process,  label: "TargetPolicy::resolve + openapi_codegen::generate_for_target(spec, opts, target)" }
   write:    { kind: process,  label: "create --out; write each GeneratedFile" }
   done:     { kind: terminal, label: "client written to --out" }
 edges:

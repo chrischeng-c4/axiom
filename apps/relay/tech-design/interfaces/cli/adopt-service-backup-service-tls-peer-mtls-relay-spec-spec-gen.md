@@ -5,7 +5,7 @@ summary: >
   TLS, and OpenAPI client codegen — as the deploy-CLI tail on the single relay
   bin. `relay spec [--format openapi|openapi-yaml|json-schema]` is the offline
   twin of /openapi.json and `relay spec gen --lang ts|py|rust [--target <profile>] --out <dir>`
-  generates typed clients through the shared cclab-openapi-codegen (keep #777
+  generates typed clients through the shared openapi-codegen (keep #777
   pattern; relay has no request-shape/value catalogs, so keep's
   --shapes/--fields are deliberately omitted). `relay backup --url --dest`
   (feature `backup` = dep:reqwest + service-backup/s3, lumen #808 layout)
@@ -46,7 +46,7 @@ nodes:
     label: "relay spec [--format openapi|openapi-yaml|json-schema]: the offline twin of GET /openapi.json. openapi = crate::openapi::api_doc_json() (pretty JSON, same utoipa document the served route renders); openapi-yaml = serde_yaml::to_string(&openapi()) (new openapi::openapi_yaml accessor, keep's pattern); json-schema = just the component schemas as {components: ...} (new openapi::json_schema_json — relay's utoipa doc registers no named schemas today, so components serializes empty; emitted honestly, never faked). keep's --shapes/--fields flags are OMITTED: relay has no request-shape cookbook or value-type catalog equivalent — deliberate contract difference, not a gap"
   gen:
     kind: process
-    label: "relay spec gen --lang ts|py|rust [--target PROFILE] --out <dir> [--http fetch|axios]: TargetPolicy::resolve from clients/codegen.toml then cclab_openapi_codegen::generate_for_target(&openapi::api_doc_json(), opts, target). GeneratedOutput::write_to_dir writes every generated file plus .cclab-openapi-codegen.json; stdout names files, target, and the entrypoint next command. One shared codegen path, no external tool"
+    label: "relay spec gen --lang ts|py|rust [--target PROFILE] --out <dir> [--http fetch|axios]: TargetPolicy::resolve from clients/codegen.toml then openapi_codegen::generate_for_target(&openapi::api_doc_json(), opts, target). GeneratedOutput::write_to_dir writes every generated file plus .openapi-codegen.json; stdout names files, target, and the entrypoint next command. One shared codegen path, no external tool"
   backup:
     kind: process
     label: "relay backup --url <base> --dest <uri> [--token (env RELAY_BACKUP_TOKEN)] [--retention-secs N] (feature `backup` = dep:reqwest + service-backup/s3, lumen #808 layout; without the feature the arm bails with the rebuild hint): src/backup.rs fetch_snapshot_bytes GETs {url}/admin/backup (Bearer token when set; non-2xx bails with status + body), then run_backup hands the EXACT response bytes to service_backup::run_backup_once against sink_from_destination(BackupDestination::from_uri(dest)) + RetentionPolicy — file:// always works, s3:// via the lib's s3 feature, gs:// parses but the lib's sink fails loudly. Prints the BackupRunResult as pretty JSON"
@@ -92,7 +92,7 @@ edges:
 flowchart TD
     main([relay bin: Spec + Backup arms; rustls provider install now unconditional via peer-tls]) --> verb{verb?}
     verb -->|spec| spec[offline OpenAPI: json pretty / yaml / components-only json-schema; no --shapes/--fields — relay has no catalogs]
-    verb -->|spec gen| gen[TargetPolicy resolve + cclab_openapi_codegen::generate_for_target on relay's document]
+    verb -->|spec gen| gen[TargetPolicy resolve + openapi_codegen::generate_for_target on relay's document]
     verb -->|backup| backup[feature backup: fetch snapshot bytes over HTTP, ship to service-backup sink, print BackupRunResult]
     backup -->|GET /admin/backup| endpoint[admin-guarded route inside the auth middleware: Role::Admin on *]
     endpoint -->|bytes from| fmt[ONE format: pub EngineSnapshot + raft snapshot_bytes / load_snapshot_bytes shared by state machine, endpoint, artifact]
@@ -169,7 +169,7 @@ requirements:
     verify: src/peer_tls.rs::tests::builds_rustls_peer_configs_from_pem_material
   spec_gen_clients:
     id: R1
-    text: "relay spec gen --lang ts|py|rust [--target PROFILE] --out <dir> writes a non-empty typed client plus a target manifest per language via shared cclab-openapi-codegen; the ts client carries types.ts, client.ts, and index.ts."
+    text: "relay spec gen --lang ts|py|rust [--target PROFILE] --out <dir> writes a non-empty typed client plus a target manifest per language via shared openapi-codegen; the ts client carries types.ts, client.ts, and index.ts."
     kind: functional
     risk: medium
     verify: tests/spec_cli.rs::spec_gen_writes_a_client_for_every_language
@@ -202,12 +202,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Feature `backup` = [dep:reqwest, service-backup/s3] (lumen #808 layout). New unconditional deps: service-backup (shared destination/policy/sink/runner contract), peer-tls (peer-mTLS material loading — links rustls in every build), cclab-openapi-codegen (spec gen), serde_yaml (spec --format openapi-yaml; was operator-only), rustls (peer_tls builder passthrough types). reqwest becomes an optional runtime dep (still a dev-dep). The private rustls-provider feature collapses: rustls is always linked now, so self-update/issue/operator drop the indirection and src/tls.rs installs unconditionally."
+    description: "Feature `backup` = [dep:reqwest, service-backup/s3] (lumen #808 layout). New unconditional deps: service-backup (shared destination/policy/sink/runner contract), peer-tls (peer-mTLS material loading — links rustls in every build), openapi-codegen (spec gen), serde_yaml (spec --format openapi-yaml; was operator-only), rustls (peer_tls builder passthrough types). reqwest becomes an optional runtime dep (still a dev-dep). The private rustls-provider feature collapses: rustls is always linked now, so self-update/issue/operator drop the indirection and src/tls.rs installs unconditionally."
   - path: apps/relay/src/bin/relay.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Command::Spec(SpecArgs{gen subcommand, --format openapi|openapi-yaml|json-schema}) mirroring keep minus --shapes/--fields, Command::Backup(BackupArgs{--url, --dest, --token env RELAY_BACKUP_TOKEN, --retention-secs}) mirroring lumen; spec_gen resolves clients/codegen.toml through TargetPolicy, calls cclab_openapi_codegen::generate_for_target, and writes files plus a manifest; dispatch_backup stays feature-gated (the not-gated arm bails with the rebuild hint). serve_main validates peer_tls::PeerTlsConfig::from_env in replica mode before the raft group spawns. Parse-surface tests extended."
+    description: "Command::Spec(SpecArgs{gen subcommand, --format openapi|openapi-yaml|json-schema}) mirroring keep minus --shapes/--fields, Command::Backup(BackupArgs{--url, --dest, --token env RELAY_BACKUP_TOKEN, --retention-secs}) mirroring lumen; spec_gen resolves clients/codegen.toml through TargetPolicy, calls openapi_codegen::generate_for_target, and writes files plus a manifest; dispatch_backup stays feature-gated (the not-gated arm bails with the rebuild hint). serve_main validates peer_tls::PeerTlsConfig::from_env in replica mode before the raft group spawns. Parse-surface tests extended."
   - path: apps/relay/src/backup.rs
     action: create
     section: logic

@@ -29,7 +29,7 @@ requirement.
 Requirements: a `cargo`/rustup toolchain only.
 
 `codegen.toml` pins the default target for each language. Every generated
-client includes `.cclab-openapi-codegen.json` with the exact target contract;
+client includes `.openapi-codegen.json` with the exact target contract;
 pass `--target <profile>` to `tape spec gen` only for an explicit override.
 
 ## Why not commit the language clients?

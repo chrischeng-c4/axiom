@@ -7,7 +7,7 @@
 // @contract multi-language-openapi-client-generation-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix
+// @command cargo test -p openapi-codegen --test target_profile_matrix
 // AW-EC-END
 
 // Contract: The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn multi_language_openapi_client_generation_contract() {
-    let command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix";
+    let command = "cargo test -p openapi-codegen --test target_profile_matrix";
     let id = "multi-language-openapi-client-generation-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

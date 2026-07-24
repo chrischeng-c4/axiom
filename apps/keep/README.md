@@ -9,7 +9,7 @@ engine and tiered RAM+disk persistence are unchanged; the transport is now
 
 `keep spec gen --lang ts|py|rust [--target <profile>] --out <dir>` uses the
 shared in-tree generator. `clients/codegen.toml` pins each language's default;
-every output includes `.cclab-openapi-codegen.json` with the selected contract.
+every output includes `.openapi-codegen.json` with the selected contract.
 
 ## Capabilities
 

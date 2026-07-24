@@ -70,7 +70,7 @@ nodes:
     label: "tape spec gen --lang ts|py|rust [--target PROFILE] --out DIR --http fetch|axios"
   spec_gen_call:
     kind: process
-    label: "TargetPolicy::resolve + cclab_openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target)"
+    label: "TargetPolicy::resolve + openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target)"
   spec_gen_done:
     kind: terminal
     label: "write generated files under --out; print each path"
@@ -107,7 +107,7 @@ flowchart TD
     backup_fetch --> backup_ship[backup::run_backup: service_backup::sink_from_destination dest + run_backup_once sink, now, bytes, retention]
     backup_ship --> backup_done([print BackupRunResult JSON])
     route -->|tape spec gen| cli_spec_gen[tape spec gen --lang ts py rust --target PROFILE --out DIR --http fetch axios]
-    cli_spec_gen --> spec_gen_call[TargetPolicy resolve + cclab_openapi_codegen::generate_for_target]
+    cli_spec_gen --> spec_gen_call[TargetPolicy resolve + openapi_codegen::generate_for_target]
     spec_gen_call --> spec_gen_done([write generated files under --out; print each path])
     route -->|clients scaffold| clients_dir[apps/tape/clients/: README.md + codegen.toml + openapi.json, direct CLI]
     route -->|scope check #1327| peer_tls_note[apps/tape/src/peer_tls.rs UNCHANGED -- #1327 already delivered the config-surface + fail-fast validation scope; no new TLS code]
@@ -173,7 +173,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add unconditional cclab-openapi-codegen and service-backup deps (schema/local-sink types are cheap); add an optional reqwest dep for the backup feature's HTTP fetch (already a dev-dependency); add a `backup = [\"dep:reqwest\", \"service-backup/s3\"]` feature entry, mirroring relay's Cargo.toml block."
+    description: "Add unconditional openapi-codegen and service-backup deps (schema/local-sink types are cheap); add an optional reqwest dep for the backup feature's HTTP fetch (already a dev-dependency); add a `backup = [\"dep:reqwest\", \"service-backup/s3\"]` feature entry, mirroring relay's Cargo.toml block."
   - path: apps/tape/src/raft.rs
     action: modify
     section: logic
@@ -198,7 +198,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add Backup(BackupArgs) top-level subcommand (feature-gated dispatch, nonzero-exit rebuild hint without the feature, mirroring K8s operator run's pattern); add a Gen(GenArgs) subcommand under Spec (spec gen --lang ts|py|rust [--target PROFILE] --out DIR --http fetch|axios) resolving the project target policy, calling cclab_openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target), and writing files plus a target manifest to --out."
+    description: "Add Backup(BackupArgs) top-level subcommand (feature-gated dispatch, nonzero-exit rebuild hint without the feature, mirroring K8s operator run's pattern); add a Gen(GenArgs) subcommand under Spec (spec gen --lang ts|py|rust [--target PROFILE] --out DIR --http fetch|axios) resolving the project target policy, calling openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target), and writing files plus a target manifest to --out."
   - path: apps/tape/clients/README.md
     action: create
     section: logic

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cclab_openapi_codegen::{
+use openapi_codegen::{
     generate, GenOptions, GeneratedOutput, GenerationManifest, HttpClient, Lang, PythonTarget,
     RustTarget, TargetProfile, TargetRequirements, TypeScriptTarget, MANIFEST_FILE,
 };
@@ -83,7 +83,7 @@ fn assert_success(output: Output, description: &str) {
 fn expected_manifest(requirements: TargetRequirements) -> GenerationManifest {
     GenerationManifest {
         schema_version: 1,
-        generator: "cclab-openapi-codegen".to_string(),
+        generator: "openapi-codegen".to_string(),
         compiler: requirements.compiler.to_string(),
         target: requirements.target.to_string(),
         language: requirements.language.id().to_string(),

@@ -7,7 +7,7 @@
 // @contract deterministic-target-requirements-and-artifacts-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact
+// @command cargo test -p openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact
 // AW-EC-END
 
 // Contract: All seven declared profiles reproduce identical ordered files, file bytes, target requirements, runtime-dependency order, and parsed on-disk manifest values across repeated runs.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn deterministic_target_requirements_and_artifacts_contract() {
     let command =
-        "cargo test -p cclab-openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact";
+        "cargo test -p openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact";
     let id = "deterministic-target-requirements-and-artifacts-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

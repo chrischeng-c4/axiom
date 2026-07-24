@@ -1,0 +1,33 @@
+{
+  "case_id": "references",
+  "checks": [
+    {
+      "details": {
+        "binary_files_skipped": 1,
+        "forbidden_identity_count": 3,
+        "generated_evidence_prefix": "libs/openapi-codegen/external-contracts/evidence/",
+        "historical_allowlist": [
+          "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md",
+          "libs/openapi-codegen/external-contracts/ec-review.json",
+          "libs/openapi-codegen/external-contracts/ec.lock"
+        ],
+        "inventory_command": [
+          "git",
+          "ls-files",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "-z"
+        ],
+        "scanned_text_files": 57142,
+        "text_detection": "no NUL byte"
+      },
+      "id": "active-reference-sweep",
+      "observed_count": 57142,
+      "status": "passed"
+    }
+  ],
+  "protocol": "openapi-codegen.ec-evidence.v1",
+  "status": "passed",
+  "total_checks": 1
+}

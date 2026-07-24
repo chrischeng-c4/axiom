@@ -602,7 +602,7 @@ fn spec(args: SpecArgs) -> Result<()> {
 ///
 /// @spec .aw/tech-design/projects/keep/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{
+    use openapi_codegen::{
         generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
     };
 

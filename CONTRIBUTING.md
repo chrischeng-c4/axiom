@@ -404,7 +404,7 @@ A service is not "done" until it satisfies every row:
 | **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/transport-h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
 | **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
 | **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claim-token`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
-| **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
+| **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
 | **Durability / ack boundary** | **Mandatory for the StatefulSet profile:** an accepted mutation to service-owned state is durable before success. A Deployment-profile proxy may own no durable mutation at all; durability remains with its downstream system. | Stateful services compose **`libs/storage-durable`** plus a service-owned durable log/state store and `raft-core`/`raft-runtime` when replicated. Deployment proxies document downstream durability and prove drain/reconnect behavior instead of inventing local persistence. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-runtime`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-runtime`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to S3-compatible object storage today and to GCS once the adapter exists; the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
@@ -431,7 +431,7 @@ requires the service's own OpenAPI surface to exist)*
 
 Because the OpenAPI doc is the source of truth, the typed clients adopters use
 are **generated from it**, never hand-written and never produced by an external
-tool. The shared `libs/openapi-codegen` (`cclab-openapi-codegen`) is the polyglot
+tool. The shared `libs/openapi-codegen` (`openapi-codegen`) is the polyglot
 core — a language-neutral IR feeding per-language emitters (TypeScript: types +
 fetch/axios client + TanStack Query hooks; Python: pydantic + generated
 sync/async HTTP/2 runtime that speaks h2c for `http://` and ALPN h2 for
@@ -444,7 +444,7 @@ behind a CLI verb:
 
 so an adopter goes from "the service is up" to "a typed client in my language"
 with no external codegen step. Reference: `lumen spec gen` (feeds the binary's
-own `openapi_json()` into `cclab_openapi_codegen::generate`). Do **not** add a
+own `openapi_json()` into `openapi_codegen::generate`). Do **not** add a
 second codegen path — extend the shared crate (a new emitter / capability) so
 every service benefits.
 

@@ -841,7 +841,7 @@ path = "libs/openapi-codegen"
 [[projects.workspaces]]
 paths = ["libs/openapi-codegen/**"]
 target = "rust"
-test_cmd = "cargo test -p cclab-openapi-codegen"
+test_cmd = "cargo test -p openapi-codegen"
 verify_cold = false
 
 [[projects]]

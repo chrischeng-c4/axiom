@@ -509,7 +509,7 @@ fn spec(args: SpecArgs) -> Result<()> {
 /// `libs/openapi-codegen`, written into `--out`. One codegen path, no
 /// external tool (keep's spec_gen verbatim).
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{
+    use openapi_codegen::{
         generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
     };
 

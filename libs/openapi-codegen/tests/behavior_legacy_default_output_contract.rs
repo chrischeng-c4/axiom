@@ -7,7 +7,7 @@
 // @contract legacy-default-output-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact
+// @command cargo test -p openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact
 // AW-EC-END
 
 // Contract: GenOptions target None reproduces fixed file lists and byte fingerprints for legacy TypeScript, Python, and Rust generation.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn legacy_default_output_contract() {
     let command =
-        "cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact";
+        "cargo test -p openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact";
     let id = "legacy-default-output-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

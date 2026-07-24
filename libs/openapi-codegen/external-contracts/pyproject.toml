@@ -1,0 +1,73 @@
+[project]
+name = "openapi-codegen-external-contracts"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "agent:codex-openapi-codegen-2537"
+efficiency_policy = "not-applicable"
+
+[[tool.aw.python-ec.cases]]
+id = "openapi-codegen-published-identity"
+artifact_id = "artifact:distribution/package-identity"
+capability_id = "multi-language-openapi-client-generation"
+use_case_id = "published-identity"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/git_version_boundary.py"
+promise = "Cargo metadata and the library manifest expose package openapi-codegen, crate openapi_codegen, independent version 0.5.0, publish=false, generator identity openapi-codegen, sidecar .openapi-codegen.json, and release tag openapi-codegen@0.5.0."
+oracle = "Hand-authored Python oracle reads Cargo metadata, Cargo.toml, and the Rust source and validates an exact fail-closed evidence schema."
+target = "rust"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py identity"
+evidence_paths = ["evidence/identity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "openapi-codegen-active-reference-sweep"
+artifact_id = "artifact:distribution/reference-sweep"
+capability_id = "multi-language-openapi-client-generation"
+use_case_id = "active-reference-sweep"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/active_reference_boundary.py"
+promise = "No active source, manifest, test, configuration, generated semantic mirror, or product documentation retains the superseded package, crate, sidecar, or generator identity; only the explicitly enumerated historical EC evidence files are exempt."
+oracle = "Hand-authored Python oracle scans bounded repository roots, applies an exact historical allowlist, rejects every unallowlisted occurrence, and records a non-zero scanned-file count."
+target = "rust"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py references"
+evidence_paths = ["evidence/references.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "openapi-codegen-target-matrix"
+artifact_id = "artifact:verification/target-matrix"
+capability_id = "multi-language-openapi-client-generation"
+use_case_id = "target-matrix"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/target_matrix_boundary.py"
+promise = "The renamed package passes the exact Python 3.11, 3.12, 3.13, and 3.14; TypeScript 5.0; Rust 2021 and 2024; legacy-default; and deterministic-artifact contract matrix, with no missing or silently skipped profile."
+oracle = "Hand-authored Python oracle runs every named matrix test separately and accepts only the exact required result set with non-zero evidence for each profile."
+target = "rust"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py matrix"
+evidence_paths = ["evidence/matrix.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "openapi-codegen-consumer-compilation"
+artifact_id = "artifact:integration/consumer-compilation"
+capability_id = "multi-language-openapi-client-generation"
+use_case_id = "consumer-compilation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/consumer_boundary.py"
+promise = "Lumen, Tape, Relay, Keep, Defer, Sift, and the client-transport-policy example each declare openapi-codegen with the local path plus version 0.5 and compile or test against the renamed crate."
+oracle = "Hand-authored Python oracle parses each consumer manifest, rejects a missing or aliased dependency declaration, then independently runs each required cargo check or example test."
+target = "rust"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py consumers"
+evidence_paths = ["evidence/consumers.json"]

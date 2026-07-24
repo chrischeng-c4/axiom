@@ -1050,7 +1050,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// (offline; no engine or server) and write it into `--out`.
 /// @spec apps/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{
+    use openapi_codegen::{
         generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
     };
 

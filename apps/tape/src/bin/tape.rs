@@ -1082,7 +1082,7 @@ fn spec(args: SpecArgs) -> Result<()> {
 /// written into `--out`. One codegen path, no external tool (relay #1209
 /// pattern).
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{
+    use openapi_codegen::{
         generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
     };
 
@@ -1621,22 +1621,22 @@ mod tests {
         }
 
         for lang in [GenLang::Ts, GenLang::Py, GenLang::Rust] {
-            let opts = cclab_openapi_codegen::GenOptions {
+            let opts = openapi_codegen::GenOptions {
                 lang: match lang {
-                    GenLang::Ts => cclab_openapi_codegen::Lang::Ts,
-                    GenLang::Py => cclab_openapi_codegen::Lang::Py,
-                    GenLang::Rust => cclab_openapi_codegen::Lang::Rust,
+                    GenLang::Ts => openapi_codegen::Lang::Ts,
+                    GenLang::Py => openapi_codegen::Lang::Py,
+                    GenLang::Rust => openapi_codegen::Lang::Rust,
                 },
                 target: None,
                 spec_path: PathBuf::new(),
                 out_dir: PathBuf::new(),
                 client_name: "createClient".to_string(),
-                http_client: cclab_openapi_codegen::HttpClient::Fetch,
+                http_client: openapi_codegen::HttpClient::Fetch,
                 emit_types: true,
                 emit_client: true,
                 emit_hooks: matches!(lang, GenLang::Ts),
             };
-            let out = cclab_openapi_codegen::generate(&spec::openapi_json(), &opts)
+            let out = openapi_codegen::generate(&spec::openapi_json(), &opts)
                 .expect("spec gen should succeed for tape's own OpenAPI document");
             assert!(
                 !out.files.is_empty(),
@@ -1653,7 +1653,7 @@ mod tests {
         })
         .expect("tape default target policy should generate");
         let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(out_dir.path().join(".cclab-openapi-codegen.json"))
+            &std::fs::read_to_string(out_dir.path().join(".openapi-codegen.json"))
                 .expect("read generated manifest"),
         )
         .expect("parse generated manifest");

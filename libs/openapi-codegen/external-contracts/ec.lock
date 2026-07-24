@@ -2,192 +2,120 @@ version = 1
 project = "openapi-codegen"
 ir_kind = "ec"
 ec_path = "libs/openapi-codegen/external-contracts"
-inventory_path = "libs/openapi-codegen/aw.toml"
-generated_at = "2026-07-24T10:12:59.515946+00:00"
-ir_digest = "sha256:06b5fc8448e8b9f36bcbe35817807597962097a55f8721a4d896d96794de0a65"
-source_digest = "sha256:3291169f5c0252a20abe1e653d271b63fc786d86b27e911e1366240ba6a8608c"
+inventory_path = "libs/openapi-codegen/external-contracts/pyproject.toml"
+generated_at = "2026-07-24T13:49:37.808600+00:00"
+ir_digest = "sha256:d6242df81645fd00e3c99a55e8fc73a85e210a6c11be948b6b6a1649f8d5b49c"
+source_digest = "sha256:cbab2054fc2382bd387f8eca253de4f896d14fe7f0dbcb70a82e25add834a40d"
 tool_contracts = []
 
 [[sources]]
-path = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md"
-digest = "sha256:08bef33f278a26f7652eb1c343f72a7a7a2efc303af414144ee0e0f1ec04fe05"
+path = "libs/openapi-codegen/external-contracts/pyproject.toml"
+digest = "sha256:fc3c5d8cfe2756c01bca1cde974d93b598824e475448e4d8c818e9d5d7aa282e"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/active_reference_boundary.py"
+digest = "sha256:5401b724a42a3d99d80fa5f0b7744172b8991e525e30a680bc2aab9282371285"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/consumer_boundary.py"
+digest = "sha256:36df65f3733e30042347aac0962136333e37e28d605ffde521b3c6a28ddb05d4"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/evidence_schema.py"
+digest = "sha256:1ad8e4fcb7ec0b6b1c0856e85e46d5be1c9122031aef0cc86d291a0effb6d189"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/git_version_boundary.py"
+digest = "sha256:9557bebfa25c91dec61ed8ed553b13d0a2234ef3522d240a6b9bdd842175fc62"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/repository_oracle.py"
+digest = "sha256:f04d694bee865db8a6d524f440792808569be525c1e63276bb1428d9530af432"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/runner.py"
+digest = "sha256:f6fdef2fccb7e978e2d03a7262582b96c8755cbb98a0e39f80db096d4260a1c9"
+
+[[sources]]
+path = "libs/openapi-codegen/external-contracts/src/target_matrix_boundary.py"
+digest = "sha256:216ffb27e6c395ebc293b2e1635760bfee3dcf3e164da551f325d6a77e65a762"
 
 [[cases]]
-id = "deterministic-target-requirements-and-artifacts-contract"
+id = "openapi-codegen-active-reference-sweep"
 capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "deterministic-target-requirements-and-artifacts-contract"
+claim_id = "active-reference-sweep"
+contract_id = "openapi-codegen-active-reference-sweep"
 dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#deterministic-target-requirements-and-artifacts-contract"
-test_path = "libs/openapi-codegen/tests/behavior_deterministic_target_requirements_and_artifacts_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix all_target_requirements_and_artifacts_are_deterministic -- --exact"
+source_ref = "libs/openapi-codegen/external-contracts/pyproject.toml#case:openapi-codegen-active-reference-sweep"
+test_path = "libs/openapi-codegen/external-contracts/src/active_reference_boundary.py"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py references"
 required_for_production = true
 assertions = [
-    "All seven declared profiles reproduce identical ordered files, file bytes, target requirements, runtime-dependency order, and parsed on-disk manifest values across repeated runs.",
-    "Every targeted output is materialized twice and the two sidecar files are byte-identical after exact field validation.",
+    "No active source, manifest, test, configuration, generated semantic mirror, or product documentation retains the superseded package, crate, sidecar, or generator identity; only the explicitly enumerated historical EC evidence files are exempt.",
+    "artifact: artifact:distribution/reference-sweep",
+    "oracle: Hand-authored Python oracle scans bounded repository roots, applies an exact historical allowlist, rejects every unallowlisted occurrence, and records a non-zero scanned-file count.",
+    "target: rust",
 ]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evidence_digest = "sha256:c7d76c822a5e6b5bc583522fcaeb679347de487afd1534499bd613cf008b5d8e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ee592e14f2787267f30692359778e9a9ecd73ff06ee783093c8c6645d60fd2d1"
+digest = "sha256:3b28636271218f0a0329143e5c24b2b87bec372aea239e38f1df042db939223a"
 
 [[cases]]
-id = "legacy-default-output-contract"
+id = "openapi-codegen-consumer-compilation"
 capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "legacy-default-output-contract"
+claim_id = "consumer-compilation"
+contract_id = "openapi-codegen-consumer-compilation"
 dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#legacy-default-output-contract"
-test_path = "libs/openapi-codegen/tests/behavior_legacy_default_output_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact"
+source_ref = "libs/openapi-codegen/external-contracts/pyproject.toml#case:openapi-codegen-consumer-compilation"
+test_path = "libs/openapi-codegen/external-contracts/src/consumer_boundary.py"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py consumers"
 required_for_production = true
 assertions = [
-    "GenOptions target None reproduces fixed file lists and byte fingerprints for legacy TypeScript, Python, and Rust generation.",
-    "TypeScript, Python, and Rust legacy outputs are each materialized independently and each proves the target sidecar is absent.",
+    "Lumen, Tape, Relay, Keep, Defer, Sift, and the client-transport-policy example each declare openapi-codegen with the local path plus version 0.5 and compile or test against the renamed crate.",
+    "artifact: artifact:integration/consumer-compilation",
+    "oracle: Hand-authored Python oracle parses each consumer manifest, rejects a missing or aliased dependency declaration, then independently runs each required cargo check or example test.",
+    "target: rust",
 ]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evidence_digest = "sha256:16bcfa768014461032ac540b1a1fc2f11bdc122bc221439aded4ef90b5a041a2"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:5a0cf3be128aa1f5b19612d22b263647f95834650a7d62d9295f9070ca7443b7"
+digest = "sha256:3a9d59fa55e243f843701cd2e9d1db8fbfe555aa57c1200bfb4aa1d29287a1b1"
 
 [[cases]]
-id = "multi-language-openapi-client-generation-contract"
+id = "openapi-codegen-published-identity"
 capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "multi-language-openapi-client-generation-contract"
+claim_id = "published-identity"
+contract_id = "openapi-codegen-published-identity"
 dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract"
-test_path = "libs/openapi-codegen/tests/behavior_multi_language_openapi_client_generation_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix"
+source_ref = "libs/openapi-codegen/external-contracts/pyproject.toml#case:openapi-codegen-published-identity"
+test_path = "libs/openapi-codegen/external-contracts/src/git_version_boundary.py"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py identity"
 required_for_production = true
 assertions = [
-    "The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.",
-    "The full external matrix covers Python 3.11-3.14 model smoke, TypeScript strict consumer type-check, Rust edition consumers, legacy golden compatibility, and deterministic materialized sidecars.",
+    "Cargo metadata and the library manifest expose package openapi-codegen, crate openapi_codegen, independent version 0.5.0, publish=false, generator identity openapi-codegen, sidecar .openapi-codegen.json, and release tag openapi-codegen@0.5.0.",
+    "artifact: artifact:distribution/package-identity",
+    "oracle: Hand-authored Python oracle reads Cargo metadata, Cargo.toml, and the Rust source and validates an exact fail-closed evidence schema.",
+    "target: rust",
 ]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evidence_digest = "sha256:7e19697b106c6be9954e779319d78a8c54ea80a23f1241eee0689e24956b8aaa"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3510f61f14ca8f7bc4b501fabf218b9c428f89d6593aeb1ab34036a44fb67a00"
+digest = "sha256:29ab6ea3b5bb1430d5cb567bc4a8a5e2e2ee3aa813beae833ab90967120b609d"
 
 [[cases]]
-id = "python-311-generated-model-contract"
+id = "openapi-codegen-target-matrix"
 capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "python-311-generated-model-contract"
+claim_id = "target-matrix"
+contract_id = "openapi-codegen-target-matrix"
 dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-311-generated-model-contract"
-test_path = "libs/openapi-codegen/tests/behavior_python_311_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_311_generated_model_contract -- --exact"
+source_ref = "libs/openapi-codegen/external-contracts/pyproject.toml#case:openapi-codegen-target-matrix"
+test_path = "libs/openapi-codegen/external-contracts/src/target_matrix_boundary.py"
+command = "python3.11 libs/openapi-codegen/external-contracts/src/runner.py matrix"
 required_for_production = true
 assertions = [
-    "Python 3.11 output compiles, imports with Pydantic 2.12.5, and validates the generated Pet model under a fail-closed uv-managed Python 3.11 runtime.",
-    "The materialized Python 3.11 sidecar is read back from disk and exactly declares python, minimum version 3.11, and the ordered pydantic>=2 runtime dependency.",
+    "The renamed package passes the exact Python 3.11, 3.12, 3.13, and 3.14; TypeScript 5.0; Rust 2021 and 2024; legacy-default; and deterministic-artifact contract matrix, with no missing or silently skipped profile.",
+    "artifact: artifact:verification/target-matrix",
+    "oracle: Hand-authored Python oracle runs every named matrix test separately and accepts only the exact required result set with non-zero evidence for each profile.",
+    "target: rust",
 ]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evidence_digest = "sha256:692b9e2d1fb754cb52b28e14e477cdd469a95bf09f7ee2532ad6ba174210dda4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:115c9e7fed35b9f0022ca265d6cf596719ddeb880dae6092b91942ce2a620099"
-
-[[cases]]
-id = "python-312-generated-model-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "python-312-generated-model-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-312-generated-model-contract"
-test_path = "libs/openapi-codegen/tests/behavior_python_312_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_312_generated_model_contract -- --exact"
-required_for_production = true
-assertions = [
-    "Python 3.12 output uses a PEP 695 alias, compiles, imports, and validates the generated Pet model under Python 3.12.",
-    "A missing Python runtime, dependency, generated file, import, or model-validation result fails the case.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:052c4349abd3dad0e39c735dfa531f0f16c05330b9bdd9e5d4b55563cf1c8883"
-
-[[cases]]
-id = "python-313-generated-model-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "python-313-generated-model-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-313-generated-model-contract"
-test_path = "libs/openapi-codegen/tests/behavior_python_313_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact"
-required_for_production = true
-assertions = [
-    "Python 3.13 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.13.",
-    "The observable gen wire property and optional tag field survive Pydantic validation and serialization.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:76d88790eff0ad6c1fda05d35f9ca565ec8e4b1a58ab13925c4d719f9b1f2dd5"
-
-[[cases]]
-id = "python-314-generated-model-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "python-314-generated-model-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-314-generated-model-contract"
-test_path = "libs/openapi-codegen/tests/behavior_python_314_generated_model_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_314_generated_model_contract -- --exact"
-required_for_production = true
-assertions = [
-    "Python 3.14 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.14.",
-    "The output carries exact Python 3.14 target requirements rather than inheriting an implicit language default.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:330c0c4654edcf3e2ffc752c30937a5c85711bc92a0e907914297814c920c112"
-
-[[cases]]
-id = "rust-2021-generated-client-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "rust-2021-generated-client-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#rust-2021-generated-client-contract"
-test_path = "libs/openapi-codegen/tests/behavior_rust_2021_generated_client_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2021_generated_client_contract -- --exact"
-required_for_production = true
-assertions = [
-    "The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2021 crate with its declared dependencies.",
-    "The independent consumer constructs Pet.gen and proves serde serialization/deserialization preserves the external JSON key gen.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:da0dc6fdaced6d4a350dfb605a9423fdf0b045b6e7b60ca862ffa8490dceaeb9"
-
-[[cases]]
-id = "rust-2024-generated-client-gen-property-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "rust-2024-generated-client-gen-property-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#rust-2024-generated-client-gen-property-contract"
-test_path = "libs/openapi-codegen/tests/behavior_rust_2024_generated_client_gen_property_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2024_generated_client_gen_property_contract -- --exact"
-required_for_production = true
-assertions = [
-    "The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2024 crate.",
-    "The consumer constructs Pet.gen_, round-trips it through serde, and proves JSON contains gen and never gen_.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7cc2ab477d144e66bdce69fee99341d7a49f85a59015dfebb0a83bd3b27cd33a"
-
-[[cases]]
-id = "typescript-50-strict-modern-module-contract"
-capability_id = "multi-language-openapi-client-generation"
-claim_id = "multi-language-openapi-client-generation-contract"
-contract_id = "typescript-50-strict-modern-module-contract"
-dimension = "behavior"
-source_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#typescript-50-strict-modern-module-contract"
-test_path = "libs/openapi-codegen/tests/behavior_typescript_50_strict_modern_module_contract.rs"
-command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix typescript_50_strict_modern_module_contract -- --exact"
-required_for_production = true
-assertions = [
-    "Generated TypeScript artifacts have the exact types/runtime/client/index file set and type-check with TypeScript 5.0.4, target ES2022, module ESNext, moduleResolution Bundler, strict, and verbatimModuleSyntax.",
-    "An independent consumer imports Pet in type position and createClient in value position, while the parsed on-disk manifest matches the tsc compiler/module/strictness contract.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:839621cc3fc2b75d2338de61a809f97952c2fe5e7f160787e7005164db3310f4"
+digest = "sha256:d7cfa5e7f3132ad32c04a7c18327685aae8677f53812900d3cc8e8e463148dc0"

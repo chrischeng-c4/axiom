@@ -10,5 +10,5 @@ there is no Makefile, external generator, `node`, or `npx` dependency.
 | `cargo run -q -p keep --bin keep -- spec gen --lang rust --out apps/keep/clients/rust` | Rust client |
 
 `codegen.toml` pins the default TypeScript, Python, and Rust contracts. Each
-generated directory includes `.cclab-openapi-codegen.json`; pass `--target
+generated directory includes `.openapi-codegen.json`; pass `--target
 <profile>` only for a deliberate compatibility override.

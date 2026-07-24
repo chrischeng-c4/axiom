@@ -112,7 +112,7 @@ pub struct GeneratedOutput {
 }
 
 /// Sidecar filename emitted with explicitly targeted generated clients.
-pub const MANIFEST_FILE: &str = ".cclab-openapi-codegen.json";
+pub const MANIFEST_FILE: &str = ".openapi-codegen.json";
 
 /// Stable, user-visible record of the exact generated-client contract.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -154,7 +154,7 @@ impl GeneratedOutput {
         let requirements = self.requirements?;
         Some(GenerationManifest {
             schema_version: 1,
-            generator: "cclab-openapi-codegen".to_string(),
+            generator: "openapi-codegen".to_string(),
             compiler: requirements.compiler.to_string(),
             target: requirements.target.to_string(),
             language: requirements.language.id().to_string(),

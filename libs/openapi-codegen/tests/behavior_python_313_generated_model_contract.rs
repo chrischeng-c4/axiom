@@ -7,7 +7,7 @@
 // @contract python-313-generated-model-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact
+// @command cargo test -p openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact
 // AW-EC-END
 
 // Contract: Python 3.13 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.13.
@@ -16,7 +16,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn python_313_generated_model_contract() {
     let command =
-        "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact";
+        "cargo test -p openapi-codegen --test target_profile_matrix python_313_generated_model_contract -- --exact";
     let id = "python-313-generated-model-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

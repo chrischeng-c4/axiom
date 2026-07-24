@@ -20,17 +20,17 @@ ID: multi-language-openapi-client-generation
 Type: DeveloperTool
 Root WI: -
 Status: verified
-Surfaces: Rust API: `cclab_openapi_codegen`.
-EC Dimensions: behavior: `cargo test -p cclab-openapi-codegen` - OpenAPI parser and emitter coverage
+Surfaces: Rust API: `openapi_codegen`.
+EC Dimensions: behavior: `cargo test -p openapi-codegen` - OpenAPI parser and emitter coverage
 Required Verification: smoke
 Promise:
 Projects can derive typed client code from OpenAPI documents without copying
 language-specific generation logic.
-Gate Inventory: `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/lib.rs
+Gate Inventory: `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/lib.rs |
+| multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs |
 
 ## Versioned target profiles
 
@@ -44,7 +44,7 @@ settings where applicable, transport, and ordered runtime dependencies.
 Projects pin their defaults in a `codegen.toml` `[targets]` table and may offer
 an explicit target override. When an output is materialized through
 `GeneratedOutput::write_to_dir`, explicitly targeted output includes
-`.cclab-openapi-codegen.json`, recording the complete target contract for
+`.openapi-codegen.json`, recording the complete target contract for
 downstream verification. Legacy `target: None` output does not add a sidecar.
 
 | Language | Profiles | Artifact effect |
@@ -54,7 +54,7 @@ downstream verification. Legacy `target: None` output does not add a sidecar.
 | Rust | 2021, 2024 | Rust 2024 treats schema fields named `gen` as reserved and emits `gen_` plus `#[serde(rename = "gen")]`. |
 
 ```rust
-use cclab_openapi_codegen::{
+use openapi_codegen::{
     generate_for_target, GenOptions, PythonTarget, TargetProfile,
 };
 

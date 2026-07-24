@@ -21,7 +21,7 @@
 
 ## Commands
 
-- Test: `cargo test -p cclab-openapi-codegen`.
+- Test: `cargo test -p openapi-codegen`.
 
 ## Root Artifacts
 

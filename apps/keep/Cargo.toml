@@ -48,7 +48,7 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 # Shared polyglot OpenAPI client codegen (libs/openapi-codegen). `keep spec gen`
 # composes its `generate(...)` on keep's own OpenAPI — one codegen path, no
 # external tool. Always linked (pure Rust, no network).
-cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+openapi-codegen = { path = "../../libs/openapi-codegen", version = "0.5" }
 # Shared k8s-native HTTP service shell (#751) — standard probes, request
 # tracing, h2c serve, and graceful drain. Composes libs/transport-h2c for HTTP/2 cleartext
 # + HTTP/1.1 on one port, so keep no longer hand-rolls the hyper-util auto-server.
