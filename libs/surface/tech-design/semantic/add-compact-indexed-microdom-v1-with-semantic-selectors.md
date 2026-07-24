@@ -86,13 +86,13 @@ id: surface-microdom-v1-verification
 requirements:
   atomic_errors:
     id: R4
-    text: "Duplicate semantic ids and invalid parent NodeId values return typed errors without partially mutating nodes, relationships, or selector indexes."
+    text: "Duplicate stable ids and invalid parent NodeId values return typed errors without partially mutating nodes, relationships, or selector indexes."
     kind: functional
     risk: high
     verify: cargo test -p cclab-surface --test microdom_contract invalid_insertions_are_typed_and_atomic -- --nocapture
   canonical_snapshot:
     id: R3
-    text: "Identical MicroDOM inputs emit byte-identical schema-versioned canonical snapshots in arena order."
+    text: "Identical MicroDOM inputs emit byte-identical schema-versioned canonical snapshots in arena order and do not serialize unordered selector indexes."
     kind: regression
     risk: medium
     verify: cargo test -p cclab-surface --test microdom_contract canonical_snapshot_is_byte_stable -- --nocapture
@@ -104,7 +104,7 @@ requirements:
     verify: cargo test -p cclab-surface --test microdom_contract compact_arena_preserves_typed_identity_and_child_order -- --nocapture
   semantic_selectors:
     id: R2
-    text: "Stable id, semantic role, and role-plus-accessible-name selectors return deterministic NodeId matches."
+    text: "Stable id, semantic role, and role-plus-accessible-name selectors return deterministic NodeId matches through the id or role index."
     kind: functional
     risk: high
     verify: cargo test -p cclab-surface --test microdom_contract selectors_resolve_stable_id_role_and_name -- --nocapture
