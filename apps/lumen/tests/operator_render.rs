@@ -500,6 +500,19 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
         ]
     );
 
+    // #2487: this must be the StatefulSet-ready series — lumen renders
+    // serving as a StatefulSet only, so a Deployment series never matches
+    // and the alert can never fire.
+    let no_ready_pods = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenNoReadyServingPods")
+        .unwrap();
+    let no_ready_pods_expr = no_ready_pods["expr"].as_str().unwrap();
+    assert!(no_ready_pods_expr.contains("kube_statefulset_status_replicas_ready"));
+    assert!(!no_ready_pods_expr.contains("kube_deployment_status_replicas_available"));
+    assert!(no_ready_pods_expr.contains("statefulset=\"lumen\""));
+    assert!(no_ready_pods_expr.contains("namespace=\"acme\""));
+
     let backup = rules
         .iter()
         .find(|r| r["alert"] == "LumenBackupCronJobFailed")
