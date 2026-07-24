@@ -27,7 +27,7 @@ mod tests {
     async fn start_server() -> (SocketAddr, AppState) {
         let mut journal = TapeJournal::default();
         journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
-        let state = AppState::new(journal, None);
+        let state = AppState::new(journal, None, 8 * 1024 * 1024);
         let app = router(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

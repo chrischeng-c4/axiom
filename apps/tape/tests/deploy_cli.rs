@@ -75,9 +75,14 @@ fn render_verbs_emit_parseable_yaml_offline() {
     let image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
         .as_str()
         .expect("operator deployment image");
+    // Derived from the crate version, not a literal: a hardcoded tag goes
+    // stale on the next release and fails the suite for the wrong reason.
+    // The invariant under test is that the tag is the pinned release version,
+    // whatever it currently is.
     assert_eq!(
-        image, "ghcr.io/chrischeng-c4/tape:0.4.10",
-        "operator image is release-pinned"
+        image,
+        format!("ghcr.io/chrischeng-c4/tape:{}", env!("CARGO_PKG_VERSION")),
+        "operator image is release-pinned to the crate version"
     );
     assert_ne!(image, "tape:latest", "operator never emits a mutable tag");
 
