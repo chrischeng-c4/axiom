@@ -13,10 +13,18 @@ set -euo pipefail
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
 ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-courier}"
 PERSISTENT_CLUSTER_NAME="${PERSISTENT_CLUSTER_NAME:-axiom-operator-acceptance}"
-LUMEN_ONLY="${LUMEN_ONLY:-0}"
+ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
 KUBECONFIG="${KUBECONFIG:-$STATE_DIR/kubeconfig}"
 TERRAFORM_ENVIRONMENT_DIR="${TERRAFORM_ENVIRONMENT_DIR:-$STATE_DIR/environment}"
 export KUBECONFIG
+case "$ACCEPTANCE_APPS" in
+  "lumen sift") acceptance_mode="lumen-sift" ;;
+  "tape") acceptance_mode="tape" ;;
+  *)
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" >&2
+    exit 1
+    ;;
+esac
 
 state="$STATE_DIR/environment.tfstate"
 tf_data="$STATE_DIR/.terraform-environment"
@@ -25,9 +33,12 @@ mkdir -p "$EVIDENCE_DIR/kubernetes"
 capture_failure_evidence() {
   kubectl get deployment,statefulset,cronjob,job,pod,pvc -A -o json \
     > "$EVIDENCE_DIR/kubernetes/workloads-before-cleanup.json" 2>/dev/null || true
-  kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
-    > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
-  if [[ "$LUMEN_ONLY" != "1" ]]; then
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    kubectl logs -n tape-system deployment/tape-operator --tail=500 --request-timeout=15s \
+      > "$EVIDENCE_DIR/kubernetes/tape-operator.log" 2>&1 || true
+  else
+    kubectl logs -n lumen-system deployment/lumen-operator --tail=500 --request-timeout=15s \
+      > "$EVIDENCE_DIR/kubernetes/lumen-operator.log" 2>&1 || true
     kubectl logs -n sift-system deployment/sift-operator --tail=500 --request-timeout=15s \
       > "$EVIDENCE_DIR/kubernetes/sift-operator.log" 2>&1 || true
   fi
@@ -69,9 +80,10 @@ delete_run_image() {
 
 if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   capture_failure_evidence
-  namespaces=(lumen lumen-system)
-  if [[ "$LUMEN_ONLY" != "1" ]]; then
-    namespaces+=(sift sift-system)
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    namespaces=(tape tape-system)
+  else
+    namespaces=(lumen lumen-system sift sift-system)
   fi
   for namespace in "${namespaces[@]}"; do
     kubectl delete namespace "$namespace" --ignore-not-found --wait=false \
@@ -95,10 +107,11 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
     fi
     sleep 5
   done
-  kubectl delete customresourcedefinition lumens.lumen.dev \
-    --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
-  if [[ "$LUMEN_ONLY" != "1" ]]; then
-    kubectl delete customresourcedefinition sifts.sift.axiom.dev \
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    kubectl delete customresourcedefinition tapes.tape.dev \
+      --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
+  else
+    kubectl delete customresourcedefinition lumens.lumen.dev sifts.sift.axiom.dev \
       --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
   fi
 fi
@@ -125,8 +138,10 @@ if [[ -f "$state" ]]; then
     -var="run_id=$RUN_ID"
     -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY"
     -var="image_tag=$IMAGE_TAG"
-    -var="lumen_only=$LUMEN_ONLY"
   )
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    destroy_args+=(-var="acceptance_apps=tape")
+  fi
   for attempt in 1 2 3; do
     if TF_DATA_DIR="$tf_data" terraform -chdir="$TERRAFORM_ENVIRONMENT_DIR" \
       destroy "${destroy_args[@]}"; then
@@ -140,8 +155,10 @@ if [[ -f "$state" ]]; then
   done
 fi
 
-delete_run_image lumen
-if [[ "$LUMEN_ONLY" != "1" ]]; then
+if [[ "$acceptance_mode" == "tape" ]]; then
+  delete_run_image tape
+else
+  delete_run_image lumen
   delete_run_image sift
 fi
 gcloud storage rm --recursive "${GCS_SOURCE_PREFIX}/**" >/dev/null 2>&1 || true
@@ -150,5 +167,5 @@ PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" RUN_ID="$RUN_ID" 
   REGISTRY="$REGISTRY" IMAGE_TAG="$IMAGE_TAG" \
   GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
-  LUMEN_ONLY="$LUMEN_ONLY" \
+  ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
   "$ACCEPTANCE_ROOT/scripts/verify-clean.sh"

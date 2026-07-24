@@ -1,10 +1,11 @@
-# GCP operator acceptance: Lumen, then Sift
+# GCP operator acceptance: Lumen, Sift, or Tape
 
 This harness is a low-cost GKE proof for the shared service
-operator shape. It completes an independent Lumen acceptance phase first; only
+operator shape. In full mode, it completes an independent Lumen acceptance phase first; only
 then does it install Sift and its node-level collector to collect Lumen's real
-structured stdout. The image, Terraform, manifest-rendering, evidence, and
-cleanup boundaries remain reusable for Tape, Relay, and Defer.
+structured stdout. In Tape-only mode, it proves Tape's domain-plane (Raft-based event log)
+capabilities in isolation. The image, Terraform, manifest-rendering, evidence, and
+cleanup boundaries remain reusable for Relay and Defer.
 
 It keeps one named Standard GKE test cluster between runs, then creates these
 short-lived resources tagged with one `RUN_ID`:
@@ -13,8 +14,9 @@ short-lived resources tagged with one `RUN_ID`:
   public-access prevention, and a one-day object lifecycle;
 - one shared backup GSA;
 - bucket-scoped `roles/storage.objectAdmin` for that backup GSA;
-- Workload Identity bindings for `lumen/lumen-backup` and
-  `sift/sift-backup`.
+- Workload Identity bindings for service account backups: `lumen/lumen-backup`
+  and `sift/sift-backup` in full mode, or `tape/tape-backup` and `tape/tape`
+  in Tape-only mode.
 
 It does **not** create Pub/Sub, Cloud Tasks, Cloud Run, a LoadBalancer, a NAT,
 or an Artifact Registry repository. `courier` is the default existing Docker
@@ -46,6 +48,19 @@ The test is deliberately narrower than a production or competitor benchmark:
 
 These exclusions are also written into `acceptance.json`, so a passing run
 cannot be mistaken for broader scaling evidence.
+
+In Tape-only mode, the boundary is narrower:
+- Tape proves 1x1 operator reconcile and standalone domain-plane lifecycle in a 3-replica
+  raft cluster without any surrounding data plane (Lumen collection is outside Tape's scope).
+- Event append, subscription replay, pull, and ack confirm the event log contract.
+- Pod restart proves data retention on the PVC.
+- GCS backup and readback prove snapshot export capability.
+- Cold restore from a GCS backup object, with the #2468 bootstrap-if-empty assertion
+  (pod restart with seedUri still present returns Ready and data intact).
+- Failover proves raft group re-election and committed writes survive leader loss.
+- The lag gauge proves subscription lag instrumentation is present in /metrics.
+- CPU/memory-driven replica actuation is not claimed.
+- Performance or scaling beyond a single raft group of three replicas is not claimed.
 
 ## Prerequisites
 
@@ -105,7 +120,26 @@ benchmarks/gcp-operator-acceptance/scripts/run.sh
 `acceptance.json` records `mode: lumen-only` and explicitly excludes Sift
 collection, CPU/memory actuator, and live replica-membership claims.
 
-For routine acceptance, pass the immutable GitHub-release-derived image
+To prove Tape in isolation, select Tape-only mode and provide the exact immutable
+Tape image (or omit it to trigger a local Cloud Build). This mode does not build,
+render, deploy, or query Lumen or Sift; it proves only Tape's 1x1 operator
+reconcile, domain-plane event append/replay/subscription lifecycle, pod restart
+data retention, GCS backup readback, cold restore from backup, bootstrap-if-empty
+seed survival, failover, and cleanup.
+
+```bash
+PROJECT_ID=axiom-502607 \
+ACCEPTANCE_APPS=tape \
+TAPE_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/tape@sha256:<digest> \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
+`ACCEPTANCE_APPS=tape` rejects `LUMEN_PRIOR_ACCEPTANCE`. The terminal
+`acceptance.json` records only `acceptance.tape` with its complete lifecycle
+proof, including the #2468 bootstrap-if-empty restart assertion and
+subscription lag gauge instrumentation.
+
+For routine acceptance of both Lumen and Sift, pass the immutable GitHub-release-derived image
 digests and no Cloud Build or staged source archive is used. A candidate can
 replace just one service; the harness builds only the missing service target.
 

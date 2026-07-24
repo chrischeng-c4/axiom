@@ -13,10 +13,21 @@ RUN_ID="${RUN_ID:-$(date -u +%m%d%H%M%S)}"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}-${RUN_ID}}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}"
+ACCEPTANCE_APPS="${ACCEPTANCE_APPS:-lumen sift}"
 INPUT_LUMEN_IMAGE="${LUMEN_IMAGE:-}"
 INPUT_SIFT_IMAGE="${SIFT_IMAGE:-}"
+INPUT_TAPE_IMAGE="${TAPE_IMAGE:-}"
 LUMEN_PRIOR_ACCEPTANCE="${LUMEN_PRIOR_ACCEPTANCE:-}"
-LUMEN_ONLY="${LUMEN_ONLY:-0}"
+# Pre-declared so `export` under `set -u` never fails; each mode branch below
+# fills in only the names it owns. Caller-supplied *_CLI overrides are
+# preserved; the *_IMAGE runtime variables are reset because their caller
+# inputs were already captured into INPUT_* above.
+LUMEN_CLI="${LUMEN_CLI:-}"
+SIFT_CLI="${SIFT_CLI:-}"
+TAPE_CLI="${TAPE_CLI:-}"
+LUMEN_IMAGE=""
+SIFT_IMAGE=""
+TAPE_IMAGE=""
 STATE_DIR="${STATE_DIR:-/tmp/axiom-gcp-operator-${RUN_ID}}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/axiom-gcp-operator-evidence/${RUN_ID}}"
 MANIFEST_DIR="${MANIFEST_DIR:-$STATE_DIR/manifests}"
@@ -66,7 +77,7 @@ cleanup() {
       GCS_SOURCE_PREFIX="$GCS_SOURCE_PREFIX" EVIDENCE_DIR="$EVIDENCE_DIR" \
       ARTIFACT_REGISTRY_REPOSITORY="$ARTIFACT_REGISTRY_REPOSITORY" \
       PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
-      LUMEN_ONLY="$LUMEN_ONLY" \
+      ACCEPTANCE_APPS="$ACCEPTANCE_APPS" \
       "$SCRIPT_DIR/cleanup.sh"; then
       echo "cleanup failed; Terraform state remains at $STATE_DIR" >&2
       ec=1
@@ -94,21 +105,28 @@ done
   echo "MAX_CLOUD_SECONDS must be an integer no greater than 2700" >&2
   exit 1
 }
-[[ "$LUMEN_ONLY" == "0" || "$LUMEN_ONLY" == "1" ]] || {
-  echo "LUMEN_ONLY must be 0 or 1" >&2
-  exit 1
-}
-if [[ "$LUMEN_ONLY" == "1" ]]; then
-  [[ -n "$INPUT_LUMEN_IMAGE" && "$INPUT_LUMEN_IMAGE" == *@sha256:* ]] || {
-    echo "LUMEN_ONLY=1 requires LUMEN_IMAGE as an immutable @sha256 digest reference" >&2
+case "$ACCEPTANCE_APPS" in
+  "lumen sift") acceptance_mode="lumen-sift" ;;
+  "tape") acceptance_mode="tape" ;;
+  *)
+    echo "ACCEPTANCE_APPS must be exactly 'lumen sift' (default) or 'tape'" >&2
+    exit 1
+    ;;
+esac
+if [[ "$acceptance_mode" == "tape" ]]; then
+  [[ -z "$INPUT_TAPE_IMAGE" || "$INPUT_TAPE_IMAGE" == *@sha256:* ]] || {
+    echo "caller-supplied service images must be immutable @sha256 digest references" >&2
     exit 1
   }
+  if [[ -n "$INPUT_TAPE_IMAGE" ]]; then
+    IMAGE_PROVENANCE="prebuilt"
+  else
+    IMAGE_PROVENANCE="cloud-build"
+  fi
   [[ -z "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
-    echo "LUMEN_ONLY=1 requires a current Lumen proof; LUMEN_PRIOR_ACCEPTANCE is not allowed" >&2
+    echo "LUMEN_PRIOR_ACCEPTANCE is meaningless in ACCEPTANCE_APPS=tape mode" >&2
     exit 1
   }
-  IMAGE_PROVENANCE="prebuilt"
-  service_images=(lumen)
 else
   for input_image in "$INPUT_LUMEN_IMAGE" "$INPUT_SIFT_IMAGE"; do
     [[ -z "$input_image" || "$input_image" == *@sha256:* ]] || {
@@ -123,7 +141,6 @@ else
   else
     IMAGE_PROVENANCE="cloud-build"
   fi
-  service_images=(lumen sift)
 fi
 if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
   [[ -f "$LUMEN_PRIOR_ACCEPTANCE" ]] || {
@@ -206,11 +223,24 @@ if [[ "$IMAGE_PROVENANCE" != "prebuilt" ]]; then
   fi
 fi
 
-for image in "${service_images[@]}"; do
+if [[ "$acceptance_mode" == "tape" ]]; then
+  image_list=(tape)
+else
+  image_list=(lumen sift)
+fi
+for image in "${image_list[@]}"; do
   inventory="$EVIDENCE_DIR/preexisting-${image}-images.json"
-  if ! gcloud artifacts docker images list "$REGISTRY/$image" \
-    --project="$PROJECT_ID" --include-tags --format=json > "$inventory"; then
+  list_stderr="$STATE_DIR/preexisting-${image}-images.stderr"
+  if gcloud artifacts docker images list "$REGISTRY/$image" \
+    --project="$PROJECT_ID" --include-tags --format=json > "$inventory" 2>"$list_stderr"; then
+    :
+  elif [[ "$image" == "tape" ]] && rg -F "NOT_FOUND" "$list_stderr" >/dev/null; then
+    # The tape package may not exist in the registry yet on a first run;
+    # applied ONLY in tape mode. lumen/sift keep the hard failure below.
+    printf '[]' > "$inventory"
+  else
     echo "could not inventory existing $image images; refusing a destructive run" >&2
+    cat "$list_stderr" >&2
     exit 1
   fi
   if jq -e --arg tag "$IMAGE_TAG" \
@@ -252,19 +282,34 @@ jq -n \
   > "$EVIDENCE_DIR/run.json"
 
 echo ">> local deployment CLI build and render-surface preflight"
-cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-  -p lumen --bin lumen --features operator
-LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
-if [[ "$LUMEN_ONLY" != "1" ]]; then
+if [[ "$acceptance_mode" == "tape" ]]; then
+  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    -p tape --bin tape --features "operator backup"
+  TAPE_CLI="${TAPE_CLI:-$REPO_ROOT/target/debug/tape}"
+else
+  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    -p lumen --bin lumen --features operator
+  LUMEN_CLI="${LUMEN_CLI:-$REPO_ROOT/target/debug/lumen}"
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     -p sift --bin sift
   SIFT_CLI="${SIFT_CLI:-$REPO_ROOT/target/debug/sift}"
 fi
 
 cleanup_armed=1
+# The watchdog polls its parent between short sleeps and disarms itself the
+# moment the parent is gone. A single long sleep followed by an unconditional
+# `kill -TERM $$` outlives a parent that died without reaching cleanup(), and
+# minutes later fires at whatever process RECYCLED the parent's pid — attempt
+# 0723113842 was killed exactly that way by a prior run's leftover.
+run_main_pid="$$"
 (
-  sleep "$MAX_CLOUD_SECONDS"
-  kill -TERM "$$" >/dev/null 2>&1 || true
+  waited=0
+  while (( waited < MAX_CLOUD_SECONDS )); do
+    sleep 10
+    waited=$((waited + 10))
+    kill -0 "$run_main_pid" >/dev/null 2>&1 || exit 0
+  done
+  kill -TERM "$run_main_pid" >/dev/null 2>&1 || true
 ) &
 watchdog_pid="$!"
 
@@ -282,16 +327,22 @@ resolve_digest() {
 
 if [[ "$IMAGE_PROVENANCE" == "prebuilt" ]]; then
   echo ">> using caller-supplied immutable release or candidate images"
-  LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
-  if [[ "$LUMEN_ONLY" != "1" ]]; then
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    TAPE_IMAGE="$INPUT_TAPE_IMAGE"
+  else
+    LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
     SIFT_IMAGE="$INPUT_SIFT_IMAGE"
   fi
 else
-  CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.yaml"
-  if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
-    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift.yaml"
-  elif [[ -n "$INPUT_SIFT_IMAGE" ]]; then
-    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.tape.yaml"
+  else
+    CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.yaml"
+    if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
+      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.sift.yaml"
+    elif [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+      CLOUD_BUILD_CONFIG="$ACCEPTANCE_ROOT/cloudbuild.lumen.yaml"
+    fi
   fi
   echo ">> Cloud Build: source candidate only for service image(s) not supplied by digest"
   build_id="$(gcloud builds submit "$REPO_ROOT" \
@@ -335,23 +386,26 @@ else
   done
   gcloud builds describe "$build_id" --project="$PROJECT_ID" --region="$REGION" \
     --format=json > "$EVIDENCE_DIR/cloud-build-final.json"
-  if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
-    LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
+  if [[ "$acceptance_mode" == "tape" ]]; then
+    TAPE_IMAGE="$(resolve_digest tape)"
   else
-    LUMEN_IMAGE="$(resolve_digest lumen)"
-  fi
-  if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
-    SIFT_IMAGE="$INPUT_SIFT_IMAGE"
-  else
-    SIFT_IMAGE="$(resolve_digest sift)"
+    if [[ -n "$INPUT_LUMEN_IMAGE" ]]; then
+      LUMEN_IMAGE="$INPUT_LUMEN_IMAGE"
+    else
+      LUMEN_IMAGE="$(resolve_digest lumen)"
+    fi
+    if [[ -n "$INPUT_SIFT_IMAGE" ]]; then
+      SIFT_IMAGE="$INPUT_SIFT_IMAGE"
+    else
+      SIFT_IMAGE="$(resolve_digest sift)"
+    fi
   fi
 fi
-if [[ "$LUMEN_ONLY" == "1" ]]; then
-  jq -n --arg mode "lumen-only" --arg lumen "$LUMEN_IMAGE" \
-    '{mode:$mode,lumen:$lumen}' > "$EVIDENCE_DIR/images.json"
+if [[ "$acceptance_mode" == "tape" ]]; then
+  jq -n --arg tape "$TAPE_IMAGE" '{tape:$tape}' > "$EVIDENCE_DIR/images.json"
 else
-  jq -n --arg mode "full" --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
-    '{mode:$mode,lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
+  jq -n --arg lumen "$LUMEN_IMAGE" --arg sift "$SIFT_IMAGE" \
+    '{lumen:$lumen,sift:$sift}' > "$EVIDENCE_DIR/images.json"
 fi
 
 # Resource names are deterministic Terraform values, so render and validate all
@@ -359,16 +413,10 @@ fi
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
-# #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
-# plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
-# same deterministic string from RUN_ID (see environment/secretmanager.tf).
-LUMEN_AUTHCSI_SECRET_ID="axo-${RUN_ID}-lumen-tokens"
-export LUMEN_CLI LUMEN_IMAGE BACKUP_BUCKET BACKUP_GSA_EMAIL LUMEN_ONLY
-if [[ "$LUMEN_ONLY" != "1" ]]; then
-  export SIFT_CLI SIFT_IMAGE
-fi
+export LUMEN_CLI SIFT_CLI TAPE_CLI LUMEN_IMAGE SIFT_IMAGE TAPE_IMAGE
+export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
-export RUN_ID MANIFEST_DIR
+export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
 "$SCRIPT_DIR/render-manifests.sh"
 
 echo ">> Terraform: run-scoped backup bucket and workload identity on persistent Standard GKE"
@@ -376,6 +424,10 @@ mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
 cp "$ACCEPTANCE_ROOT/environment"/*.tf "$TERRAFORM_ENVIRONMENT_DIR/"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" init -input=false
+terraform_apply_var_args=()
+if [[ "$acceptance_mode" == "tape" ]]; then
+  terraform_apply_var_args+=(-var="acceptance_apps=tape")
+fi
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" apply \
   -state="$STATE_DIR/environment.tfstate" \
@@ -387,7 +439,7 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="run_id=$RUN_ID" \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
   -var="image_tag=$IMAGE_TAG" \
-  -var="lumen_only=$LUMEN_ONLY"
+  "${terraform_apply_var_args[@]}"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" output \
   -state="$STATE_DIR/environment.tfstate" -json > "$EVIDENCE_DIR/terraform-output.json"
@@ -400,50 +452,59 @@ test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" 
 test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
+
+# App namespaces are fixed names on the shared persistent cluster, so two
+# concurrent acceptance runs of the same mode would drive the SAME operator
+# cell and destroy each other's expected state (runs 0723094538/0723095701
+# raced exactly this way — both tampered one StatefulSet, then one run's
+# cleanup deleted the other's live namespaces). Refuse to start, and do so
+# BEFORE kube-context-ready.txt exists so this run's cleanup does not touch
+# the other run's namespaces either.
+if [[ "$acceptance_mode" == "tape" ]]; then
+  mode_namespaces=(tape tape-system)
+else
+  mode_namespaces=(lumen lumen-system sift sift-system)
+fi
+for namespace in "${mode_namespaces[@]}"; do
+  if kubectl get namespace "$namespace" --no-headers >/dev/null 2>&1; then
+    echo "namespace $namespace already exists on $cluster; another acceptance run appears active — refusing to race it" >&2
+    exit 1
+  fi
+done
 printf '%s\n' "$cluster" > "$STATE_DIR/kube-context-ready.txt"
 
-export EVIDENCE_DIR LUMEN_AUTHCSI_SECRET_ID
-
-# Phase 1 is a hard gate: no Sift CRD/operator/instance/collector is applied
-# until Lumen has independently reconciled, recovered, backed up to GCS, and
-# completed its bounded disk-triggered split.
-"$SCRIPT_DIR/deploy.sh" lumen
-"$SCRIPT_DIR/verify-operator-cell.sh" lumen
+export EVIDENCE_DIR
 export PROJECT_ID REGION BACKUP_BUCKET
-if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
-  cp "$LUMEN_PRIOR_ACCEPTANCE" "$EVIDENCE_DIR/lumen-acceptance-prior.json"
-  export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance-prior.json"
-  export LUMEN_ACCEPTANCE_PROVENANCE="prior-gke-proof"
-  echo ">> current Lumen operator cell passed; reusing supplied prior persistence, backup, and split proof"
+
+if [[ "$acceptance_mode" == "tape" ]]; then
+  # Tape-only acceptance mode: a single disposable domain-plane cell, no
+  # Lumen/Sift phasing.
+  "$SCRIPT_DIR/deploy.sh" tape
+  "$SCRIPT_DIR/verify-operator-cell.sh" tape
+  "$SCRIPT_DIR/verify-tape.sh"
 else
-  "$SCRIPT_DIR/verify-lumen.sh"
-  export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
-  export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
-fi
+  # Phase 1 is a hard gate: no Sift CRD/operator/instance/collector is applied
+  # until Lumen has independently reconciled, recovered, backed up to GCS, and
+  # completed its bounded disk-triggered split.
+  "$SCRIPT_DIR/deploy.sh" lumen
+  "$SCRIPT_DIR/verify-operator-cell.sh" lumen
+  if [[ -n "$LUMEN_PRIOR_ACCEPTANCE" ]]; then
+    cp "$LUMEN_PRIOR_ACCEPTANCE" "$EVIDENCE_DIR/lumen-acceptance-prior.json"
+    export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance-prior.json"
+    export LUMEN_ACCEPTANCE_PROVENANCE="prior-gke-proof"
+    echo ">> current Lumen operator cell passed; reusing supplied prior persistence, backup, and split proof"
+  else
+    "$SCRIPT_DIR/verify-lumen.sh"
+    export LUMEN_ACCEPTANCE_EVIDENCE="$EVIDENCE_DIR/lumen-acceptance.json"
+    export LUMEN_ACCEPTANCE_PROVENANCE="current-run"
+  fi
 
-if [[ "$LUMEN_ONLY" == "1" ]]; then
-  jq -n \
-    --arg schema "axiom.gcp.operator.acceptance.v1" \
-    --arg mode "lumen-only" \
-    --arg project_id "$PROJECT_ID" \
-    --arg region "$REGION" \
-    --arg gke_zone "$GKE_ZONE" \
-    --arg run_id "$RUN_ID" \
-    --arg backup_bucket "$BACKUP_BUCKET" \
-    --slurpfile lumen "$EVIDENCE_DIR/lumen-acceptance.json" \
-    '{schema:$schema,mode:$mode,project_id:$project_id,region:$region,gke_zone:$gke_zone,run_id:$run_id,backup_bucket:$backup_bucket,acceptance:{lumen:$lumen[0]},exclusions:["sift_collection_deferred","cpu_memory_actuator_not_claimed","live_replica_membership_not_claimed"]}' \
-    > "$EVIDENCE_DIR/acceptance.json"
-  jq -e '.mode == "lumen-only" and .acceptance.lumen.operator_reconcile_1x1 == "passed" and .acceptance.lumen.pod_restart_data_retention == "passed" and .acceptance.lumen.gcs_backup_before_split == "passed" and .acceptance.lumen.auto_split_delta == 1' \
-    "$EVIDENCE_DIR/acceptance.json" >/dev/null
-  echo ">> Lumen-only acceptance passed; mandatory cleanup runs on EXIT"
-  exit 0
+  # Only a successful Lumen phase starts the Sift data plane. The collector then
+  # reads Lumen's structured stdout from Standard GKE node logs and the proof
+  # queries the materialized Sift logging store.
+  "$SCRIPT_DIR/deploy.sh" sift
+  "$SCRIPT_DIR/verify-operator-cell.sh" sift
+  "$SCRIPT_DIR/verify-sift-collection.sh"
 fi
-
-# Only a successful Lumen phase starts the Sift data plane. The collector then
-# reads Lumen's structured stdout from Standard GKE node logs and the proof
-# queries the materialized Sift logging store.
-"$SCRIPT_DIR/deploy.sh" sift
-"$SCRIPT_DIR/verify-operator-cell.sh" sift
-"$SCRIPT_DIR/verify-sift-collection.sh"
 
 echo ">> acceptance passed; mandatory cleanup runs on EXIT"
