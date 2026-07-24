@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${LUMEN_CLI:?LUMEN_CLI is required}"
-: "${LUMEN_IMAGE:?LUMEN_IMAGE digest reference is required}"
-: "${LUMEN_ONLY:=0}"
+: "${ACCEPTANCE_APPS:=lumen sift}"
 : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
 : "${BACKUP_GSA_EMAIL:?BACKUP_GSA_EMAIL is required}"
 : "${RUN_ID:?RUN_ID is required}"
@@ -12,38 +10,53 @@ set -euo pipefail
 : "${GKE_ZONE:?GKE_ZONE is required}"
 : "${PROJECT_ID:?PROJECT_ID is required}"
 
-for cli in "$LUMEN_CLI"; do
-  [[ -x "$cli" ]] || {
-    echo "deployment CLI is not executable: $cli" >&2
+# Determine acceptance mode and require only the appropriate CLIs/images
+case "$ACCEPTANCE_APPS" in
+  "lumen sift")
+    : "${LUMEN_CLI:?LUMEN_CLI is required for lumen-sift mode}"
+    : "${LUMEN_IMAGE:?LUMEN_IMAGE digest reference is required for lumen-sift mode}"
+    : "${SIFT_CLI:?SIFT_CLI is required for lumen-sift mode}"
+    : "${SIFT_IMAGE:?SIFT_IMAGE digest reference is required for lumen-sift mode}"
+    [[ -x "$LUMEN_CLI" ]] || {
+      echo "deployment CLI is not executable: $LUMEN_CLI" >&2
+      exit 1
+    }
+    [[ -x "$SIFT_CLI" ]] || {
+      echo "deployment CLI is not executable: $SIFT_CLI" >&2
+      exit 1
+    }
+    mkdir -p \
+      "$MANIFEST_DIR/lumen/operator" \
+      "$MANIFEST_DIR/lumen/instance" \
+      "$MANIFEST_DIR/sift/operator" \
+      "$MANIFEST_DIR/sift/instance" \
+      "$MANIFEST_DIR/sift/collector"
+    ;;
+  "tape")
+    : "${TAPE_CLI:?TAPE_CLI is required for tape mode}"
+    : "${TAPE_IMAGE:?TAPE_IMAGE digest reference is required for tape mode}"
+    [[ -x "$TAPE_CLI" ]] || {
+      echo "deployment CLI is not executable: $TAPE_CLI" >&2
+      exit 1
+    }
+    mkdir -p \
+      "$MANIFEST_DIR/tape/operator" \
+      "$MANIFEST_DIR/tape/instance"
+    ;;
+  *)
+    echo "ACCEPTANCE_APPS must be 'lumen sift' or 'tape'" >&2
     exit 1
-  }
-done
-if [[ "$LUMEN_ONLY" != "1" ]]; then
-  : "${SIFT_CLI:?SIFT_CLI is required outside LUMEN_ONLY mode}"
-  : "${SIFT_IMAGE:?SIFT_IMAGE digest reference is required outside LUMEN_ONLY mode}"
-  [[ -x "$SIFT_CLI" ]] || {
-    echo "deployment CLI is not executable: $SIFT_CLI" >&2
-    exit 1
-  }
-fi
+    ;;
+esac
 
-mkdir -p \
-  "$MANIFEST_DIR/lumen/operator" \
-  "$MANIFEST_DIR/lumen/instance"
-if [[ "$LUMEN_ONLY" != "1" ]]; then
-  mkdir -p \
-    "$MANIFEST_DIR/sift/operator" \
-    "$MANIFEST_DIR/sift/instance" \
-    "$MANIFEST_DIR/sift/collector"
-fi
+# Render Lumen/Sift manifests for lumen-sift mode
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
+  "$LUMEN_CLI" k8s crd render --out "$MANIFEST_DIR/lumen/crd.yaml"
+  "$LUMEN_CLI" k8s operator render --namespace lumen-system \
+    --out "$MANIFEST_DIR/lumen/operator/operator.yaml"
+  "$LUMEN_CLI" k8s instance render --profile dev --name lumen --namespace lumen \
+    --image "$LUMEN_IMAGE" --out "$MANIFEST_DIR/lumen/instance/lumen.yaml"
 
-"$LUMEN_CLI" k8s crd render --out "$MANIFEST_DIR/lumen/crd.yaml"
-"$LUMEN_CLI" k8s operator render --namespace lumen-system \
-  --out "$MANIFEST_DIR/lumen/operator/operator.yaml"
-"$LUMEN_CLI" k8s instance render --profile dev --name lumen --namespace lumen \
-  --image "$LUMEN_IMAGE" --out "$MANIFEST_DIR/lumen/instance/lumen.yaml"
-
-if [[ "$LUMEN_ONLY" != "1" ]]; then
   "$SIFT_CLI" k8s crd render --out "$MANIFEST_DIR/sift/crd.yaml"
   "$SIFT_CLI" k8s operator render --namespace sift-system \
     --out "$MANIFEST_DIR/sift/operator/operator.yaml"
@@ -53,6 +66,16 @@ if [[ "$LUMEN_ONLY" != "1" ]]; then
     --out "$MANIFEST_DIR/sift/collector/collector.yaml"
 fi
 
+# Render Tape manifests for tape mode
+if [[ "$ACCEPTANCE_APPS" == "tape" ]]; then
+  "$TAPE_CLI" k8s crd render --out "$MANIFEST_DIR/tape/crd.yaml"
+  "$TAPE_CLI" k8s operator render --namespace tape-system \
+    --out "$MANIFEST_DIR/tape/operator/operator.yaml"
+  "$TAPE_CLI" k8s instance render --profile dev --name tape --namespace tape \
+    --image "$TAPE_IMAGE" --out "$MANIFEST_DIR/tape/instance/tape.yaml"
+fi
+
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
 cat > "$MANIFEST_DIR/lumen/operator/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -69,7 +92,9 @@ patches:
         path: /spec/template/spec/containers/0/image
         value: ${LUMEN_IMAGE}
 EOF
+fi
 
+if [[ "$ACCEPTANCE_APPS" == "lumen sift" ]]; then
 cat > "$MANIFEST_DIR/lumen/instance/identity.yaml" <<EOF
 apiVersion: v1
 kind: Namespace
@@ -124,7 +149,6 @@ EOF
 kubectl kustomize "$MANIFEST_DIR/lumen/operator" > "$MANIFEST_DIR/lumen/operator.bundle.yaml"
 kubectl kustomize "$MANIFEST_DIR/lumen/instance" > "$MANIFEST_DIR/lumen/instance.bundle.yaml"
 
-if [[ "$LUMEN_ONLY" != "1" ]]; then
 cat > "$MANIFEST_DIR/sift/operator/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -223,4 +247,75 @@ resources:
 EOF
 
 kubectl kustomize "$MANIFEST_DIR/sift/collector" > "$MANIFEST_DIR/sift/collector.bundle.yaml"
+fi
+
+# Tape-specific kustomization for tape mode
+if [[ "$ACCEPTANCE_APPS" == "tape" ]]; then
+cat > "$MANIFEST_DIR/tape/operator/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - operator.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: tape-operator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: ${TAPE_IMAGE}
+EOF
+
+cat > "$MANIFEST_DIR/tape/instance/identity.yaml" <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tape
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tape-backup
+  namespace: tape
+  annotations:
+    iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
+EOF
+
+cat > "$MANIFEST_DIR/tape/instance/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - identity.yaml
+  - tape.yaml
+patches:
+  - target:
+      group: tape.dev
+      version: v1alpha1
+      kind: Tape
+      name: tape
+    patch: |-
+      - op: add
+        path: /spec/imagePullPolicy
+        value: IfNotPresent
+      - op: replace
+        path: /spec/resources/cpu
+        value: 500m
+      - op: replace
+        path: /spec/resources/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/storage
+        value: 1Gi
+      - op: add
+        path: /spec/backup
+        value:
+          schedule: "*/5 * * * *"
+          destination: gs://${BACKUP_BUCKET}/tape/${RUN_ID}
+          retentionSecs: 3600
+EOF
+
+kubectl kustomize "$MANIFEST_DIR/tape/operator" > "$MANIFEST_DIR/tape/operator.bundle.yaml"
+kubectl kustomize "$MANIFEST_DIR/tape/instance" > "$MANIFEST_DIR/tape/instance.bundle.yaml"
 fi
