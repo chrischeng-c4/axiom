@@ -79,8 +79,11 @@ jobs:
           echo "Deleting sha-* candidates ranked beyond that AND older than ${MAX_AGE_DAYS} days."
 
           # Collect every page, newest-first (explicit sort — don't rely on
-          # the API's default ordering).
-          raw="$(gh api --paginate -f per_page=100 \
+          # the API's default ordering). `--method GET` is load-bearing:
+          # without it, gh api treats `-f` fields as a POST body and the
+          # versions endpoint answers 404 for POST — which reads exactly like
+          # a token-scope failure and cost a round of PAT debugging.
+          raw="$(gh api --paginate --method GET -f per_page=100 \
             "${base}/packages/container/${PACKAGE}/versions" \
             --jq '[.[] | {id, created_at, tags: (.metadata.container.tags // [])}]')"
           all_versions="$(jq -s 'add | sort_by(.created_at) | reverse' <<<"${raw}")"
