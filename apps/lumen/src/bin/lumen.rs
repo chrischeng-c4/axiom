@@ -2068,6 +2068,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 host.clone(),
                 cluster_state.clone(),
                 cluster_cfg.is_voter()?,
+                engine.clone(),
             );
             raft_cluster = Some(cluster_state);
 
@@ -2536,6 +2537,7 @@ fn spawn_cluster_state_poller(
     host: Arc<raft_runtime::RaftHost>,
     cluster: Arc<lumen::raft::ClusterState>,
     is_voter: bool,
+    engine: Arc<Engine>,
 ) {
     use lumen::raft::RaftRole;
     let applied_rx = host.applied_watch();
@@ -2557,6 +2559,13 @@ fn spawn_cluster_state_poller(
             let prev = cluster.role();
             cluster.set_role(role);
             cluster.set_leader_index(leader.map(|n| n as u32));
+            // #2475: publish `lumen_raft_leader_known{shard}` off the same
+            // live election read `enforce_read_consistency` trusts, so
+            // `render::prometheus_rule`'s `LumenRaftLeaderAbsent` alerts on
+            // a real signal rather than a synthesized one.
+            engine
+                .metrics()
+                .set_raft_leader_known(cluster.shard_index, leader.is_some());
             cluster.replication_lag_ms.store(
                 if role == RaftRole::Leader {
                     0
@@ -3124,7 +3133,19 @@ mod tests {
         ));
         assert_eq!(cluster.role(), RaftRole::Follower, "bootstrap sanity check");
 
-        spawn_cluster_state_poller(host, cluster.clone(), true);
+        // #2475: a fresh `Engine`'s `lumen_raft_leader_known` starts
+        // unpublished (sentinel `raft_shard`, see `metrics.rs`) until this
+        // poller ticks; asserted below alongside role convergence.
+        let poller_engine = Arc::new(Engine::new());
+        assert!(
+            !poller_engine
+                .metrics()
+                .render()
+                .contains("lumen_raft_leader_known"),
+            "raft leader metric must be absent before the poller's first tick"
+        );
+
+        spawn_cluster_state_poller(host, cluster.clone(), true, poller_engine.clone());
 
         let converged = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3146,6 +3167,16 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             0,
             "leader reports zero lag, not the unknown sentinel"
+        );
+
+        // #2475: the poller's real election read also publishes
+        // `lumen_raft_leader_known{shard="0"} 1` on `/metrics` (a
+        // single-voter host always wins its own election) — the metric
+        // `render::prometheus_rule`'s `LumenRaftLeaderAbsent` alert reads.
+        let metrics_out = poller_engine.metrics().render();
+        assert!(
+            metrics_out.contains("lumen_raft_leader_known{shard=\"0\"} 1"),
+            "expected lumen_raft_leader_known in:\n{metrics_out}"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);

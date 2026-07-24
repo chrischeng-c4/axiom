@@ -572,6 +572,10 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
             "LumenNoReadyServingPods",
             "LumenBackupCronJobFailed",
             "LumenPodCrashLooping",
+            "LumenRaftLeaderAbsent",
+            "LumenReshardWorkflowStalled",
+            "LumenPvcNearFull",
+            "LumenAuthRegistryReloadFailing",
         ]
     );
 
@@ -596,6 +600,10 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
     assert!(backup_expr.contains("kube_job_status_failed"));
     assert!(backup_expr.contains("namespace=\"acme\""));
     assert!(backup_expr.contains("job_name=~\"^lumen-backup-.*\""));
+    // #2475: >= 2 retained failed Jobs (not > 0) so a single flaky run
+    // (successfulJobsHistoryLimit/failedJobsHistoryLimit both retain
+    // multiple Job objects) does not page on its own.
+    assert!(backup_expr.contains(">= 2"));
 
     let crash_loop = rules
         .iter()
@@ -605,6 +613,67 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
     assert!(crash_loop_expr.contains("kube_pod_container_status_restarts_total"));
     assert!(crash_loop_expr.contains("namespace=\"acme\""));
     assert!(crash_loop_expr.contains("pod=~\"^lumen-[0-9]+$\""));
+
+    for r in rules {
+        let annotations = &r["annotations"];
+        assert!(
+            annotations["summary"].is_string(),
+            "{} missing summary annotation",
+            r["alert"]
+        );
+        assert!(
+            annotations["runbook"].is_string(),
+            "{} missing runbook annotation",
+            r["alert"]
+        );
+    }
+}
+
+/// #2475: raft-leader-absent, reshard-stalled, PVC-near-full, and
+/// auth-registry-reload-failing each bind to a real metric name published
+/// by this binary (`src/metrics.rs`) or the kubelet, not a synthesized one.
+#[test]
+fn prometheus_rule_covers_raft_reshard_pvc_and_auth_failure_modes() {
+    let l = lumen("lumen", prod_spec());
+    let objs = render(&l);
+    let rule = find(&objs, "PrometheusRule", "lumen");
+    let rules = rule["spec"]["groups"][0]["rules"].as_array().unwrap();
+
+    let raft_leader_absent = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenRaftLeaderAbsent")
+        .unwrap();
+    let raft_expr = raft_leader_absent["expr"].as_str().unwrap();
+    assert!(raft_expr.contains("lumen_raft_leader_known"));
+    assert!(raft_expr.contains("namespace=\"acme\""));
+    assert!(raft_expr.contains("by (shard)"));
+
+    let reshard_stalled = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenReshardWorkflowStalled")
+        .unwrap();
+    let reshard_expr = reshard_stalled["expr"].as_str().unwrap();
+    assert!(reshard_expr.contains("lumen_reshard_fence_active"));
+    assert!(reshard_expr.contains("lumen_reshard_fence_armed_unixtime"));
+    assert!(reshard_expr.contains("namespace=\"acme\""));
+
+    let pvc_near_full = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenPvcNearFull")
+        .unwrap();
+    let pvc_expr = pvc_near_full["expr"].as_str().unwrap();
+    assert!(pvc_expr.contains("kubelet_volume_stats_available_bytes"));
+    assert!(pvc_expr.contains("kubelet_volume_stats_capacity_bytes"));
+    assert!(pvc_expr.contains("namespace=\"acme\""));
+    assert!(pvc_expr.contains("persistentvolumeclaim=~\"^raft-lumen-[0-9]+$\""));
+
+    let auth_reload_failing = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenAuthRegistryReloadFailing")
+        .unwrap();
+    let auth_expr = auth_reload_failing["expr"].as_str().unwrap();
+    assert!(auth_expr.contains("lumen_auth_registry_reload_failures_total"));
+    assert!(auth_expr.contains("namespace=\"acme\""));
 }
 
 #[test]

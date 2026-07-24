@@ -468,6 +468,10 @@ impl AppState {
         auth: Arc<AuthConfig>,
         writer: Arc<dyn WriteSink>,
     ) -> Self {
+        // #2475: the reload sink needs its own `Engine` handle so it can
+        // publish onto the same `/metrics` surface `GET /metrics` renders;
+        // cloned before `engine` moves into the field below.
+        let metrics_engine = engine.clone();
         Self {
             search_backend: Arc::new(LocalEngineSearch {
                 engine: engine.clone(),
@@ -476,7 +480,7 @@ impl AppState {
                 writer: writer.clone(),
             }),
             engine,
-            verifier: Arc::new(LumenVerifier::new(auth.clone())),
+            verifier: Arc::new(LumenVerifier::with_metrics(auth.clone(), metrics_engine)),
             auth,
             cluster: None,
             writer,
@@ -2452,6 +2456,10 @@ async fn reshard_fence(
     }
     if req.buckets.is_empty() {
         state.write_fence.clear();
+        // #2475: publish the same clear on `/metrics` so
+        // `render::prometheus_rule`'s `LumenReshardWorkflowStalled` alert
+        // (which reads `lumen_reshard_fence_active`) reflects it too.
+        state.engine.metrics().set_reshard_fence_active(false);
         tracing::info!(
             target: "lumen.audit",
             event = "reshard_fence_cleared",
@@ -2489,6 +2497,10 @@ async fn reshard_fence(
                 "ttl_secs would overflow the fence deadline",
             ));
         }
+        // #2475: `reshard_fence_armed_unixtime` lets the alert distinguish
+        // a fence still mid-`CatchingUp`-pass from one the driver never
+        // came back to clear.
+        state.engine.metrics().set_reshard_fence_active(true);
         tracing::info!(
             target: "lumen.audit",
             event = "reshard_fence_armed",

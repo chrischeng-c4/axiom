@@ -17,7 +17,12 @@
 //! unchanged for callers, including the `otel` feature's direct
 //! `field.load(Ordering::Relaxed)` reads in `src/bin/lumen.rs`.
 
-use metrics_prometheus::{Counter, Gauge, Sample};
+use metrics_prometheus::{Counter, Gauge, Label, LabeledSample, Sample, SampleGroup};
+
+/// #2475: sentinel `raft_shard` value meaning "never touched by the raft
+/// election-state poller" — see [`Metrics::raft_shard`]. Out of range for
+/// any real shard index, so it stays distinguishable from every real shard.
+const NOT_RAFT: u64 = u64::MAX;
 
 /// All metrics carry the `{collection, shard, partition}` label set per
 /// the README §5 contract. v1 in-memory single-shard reports
@@ -60,12 +65,52 @@ pub struct Metrics {
     /// doc — availability over completeness). `0` outside routed
     /// deployments.
     pub scatter_map_version_mismatches_total: Counter,
+    /// #2475: this pod's raft shard index, or the `NOT_RAFT` sentinel until
+    /// its raft election-state poller (`spawn_cluster_state_poller` in
+    /// `src/bin/lumen.rs`) has ticked at least once. `render()` reads the
+    /// sentinel to omit `lumen_raft_leader_known` entirely for
+    /// standalone/non-raft deployments — publishing a permanently-`0`
+    /// series there would be indistinguishable from a genuinely stuck
+    /// leaderless shard to `render::prometheus_rule`'s
+    /// `LumenRaftLeaderAbsent` alert.
+    pub raft_shard: Gauge,
+    /// #2475: `1` while this pod's raft election-state poll believes its
+    /// shard currently has an elected leader (itself or a peer), `0` while
+    /// it does not. Meaningful only once `raft_shard` has left the
+    /// `NOT_RAFT` sentinel; see [`Metrics::set_raft_leader_known`].
+    pub raft_leader_known: Gauge,
+    /// #2475: `1` while this pod believes a reshard-driver write fence
+    /// (`POST /admin/reshard:fence`, see `crate::api::WriteFence`) is
+    /// currently armed on it, `0` once cleared or never armed.
+    pub reshard_fence_active: Gauge,
+    /// #2475: unix-epoch seconds the currently (or most recently) armed
+    /// write fence was armed at. Pairs with `reshard_fence_active` so
+    /// `LumenReshardWorkflowStalled` can tell a long-armed fence (the
+    /// driver's fenced final `CatchingUp` pass never came back to clear it)
+    /// from one still mid-pass.
+    pub reshard_fence_armed_unixtime: Gauge,
+    /// #2475: total failed hot-reloads of the bearer-token registry file
+    /// (`LUMEN_TOKEN_REGISTRY_FILE`, watched by
+    /// `service_auth::spawn_registry_file_watcher`) — read/parse/validation
+    /// failures recorded via `crate::auth::LumenAuthEventSink`. The
+    /// verifier always keeps serving the last known-good registry on
+    /// failure, so this counts silent staleness risk, not live outage.
+    pub auth_registry_reload_failures_total: Counter,
+    /// #2475: unix-epoch seconds of the last successful bearer-token
+    /// registry hot-reload, pairing with the failure counter above as a
+    /// cheap staleness signal.
+    pub auth_registry_reload_success_unixtime: Gauge,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
 impl Metrics {
     pub fn new() -> Self {
-        Self::default()
+        let metrics = Self::default();
+        // #2475: seed the "never touched by the raft poller" sentinel;
+        // every other field's `Default` (0) is already the right initial
+        // value.
+        metrics.raft_shard.set(NOT_RAFT);
+        metrics
     }
 
     pub fn incr_index(&self, items: u64, bytes: u64) {
@@ -106,6 +151,39 @@ impl Metrics {
     /// version differed from the scattering pod's own declared version.
     pub fn incr_scatter_map_version_mismatch(&self) {
         self.scatter_map_version_mismatches_total.incr();
+    }
+
+    /// #2475: record this pod's shard index + whether its raft
+    /// election-state poll currently believes that shard has an elected
+    /// leader. Called every `spawn_cluster_state_poller` tick in raft mode
+    /// only; standalone/non-raft pods never call this, so `raft_shard`
+    /// stays at the `NOT_RAFT` sentinel forever and `render()` omits
+    /// `lumen_raft_leader_known` for them.
+    pub fn set_raft_leader_known(&self, shard: u32, known: bool) {
+        self.raft_shard.set(shard as u64);
+        self.raft_leader_known.set(known as u64);
+    }
+
+    /// #2475: arm/clear the reshard write-fence-active signal, called from
+    /// `POST /admin/reshard:fence`'s handler. Arming also stamps
+    /// `reshard_fence_armed_unixtime` to "now".
+    pub fn set_reshard_fence_active(&self, active: bool) {
+        self.reshard_fence_active.set(active as u64);
+        if active {
+            self.reshard_fence_armed_unixtime.set(unix_now_secs());
+        }
+    }
+
+    /// #2475: record one failed bearer-token registry hot-reload.
+    pub fn incr_auth_registry_reload_failure(&self) {
+        self.auth_registry_reload_failures_total.incr();
+    }
+
+    /// #2475: record one successful bearer-token registry hot-reload's
+    /// wall-clock time.
+    pub fn touch_auth_registry_reload_success(&self) {
+        self.auth_registry_reload_success_unixtime
+            .set(unix_now_secs());
     }
 
     /// Prometheus text format (0.0.4 compatible). Always emits the same
@@ -197,9 +275,66 @@ impl Metrics {
                  from the sender's.",
                 self.scatter_map_version_mismatches_total.get(),
             ),
+            Sample::new(
+                "lumen_reshard_fence_active",
+                "gauge",
+                "1 while this pod believes a reshard-driver write fence is currently armed \
+                 on it.",
+                self.reshard_fence_active.get(),
+            ),
+            Sample::new(
+                "lumen_reshard_fence_armed_unixtime",
+                "gauge",
+                "Unix time the currently (or most recently) armed reshard write fence was \
+                 armed at.",
+                self.reshard_fence_armed_unixtime.get(),
+            ),
+            Sample::new(
+                "lumen_auth_registry_reload_failures_total",
+                "counter",
+                "Total failed bearer-token registry hot-reloads.",
+                self.auth_registry_reload_failures_total.get(),
+            ),
+            Sample::new(
+                "lumen_auth_registry_reload_success_unixtime",
+                "gauge",
+                "Unix time of the last successful bearer-token registry hot-reload.",
+                self.auth_registry_reload_success_unixtime.get(),
+            ),
         ];
-        metrics_prometheus::render(&samples)
+        let mut out = metrics_prometheus::render(&samples);
+        // #2475: `lumen_raft_leader_known` carries a `shard` label and is
+        // omitted entirely (not just left at 0) for standalone/non-raft
+        // pods — see `raft_shard`'s doc comment for why a permanent-0
+        // series would be a false-positive risk for `LumenRaftLeaderAbsent`.
+        let shard = self.raft_shard.get();
+        if shard != NOT_RAFT {
+            let shard_label = shard.to_string();
+            let rows = [LabeledSample::new(
+                vec![Label::new("shard", &shard_label)],
+                self.raft_leader_known.get(),
+            )];
+            let groups = [SampleGroup::new(
+                "lumen_raft_leader_known",
+                "gauge",
+                "1 while this pod's raft election-state poll believes its shard currently \
+                 has an elected leader, 0 otherwise. Omitted for standalone/non-raft \
+                 deployments.",
+                &rows,
+            )];
+            out.push_str(&metrics_prometheus::render_labeled(&groups));
+        }
+        out
     }
+}
+
+/// #2475: current unix-epoch seconds, saturating to `0` on a pre-epoch
+/// clock rather than panicking (metrics rendering must never fail).
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -211,6 +346,10 @@ mod tests {
         let m = Metrics::new();
         m.incr_index(3, 100);
         m.observe_search(7);
+        m.set_raft_leader_known(2, true);
+        m.set_reshard_fence_active(true);
+        m.incr_auth_registry_reload_failure();
+        m.touch_auth_registry_reload_success();
         let out = m.render();
         for name in [
             "lumen_index_writes_total",
@@ -220,9 +359,33 @@ mod tests {
             "lumen_replace_fields_skipped_total",
             "lumen_shard_map_version",
             "lumen_scatter_map_version_mismatches_total",
+            "lumen_reshard_fence_active",
+            "lumen_reshard_fence_armed_unixtime",
+            "lumen_auth_registry_reload_failures_total",
+            "lumen_auth_registry_reload_success_unixtime",
+            "lumen_raft_leader_known",
         ] {
             assert!(out.contains(name), "expected {name} in:\n{out}");
         }
+        assert!(
+            out.contains("lumen_raft_leader_known{shard=\"2\"} 1"),
+            "expected labeled raft series in:\n{out}"
+        );
+    }
+
+    /// #2475: a pod whose raft election-state poller never ticked (every
+    /// standalone/non-raft deployment) must not publish
+    /// `lumen_raft_leader_known` at all — a permanent `0` there would be
+    /// indistinguishable from a genuinely stuck leaderless shard to
+    /// `LumenRaftLeaderAbsent`.
+    #[test]
+    fn render_omits_raft_leader_known_when_never_set() {
+        let m = Metrics::new();
+        let out = m.render();
+        assert!(
+            !out.contains("lumen_raft_leader_known"),
+            "unexpected raft series in:\n{out}"
+        );
     }
 
     /// Byte-identical golden-render check (#974): fixed inputs must
@@ -243,6 +406,14 @@ mod tests {
         m.incr_replace_skipped(6);
         m.set_shard_map_version(3);
         m.incr_scatter_map_version_mismatch();
+        // #2475: reach past the wall-clock-stamping setters and set the raw
+        // gauges directly so this golden capture stays deterministic.
+        m.reshard_fence_active.set(1);
+        m.reshard_fence_armed_unixtime.set(1_700_000_000);
+        m.incr_auth_registry_reload_failure();
+        m.incr_auth_registry_reload_failure();
+        m.auth_registry_reload_success_unixtime.set(1_700_000_001);
+        m.set_raft_leader_known(2, true);
         let out = m.render();
         let golden = "# HELP lumen_index_writes_total Total index items applied.\n\
 # TYPE lumen_index_writes_total counter\n\
@@ -285,11 +456,28 @@ lumen_replace_fields_skipped_total 6\n\
 lumen_shard_map_version 3\n\
 # HELP lumen_scatter_map_version_mismatches_total Scatter search sub-responses whose responding pod's map version differed from the sender's.\n\
 # TYPE lumen_scatter_map_version_mismatches_total counter\n\
-lumen_scatter_map_version_mismatches_total 1\n";
+lumen_scatter_map_version_mismatches_total 1\n\
+# HELP lumen_reshard_fence_active 1 while this pod believes a reshard-driver write fence is currently armed on it.\n\
+# TYPE lumen_reshard_fence_active gauge\n\
+lumen_reshard_fence_active 1\n\
+# HELP lumen_reshard_fence_armed_unixtime Unix time the currently (or most recently) armed reshard write fence was armed at.\n\
+# TYPE lumen_reshard_fence_armed_unixtime gauge\n\
+lumen_reshard_fence_armed_unixtime 1700000000\n\
+# HELP lumen_auth_registry_reload_failures_total Total failed bearer-token registry hot-reloads.\n\
+# TYPE lumen_auth_registry_reload_failures_total counter\n\
+lumen_auth_registry_reload_failures_total 2\n\
+# HELP lumen_auth_registry_reload_success_unixtime Unix time of the last successful bearer-token registry hot-reload.\n\
+# TYPE lumen_auth_registry_reload_success_unixtime gauge\n\
+lumen_auth_registry_reload_success_unixtime 1700000001\n\
+# HELP lumen_raft_leader_known 1 while this pod's raft election-state poll believes its shard currently has an elected leader, 0 otherwise. Omitted for standalone/non-raft deployments.\n\
+# TYPE lumen_raft_leader_known gauge\n\
+lumen_raft_leader_known{shard=\"2\"} 1\n";
         assert_eq!(
             out, golden,
-            "render() diverged from the pre-refactor capture (#1467 added lumen_shard_map_version \
-             + lumen_scatter_map_version_mismatches_total)"
+            "render() diverged from the pre-refactor capture (#2475 added \
+             lumen_reshard_fence_active + lumen_reshard_fence_armed_unixtime + \
+             lumen_auth_registry_reload_failures_total + \
+             lumen_auth_registry_reload_success_unixtime + lumen_raft_leader_known)"
         );
     }
 }

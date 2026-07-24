@@ -23,19 +23,22 @@ Public API manifest for `apps/lumen/src/auth.rs` generated from AST during Score
 | `AuthConfig` | apps/lumen/src/auth.rs | struct | pub | 57 |  |
 | `AuthContext` | apps/lumen/src/auth.rs | struct | pub | 140 |  |
 | `AuthErr` | apps/lumen/src/auth.rs | enum | pub | 164 |  |
+| `LumenAuthEventSink` | apps/lumen/src/auth.rs | struct | pub | 169 |  |
 | `LumenVerifier` | apps/lumen/src/auth.rs | struct | pub | 98 |  |
 | `auth_middleware` | apps/lumen/src/auth.rs | function | pub | 154 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
 | `ensure` | apps/lumen/src/auth.rs | function | pub | 144 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
 | `from_env` | apps/lumen/src/auth.rs | function | pub | 71 | from_env() -> Result<Self> |
 | `new` | apps/lumen/src/auth.rs | function | pub | 102 | new(cfg: Arc<AuthConfig>) -> Self |
+| `new` | apps/lumen/src/auth.rs | function | pub | 175 | new(engine: Arc<Engine>) -> Self |
 | `open` | apps/lumen/src/auth.rs | function | pub | 64 | open() -> Self |
 | `reload_file` | apps/lumen/src/auth.rs | function | pub | 113 | reload_file(&self, path: impl AsRef<Path>) -> Result<u64> |
 | `reload_json` | apps/lumen/src/auth.rs | function | pub | 117 | reload_json(&self, json: &str) -> Result<u64> |
 | `subject` | apps/lumen/src/auth.rs | function | pub | 148 | subject(&self) -> Option<&str> |
+| `with_metrics` | apps/lumen/src/auth.rs | function | pub | 121 | with_metrics(cfg: Arc<AuthConfig>, engine: Arc<Engine>) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Bearer-token auth + per-collection RBAC.
@@ -79,15 +82,19 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use service_auth::{
-    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, ReloadableRoleMapVerifier,
-    RoleMapDenied, TracingAuthEventSink, Verifier,
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink,
+    ReloadableRoleMapVerifier, RoleMapDenied, TracingAuthEventSink, Verifier,
 };
 
 pub use service_auth::{Role, TokenClaims};
 
+use crate::storage::Engine;
 use crate::types::ApiError;
 
-const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
+/// Environment variable naming the Secret/CSI-projected token registry.
+/// The serving adapter watches this exact file after successful startup so a
+/// validated replacement updates the live request verifier without a restart.
+pub const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
 const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone)]
@@ -133,16 +140,38 @@ impl AuthConfig {
 /// thin newtype over `service_auth::ReloadableRoleMapVerifier`.
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
-pub struct LumenVerifier(ReloadableRoleMapVerifier);
+pub struct LumenVerifier(Arc<ReloadableRoleMapVerifier>);
 
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
-        Self(ReloadableRoleMapVerifier::with_sink(
+        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
             cfg.required,
             cfg.tokens.clone(),
             Arc::new(TracingAuthEventSink),
-        ))
+        )))
+    }
+
+    /// #2475: same wiring as [`Self::new`], but the registry-reload sink
+    /// additionally counts failed/successful hot-reloads onto `engine`'s
+    /// `/metrics` surface (`crate::auth::LumenAuthEventSink`) so
+    /// `render::prometheus_rule`'s `LumenAuthRegistryReloadFailing` alert
+    /// has a real series to read. `AppState::with_components` is the only
+    /// production caller; test call sites keep using `Self::new`, which
+    /// has no metrics side effect.
+    pub fn with_metrics(cfg: Arc<AuthConfig>, engine: Arc<Engine>) -> Self {
+        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
+            cfg.required,
+            cfg.tokens.clone(),
+            Arc::new(LumenAuthEventSink::new(engine)),
+        )))
+    }
+
+    /// The shared reloadable verifier owned by this service wrapper. The
+    /// serving adapter passes this same instance to the Secret/CSI file
+    /// watcher, while the HTTP middleware keeps using the wrapper itself.
+    pub fn registry_verifier(&self) -> Arc<ReloadableRoleMapVerifier> {
+        Arc::clone(&self.0)
     }
 
     /// Explicit credential-rotation boundary. Parsing/validation completes
@@ -167,6 +196,39 @@ impl Verifier for LumenVerifier {
 
     fn required(&self) -> bool {
         self.0.required()
+    }
+}
+
+/// #2475: registry-reload event sink used by `LumenVerifier::with_metrics`.
+/// Delegates every event to [`TracingAuthEventSink`] for unchanged log
+/// parity, and additionally records `RegistryReload` outcomes onto
+/// `engine`'s `Metrics` — the same instance `GET /metrics` renders — so a
+/// silently-stuck rotation (the verifier keeps serving the last known-good
+/// registry on failure, by design) is externally observable.
+#[derive(Debug)]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+pub struct LumenAuthEventSink {
+    engine: Arc<Engine>,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+impl LumenAuthEventSink {
+    pub fn new(engine: Arc<Engine>) -> Self {
+        Self { engine }
+    }
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+impl AuthEventSink for LumenAuthEventSink {
+    fn record(&self, event: &AuthEvent) {
+        TracingAuthEventSink.record(event);
+        if let AuthEvent::RegistryReload { applied, .. } = event {
+            if *applied {
+                self.engine.metrics().touch_auth_registry_reload_success();
+            } else {
+                self.engine.metrics().incr_auth_registry_reload_failure();
+            }
+        }
     }
 }
 
@@ -331,6 +393,27 @@ mod tests {
     }
 
     #[test]
+    fn registry_handle_reloads_the_live_lumen_verifier() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("old".to_string(), token(&[("u", Role::Read)]))]),
+        }));
+        verifier
+            .registry_verifier()
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer rotated".parse().unwrap(),
+        );
+        let context = verifier.authenticate(&headers).unwrap();
+        assert_eq!(context.subject(), Some("next"));
+        assert!(context.ensure("u", Role::Admin).is_ok());
+    }
+
+    #[test]
     fn auth_context_ensure_forbidden_maps_resource_to_collection_id() {
         let verifier = LumenVerifier::new(Arc::new(AuthConfig {
             required: true,
@@ -442,6 +525,41 @@ mod tests {
         clear_auth_env();
     }
 
+    /// #2475: `LumenVerifier::with_metrics`'s sink must count a failed
+    /// hot-reload and stamp a successful one onto the `Engine`'s
+    /// `/metrics` surface — the series `LumenAuthRegistryReloadFailing`
+    /// reads.
+    #[test]
+    fn with_metrics_records_reload_failures_and_successes_on_engine() {
+        let engine = Arc::new(crate::storage::Engine::new());
+        let verifier = LumenVerifier::with_metrics(
+            Arc::new(AuthConfig {
+                required: true,
+                tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+            }),
+            engine.clone(),
+        );
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            0
+        );
+
+        assert!(verifier.reload_json("not-json").is_err());
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            1
+        );
+
+        verifier
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            1
+        );
+        assert!(engine.metrics().auth_registry_reload_success_unixtime.get() > 0);
+    }
+
     #[test]
     fn auth_config_from_env_rejects_bad_json() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -455,8 +573,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

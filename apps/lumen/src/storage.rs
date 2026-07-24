@@ -3031,7 +3031,14 @@ struct EngineState {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-storage-rs.md#source
 impl Engine {
     pub fn new() -> Self {
-        Self::default()
+        // #2475: `metrics` needs `Metrics::new()`'s sentinel seeding (the
+        // `raft_shard` "never touched by the raft poller" sentinel), not
+        // the derived `Metrics::default()` every other `Engine` field is
+        // fine relying on.
+        Self {
+            metrics: Metrics::new(),
+            ..Default::default()
+        }
     }
 
     pub fn metrics(&self) -> &Metrics {

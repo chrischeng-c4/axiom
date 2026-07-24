@@ -41,12 +41,13 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use service_auth::{
-    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, ReloadableRoleMapVerifier,
-    RoleMapDenied, TracingAuthEventSink, Verifier,
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink,
+    ReloadableRoleMapVerifier, RoleMapDenied, TracingAuthEventSink, Verifier,
 };
 
 pub use service_auth::{Role, TokenClaims};
 
+use crate::storage::Engine;
 use crate::types::ApiError;
 
 /// Environment variable naming the Secret/CSI-projected token registry.
@@ -110,6 +111,21 @@ impl LumenVerifier {
         )))
     }
 
+    /// #2475: same wiring as [`Self::new`], but the registry-reload sink
+    /// additionally counts failed/successful hot-reloads onto `engine`'s
+    /// `/metrics` surface (`crate::auth::LumenAuthEventSink`) so
+    /// `render::prometheus_rule`'s `LumenAuthRegistryReloadFailing` alert
+    /// has a real series to read. `AppState::with_components` is the only
+    /// production caller; test call sites keep using `Self::new`, which
+    /// has no metrics side effect.
+    pub fn with_metrics(cfg: Arc<AuthConfig>, engine: Arc<Engine>) -> Self {
+        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
+            cfg.required,
+            cfg.tokens.clone(),
+            Arc::new(LumenAuthEventSink::new(engine)),
+        )))
+    }
+
     /// The shared reloadable verifier owned by this service wrapper. The
     /// serving adapter passes this same instance to the Secret/CSI file
     /// watcher, while the HTTP middleware keeps using the wrapper itself.
@@ -139,6 +155,39 @@ impl Verifier for LumenVerifier {
 
     fn required(&self) -> bool {
         self.0.required()
+    }
+}
+
+/// #2475: registry-reload event sink used by `LumenVerifier::with_metrics`.
+/// Delegates every event to [`TracingAuthEventSink`] for unchanged log
+/// parity, and additionally records `RegistryReload` outcomes onto
+/// `engine`'s `Metrics` — the same instance `GET /metrics` renders — so a
+/// silently-stuck rotation (the verifier keeps serving the last known-good
+/// registry on failure, by design) is externally observable.
+#[derive(Debug)]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+pub struct LumenAuthEventSink {
+    engine: Arc<Engine>,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+impl LumenAuthEventSink {
+    pub fn new(engine: Arc<Engine>) -> Self {
+        Self { engine }
+    }
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+impl AuthEventSink for LumenAuthEventSink {
+    fn record(&self, event: &AuthEvent) {
+        TracingAuthEventSink.record(event);
+        if let AuthEvent::RegistryReload { applied, .. } = event {
+            if *applied {
+                self.engine.metrics().touch_auth_registry_reload_success();
+            } else {
+                self.engine.metrics().incr_auth_registry_reload_failure();
+            }
+        }
     }
 }
 
@@ -433,6 +482,41 @@ mod tests {
         let err = AuthConfig::from_env().unwrap_err();
         assert!(err.to_string().contains("LUMEN_AUTH"));
         clear_auth_env();
+    }
+
+    /// #2475: `LumenVerifier::with_metrics`'s sink must count a failed
+    /// hot-reload and stamp a successful one onto the `Engine`'s
+    /// `/metrics` surface — the series `LumenAuthRegistryReloadFailing`
+    /// reads.
+    #[test]
+    fn with_metrics_records_reload_failures_and_successes_on_engine() {
+        let engine = Arc::new(crate::storage::Engine::new());
+        let verifier = LumenVerifier::with_metrics(
+            Arc::new(AuthConfig {
+                required: true,
+                tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
+            }),
+            engine.clone(),
+        );
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            0
+        );
+
+        assert!(verifier.reload_json("not-json").is_err());
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            1
+        );
+
+        verifier
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+        assert_eq!(
+            engine.metrics().auth_registry_reload_failures_total.get(),
+            1
+        );
+        assert!(engine.metrics().auth_registry_reload_success_unixtime.get() > 0);
     }
 
     #[test]
