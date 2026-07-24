@@ -73,7 +73,9 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: lumen
-          image: ghcr.io/chrischeng-c4/lumen:0.4.24
+          # Bumped by the release procedure alongside Cargo.toml/openapi.json;
+          # grep target for the bump commit: `ghcr.io/chrischeng-c4/lumen:`.
+          image: ghcr.io/chrischeng-c4/lumen:0.4.25
           imagePullPolicy: IfNotPresent
           command: ["lumen", "serve"]
           ports:

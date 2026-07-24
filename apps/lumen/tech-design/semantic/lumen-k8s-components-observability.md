@@ -48,6 +48,8 @@ deployment:
     - path: "apps/lumen/k8s/components/observability/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-k8s-components-observability.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1alpha1
         kind: Component
         
@@ -58,10 +60,22 @@ deployment:
         # in a component that only the operator-bearing overlays (staging, prod)
         # pull in. The dev overlay — laptop / kind, no operator — omits them and
         # applies cleanly against a vanilla cluster.
+        #
+        # NOTE on the ServiceMonitor's spec.namespaceSelector.matchNames: it cannot
+        # be self-derived from inside this file. Kustomize resolves a Component's
+        # own resources+transformers as part of the *enclosing* kustomization's
+        # resource accumulation, strictly before that enclosing kustomization's own
+        # `namespace:` transformer runs (verified empirically) — so a `replacements:`
+        # block placed here can only ever see the pre-remap default, never the
+        # consuming overlay's actual namespace. Each consuming overlay that sets
+        # `namespace:` and pulls in this component (see overlays/staging,
+        # overlays/prod) carries its own `replacements:` block instead, one level up
+        # from where the ordering problem lives.
         
         resources:
           - servicemonitor.yaml
           - prometheusrule.yaml
+        # CODEGEN-END
 ```
 
 ## Changes
