@@ -66,24 +66,6 @@ search_probe() {
     --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-${RUN_ID}\"}},\"limit\":10}"
 }
 
-wait_for_gcs_object() {
-  local prefix="gs://${BACKUP_BUCKET}/lumen"
-  local listing="$EVIDENCE_DIR/gcs/lumen-objects.txt"
-  local deadline=$((SECONDS + 180))
-  local first
-  while (( SECONDS < deadline )); do
-    gcloud storage ls --recursive "${prefix}/**" > "$listing" 2>/dev/null || true
-    first="$(rg -F "/lumen/${RUN_ID}-" "$listing" | sed -n '1p' || true)"
-    if [[ -n "$first" ]]; then
-      printf '%s\n' "$first"
-      return 0
-    fi
-    sleep 3
-  done
-  echo "no Lumen backup object for run $RUN_ID appeared below $prefix" >&2
-  return 1
-}
-
 wait_for_split() {
   local deadline=$((SECONDS + 900))
   local shard_count workflow_phase status_phase desired ready pvc_count map_version converged_map_version
@@ -247,12 +229,33 @@ lumen_job="lumen-backup-${RUN_ID}"
 kubectl -n lumen create job --from=cronjob/lumen-backup "$lumen_job"
 kubectl -n lumen wait --for=condition=Complete "job/$lumen_job" --timeout=600s
 kubectl -n lumen logs "job/$lumen_job" > "$EVIDENCE_DIR/kubernetes/lumen-backup.log"
-first_object="$(wait_for_gcs_object)"
+# Seed the cold-restore from the object THIS manual backup Job just wrote — its
+# key is reported in the Job's own log and it provably post-dates the
+# collection+doc created above. Do NOT fall back to the earliest object
+# matching the run prefix: the CR's `*/5` backup cronjob can fire right after
+# deploy, before the collection exists, and leave an empty
+# `{"version":1,"collections":{}}` manifest. Seeding a fresh PVC from that empty
+# object restores to a *queryable-empty* instance — the restore path works
+# perfectly yet the `acceptance` collection is absent, which reads as a phantom
+# cold-restore product bug.
+backup_key="$(jq -r '.object.key // empty' "$EVIDENCE_DIR/kubernetes/lumen-backup.log")"
+[[ -n "$backup_key" ]] || {
+  echo "manual backup job did not report an object key" >&2
+  cat "$EVIDENCE_DIR/kubernetes/lumen-backup.log" >&2
+  exit 1
+}
+first_object="gs://${BACKUP_BUCKET}/${backup_key}"
 object_size="$(gcloud storage objects describe "$first_object" --format='value(size)')"
 [[ "$object_size" =~ ^[0-9]+$ && "$object_size" -gt 0 ]]
 printf '%s\n' "$object_size" > "$EVIDENCE_DIR/gcs/lumen-first-object-bytes.txt"
 gcloud storage cat "$first_object" > "$EVIDENCE_DIR/gcs/lumen-first-object.json"
-jq -e 'type == "object"' "$EVIDENCE_DIR/gcs/lumen-first-object.json" >/dev/null
+# The backup we seed the cold-restore from must actually contain the collection
+# we created — an empty manifest here proves nothing about the restore path.
+jq -e '.collections.acceptance' "$EVIDENCE_DIR/gcs/lumen-first-object.json" >/dev/null || {
+  echo "backup object $first_object carries no 'acceptance' collection — refusing to seed a hollow cold-restore" >&2
+  cat "$EVIDENCE_DIR/gcs/lumen-first-object.json" >&2
+  exit 1
+}
 
 stop_forward
 kubectl -n lumen delete pod/lumen-0 --wait=true --timeout=120s
