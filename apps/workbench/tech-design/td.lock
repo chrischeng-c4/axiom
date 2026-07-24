@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-23T13:46:28.734401+00:00"
-digest = "sha256:0f522d86831f69e4b7e6e444b506e8229bb338b9a2332a12f07495448eb6cac0"
-source_digest = "sha256:0f522d86831f69e4b7e6e444b506e8229bb338b9a2332a12f07495448eb6cac0"
-ir_digest = "sha256:c2e9e86379019b0b9e957e154006ca7e5418e292e99805eb0e0511949748610c"
+generated_at = "2026-07-24T03:31:09.984332+00:00"
+digest = "sha256:e3645ed332a8866dacb5c6b13ddf5461bdbad164ace69c119501d7316a65c5df"
+source_digest = "sha256:e3645ed332a8866dacb5c6b13ddf5461bdbad164ace69c119501d7316a65c5df"
+ir_digest = "sha256:6bdf47c368963057d23930b996115beb929cf0e99e9b669220e718103f682145"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -65,6 +65,12 @@ section_count = 3
 path = "logic/add-independent-agent-and-default-shell-terminal-tabs-to-workben.md"
 digest = "sha256:f6335aa4102f462451e219fe52960caedccf2fbca65157879c2a89459bab4c00"
 ir_digest = "sha256:8c85c2e85ede313234415bc3204631bdcc9687b94c9c0ae8d8c8e1c9a0ede1de"
+section_count = 3
+
+[[files]]
+path = "logic/add-project-scoped-two-pane-terminal-workspace.md"
+digest = "sha256:c86f95f89e003909972f67b1dc02235263ca63ccd8ae1736254ec4e3aa821298"
+ir_digest = "sha256:3e9d6df59d59a959adb1867f8e267f9a4977d72a5f14922954cf7646e7f25365"
 section_count = 3
 
 [[files]]
