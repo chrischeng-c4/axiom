@@ -167,8 +167,8 @@ pub struct CbClaimArgs {
 pub struct CbGenArgs {
     // Issue slug identifying the approved tech-design.
     pub slug: Option<String>,
-    // Target-native generator to run. Python consumes a Python TD project
-    // source tree and emits a DDD Python package plus native unit tests.
+    // Target-native generator to run. Rust, Python, and TypeScript consume a
+    // Python TD project source tree and emit a native package plus unit tests.
     #[arg(long)]
     pub target: Option<String>,
     // Input project root for a target-native generator.
@@ -423,7 +423,7 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
         return run_target_native_gen(target, &args);
     }
     if args.source_root.is_some() || args.output_dir.is_some() {
-        anyhow::bail!("--source-root and --output-dir require --target python");
+        anyhow::bail!("--source-root and --output-dir require --target rust|python|typescript");
     }
     if args.force_regen {
         if args.slug.is_some() || args.spec_path.is_some() {

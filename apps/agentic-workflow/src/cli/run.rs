@@ -623,6 +623,42 @@ fn python_target_gen_command(
     ))
 }
 
+pub(crate) fn python_artifact_codegen_target(
+    project_root: &Path,
+    project: &str,
+) -> Result<&'static str> {
+    use crate::models::tech_stack::Language;
+
+    let canonical =
+        crate::services::project_registry::resolve_project_config_row(project_root, project)?.name;
+    let projects = crate::services::project_registry::load_projects(project_root)?;
+    let configured = projects
+        .iter()
+        .find(|candidate| candidate.name == canonical)
+        .and_then(|candidate| candidate.workspaces.first())
+        .map(|workspace| {
+            workspace
+                .codegen
+                .as_ref()
+                .and_then(|profile| profile.target)
+                .unwrap_or(workspace.target)
+        })
+        .unwrap_or(Language::Rust);
+    match configured {
+        Language::Rust => Ok("rust"),
+        Language::Python => Ok("python"),
+        Language::TypeScript => Ok("typescript"),
+        Language::JavaScript | Language::Schemas => anyhow::bail!(
+            "project `{canonical}` workspace target `{}` has no Python-TD native emitter; supported targets: rust, python, typescript",
+            match configured {
+                Language::JavaScript => "javascript",
+                Language::Schemas => "schemas",
+                _ => unreachable!("unsupported branch only"),
+            }
+        ),
+    }
+}
+
 fn python_td_check_command(project_root: &Path, project: &str, wi: &str) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
     let source_root = project_root.join(&row.path).join("tech-design");
@@ -678,7 +714,10 @@ pub(crate) fn python_artifact_lifecycle_step(
         Some(_) => PythonArtifactPhase::EcAuthoring,
     };
 
-    let target_gen = |target: &str| python_target_gen_command(project_root, &row.name, target, wi);
+    let target_gen = || {
+        let target = python_artifact_codegen_target(project_root, &row.name)?;
+        python_target_gen_command(project_root, &row.name, target, wi)
+    };
     let step = match phase {
         PythonArtifactPhase::EcAuthoring => PythonArtifactLifecycleStep {
             phase,
@@ -709,7 +748,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::CbGenerate => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen("python")?,
+            command: target_gen()?,
             reason: "TD behavior and security are green; materialize the native DDD codebase and its unit-test inventory".to_string(),
             requires_hitl: false,
         },
@@ -742,20 +781,20 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::BehaviorOrSecurityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen("python")?,
-            reason: "behavior/security EC is red; adapt TD or generated source, then regenerate the affected Python target".to_string(),
+            command: target_gen()?,
+            reason: "behavior/security EC is red; adapt TD or generated source, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::StabilityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen("python")?,
-            reason: "stability EC is red; adapt runtime/deployment/source behavior, then regenerate the Python target".to_string(),
+            command: target_gen()?,
+            reason: "stability EC is red; adapt runtime/deployment/source behavior, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::EfficiencyRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen("rust")?,
-            reason: "efficiency EC is red; route remediation to the required production target (Rust by default)".to_string(),
+            command: target_gen()?,
+            reason: "efficiency EC is red; route remediation to the configured native production target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::ContractRepair => PythonArtifactLifecycleStep {
@@ -4104,20 +4143,44 @@ mod tests {
     }
 
     fn python_project_root() -> tempfile::TempDir {
+        python_project_root_with_target("rust")
+    }
+
+    fn python_project_root_with_target(target: &str) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("projects/demo/tech-design")).unwrap();
         std::fs::write(
             root.path().join("aw.toml"),
-            r#"
+            format!(
+                r#"
 [[projects]]
 name = "demo"
 path = "projects/demo"
 artifact_model = "python-v1"
-workspaces = []
-"#,
+
+[[projects.workspaces]]
+paths = ["projects/demo/**"]
+target = "{target}"
+"#
+            ),
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn python_artifact_codegen_target_follows_primary_workspace_language() {
+        for (configured, expected) in [
+            ("rust", "rust"),
+            ("python", "python"),
+            ("typescript", "typescript"),
+        ] {
+            let root = python_project_root_with_target(configured);
+            assert_eq!(
+                python_artifact_codegen_target(root.path(), "demo").unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -4135,10 +4198,7 @@ workspaces = []
                 Some("td_compiled"),
                 "aw ec verify --project demo --required-only --stage td --wi 42",
             ),
-            (
-                Some("ec_td_green"),
-                "aw cb gen --target python --source-root",
-            ),
+            (Some("ec_td_green"), "aw cb gen --target rust --source-root"),
             (Some("cb_generated"), "aw cb fill 42"),
             (Some("cb_filled"), "aw cb check 42"),
             (
@@ -4172,14 +4232,14 @@ workspaces = []
             python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_behavior_red"))
                 .unwrap()
                 .unwrap();
-        assert!(behavior.command.contains("--target python"));
+        assert!(behavior.command.contains("--target rust"));
         assert!(behavior.reason.contains("behavior/security"));
 
         let stability =
             python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stability_red"))
                 .unwrap()
                 .unwrap();
-        assert!(stability.command.contains("--target python"));
+        assert!(stability.command.contains("--target rust"));
         assert!(stability.reason.contains("stability"));
 
         let efficiency =
@@ -4187,7 +4247,7 @@ workspaces = []
                 .unwrap()
                 .unwrap();
         assert!(efficiency.command.contains("--target rust"));
-        assert!(efficiency.reason.contains("Rust"));
+        assert!(efficiency.reason.contains("configured native"));
 
         let stale = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_stale"))
             .unwrap()
