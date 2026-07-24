@@ -162,3 +162,48 @@ fn python_td_compiler_routes_python_projects_through_td_ast_and_check() {
     let checked: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
     assert_eq!(checked["semantic_digest"], ir["semantic_digest"]);
 }
+
+#[test]
+fn python_td_check_fails_closed_when_configured_project_has_no_python_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("projects/demo");
+    let tech_design = project.join("tech-design");
+    fs::create_dir_all(&tech_design).unwrap();
+    fs::write(
+        root.path().join("aw.toml"),
+        r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tech_design.join("legacy.md"),
+        "# Legacy TD\n\nThis must not make a Python TD check pass.\n",
+    )
+    .unwrap();
+
+    let check = std::process::Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args([
+            "td",
+            "check",
+            tech_design.to_str().unwrap(),
+            "--project",
+            "demo",
+        ])
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !check.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        stderr.contains("Python TD compiler found no .py files"),
+        "stderr={stderr}"
+    );
+}

@@ -3397,8 +3397,25 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
     }
 
     let candidate = std::path::PathBuf::from(target);
+    let configured_row = if candidate.is_dir() {
+        configured_project
+            .map(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    &project_root,
+                    project,
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let configured_python = configured_row.as_ref().is_some_and(|row| {
+        row.effective_artifact_model() == crate::models::project::ProjectArtifactModel::PythonV1
+    });
     if candidate.is_dir()
-        && (candidate.join("src").is_dir() || candidate.join("pyproject.toml").is_file())
+        && (configured_python
+            || candidate.join("src").is_dir()
+            || candidate.join("pyproject.toml").is_file())
     {
         let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
         if args.json {
@@ -3410,11 +3427,7 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
                 ir.semantic_digest
             );
         }
-        if let (Some(project), Some(wi)) = (configured_project, args.wi.as_deref()) {
-            let row = crate::services::project_registry::resolve_project_config_row(
-                &project_root,
-                project,
-            )?;
+        if let (Some(row), Some(wi)) = (configured_row.as_ref(), args.wi.as_deref()) {
             if row.effective_artifact_model()
                 == crate::models::project::ProjectArtifactModel::PythonV1
             {
