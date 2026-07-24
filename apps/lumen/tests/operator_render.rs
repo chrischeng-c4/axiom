@@ -576,6 +576,7 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
             "LumenReshardWorkflowStalled",
             "LumenPvcNearFull",
             "LumenAuthRegistryReloadFailing",
+            "LumenSlowQueries",
         ]
     );
 
@@ -674,6 +675,31 @@ fn prometheus_rule_covers_raft_reshard_pvc_and_auth_failure_modes() {
     let auth_expr = auth_reload_failing["expr"].as_str().unwrap();
     assert!(auth_expr.contains("lumen_auth_registry_reload_failures_total"));
     assert!(auth_expr.contains("namespace=\"acme\""));
+}
+
+/// #2519: the slow-query alert binds to `lumen_slow_queries_total`
+/// (`src/metrics.rs`'s `Metrics::observe_search`, gated on
+/// `LUMEN_SLOW_QUERY_MS`), carries a `for: 10m` sustained-rate window per
+/// the issue's acceptance criteria, and gets the same summary/runbook
+/// annotation shape as every other alert in this rule group.
+#[test]
+fn prometheus_rule_covers_slow_queries() {
+    let l = lumen("lumen", prod_spec());
+    let objs = render(&l);
+    let rule = find(&objs, "PrometheusRule", "lumen");
+    let rules = rule["spec"]["groups"][0]["rules"].as_array().unwrap();
+
+    let slow_queries = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenSlowQueries")
+        .unwrap();
+    let expr = slow_queries["expr"].as_str().unwrap();
+    assert!(expr.contains("lumen_slow_queries_total"));
+    assert!(expr.contains("namespace=\"acme\""));
+    assert_eq!(slow_queries["for"], "10m");
+    assert_eq!(slow_queries["labels"]["severity"], "warning");
+    assert!(slow_queries["annotations"]["summary"].is_string());
+    assert!(slow_queries["annotations"]["runbook"].is_string());
 }
 
 #[test]

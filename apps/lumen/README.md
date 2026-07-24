@@ -613,7 +613,7 @@ Gate Inventory:
 
 ID: observability
 Type: Devops
-Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint.; K8s: ServiceMonitor + PrometheusRule manifests.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.
+Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint, including the `lumen_search_latency_seconds` histogram (`_bucket{le=...}`/`_sum`/`_count`, SLO-sized buckets from 1ms to 5s) and the `lumen_slow_queries_total` counter; the legacy `lumen_search_latency_ms_sum`/`_count` pair stays published (deprecated) for dashboard back-compat.; K8s: ServiceMonitor + PrometheusRule manifests, including the `LumenSlowQueries` alert (#2519).; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.; Config: `LUMEN_SLOW_QUERY_MS` (default `500`) - search-latency threshold in milliseconds at/above which a query increments `lumen_slow_queries_total`.
 EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
 Root WI: -
 Status: verified

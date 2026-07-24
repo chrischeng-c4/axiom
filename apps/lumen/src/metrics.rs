@@ -18,11 +18,48 @@
 //! `field.load(Ordering::Relaxed)` reads in `src/bin/lumen.rs`.
 
 use metrics_prometheus::{Counter, Gauge, Label, LabeledSample, Sample, SampleGroup};
+use std::fmt::Write as _;
+use std::time::Duration;
 
 /// #2475: sentinel `raft_shard` value meaning "never touched by the raft
 /// election-state poller" — see [`Metrics::raft_shard`]. Out of range for
 /// any real shard index, so it stays distinguishable from every real shard.
 const NOT_RAFT: u64 = u64::MAX;
+
+/// #2519: number of finite `lumen_search_latency_seconds_bucket{le=...}`
+/// rows — see [`SEARCH_LATENCY_BUCKETS_US`].
+const SEARCH_LATENCY_BUCKET_COUNT: usize = 12;
+
+/// #2519: search-latency histogram bucket upper bounds, sized for search
+/// SLOs from a sub-millisecond fast path up to a 5s outlier tail. Each pair
+/// is `(the Prometheus "le" label, the same bound in whole microseconds)` —
+/// microseconds because every bound here is an exact conversion of a "nice"
+/// decimal-seconds SLO value (e.g. `0.0025s == 2_500us`), so bucket
+/// assignment in [`Metrics::observe_search`] is exact integer comparison,
+/// never float rounding. Bucket `i` (see `search_latency_buckets`) counts
+/// observations in `(bound[i-1], bound[i]]`, with `bound[-1] == 0`.
+/// Observations past the last bound aren't stored in a 13th counter — the
+/// Prometheus `+Inf` bucket renders as the plain total observation count
+/// instead (see `render_search_latency_histogram`).
+const SEARCH_LATENCY_BUCKETS_US: [(&str, u64); SEARCH_LATENCY_BUCKET_COUNT] = [
+    ("0.001", 1_000),
+    ("0.0025", 2_500),
+    ("0.005", 5_000),
+    ("0.01", 10_000),
+    ("0.025", 25_000),
+    ("0.05", 50_000),
+    ("0.1", 100_000),
+    ("0.25", 250_000),
+    ("0.5", 500_000),
+    ("1", 1_000_000),
+    ("2.5", 2_500_000),
+    ("5", 5_000_000),
+];
+
+/// #2519: `lumen_slow_queries_total`'s threshold (milliseconds) when
+/// `LUMEN_SLOW_QUERY_MS` is unset or unparseable — see
+/// `slow_query_threshold_ms_from_env`.
+const DEFAULT_SLOW_QUERY_THRESHOLD_MS: u64 = 500;
 
 /// All metrics carry the `{collection, shard, partition}` label set per
 /// the README §5 contract. v1 in-memory single-shard reports
@@ -34,8 +71,43 @@ pub struct Metrics {
     pub index_writes_total: Counter,
     pub index_bytes_total: Counter,
     pub search_requests_total: Counter,
+    /// #2519 DEPRECATED: kept only for dashboard back-compat. New
+    /// consumers should read the `lumen_search_latency_seconds` histogram
+    /// (`search_latency_buckets`/`search_latency_us_sum`) instead — it
+    /// carries the same observations at real bucket + second-precision
+    /// sum resolution instead of a lossy millisecond-rounded sum/count
+    /// pair.
     pub search_latency_ms_sum: Counter,
+    /// #2519 DEPRECATED: see `search_latency_ms_sum`. Doubles as the
+    /// histogram's total observation count (`+Inf` bucket / `_count`) in
+    /// `render_search_latency_histogram` — one `observe_search` call is
+    /// exactly one observation of both series, so a second atomic would
+    /// only duplicate this one.
     pub search_latency_ms_count: Counter,
+    /// #2519: exclusive per-bucket search-latency observation counts
+    /// backing `lumen_search_latency_seconds_bucket{le=...}` — see
+    /// [`SEARCH_LATENCY_BUCKETS_US`] for the bucket bounds/semantics and
+    /// `render_search_latency_histogram` for how these become the
+    /// cumulative counts a Prometheus histogram requires.
+    pub search_latency_buckets: [Counter; SEARCH_LATENCY_BUCKET_COUNT],
+    /// #2519: sum of search latencies in whole microseconds — an integer
+    /// atomic (not a float) for lock-free accumulation; `render()` divides
+    /// by 1e6 to produce `lumen_search_latency_seconds_sum`.
+    pub search_latency_us_sum: Counter,
+    /// #2519: total search queries whose latency met or exceeded
+    /// `slow_query_threshold_ms` (`LUMEN_SLOW_QUERY_MS`, default
+    /// [`DEFAULT_SLOW_QUERY_THRESHOLD_MS`]ms) — see
+    /// [`Metrics::observe_search`].
+    pub slow_queries_total: Counter,
+    /// #2519: the resolved `LUMEN_SLOW_QUERY_MS` threshold in
+    /// milliseconds, read once in [`Metrics::new`] (server startup)
+    /// rather than per `observe_search` call — mirrors `LUMEN_HNSW_EF`'s
+    /// read-once-at-construction convention (`hnsw_search_ef` in
+    /// `src/vector_index.rs`) instead of adding env-var lock traffic to
+    /// the search hot path. Not published as its own series;
+    /// `lumen_slow_queries_total`'s HELP text documents the env var for
+    /// operators reading `/metrics` directly.
+    pub slow_query_threshold_ms: Gauge,
     pub duplicates_requests_total: Counter,
     pub collections_created_total: Counter,
     pub schema_fields_total: Counter,
@@ -110,6 +182,10 @@ impl Metrics {
         // every other field's `Default` (0) is already the right initial
         // value.
         metrics.raft_shard.set(NOT_RAFT);
+        // #2519: resolve `LUMEN_SLOW_QUERY_MS` once at construction time.
+        metrics
+            .slow_query_threshold_ms
+            .set(slow_query_threshold_ms_from_env());
         metrics
     }
 
@@ -118,10 +194,32 @@ impl Metrics {
         self.index_bytes_total.add(bytes);
     }
 
-    pub fn observe_search(&self, latency_ms: u64) {
+    /// Record one search observation of `elapsed`. Updates the deprecated
+    /// millisecond sum/count pair (back-compat, see `search_latency_ms_sum`),
+    /// the `lumen_search_latency_seconds` histogram (#2519), and
+    /// `slow_queries_total` when `elapsed` meets or exceeds
+    /// `slow_query_threshold_ms` — `>=`, not `>`, so a
+    /// `LUMEN_SLOW_QUERY_MS=0` override (used by tests to force every
+    /// search to count as slow) actually fires on a `0`ms observation.
+    pub fn observe_search(&self, elapsed: Duration) {
         self.search_requests_total.incr();
+
+        let latency_ms = elapsed.as_millis() as u64;
         self.search_latency_ms_sum.add(latency_ms);
         self.search_latency_ms_count.incr();
+
+        let latency_us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        self.search_latency_us_sum.add(latency_us);
+        if let Some(idx) = SEARCH_LATENCY_BUCKETS_US
+            .iter()
+            .position(|&(_, bound_us)| latency_us <= bound_us)
+        {
+            self.search_latency_buckets[idx].incr();
+        }
+
+        if latency_ms >= self.slow_query_threshold_ms.get() {
+            self.slow_queries_total.incr();
+        }
     }
 
     pub fn incr_duplicates(&self) {
@@ -211,14 +309,25 @@ impl Metrics {
             Sample::new(
                 "lumen_search_latency_ms_sum",
                 "counter",
-                "Sum of search latencies in milliseconds.",
+                "DEPRECATED (#2519): sum of search latencies in milliseconds; kept for \
+                 dashboard back-compat, see lumen_search_latency_seconds for the real \
+                 histogram.",
                 self.search_latency_ms_sum.get(),
             ),
             Sample::new(
                 "lumen_search_latency_ms_count",
                 "counter",
-                "Count of search latency observations.",
+                "DEPRECATED (#2519): count of search latency observations; kept for \
+                 dashboard back-compat, see lumen_search_latency_seconds for the real \
+                 histogram.",
                 self.search_latency_ms_count.get(),
+            ),
+            Sample::new(
+                "lumen_slow_queries_total",
+                "counter",
+                "Total search queries at/above the slow-query threshold \
+                 (LUMEN_SLOW_QUERY_MS, default 500ms).",
+                self.slow_queries_total.get(),
             ),
             Sample::new(
                 "lumen_duplicates_requests_total",
@@ -303,6 +412,12 @@ impl Metrics {
             ),
         ];
         let mut out = metrics_prometheus::render(&samples);
+        // #2519: real Prometheus histogram for search latency — hand-rolled
+        // rather than via `metrics_prometheus::render_labeled` because a
+        // histogram's `_bucket`/`_sum`/`_count` sample names all suffix ONE
+        // base name under a single `# HELP`/`# TYPE histogram` pair, while
+        // `render_labeled` assumes one bare metric name per row.
+        out.push_str(&self.render_search_latency_histogram());
         // #2475: `lumen_raft_leader_known` carries a `shard` label and is
         // omitted entirely (not just left at 0) for standalone/non-raft
         // pods — see `raft_shard`'s doc comment for why a permanent-0
@@ -326,6 +441,47 @@ impl Metrics {
         }
         out
     }
+
+    /// #2519: renders `lumen_search_latency_seconds_bucket{le=...}`
+    /// (cumulative, per the Prometheus histogram convention) followed by
+    /// `_sum` and `_count`, all under one `# HELP`/`# TYPE histogram`
+    /// declaration. See [`SEARCH_LATENCY_BUCKETS_US`] for the bucket
+    /// bounds and `search_latency_ms_count`'s doc for why `_count`/`+Inf`
+    /// reuse that field instead of a dedicated histogram-count atomic.
+    fn render_search_latency_histogram(&self) -> String {
+        const NAME: &str = "lumen_search_latency_seconds";
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "# HELP {NAME} Search latency histogram in seconds, bucketed for search SLOs."
+        );
+        let _ = writeln!(out, "# TYPE {NAME} histogram");
+        let mut cumulative = 0u64;
+        for ((le, _bound_us), bucket) in SEARCH_LATENCY_BUCKETS_US
+            .iter()
+            .zip(self.search_latency_buckets.iter())
+        {
+            cumulative += bucket.get();
+            let _ = writeln!(out, "{NAME}_bucket{{le=\"{le}\"}} {cumulative}");
+        }
+        let total = self.search_latency_ms_count.get();
+        let _ = writeln!(out, "{NAME}_bucket{{le=\"+Inf\"}} {total}");
+        let sum_seconds = self.search_latency_us_sum.get() as f64 / 1_000_000.0;
+        let _ = writeln!(out, "{NAME}_sum {sum_seconds}");
+        let _ = writeln!(out, "{NAME}_count {total}");
+        out
+    }
+}
+
+/// #2519: `LUMEN_SLOW_QUERY_MS` (milliseconds) if set and parseable to a
+/// `u64`, else [`DEFAULT_SLOW_QUERY_THRESHOLD_MS`]. Read once at
+/// `Metrics::new()` construction — mirrors `hnsw_search_ef`'s
+/// read-once-per-construction convention in `src/vector_index.rs`.
+fn slow_query_threshold_ms_from_env() -> u64 {
+    std::env::var("LUMEN_SLOW_QUERY_MS")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SLOW_QUERY_THRESHOLD_MS)
 }
 
 /// #2475: current unix-epoch seconds, saturating to `0` on a pre-epoch
@@ -345,7 +501,7 @@ mod tests {
     fn render_emits_every_metric() {
         let m = Metrics::new();
         m.incr_index(3, 100);
-        m.observe_search(7);
+        m.observe_search(Duration::from_millis(7));
         m.set_raft_leader_known(2, true);
         m.set_reshard_fence_active(true);
         m.incr_auth_registry_reload_failure();
@@ -353,7 +509,14 @@ mod tests {
         let out = m.render();
         for name in [
             "lumen_index_writes_total",
+            // #2519: deprecated back-compat series must still be present.
             "lumen_search_latency_ms_sum",
+            "lumen_search_latency_ms_count",
+            // #2519: the new histogram + slow-query series.
+            "lumen_search_latency_seconds_bucket",
+            "lumen_search_latency_seconds_sum",
+            "lumen_search_latency_seconds_count",
+            "lumen_slow_queries_total",
             "lumen_storage_bytes",
             "lumen_posting_cache_hits_total",
             "lumen_replace_fields_skipped_total",
@@ -371,6 +534,97 @@ mod tests {
             out.contains("lumen_raft_leader_known{shard=\"2\"} 1"),
             "expected labeled raft series in:\n{out}"
         );
+    }
+
+    /// #2519: a search observation lands in the correct cumulative
+    /// histogram bucket, and every bucket >= its own falls in too (a
+    /// Prometheus histogram bucket is "le", not exclusive).
+    #[test]
+    fn observe_search_updates_histogram_buckets() {
+        let m = Metrics::new();
+        m.observe_search(Duration::from_micros(1_500)); // 1.5ms -> le=0.0025 bucket
+        let out = m.render();
+        assert!(
+            out.contains("lumen_search_latency_seconds_bucket{le=\"0.001\"} 0"),
+            "1.5ms observation must not count in the 1ms bucket:\n{out}"
+        );
+        assert!(
+            out.contains("lumen_search_latency_seconds_bucket{le=\"0.0025\"} 1"),
+            "1.5ms observation must count in the 2.5ms bucket:\n{out}"
+        );
+        assert!(
+            out.contains("lumen_search_latency_seconds_bucket{le=\"5\"} 1"),
+            "cumulative buckets past the observation's own bucket must include it:\n{out}"
+        );
+        assert!(
+            out.contains("lumen_search_latency_seconds_bucket{le=\"+Inf\"} 1"),
+            "+Inf bucket must equal the total observation count:\n{out}"
+        );
+        assert!(
+            out.contains("lumen_search_latency_seconds_count 1"),
+            "histogram _count must equal the total observation count:\n{out}"
+        );
+    }
+
+    /// #2519 AC: an artificially-slow observation (here, `Duration::MAX`
+    /// against a default threshold) increments `lumen_slow_queries_total`,
+    /// and it stays folded into the `+Inf` bucket rather than a stored
+    /// 13th bucket counter.
+    #[test]
+    fn observe_search_increments_slow_queries_over_threshold() {
+        let m = Metrics::new();
+        m.observe_search(Duration::from_secs(10)); // past every finite bucket
+        assert_eq!(m.slow_queries_total.get(), 1);
+        let out = m.render();
+        assert!(out.contains("lumen_slow_queries_total 1"), "{out}");
+        assert!(
+            out.contains("lumen_search_latency_seconds_bucket{le=\"5\"} 0"),
+            "a 10s observation must not land in the 5s bucket:\n{out}"
+        );
+        assert!(out.contains("lumen_search_latency_seconds_bucket{le=\"+Inf\"} 1"));
+    }
+
+    // Process-global env mutex shared across LUMEN_SLOW_QUERY_MS-mutating
+    // tests (mirrors `auth.rs`'s `AUTH_ENV_LOCK`).
+    static SLOW_QUERY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// #2519 AC: the "threshold=0 trick" — `LUMEN_SLOW_QUERY_MS=0` makes
+    /// every search, however fast, count as slow. `Metrics::new()` reads
+    /// the env var once at construction, so it must be set before that
+    /// call.
+    #[test]
+    fn slow_query_threshold_zero_counts_every_search_as_slow() {
+        let _g = SLOW_QUERY_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("LUMEN_SLOW_QUERY_MS", "0");
+        }
+        let m = Metrics::new();
+        unsafe {
+            std::env::remove_var("LUMEN_SLOW_QUERY_MS");
+        }
+        m.observe_search(Duration::from_micros(1));
+        assert_eq!(
+            m.slow_queries_total.get(),
+            1,
+            "a threshold=0 override must count even a ~0ms search as slow"
+        );
+    }
+
+    /// A fast search under the default 500ms threshold must NOT count as
+    /// slow (regression guard against an inverted comparison).
+    #[test]
+    fn fast_search_under_default_threshold_is_not_slow() {
+        let _g = SLOW_QUERY_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("LUMEN_SLOW_QUERY_MS");
+        }
+        let m = Metrics::new();
+        m.observe_search(Duration::from_millis(5));
+        assert_eq!(m.slow_queries_total.get(), 0);
     }
 
     /// #2475: a pod whose raft election-state poller never ticked (every
@@ -396,8 +650,8 @@ mod tests {
     fn render_is_byte_identical_to_pre_refactor_capture() {
         let m = Metrics::new();
         m.incr_index(3, 100);
-        m.observe_search(7);
-        m.observe_search(9);
+        m.observe_search(Duration::from_millis(7));
+        m.observe_search(Duration::from_millis(9));
         m.incr_duplicates();
         m.incr_collection_created(4);
         m.set_storage_bytes(2048);
@@ -424,12 +678,15 @@ lumen_index_bytes_total 100\n\
 # HELP lumen_search_requests_total Total search requests served.\n\
 # TYPE lumen_search_requests_total counter\n\
 lumen_search_requests_total 2\n\
-# HELP lumen_search_latency_ms_sum Sum of search latencies in milliseconds.\n\
+# HELP lumen_search_latency_ms_sum DEPRECATED (#2519): sum of search latencies in milliseconds; kept for dashboard back-compat, see lumen_search_latency_seconds for the real histogram.\n\
 # TYPE lumen_search_latency_ms_sum counter\n\
 lumen_search_latency_ms_sum 16\n\
-# HELP lumen_search_latency_ms_count Count of search latency observations.\n\
+# HELP lumen_search_latency_ms_count DEPRECATED (#2519): count of search latency observations; kept for dashboard back-compat, see lumen_search_latency_seconds for the real histogram.\n\
 # TYPE lumen_search_latency_ms_count counter\n\
 lumen_search_latency_ms_count 2\n\
+# HELP lumen_slow_queries_total Total search queries at/above the slow-query threshold (LUMEN_SLOW_QUERY_MS, default 500ms).\n\
+# TYPE lumen_slow_queries_total counter\n\
+lumen_slow_queries_total 0\n\
 # HELP lumen_duplicates_requests_total Total duplicate-detection requests.\n\
 # TYPE lumen_duplicates_requests_total counter\n\
 lumen_duplicates_requests_total 1\n\
@@ -469,6 +726,23 @@ lumen_auth_registry_reload_failures_total 2\n\
 # HELP lumen_auth_registry_reload_success_unixtime Unix time of the last successful bearer-token registry hot-reload.\n\
 # TYPE lumen_auth_registry_reload_success_unixtime gauge\n\
 lumen_auth_registry_reload_success_unixtime 1700000001\n\
+# HELP lumen_search_latency_seconds Search latency histogram in seconds, bucketed for search SLOs.\n\
+# TYPE lumen_search_latency_seconds histogram\n\
+lumen_search_latency_seconds_bucket{le=\"0.001\"} 0\n\
+lumen_search_latency_seconds_bucket{le=\"0.0025\"} 0\n\
+lumen_search_latency_seconds_bucket{le=\"0.005\"} 0\n\
+lumen_search_latency_seconds_bucket{le=\"0.01\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"0.025\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"0.05\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"0.1\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"0.25\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"0.5\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"1\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"2.5\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"5\"} 2\n\
+lumen_search_latency_seconds_bucket{le=\"+Inf\"} 2\n\
+lumen_search_latency_seconds_sum 0.016\n\
+lumen_search_latency_seconds_count 2\n\
 # HELP lumen_raft_leader_known 1 while this pod's raft election-state poll believes its shard currently has an elected leader, 0 otherwise. Omitted for standalone/non-raft deployments.\n\
 # TYPE lumen_raft_leader_known gauge\n\
 lumen_raft_leader_known{shard=\"2\"} 1\n";
@@ -477,7 +751,10 @@ lumen_raft_leader_known{shard=\"2\"} 1\n";
             "render() diverged from the pre-refactor capture (#2475 added \
              lumen_reshard_fence_active + lumen_reshard_fence_armed_unixtime + \
              lumen_auth_registry_reload_failures_total + \
-             lumen_auth_registry_reload_success_unixtime + lumen_raft_leader_known)"
+             lumen_auth_registry_reload_success_unixtime + lumen_raft_leader_known; \
+             #2519 added lumen_slow_queries_total + the \
+             lumen_search_latency_seconds histogram, and marked \
+             lumen_search_latency_ms_sum/_count deprecated in HELP text)"
         );
     }
 }

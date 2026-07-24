@@ -3940,7 +3940,7 @@ impl Engine {
             let el = start.elapsed();
             cached.took_ms = el.as_millis() as u64;
             cached.took_us = el.as_micros() as u64;
-            self.metrics.observe_search(cached.took_ms);
+            self.metrics.observe_search(el);
             return Ok(cached);
         }
 
@@ -4002,7 +4002,7 @@ impl Engine {
                     let total = hits.len() as u64; // lower bound (track_total=false)
                     let el = start.elapsed();
                     let took_ms = el.as_millis() as u64;
-                    self.metrics.observe_search(took_ms);
+                    self.metrics.observe_search(el);
                     let response = SearchResponse {
                         hits,
                         total,
@@ -4065,7 +4065,7 @@ impl Engine {
             };
             let el = start.elapsed();
             let took_ms = el.as_millis() as u64;
-            self.metrics.observe_search(took_ms);
+            self.metrics.observe_search(el);
             let response = SearchResponse {
                 hits,
                 total,
@@ -4161,7 +4161,7 @@ impl Engine {
             };
             let el = start.elapsed();
             let took_ms = el.as_millis() as u64;
-            self.metrics.observe_search(took_ms);
+            self.metrics.observe_search(el);
             let response = SearchResponse {
                 hits,
                 total,
@@ -4329,7 +4329,7 @@ impl Engine {
 
         let el = start.elapsed();
         let took_ms = el.as_millis() as u64;
-        self.metrics.observe_search(took_ms);
+        self.metrics.observe_search(el);
         let response = SearchResponse {
             hits,
             total,
@@ -4388,7 +4388,7 @@ impl Engine {
 
         let el = start.elapsed();
         let took_ms = el.as_millis() as u64;
-        self.metrics.observe_search(took_ms);
+        self.metrics.observe_search(el);
         Ok(SearchResponse {
             hits,
             total,
