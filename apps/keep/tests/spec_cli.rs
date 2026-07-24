@@ -200,6 +200,7 @@ fn spec_gen_composes_openapi_codegen_for_every_language() {
     for lang in [Lang::Ts, Lang::Py, Lang::Rust] {
         let opts = GenOptions {
             lang,
+            target: None,
             spec_path: std::path::PathBuf::new(),
             out_dir: std::path::PathBuf::new(),
             client_name: "createClient".to_string(),

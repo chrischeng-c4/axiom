@@ -8,7 +8,7 @@ use crate::PythonTarget;
 
 /// Python type expression for a schema (or `$ref`) in `target` syntax.
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
-pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap, target: PythonTarget) -> String {
+pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     match node {
         RefOr::Ref(r) => tm
             .resolve_ref(&r.reference)
@@ -26,15 +26,21 @@ pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap, target: PythonTarget) -> St
 
 /// Wrap in a target-valid nullable type unless it already is (or is `Any`/`None`).
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
-pub fn optional(ty: &str, _target: PythonTarget) -> String {
-    if ty == "Any" || ty == "None" || ty.ends_with(" | None") {
+pub fn optional(ty: &str, target: Option<PythonTarget>) -> String {
+    if ty == "Any"
+        || ty == "None"
+        || ty.ends_with(" | None")
+        || (target.is_none() && ty.starts_with("Optional["))
+    {
         ty.to_string()
-    } else {
+    } else if target.is_some() {
         format!("{ty} | None")
+    } else {
+        format!("Optional[{ty}]")
     }
 }
 
-fn base_expr(schema: &Schema, tm: &TypeMap, target: PythonTarget) -> String {
+fn base_expr(schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     if !schema.all_of.is_empty() {
         // pydantic has no intersection type; fall back to the first member.
         return schema
@@ -96,7 +102,7 @@ fn string_expr(schema: &Schema) -> String {
     }
 }
 
-fn array_expr(schema: &Schema, tm: &TypeMap, target: PythonTarget) -> String {
+fn array_expr(schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     match &schema.items {
         Some(items) => format!("list[{}]", type_expr(items, tm, target)),
         None => "list[Any]".to_string(),
@@ -106,7 +112,7 @@ fn array_expr(schema: &Schema, tm: &TypeMap, target: PythonTarget) -> String {
 /// Inline object → a typed mapping (pydantic can't synthesize a nested model
 /// inline; `additionalProperties` drives the value type, else `Any`).
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
-pub fn object_expr(schema: &Schema, tm: &TypeMap, target: PythonTarget) -> String {
+pub fn object_expr(schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     match &schema.additional_properties {
         Some(AdditionalProperties::Schema(s)) => {
             format!("dict[str, {}]", type_expr(s, tm, target))
@@ -134,7 +140,7 @@ fn enum_literal(schema: &Schema) -> String {
     }
 }
 
-fn union(items: &[RefOr<Schema>], tm: &TypeMap, target: PythonTarget) -> String {
+fn union(items: &[RefOr<Schema>], tm: &TypeMap, target: Option<PythonTarget>) -> String {
     let members = items
         .iter()
         .map(|i| type_expr(i, tm, target))
@@ -142,13 +148,15 @@ fn union(items: &[RefOr<Schema>], tm: &TypeMap, target: PythonTarget) -> String 
     union_expr(members, target)
 }
 
-pub fn union_expr(members: Vec<String>, _target: PythonTarget) -> String {
+pub fn union_expr(members: Vec<String>, target: Option<PythonTarget>) -> String {
     if members.is_empty() {
         "Any".to_string()
     } else if members.len() == 1 {
         members[0].clone()
-    } else {
+    } else if target.is_some() {
         members.join(" | ")
+    } else {
+        format!("Union[{}]", members.join(", "))
     }
 }
 
@@ -167,7 +175,7 @@ mod tests {
 
     #[test]
     fn primitives_array_ref_optional() {
-        let target = PythonTarget::Py311;
+        let target = Some(PythonTarget::Py311);
         assert_eq!(
             type_expr(&s(r##"{"type":"integer"}"##), &tm(), target),
             "int"

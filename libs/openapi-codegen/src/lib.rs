@@ -80,6 +80,9 @@ pub enum HttpClient {
 pub struct GenOptions {
     /// Target language for the generated client.
     pub lang: Lang,
+    /// Versioned language/toolchain contract. `None` preserves the legacy
+    /// generated files and does not emit a target manifest.
+    pub target: Option<TargetProfile>,
     pub spec_path: PathBuf,
     pub out_dir: PathBuf,
     pub client_name: String,
@@ -102,13 +105,13 @@ pub struct GeneratedFile {
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub struct GeneratedOutput {
     pub files: Vec<GeneratedFile>,
-    /// The profile used to render `files`.
-    pub target: TargetProfile,
-    /// The minimum requirements for consuming `files`.
-    pub requirements: TargetRequirements,
+    /// The explicitly selected profile used to render `files`.
+    pub target: Option<TargetProfile>,
+    /// The minimum requirements for consuming explicitly targeted `files`.
+    pub requirements: Option<TargetRequirements>,
 }
 
-/// Sidecar filename emitted with every materialized generated client.
+/// Sidecar filename emitted with explicitly targeted generated clients.
 pub const MANIFEST_FILE: &str = ".cclab-openapi-codegen.json";
 
 /// Stable, user-visible record of the exact generated-client contract.
@@ -116,40 +119,60 @@ pub const MANIFEST_FILE: &str = ".cclab-openapi-codegen.json";
 pub struct GenerationManifest {
     pub schema_version: u8,
     pub generator: String,
+    pub compiler: String,
     pub target: String,
     pub language: String,
     pub minimum_version: String,
+    pub language_standard: String,
+    pub module_system: Option<String>,
+    pub module_resolution: Option<String>,
+    pub strict: Option<bool>,
+    pub transport: Option<String>,
     pub runtime_dependencies: Vec<String>,
 }
 
 impl GeneratedOutput {
+    pub(crate) fn legacy(files: Vec<GeneratedFile>) -> Self {
+        Self {
+            files,
+            target: None,
+            requirements: None,
+        }
+    }
+
     pub(crate) fn for_target(files: Vec<GeneratedFile>, target: TargetProfile) -> Self {
         Self {
             files,
-            target,
-            requirements: target.requirements(),
+            target: Some(target),
+            requirements: Some(target.requirements()),
         }
     }
 
     /// Build the sidecar manifest which makes the target contract inspectable
     /// after the in-memory result has been written to disk.
-    pub fn manifest(&self) -> GenerationManifest {
-        GenerationManifest {
+    pub fn manifest(&self) -> Option<GenerationManifest> {
+        let requirements = self.requirements?;
+        Some(GenerationManifest {
             schema_version: 1,
             generator: "cclab-openapi-codegen".to_string(),
-            target: self.requirements.target.to_string(),
-            language: self.requirements.language.id().to_string(),
-            minimum_version: self.requirements.minimum_version.to_string(),
-            runtime_dependencies: self
-                .requirements
+            compiler: requirements.compiler.to_string(),
+            target: requirements.target.to_string(),
+            language: requirements.language.id().to_string(),
+            minimum_version: requirements.minimum_version.to_string(),
+            language_standard: requirements.language_standard.to_string(),
+            module_system: requirements.module_system.map(str::to_string),
+            module_resolution: requirements.module_resolution.map(str::to_string),
+            strict: requirements.strict,
+            transport: requirements.transport.map(str::to_string),
+            runtime_dependencies: requirements
                 .runtime_dependencies
                 .iter()
                 .map(|dependency| (*dependency).to_string())
                 .collect(),
-        }
+        })
     }
 
-    /// Materialize generated files and their target-contract manifest.
+    /// Materialize generated files and, for explicit targets, their contract manifest.
     ///
     /// The output is intentionally written through this one method so every
     /// embedding CLI records the same contract rather than duplicating file
@@ -163,8 +186,10 @@ impl GeneratedOutput {
             }
             std::fs::write(path, &file.contents)?;
         }
-        let manifest = serde_json::to_string_pretty(&self.manifest())?;
-        std::fs::write(out_dir.join(MANIFEST_FILE), format!("{manifest}\n"))?;
+        if let Some(manifest) = self.manifest() {
+            let manifest = serde_json::to_string_pretty(&manifest)?;
+            std::fs::write(out_dir.join(MANIFEST_FILE), format!("{manifest}\n"))?;
+        }
         Ok(())
     }
 }
@@ -185,7 +210,7 @@ fn safe_output_path(out_dir: &Path, rel_path: &str) -> Result<PathBuf> {
 
 impl Default for GeneratedOutput {
     fn default() -> Self {
-        Self::for_target(Vec::new(), TargetProfile::default_for(Lang::default()))
+        Self::legacy(Vec::new())
     }
 }
 
@@ -193,7 +218,14 @@ impl Default for GeneratedOutput {
 /// to the per-language emitter selected by [`GenOptions::lang`].
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
-    generate_for_target(spec_json, opts, TargetProfile::default_for(opts.lang))
+    match opts.target {
+        Some(target) => generate_for_target(spec_json, opts, target),
+        None => match opts.lang {
+            Lang::Ts => emit::ts::generate(spec_json, opts),
+            Lang::Py => emit::py::generate(spec_json, opts),
+            Lang::Rust => emit::rust::generate(spec_json, opts),
+        },
+    }
 }
 
 /// Pure core with an explicit versioned target profile. The profile must match
@@ -211,6 +243,15 @@ pub fn generate_for_target(
             target.lang(),
             opts.lang
         );
+    }
+    if let Some(configured) = opts.target {
+        if configured != target {
+            anyhow::bail!(
+                "explicit target argument {} conflicts with GenOptions target {}",
+                target.id(),
+                configured.id()
+            );
+        }
     }
     match target {
         TargetProfile::TypeScript(target) => emit::ts::generate_for_target(spec_json, opts, target),
@@ -250,7 +291,9 @@ pub fn run(opts: &GenOptions) -> i32 {
     for file in &output.files {
         println!("generated {}", opts.out_dir.join(&file.rel_path).display());
     }
-    println!("generated {}", opts.out_dir.join(MANIFEST_FILE).display());
+    if output.target.is_some() {
+        println!("generated {}", opts.out_dir.join(MANIFEST_FILE).display());
+    }
     0
 }
 
@@ -264,6 +307,7 @@ mod tests {
     fn full_opts() -> GenOptions {
         GenOptions {
             lang: Lang::Ts,
+            target: None,
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "createClient".to_string(),
@@ -367,9 +411,10 @@ mod tests {
                 generate_for_target(TARGET_PROFILE_SPEC, &opts, TargetProfile::Python(target))
                     .unwrap();
 
-            assert_eq!(out.target, TargetProfile::Python(target));
-            assert_eq!(out.requirements.minimum_version, version);
-            assert_eq!(out.requirements.runtime_dependencies, &["pydantic>=2"]);
+            assert_eq!(out.target, Some(TargetProfile::Python(target)));
+            let requirements = out.requirements.expect("profile requirements");
+            assert_eq!(requirements.minimum_version, version);
+            assert_eq!(requirements.runtime_dependencies, &["pydantic>=2"]);
             assert!(content(&out, "models.py").contains(alias));
             assert!(!content(&out, "models.py").contains("Optional["));
         }
@@ -452,7 +497,7 @@ mod tests {
             assert!(
                 result.status.success(),
                 "{interpreter} cannot compile {} output\n{}",
-                output.target.id(),
+                output.target.expect("profile target").id(),
                 String::from_utf8_lossy(&result.stderr)
             );
             let _ = fs::remove_dir_all(dir);
@@ -480,7 +525,13 @@ mod tests {
         assert!(content(&rust_2021, "models.rs").contains("pub gen: String,"));
         assert!(content(&rust_2024, "models.rs").contains("pub gen_: String,"));
         assert!(content(&rust_2024, "models.rs").contains("#[serde(rename = \"gen\")]"));
-        assert_eq!(rust_2024.requirements.minimum_version, "1.85");
+        assert_eq!(
+            rust_2024
+                .requirements
+                .expect("profile requirements")
+                .minimum_version,
+            "1.85"
+        );
     }
 
     #[test]

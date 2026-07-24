@@ -1046,6 +1046,7 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         &sift::openapi_json()?,
         &GenOptions {
             lang,
+            target: None,
             spec_path: PathBuf::new(),
             out_dir: args.out.clone(),
             client_name: "createClient".to_string(),

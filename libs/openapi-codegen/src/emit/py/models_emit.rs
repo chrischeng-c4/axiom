@@ -30,10 +30,14 @@ pub fn is_py_ident(s: &str) -> bool {
 }
 
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#source
-pub fn emit(spec: &Spec, tm: &TypeMap, target: PythonTarget) -> String {
+pub fn emit(spec: &Spec, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     let mut out = String::from(HEADER);
     out.push_str("from __future__ import annotations\n");
-    out.push_str("from typing import Any, Literal\n");
+    if target.is_some() {
+        out.push_str("from typing import Any, Literal\n");
+    } else {
+        out.push_str("from typing import Any, Literal, Optional, Union\n");
+    }
     out.push_str("from pydantic import BaseModel, Field, RootModel\n");
 
     // Python aliases evaluate their right-hand side at import time, unlike
@@ -118,7 +122,12 @@ fn collect_component_dependencies(node: &RefOr<Schema>, dependencies: &mut BTree
     }
 }
 
-fn emit_schema(name: &str, node: &RefOr<Schema>, tm: &TypeMap, target: PythonTarget) -> String {
+fn emit_schema(
+    name: &str,
+    node: &RefOr<Schema>,
+    tm: &TypeMap,
+    target: Option<PythonTarget>,
+) -> String {
     match node {
         // A component that is itself a `$ref` → a plain alias.
         RefOr::Ref(_) => emit_alias(name, &pymap::type_expr(node, tm, target), target),
@@ -133,8 +142,8 @@ fn emit_schema(name: &str, node: &RefOr<Schema>, tm: &TypeMap, target: PythonTar
     }
 }
 
-fn emit_alias(name: &str, ty: &str, target: PythonTarget) -> String {
-    if target.uses_pep695_type_aliases() {
+fn emit_alias(name: &str, ty: &str, target: Option<PythonTarget>) -> String {
+    if target.is_some_and(PythonTarget::uses_pep695_type_aliases) {
         format!("type {name} = {ty}")
     } else {
         format!("{name} = {ty}")
@@ -159,7 +168,7 @@ fn emit_root_union_model(
     name: &str,
     schema: &Schema,
     tm: &TypeMap,
-    target: PythonTarget,
+    target: Option<PythonTarget>,
 ) -> String {
     let variants = if !schema.one_of.is_empty() {
         &schema.one_of
@@ -196,7 +205,7 @@ fn inline_variant_name(parent: &str, schema: &Schema, idx: usize) -> String {
     }
 }
 
-fn emit_model(name: &str, schema: &Schema, tm: &TypeMap, target: PythonTarget) -> String {
+fn emit_model(name: &str, schema: &Schema, tm: &TypeMap, target: Option<PythonTarget>) -> String {
     let mut s = format!("class {name}(BaseModel):\n");
     for (key, prop) in &schema.properties {
         let required = schema.required.iter().any(|r| r == key);
@@ -268,7 +277,7 @@ mod tests {
             }"##,
         )
         .expect("parse alias ordering fixture");
-        let rendered = emit(&spec, &build_type_map(&spec), PythonTarget::Py311);
+        let rendered = emit(&spec, &build_type_map(&spec), Some(PythonTarget::Py311));
 
         assert!(
             rendered.find("class SearchRequest(BaseModel):").unwrap()

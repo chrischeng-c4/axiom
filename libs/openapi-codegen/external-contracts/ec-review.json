@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "project": "openapi-codegen",
+  "source_digest": "sha256:8634a74df4485d726b0eb777d85932bcad100f128ddfe6587c4b4dd7844dd0b2",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer",
+  "reviewed_at": "2026-07-24T10:12:45.632343+00:00",
+  "summary": "Accepted: the nine previously approved profile-specific cases remain intact, and the retained historical `multi-language-openapi-client-generation-contract` is a sound umbrella. Its unfiltered target_profile_matrix command executes the complete nine-test external matrix and fails on any case failure; the nine named exact-filter cases independently prevent a profile test from disappearing silently through AW's zero-test guard; and retaining the historical case id preserves EC lock lineage without weakening the concrete Python, TypeScript, Rust, legacy-compatibility, or deterministic-sidecar oracles.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": [],
+  "target_path": "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md"
+}

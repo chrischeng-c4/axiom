@@ -37,11 +37,18 @@ Public API manifest for `libs/openapi-codegen/src/emit/rust/mod.rs` captured dur
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! Rust emitter: read an OpenAPI 3.0/3.1 document and emit serde models plus a
-//! typed `reqwest::blocking` client.
+//! Rust emitter: read an OpenAPI 3.0/3.1/3.2 document and emit serde models
+//! plus a typed `reqwest::blocking` client.
 //!
 //! Pipeline: parse → `models.rs` (serde struct/alias per component schema) +
 //! `client.rs` (one `Client` method per operation) + `mod.rs`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that dispatches via
+//! `reqwest::Method::from_bytes(b"QUERY")` — `reqwest::blocking::Client` has
+//! no dedicated `.query()` verb method (that name is the querystring
+//! builder). `Client::with_post_fallback(true)` flips that dispatch to
+//! `POST` against the operation's documented twin path at request time.
 
 pub mod client_emit;
 pub mod models_emit;
@@ -50,11 +57,29 @@ pub mod rsmap;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, RustTarget};
 use anyhow::{Context, Result};
 
 /// Pure Rust generation: spec JSON text → in-memory files. No filesystem access.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None)
+}
+
+/// Profile-aware Rust generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: RustTarget,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target))
+}
+
+fn generate_impl(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: Option<RustTarget>,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let ops = operations::build(&spec);
@@ -63,7 +88,7 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "models.rs".to_string(),
-            contents: models_emit::emit(&spec, &tm),
+            contents: models_emit::emit(&spec, &tm, target.unwrap_or(RustTarget::Rust2021)),
         });
     }
     if opts.emit_client {
@@ -76,7 +101,10 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
         rel_path: "mod.rs".to_string(),
         contents: emit_mod(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(match target {
+        Some(target) => GeneratedOutput::for_target(files, crate::TargetProfile::Rust(target)),
+        None => GeneratedOutput::legacy(files),
+    })
 }
 
 fn emit_mod(opts: &GenOptions) -> String {
@@ -113,9 +141,35 @@ mod tests {
       } }
     }"##;
 
+    /// OpenAPI 3.2 fixture: a `query` operation (RFC 10008 HTTP QUERY) with a
+    /// sibling `post` twin on the same path — the default POST-twin fallback
+    /// convention (epic #1296).
+    const SPEC_32_QUERY: &str = r##"{
+      "openapi": "3.2.0",
+      "info": { "title": "Mini", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "query": {
+            "operationId": "searchPets",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+            "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          },
+          "post": {
+            "operationId": "createPet",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+            "responses": { "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          }
+        }
+      },
+      "components": { "schemas": {
+        "Pet": { "type": "object", "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }, "required": ["id", "name"] }
+      } }
+    }"##;
+
     fn opts() -> GenOptions {
         GenOptions {
             lang: Lang::Rust,
+            target: None,
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "Client".to_string(),
@@ -176,6 +230,33 @@ mod tests {
     }
 
     #[test]
+    fn query_operation_uses_method_from_bytes_with_post_fallback_branch() {
+        let out = generate(SPEC_32_QUERY, &opts()).unwrap();
+        let client = file(&out, "client.rs");
+        assert!(client.contains("use_post_fallback: bool,"));
+        assert!(client
+            .contains("pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {"));
+        assert!(client.contains("pub fn search_pets(&self, body:"));
+        assert!(client.contains("let mut req = if self.use_post_fallback {"));
+        assert!(client.contains("let twin_url = format!(\"{}/pets\", self.base_url);"));
+        assert!(client.contains("self.http.post(twin_url)"));
+        assert!(client.contains(
+            "self.http.request(reqwest::Method::from_bytes(b\"QUERY\").expect(\"valid HTTP method\"), url)"
+        ));
+    }
+
+    #[test]
+    fn non_query_operation_keeps_direct_verb_dispatch() {
+        let out = generate(SPEC, &opts()).unwrap();
+        let client = file(&out, "client.rs");
+        // `use_post_fallback` is always present on `Client` (shared runtime
+        // surface), but a non-QUERY operation still dispatches directly.
+        assert!(client.contains("use_post_fallback: bool,"));
+        assert!(!client.contains("Method::from_bytes"));
+        assert!(client.contains("self.http.get(url)"));
+    }
+
+    #[test]
     fn deterministic() {
         let a = generate(SPEC, &opts()).unwrap();
         let b = generate(SPEC, &opts()).unwrap();
@@ -184,6 +265,7 @@ mod tests {
         }
     }
 }
+
 ````
 
 ## Changes

@@ -33,11 +33,17 @@ Public API manifest for `libs/openapi-codegen/src/emit/ts/mod.rs` captured durin
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! TypeScript emitter: read an OpenAPI 3.0/3.1 document and emit TS types, a
-//! typed fetch/axios client, and TanStack Query hooks.
+//! TypeScript emitter: read an OpenAPI 3.0/3.1/3.2 document and emit TS types,
+//! a typed fetch/axios client, and TanStack Query hooks.
 //!
-//! Pipeline: parse → normalize 3.0/3.1 → resolve `$ref`s → emit `types.ts` /
-//! `runtime.ts` / `client.ts` / `hooks.ts` / `index.ts`.
+//! Pipeline: parse → normalize 3.0/3.1/3.2 → resolve `$ref`s → emit `types.ts`
+//! / `runtime.ts` / `client.ts` / `hooks.ts` / `index.ts`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that sends `method: "QUERY"` with a JSON body via `fetch`/`axios`
+//! (both accept arbitrary method strings); `ClientConfig.usePostFallback`
+//! (see `client_emit::FETCH_RUNTIME`/`AXIOS_RUNTIME`) flips that call to
+//! `POST` against the operation's documented twin path at request time.
 
 pub mod client_emit;
 pub mod hooks_emit;
@@ -47,11 +53,29 @@ pub mod types_emit;
 
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, TypeScriptTarget};
 use anyhow::{Context, Result};
 
 /// Pure TS generation: spec JSON text → in-memory files. No filesystem access.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None)
+}
+
+/// Profile-aware TypeScript generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: TypeScriptTarget,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target))
+}
+
+fn generate_impl(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: Option<TypeScriptTarget>,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let plans = plan::build(&spec, &tm);
@@ -83,7 +107,12 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
         rel_path: "index.ts".to_string(),
         contents: emit_index(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(match target {
+        Some(target) => {
+            GeneratedOutput::for_target(files, crate::TargetProfile::TypeScript(target))
+        }
+        None => GeneratedOutput::legacy(files),
+    })
 }
 
 fn emit_index(opts: &GenOptions) -> String {
@@ -100,6 +129,7 @@ fn emit_index(opts: &GenOptions) -> String {
     }
     out
 }
+
 ````
 
 ## Changes

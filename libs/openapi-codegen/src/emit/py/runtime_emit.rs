@@ -2076,9 +2076,12 @@ class AsyncH2CStream:
 "####;
 
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-runtime-emit-rs.md#source
-pub fn emit(target: PythonTarget) -> String {
+pub fn emit(target: Option<PythonTarget>) -> String {
     let mut out = String::from(HEADER);
-    out.push_str(&modernize_annotations(RUNTIME, target));
+    match target {
+        Some(target) => out.push_str(&modernize_annotations(RUNTIME, target)),
+        None => out.push_str(RUNTIME),
+    }
     out
 }
 
@@ -2162,7 +2165,7 @@ mod tests {
 
     #[test]
     fn python_311_runtime_uses_modern_optional_and_self_annotations() {
-        let runtime = emit(PythonTarget::Py311);
+        let runtime = emit(Some(PythonTarget::Py311));
         assert!(runtime
             .contains("from typing import Any, AsyncIterator, Iterable, Iterator, Mapping, Self"));
         assert!(runtime.contains("concurrency: int, parallelism: int | None = None"));

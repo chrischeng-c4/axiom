@@ -520,8 +520,10 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         GenLang::Py => Lang::Py,
         GenLang::Rust => Lang::Rust,
     };
+    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
     let opts = GenOptions {
         lang,
+        target: Some(target),
         spec_path: PathBuf::new(),
         out_dir: args.out.clone(),
         client_name: "createClient".to_string(),
@@ -534,7 +536,6 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
     let output = generate_for_target(&relay::openapi::api_doc_json(), &opts, target)?;
     output.write_to_dir(&args.out)?;
     for file in &output.files {
@@ -542,11 +543,12 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         println!("generated {}", path.display());
     }
     println!("generated {}", args.out.join(MANIFEST_FILE).display());
+    let requirements = output.requirements.expect("explicit target requirements");
     println!(
         "target: {} (minimum {} {})",
-        output.requirements.target,
-        output.requirements.language.id(),
-        output.requirements.minimum_version
+        requirements.target,
+        requirements.language.id(),
+        requirements.minimum_version
     );
     println!("next: done");
     Ok(())

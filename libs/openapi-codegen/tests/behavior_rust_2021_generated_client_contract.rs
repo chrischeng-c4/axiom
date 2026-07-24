@@ -1,22 +1,23 @@
-// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract
+// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#rust-2021-generated-client-contract
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec multi-language-openapi-client-generation-contract
+// @ec rust-2021-generated-client-contract
 // @capability multi-language-openapi-client-generation
 // @claim multi-language-openapi-client-generation-contract
-// @contract multi-language-openapi-client-generation-contract
+// @contract rust-2021-generated-client-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix
+// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2021_generated_client_contract -- --exact
 // AW-EC-END
 
-// Contract: The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.
-// Contract: The full external matrix covers Python 3.11-3.14 model smoke, TypeScript strict consumer type-check, Rust edition consumers, legacy golden compatibility, and deterministic materialized sidecars.
+// Contract: The exact models/client/mod file set compiles and runs an independent Pet consumer as a temporary Cargo edition 2021 crate with its declared dependencies.
+// Contract: The independent consumer constructs Pet.gen and proves serde serialization/deserialization preserves the external JSON key gen.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn multi_language_openapi_client_generation_contract() {
-    let command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix";
-    let id = "multi-language-openapi-client-generation-contract";
+fn rust_2021_generated_client_contract() {
+    let command =
+        "cargo test -p cclab-openapi-codegen --test target_profile_matrix rust_2021_generated_client_contract -- --exact";
+    let id = "rust-2021-generated-client-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

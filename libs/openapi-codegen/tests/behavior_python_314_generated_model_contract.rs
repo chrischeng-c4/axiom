@@ -1,22 +1,23 @@
-// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract
+// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#python-314-generated-model-contract
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec multi-language-openapi-client-generation-contract
+// @ec python-314-generated-model-contract
 // @capability multi-language-openapi-client-generation
 // @claim multi-language-openapi-client-generation-contract
-// @contract multi-language-openapi-client-generation-contract
+// @contract python-314-generated-model-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix
+// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix python_314_generated_model_contract -- --exact
 // AW-EC-END
 
-// Contract: The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.
-// Contract: The full external matrix covers Python 3.11-3.14 model smoke, TypeScript strict consumer type-check, Rust edition consumers, legacy golden compatibility, and deterministic materialized sidecars.
+// Contract: Python 3.14 output uses target-valid typing, compiles, imports, and validates the generated Pet model under Python 3.14.
+// Contract: The output carries exact Python 3.14 target requirements rather than inheriting an implicit language default.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn multi_language_openapi_client_generation_contract() {
-    let command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix";
-    let id = "multi-language-openapi-client-generation-contract";
+fn python_314_generated_model_contract() {
+    let command =
+        "cargo test -p cclab-openapi-codegen --test target_profile_matrix python_314_generated_model_contract -- --exact";
+    let id = "python-314-generated-model-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

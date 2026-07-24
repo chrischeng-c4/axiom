@@ -523,6 +523,7 @@ fn spec(args: SpecArgs) -> Result<()> {
             &json,
             &cclab_openapi_codegen::GenOptions {
                 lang,
+                target: None,
                 spec_path: PathBuf::new(),
                 out_dir: args.out.clone(),
                 client_name: "createDeferClient".into(),

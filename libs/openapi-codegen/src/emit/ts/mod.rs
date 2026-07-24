@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 /// Pure TS generation: spec JSON text → in-memory files. No filesystem access.
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
-    generate_for_target(spec_json, opts, TypeScriptTarget::Ts50)
+    generate_impl(spec_json, opts, None)
 }
 
 /// Profile-aware TypeScript generation used by the public target-profile API.
@@ -34,6 +34,14 @@ pub fn generate_for_target(
     spec_json: &str,
     opts: &GenOptions,
     target: TypeScriptTarget,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target))
+}
+
+fn generate_impl(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: Option<TypeScriptTarget>,
 ) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
@@ -66,10 +74,12 @@ pub fn generate_for_target(
         rel_path: "index.ts".to_string(),
         contents: emit_index(opts),
     });
-    Ok(GeneratedOutput::for_target(
-        files,
-        crate::TargetProfile::TypeScript(target),
-    ))
+    Ok(match target {
+        Some(target) => {
+            GeneratedOutput::for_target(files, crate::TargetProfile::TypeScript(target))
+        }
+        None => GeneratedOutput::legacy(files),
+    })
 }
 
 fn emit_index(opts: &GenOptions) -> String {

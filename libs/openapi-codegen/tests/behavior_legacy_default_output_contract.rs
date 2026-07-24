@@ -1,22 +1,23 @@
-// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract
+// SPEC-MANAGED: libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#legacy-default-output-contract
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec multi-language-openapi-client-generation-contract
+// @ec legacy-default-output-contract
 // @capability multi-language-openapi-client-generation
 // @claim multi-language-openapi-client-generation-contract
-// @contract multi-language-openapi-client-generation-contract
+// @contract legacy-default-output-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix
+// @command cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact
 // AW-EC-END
 
-// Contract: The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.
-// Contract: The full external matrix covers Python 3.11-3.14 model smoke, TypeScript strict consumer type-check, Rust edition consumers, legacy golden compatibility, and deterministic materialized sidecars.
+// Contract: GenOptions target None reproduces fixed file lists and byte fingerprints for legacy TypeScript, Python, and Rust generation.
+// Contract: TypeScript, Python, and Rust legacy outputs are each materialized independently and each proves the target sidecar is absent.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn multi_language_openapi_client_generation_contract() {
-    let command = "cargo test -p cclab-openapi-codegen --test target_profile_matrix";
-    let id = "multi-language-openapi-client-generation-contract";
+fn legacy_default_output_contract() {
+    let command =
+        "cargo test -p cclab-openapi-codegen --test target_profile_matrix legacy_default_output_contract -- --exact";
+    let id = "legacy-default-output-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

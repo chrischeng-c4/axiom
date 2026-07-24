@@ -34,17 +34,18 @@ Gate Inventory: `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/
 
 ## Versioned target profiles
 
-`generate` keeps the ergonomic language-only API and chooses a conservative
-default profile: Python 3.11, TypeScript 5.0, or Rust 2021. Consumers that need
-an exact generated-artifact contract call `generate_for_target` with a profile;
+`GenOptions::target` is the explicit target contract. `target: None` keeps the
+pre-profile generated files byte-for-byte and emits no target manifest.
+`target: Some(profile)` (or `generate_for_target`) enables version-aware syntax;
 the returned `GeneratedOutput` carries the selected `target` and deterministic
-`requirements` (minimum version and generated-runtime dependencies).
+requirements: compiler/minimum version, language standard, module/strictness
+settings where applicable, transport, and ordered runtime dependencies.
 
 Projects pin their defaults in a `codegen.toml` `[targets]` table and may offer
 an explicit target override. When an output is materialized through
-`GeneratedOutput::write_to_dir`, it always includes
-`.cclab-openapi-codegen.json`, recording the exact target, minimum version,
-and runtime dependencies for downstream verification.
+`GeneratedOutput::write_to_dir`, explicitly targeted output includes
+`.cclab-openapi-codegen.json`, recording the complete target contract for
+downstream verification. Legacy `target: None` output does not add a sidecar.
 
 | Language | Profiles | Artifact effect |
 |---|---|---|

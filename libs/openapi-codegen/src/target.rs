@@ -130,19 +130,40 @@ impl TargetProfile {
             Self::Python(target) => TargetRequirements {
                 target: self.id(),
                 language: Lang::Py,
+                compiler: "python",
                 minimum_version: target.minimum_version(),
+                language_standard: target.minimum_version(),
+                module_system: None,
+                module_resolution: None,
+                strict: None,
+                transport: Some("generated-h2c-and-tls-alpn-h2"),
                 runtime_dependencies: &["pydantic>=2"],
             },
             Self::TypeScript(target) => TargetRequirements {
                 target: self.id(),
                 language: Lang::Ts,
+                compiler: "typescript",
                 minimum_version: target.minimum_version(),
+                language_standard: "ES2022",
+                module_system: Some("ESNext"),
+                module_resolution: Some("Bundler"),
+                strict: Some(true),
+                transport: Some("fetch-or-axios"),
                 runtime_dependencies: &[],
             },
             Self::Rust(target) => TargetRequirements {
                 target: self.id(),
                 language: Lang::Rust,
+                compiler: "rustc",
                 minimum_version: target.minimum_version(),
+                language_standard: match target {
+                    RustTarget::Rust2021 => "2021",
+                    RustTarget::Rust2024 => "2024",
+                },
+                module_system: None,
+                module_resolution: None,
+                strict: None,
+                transport: Some("reqwest-blocking"),
                 runtime_dependencies: &["reqwest", "serde", "serde_json"],
             },
         }
@@ -264,7 +285,13 @@ fn parse_policy_target(value: String, lang: Lang, key: &str) -> Result<TargetPro
 pub struct TargetRequirements {
     pub target: &'static str,
     pub language: Lang,
+    pub compiler: &'static str,
     pub minimum_version: &'static str,
+    pub language_standard: &'static str,
+    pub module_system: Option<&'static str>,
+    pub module_resolution: Option<&'static str>,
+    pub strict: Option<bool>,
+    pub transport: Option<&'static str>,
     pub runtime_dependencies: &'static [&'static str],
 }
 
@@ -285,6 +312,16 @@ mod tests {
 
         assert!(RustTarget::Rust2024.reserves_gen());
         assert!(!RustTarget::Rust2021.reserves_gen());
+
+        let typescript = TargetProfile::TypeScript(TypeScriptTarget::Ts50).requirements();
+        assert_eq!(typescript.language_standard, "ES2022");
+        assert_eq!(typescript.module_system, Some("ESNext"));
+        assert_eq!(typescript.module_resolution, Some("Bundler"));
+        assert_eq!(typescript.strict, Some(true));
+
+        let rust = TargetProfile::Rust(RustTarget::Rust2024).requirements();
+        assert_eq!(rust.language_standard, "2024");
+        assert_eq!(rust.transport, Some("reqwest-blocking"));
     }
 
     #[test]

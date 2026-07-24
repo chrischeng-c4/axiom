@@ -88,9 +88,29 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Keep generated Python runtime annotation behavior compatible with its profile."
+  - path: "libs/openapi-codegen/src/emit/py/mod.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Keep target None on the byte-compatible legacy Python path and attach metadata only for explicit profiles."
+  - path: "libs/openapi-codegen/src/emit/ts/mod.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Separate legacy TypeScript output from explicitly targeted output metadata."
+  - path: "libs/openapi-codegen/src/emit/rust/mod.rs"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Separate legacy Rust output from explicitly targeted edition metadata."
   - path: "libs/openapi-codegen/src/emit/rust/models_emit.rs"
     action: modify
     section: logic
     impl_mode: hand-written
     description: "Use Rust edition-aware generated identifiers, including Rust 2024 gen."
+  - path: "libs/openapi-codegen/tests/target_profile_matrix.rs"
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "Fail-closed external Python, TypeScript, Rust, legacy-golden, and determinism verification matrix."
 ```

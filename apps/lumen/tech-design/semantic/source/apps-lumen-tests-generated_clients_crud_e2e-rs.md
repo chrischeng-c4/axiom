@@ -105,6 +105,7 @@ impl LumenServer {
 fn opts(lang: Lang) -> GenOptions {
     GenOptions {
         lang,
+        target: None,
         spec_path: PathBuf::new(),
         out_dir: PathBuf::new(),
         client_name: "createLumenClient".to_string(),
