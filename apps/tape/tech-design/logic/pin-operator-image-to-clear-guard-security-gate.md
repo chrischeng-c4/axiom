@@ -17,7 +17,7 @@ nodes:
     label: "apps/tape/k8s/operator/deployment.yaml"
   pinned_release:
     kind: process
-    label: "image: tape:0.4.5"
+    label: "image: ghcr.io/chrischeng-c4/tape:0.4.10"
   namespace_render:
     kind: terminal
     label: "namespace substitution preserves the pinned image"
@@ -30,12 +30,12 @@ edges:
   - { from: pinned_release, to: guard }
 ---
 flowchart TD
-    fixture[operator Deployment fixture] --> release[tape:0.4.5]
+    fixture[operator Deployment fixture] --> release[ghcr.io/chrischeng-c4/tape:0.4.10]
     release --> render[operator render keeps image]
     release --> guard[K8003 clear]
 ```
 
-`apps/tape/k8s/operator/deployment.yaml` is the exact Deployment fragment consumed by `render_operator_yaml`. Its operator image is pinned to the workspace's concrete Tape release tag (`tape:0.4.5`). Rendering may replace only `tape-system` namespace fields and therefore cannot downgrade that image reference. The data-plane instance renderer remains separately configurable through its existing `--image` option; this change does not turn a local dev override into a production operator default.
+`apps/tape/k8s/operator/deployment.yaml` is the exact Deployment fragment consumed by `render_operator_yaml`. Its operator image is pinned to the workspace's concrete Tape release tag (`ghcr.io/chrischeng-c4/tape:0.4.10`). Rendering may replace only `tape-system` namespace fields and therefore cannot downgrade that image reference. The data-plane instance renderer remains separately configurable through its existing `--image` option; this change does not turn a local dev override into a production operator default.
 ## Changes
 <!-- type: changes lang: yaml -->
 
