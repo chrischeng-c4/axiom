@@ -30,8 +30,7 @@ flowchart LR
   file[Bounded top-level file name] -->|auxiliary.file.name| child
 ```
 
-Each terminal container becomes an explicit accessibility element with contained children before its identifier is assigned. SwiftUI then exposes both the container and descendant controls instead of propagating the parent identifier onto every accessible leaf. Auxiliary rows use the top-level entry name, which is unique within one project root and bounded independently of the absolute fixture path.
-
+Apply `.accessibilityElement(children: .contain)` before assigning identifiers to the terminal workspace, toolbar, pane tree, split containers, and pane leaves. This prevents parent identifiers from replacing descendant Menu/Button identifiers in the native accessibility tree. Auxiliary rows identify `auxiliary.file.<entry.name>` because top-level filesystem names are unique within the displayed root and do not inherit an arbitrarily long XCTest container path.
 ## Changes
 <!-- type: changes lang: yaml -->
 
