@@ -207,7 +207,41 @@ fn generated_crd_is_structural_and_includes_backup_and_signing() {
     assert!(yaml.contains("name: defers.defer.dev"));
     assert!(yaml.contains("targetSigningSecret"));
     assert!(yaml.contains("backup"));
+    assert!(yaml.contains("tokensSecretCsiDriver"));
     assert!(!yaml.contains("format: uint64"));
     assert!(!yaml.contains("format: uint32"));
+}
+
+/// GKE's managed Secrets Store add-on registers a different CSI driver name
+/// than the community default (#2456/#2457); an explicit
+/// `tokensSecretCsiDriver` must render that name on the pod volume.
+#[test]
+fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
+    let defer: Defer = serde_json::from_value(json!({
+        "apiVersion": "defer.dev/v1alpha1",
+        "kind": "Defer",
+        "metadata": {"name": "jobs", "namespace": "payments", "uid": "u-1"},
+        "spec": {
+            "image": "registry/defer:1",
+            "replicasPerShard": 3,
+            "voterCount": 3,
+            "storage": "100Gi",
+            "auth": "required",
+            "tokensSecretProviderClass": "defer-registry-csi",
+            "tokensSecretCsiDriver": "secrets-store-gke.csi.k8s.io"
+        }
+    }))
+    .unwrap();
+    let objects = operator::render::render(&defer);
+    let stateful = object(&objects, "StatefulSet", "jobs");
+    let vol = named(
+        &stateful["spec"]["template"]["spec"]["volumes"],
+        "defer-token-registry",
+    );
+    assert_eq!(vol["csi"]["driver"], "secrets-store-gke.csi.k8s.io");
+    assert_eq!(
+        vol["csi"]["volumeAttributes"]["secretProviderClass"],
+        "defer-registry-csi"
+    );
 }
 // HANDWRITE-END

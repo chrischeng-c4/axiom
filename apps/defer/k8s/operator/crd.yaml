@@ -111,6 +111,10 @@ spec:
               tokensSecret:
                 nullable: true
                 type: string
+              tokensSecretCsiDriver:
+                description: CSI driver name for the `tokensSecretProviderClass` projection. Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE instances must set that value (#2456).
+                nullable: true
+                type: string
               tokensSecretProviderClass:
                 nullable: true
                 type: string

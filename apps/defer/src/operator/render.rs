@@ -66,7 +66,7 @@ fn token_source(defer: &Defer) -> Option<render::TokenRegistrySource<'_>> {
         .as_deref()
         .map(|provider_class| render::TokenRegistrySource::Csi {
             provider_class,
-            driver: None,
+            driver: defer.spec.tokens_secret_csi_driver.as_deref(),
         })
 }
 
