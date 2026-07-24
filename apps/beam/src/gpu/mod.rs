@@ -275,29 +275,28 @@ impl GpuFlatIndex {
             source: wgpu::ShaderSource::Wgsl(include_str!("flat.wgsl").into()),
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("beam_flat_bgl"),
-                entries: &[
-                    // 0: db vectors (storage, read-only)
-                    storage_entry(0, true),
-                    // 1: query vector (storage, read-only)
-                    storage_entry(1, true),
-                    // 2: params (uniform)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("beam_flat_bgl"),
+            entries: &[
+                // 0: db vectors (storage, read-only)
+                storage_entry(0, true),
+                // 1: query vector (storage, read-only)
+                storage_entry(1, true),
+                // 2: params (uniform)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // 3: out distances (storage, read_write)
-                    storage_entry(3, false),
-                ],
-            });
+                    count: None,
+                },
+                // 3: out distances (storage, read_write)
+                storage_entry(3, false),
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("beam_flat_pipeline_layout"),
@@ -424,12 +423,11 @@ impl GpuFlatIndex {
                     storage_entry(18, true),  // keep bitmask (read-only)
                 ],
             });
-        let topk_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("beam_flat_topk_pipeline_layout"),
-                bind_group_layouts: &[&topk_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let topk_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("beam_flat_topk_pipeline_layout"),
+            bind_group_layouts: &[&topk_bind_group_layout],
+            push_constant_ranges: &[],
+        });
         let topk_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("beam_flat_topk_pipeline"),
             layout: Some(&topk_pipeline_layout),
@@ -571,13 +569,13 @@ impl GpuFlatIndex {
             metric: self.metric.code(),
             _pad: 0,
         };
-        let params_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("beam_params"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let out_bytes = (self.n * std::mem::size_of::<f32>()) as wgpu::BufferAddress;
         let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -686,13 +684,13 @@ impl GpuFlatIndex {
             metric: self.metric.code(),
             _pad: 0,
         };
-        let params_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("beam_params_filtered"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_params_filtered"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let out_bytes = (self.n * std::mem::size_of::<f32>()) as wgpu::BufferAddress;
         let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1086,7 +1084,12 @@ impl GpuFlatIndex {
     /// run the 2D grid (one invocation per (query, DB row)) against the resident DB
     /// buffer and the reused keep `mask_buffer`, and read back the `num_q * n`
     /// query-major distance sub-matrix.
-    fn dispatch_batch(&self, packed_q: &[f32], num_q: usize, mask_buffer: &wgpu::Buffer) -> Vec<f32> {
+    fn dispatch_batch(
+        &self,
+        packed_q: &[f32],
+        num_q: usize,
+        mask_buffer: &wgpu::Buffer,
+    ) -> Vec<f32> {
         let query_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1101,13 +1104,13 @@ impl GpuFlatIndex {
             metric: self.metric.code(),
             num_q: num_q as u32,
         };
-        let params_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("beam_batch_params"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_batch_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let out_len = num_q * self.n;
         let out_bytes = (out_len * std::mem::size_of::<f32>()) as wgpu::BufferAddress;
@@ -1220,13 +1223,13 @@ impl GpuFlatIndex {
             _p1: 0,
             _p2: 0,
         };
-        let params_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("beam_topk_params"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_topk_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Output: num_q * want entries, each two u32s [score_bits, row].
         let out_u32 = num_q * want * 2;
@@ -1345,13 +1348,13 @@ impl GpuFlatIndex {
             split_len: split_len as u32,
             _p0: 0,
         };
-        let params_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("beam_tiled_params"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_tiled_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Output: num_q * num_splits * want entries, each two u32s [score_bits, row].
         let out_u32 = num_q * num_splits * want * 2;

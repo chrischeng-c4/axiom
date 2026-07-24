@@ -12,14 +12,14 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::sync::{
-    Arc,
     atomic::{AtomicI32, Ordering},
     mpsc::{self, Receiver},
+    Arc,
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use signal_hook::{
     consts::signal::{SIGINT, SIGTERM},
@@ -27,9 +27,10 @@ use signal_hook::{
 };
 
 use super::{
-    ActiveSession, SessionKubeconfig, ensure_apple_container, exit_code, k8s_host_command,
-    read_active_session, require_active_session_lease, require_private_file, sensitive_environment,
-    validate_active_session_backing, verify_host_api, write_new_marker,
+    ensure_apple_container, exit_code, k8s_host_command, read_active_session,
+    require_active_session_lease, require_private_file, sensitive_environment,
+    validate_active_session_backing, verify_host_api, write_new_marker, ActiveSession,
+    SessionKubeconfig,
 };
 
 const MAX_SESSION_EXEC_STREAM_CAPTURE_BYTES: u64 = 64 * 1024;
@@ -928,10 +929,8 @@ fn cap_to_json_string_value(text: String) -> Result<(String, bool)> {
         }
     }
     let suffix = text[boundaries[lower]..].to_string();
-    debug_assert!(
-        serialized_json_string_len(&suffix)
-            .is_ok_and(|length| length <= MAX_SESSION_EXEC_JSON_STREAM_VALUE_BYTES)
-    );
+    debug_assert!(serialized_json_string_len(&suffix)
+        .is_ok_and(|length| length <= MAX_SESSION_EXEC_JSON_STREAM_VALUE_BYTES));
     Ok((suffix, true))
 }
 

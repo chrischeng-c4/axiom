@@ -9,10 +9,7 @@ const EXPECTED_REFS: [(&str, &str); 19] = [
     ("long-running-stability", "repeated-raft-restart-endurance"),
     ("long-running-stability", "bounded-http-replay-soak"),
     ("security-hardening", "topic-replay-security-boundary"),
-    (
-        "security-hardening",
-        "opt-in-server-ingress-network-policy",
-    ),
+    ("security-hardening", "opt-in-server-ingress-network-policy"),
     (
         "subscription-delivery-resources",
         "pull-subscription-cursor-contract",
@@ -25,10 +22,7 @@ const EXPECTED_REFS: [(&str, &str); 19] = [
         "http2-api-list",
         "service-http-shell-h2c-serve-standard-endpoints",
     ),
-    (
-        "http2-api-list",
-        "backup-service-tls-spec-gen-clients",
-    ),
+    ("http2-api-list", "backup-service-tls-spec-gen-clients"),
     (
         "standard-operational-endpoints",
         "service-http-shell-h2c-serve-standard-endpoints",
@@ -49,14 +43,8 @@ const EXPECTED_REFS: [(&str, &str); 19] = [
     ),
     ("backup-restore", "exact-journal-snapshot-backup"),
     ("backup-restore", "fresh-pvc-cold-recovery-seed"),
-    (
-        "replica-sync-bootstrap",
-        "raft-log-existing-pvc-sync",
-    ),
-    (
-        "replica-sync-bootstrap",
-        "empty-pvc-external-backup-seed",
-    ),
+    ("replica-sync-bootstrap", "raft-log-existing-pvc-sync"),
+    ("replica-sync-bootstrap", "empty-pvc-external-backup-seed"),
     ("primary-replicas", "raft-backed-replay-journal"),
 ];
 
@@ -82,9 +70,18 @@ fn exact_primary_full_linkage_inventory_is_preserved() {
         );
     }
 
-    assert_eq!(frontmatter.matches("  - id: \"").count(), EXPECTED_REFS.len());
-    assert_eq!(frontmatter.matches("    role: primary").count(), EXPECTED_REFS.len());
-    assert_eq!(frontmatter.matches("    coverage: full").count(), EXPECTED_REFS.len());
+    assert_eq!(
+        frontmatter.matches("  - id: \"").count(),
+        EXPECTED_REFS.len()
+    );
+    assert_eq!(
+        frontmatter.matches("    role: primary").count(),
+        EXPECTED_REFS.len()
+    );
+    assert_eq!(
+        frontmatter.matches("    coverage: full").count(),
+        EXPECTED_REFS.len()
+    );
 }
 
 #[test]

@@ -462,8 +462,7 @@ mod tests {
                     // does not match a bare `&str`'s native `Hash` impl — route
                     // through `dict_get_exact_str` (module-hazards.md).
                     !map.is_empty()
-                        && super::super::super::dict_ops::dict_get_exact_str(&map, "PATH")
-                            .is_some()
+                        && super::super::super::dict_ops::dict_get_exact_str(&map, "PATH").is_some()
                 } else {
                     false
                 }

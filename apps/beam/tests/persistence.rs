@@ -92,7 +92,10 @@ fn build_corpus_with_mutations() -> Collection {
 
 /// The ids deleted by [`build_corpus_with_mutations`] — must stay gone after load.
 fn deleted_ids() -> HashSet<String> {
-    (0..N).step_by(DELETE_STRIDE).map(|i| format!("v{i}")).collect()
+    (0..N)
+        .step_by(DELETE_STRIDE)
+        .map(|i| format!("v{i}"))
+        .collect()
 }
 
 fn queries() -> Vec<Vec<f32>> {
@@ -190,19 +193,31 @@ fn flat_round_trip_identity_cpu_and_gpu() {
     assert_eq!(original.capacity(), loaded.capacity());
     assert_eq!(original.tombstoned(), loaded.tombstoned());
     assert_eq!(original.data(), loaded.data(), "vectors survive");
-    assert_eq!(original.external_ids(), loaded.external_ids(), "external ids survive");
+    assert_eq!(
+        original.external_ids(),
+        loaded.external_ids(),
+        "external ids survive"
+    );
     assert_eq!(original.live(), loaded.live(), "tombstone bits survive");
     assert_eq!(original.payloads(), loaded.payloads(), "payloads survive");
     // id_map rebuilt: a sample of live/deleted ids resolves as before.
     for id in ["v1", "v2", "v500", "v2999"] {
-        assert_eq!(original.row_of(id), loaded.row_of(id), "id_map rebuilt for {id}");
+        assert_eq!(
+            original.row_of(id),
+            loaded.row_of(id),
+            "id_map rebuilt for {id}"
+        );
     }
 
     // CPU flat top-k over the loaded collection == over the original.
     let cpu_orig = CpuFlatIndex::new(&original);
     let cpu_loaded = CpuFlatIndex::new(&loaded);
     for q in &queries() {
-        assert_identical_topk(&cpu_orig.search_knn(q, K), &cpu_loaded.search_knn(q, K), "flat CPU");
+        assert_identical_topk(
+            &cpu_orig.search_knn(q, K),
+            &cpu_loaded.search_knn(q, K),
+            "flat CPU",
+        );
     }
 
     // GPU flat top-k over the loaded collection == over the original (buffers
@@ -211,7 +226,11 @@ fn flat_round_trip_identity_cpu_and_gpu() {
         let gpu_orig = GpuFlatIndex::new(&gpu, &original);
         let gpu_loaded = GpuFlatIndex::new(&gpu, &loaded);
         for q in &queries() {
-            assert_identical_topk(&gpu_orig.search_knn(q, K), &gpu_loaded.search_knn(q, K), "flat GPU");
+            assert_identical_topk(
+                &gpu_orig.search_knn(q, K),
+                &gpu_loaded.search_knn(q, K),
+                "flat GPU",
+            );
         }
     }
 
@@ -231,7 +250,10 @@ fn ivfpq_round_trip_identity_and_no_retrain_cpu_and_gpu() {
     let loaded = IvfPqIndex::load(&path).unwrap();
 
     // (2) No retrain: the trained model reloads byte-for-byte.
-    assert!(!index.codebooks().is_empty(), "PQ config must produce codebooks");
+    assert!(
+        !index.codebooks().is_empty(),
+        "PQ config must produce codebooks"
+    );
     assert_eq!(
         index.coarse_centroids(),
         loaded.coarse_centroids(),
@@ -287,7 +309,10 @@ fn payloads_and_tombstones_survive_load() {
     let deleted = deleted_ids();
     let filters = [
         ("category == 3", Filter::new().eq("category", 3i64)),
-        ("20 <= bucket <= 40", Filter::new().int_range("bucket", 20, 40)),
+        (
+            "20 <= bucket <= 40",
+            Filter::new().int_range("bucket", 20, 40),
+        ),
     ];
 
     // ---- Collection / flat path ----
@@ -297,7 +322,10 @@ fn payloads_and_tombstones_survive_load() {
     assert_eq!(corpus.payloads(), loaded_col.payloads(), "payloads survive");
     assert_eq!(corpus.live(), loaded_col.live(), "tombstones survive");
     for id in &deleted {
-        assert!(!loaded_col.contains(id), "deleted id {id} must stay deleted after load");
+        assert!(
+            !loaded_col.contains(id),
+            "deleted id {id} must stay deleted after load"
+        );
     }
     let cpu_orig = CpuFlatIndex::new(&corpus);
     let cpu_loaded = CpuFlatIndex::new(&loaded_col);
@@ -316,7 +344,11 @@ fn payloads_and_tombstones_survive_load() {
     let ipath = temp_path("survive.idx");
     index.save(&ipath).unwrap();
     let loaded_idx = IvfPqIndex::load(&ipath).unwrap();
-    assert_eq!(index.live(), loaded_idx.live(), "IVF live/tombstone bits survive");
+    assert_eq!(
+        index.live(),
+        loaded_idx.live(),
+        "IVF live/tombstone bits survive"
+    );
     assert_eq!(index.tombstoned(), loaded_idx.tombstoned());
     for q in &queries() {
         // Filtered IVF top-k identical.
@@ -329,7 +361,11 @@ fn payloads_and_tombstones_survive_load() {
         }
         // A deleted id never comes back from the loaded index.
         for nb in loaded_idx.search_cpu(q, K, NLIST) {
-            assert!(!deleted.contains(&nb.external_id), "deleted id {} returned after load", nb.external_id);
+            assert!(
+                !deleted.contains(&nb.external_id),
+                "deleted id {} returned after load",
+                nb.external_id
+            );
         }
     }
 
@@ -363,7 +399,11 @@ fn cold_start_load_and_search() {
     let cold_idx = IvfPqIndex::load(&ipath).unwrap();
     assert!(!cold_col.is_empty(), "cold-loaded collection is non-empty");
     assert!(!cold_idx.is_empty(), "cold-loaded index is non-empty");
-    assert_eq!(cold_col.len(), cold_idx.len(), "cold collection + index agree on live count");
+    assert_eq!(
+        cold_col.len(),
+        cold_idx.len(),
+        "cold collection + index agree on live count"
+    );
 
     // CPU: cold search reproduces the captured answers.
     for (q, exp) in qs.iter().zip(&expected) {
@@ -381,7 +421,11 @@ fn cold_start_load_and_search() {
         for q in &qs {
             let gpu_ivf = scanner.search(&cold_idx, q, K, NLIST);
             assert_eq!(gpu_ivf.len(), K, "cold GPU IVF search returns k results");
-            assert_eq!(gpu_flat.search_knn(q, K).len(), K, "cold GPU flat search returns k results");
+            assert_eq!(
+                gpu_flat.search_knn(q, K).len(),
+                K,
+                "cold GPU flat search returns k results"
+            );
         }
     }
 

@@ -81,10 +81,7 @@ async fn jieba_bigram_fallback_cjk_match_e2e() {
         .await;
     resp.assert_status_ok();
     let body: Value = resp.json();
-    assert_eq!(
-        body["total"], 1,
-        "Middle bigram match should work: {body}"
-    );
+    assert_eq!(body["total"], 1, "Middle bigram match should work: {body}");
     assert_eq!(body["hits"][0]["external_id"], "doc1");
 }
 // HANDWRITE-END

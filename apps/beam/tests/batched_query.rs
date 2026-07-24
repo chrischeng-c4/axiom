@@ -76,10 +76,16 @@ fn assert_batched_matches_serial(gpu: &GpuContext, metric: Metric) {
     for (qi, q) in queries.iter().enumerate() {
         let serial = index.search_knn(q, K);
         assert_eq!(serial.len(), K, "{metric:?} q{qi}: serial should return K");
-        assert_eq!(batched[qi].len(), K, "{metric:?} q{qi}: batched should return K");
+        assert_eq!(
+            batched[qi].len(),
+            K,
+            "{metric:?} q{qi}: batched should return K"
+        );
         assert_same(&format!("{metric:?} q{qi}"), &batched[qi], &serial);
     }
-    eprintln!("  batched == serial OK for {metric:?} (n={N}, dim={DIM}, k={K}, {N_QUERIES} queries)");
+    eprintln!(
+        "  batched == serial OK for {metric:?} (n={N}, dim={DIM}, k={K}, {N_QUERIES} queries)"
+    );
 }
 
 #[test]
@@ -106,7 +112,10 @@ fn batched_excludes_tombstones() {
     let mut collection = dataset::random_collection("batch-del", N, DIM, Metric::L2, DATASET_SEED);
     let deleted: HashSet<u32> = (0..N as u32).filter(|r| r % 7 == 0).collect();
     for &r in &deleted {
-        assert!(collection.delete(&format!("id-{r}")), "row {r} should be live before delete");
+        assert!(
+            collection.delete(&format!("id-{r}")),
+            "row {r} should be live before delete"
+        );
     }
     assert!(collection.tombstoned() > 0, "should have tombstones");
 
@@ -124,7 +133,11 @@ fn batched_excludes_tombstones() {
             );
         }
         // And the batched live result equals the serial live result.
-        assert_same(&format!("tombstone q{qi}"), &batched[qi], &index.search_knn(q, K));
+        assert_same(
+            &format!("tombstone q{qi}"),
+            &batched[qi],
+            &index.search_knn(q, K),
+        );
     }
     eprintln!(
         "  tombstones excluded OK ({} live, {} tombstoned)",
@@ -157,11 +170,18 @@ fn batched_is_tiling_invariant() {
         let tiled = index.search_knn_batch_tiled(&queries, K, tile);
         assert_eq!(tiled.len(), queries.len());
         for (qi, q) in queries.iter().enumerate() {
-            assert_same(&format!("tile={tile} q{qi} vs serial"), &tiled[qi], &index.search_knn(q, K));
+            assert_same(
+                &format!("tile={tile} q{qi} vs serial"),
+                &tiled[qi],
+                &index.search_knn(q, K),
+            );
             assert_same(&format!("tile={tile} q{qi} vs auto"), &tiled[qi], &auto[qi]);
         }
     }
-    eprintln!("  tiling invariance OK (tiles 1, 5, {N_QUERIES}, {} over {N_QUERIES} queries)", N_QUERIES + 8);
+    eprintln!(
+        "  tiling invariance OK (tiles 1, 5, {N_QUERIES}, {} over {N_QUERIES} queries)",
+        N_QUERIES + 8
+    );
 }
 
 /// A single query passed as a one-element batch equals the serial result — the
@@ -239,7 +259,11 @@ fn gpu_topk_matches_cpu_oracle() {
                 let oracle = cpu.search_knn(q, k);
                 assert_eq!(oracle.len(), k, "{metric:?} k={k} q{qi}: oracle len");
                 assert_eq!(batched[qi].len(), k, "{metric:?} k={k} q{qi}: gpu-topk len");
-                assert_same(&format!("{metric:?} k={k} q{qi} vs oracle"), &batched[qi], &oracle);
+                assert_same(
+                    &format!("{metric:?} k={k} q{qi} vs oracle"),
+                    &batched[qi],
+                    &oracle,
+                );
             }
         }
         eprintln!("  GPU top-k == CPU oracle OK for {metric:?} (k ∈ 1,10,32)");
@@ -264,7 +288,11 @@ fn gpu_topk_matches_distmatrix_path() {
         let distmatrix = index.search_knn_batch_distmatrix(&queries, k); // forced T×n path
         assert_eq!(topk.len(), distmatrix.len());
         for qi in 0..queries.len() {
-            assert_same(&format!("k={k} q{qi} topk vs distmatrix"), &topk[qi], &distmatrix[qi]);
+            assert_same(
+                &format!("k={k} q{qi} topk vs distmatrix"),
+                &topk[qi],
+                &distmatrix[qi],
+            );
         }
     }
     eprintln!("  GPU top-k == distance-matrix path OK (k ∈ 1,10,32)");
@@ -292,8 +320,16 @@ fn gpu_topk_falls_back_above_max_k() {
     for (qi, q) in queries.iter().enumerate() {
         let oracle = cpu.search_knn(q, k);
         assert_eq!(batched[qi].len(), k, "q{qi}: fallback should return k={k}");
-        assert_same(&format!("fallback k={k} q{qi} vs oracle"), &batched[qi], &oracle);
-        assert_same(&format!("fallback k={k} q{qi} vs distmatrix"), &batched[qi], &distmatrix[qi]);
+        assert_same(
+            &format!("fallback k={k} q{qi} vs oracle"),
+            &batched[qi],
+            &oracle,
+        );
+        assert_same(
+            &format!("fallback k={k} q{qi} vs distmatrix"),
+            &batched[qi],
+            &distmatrix[qi],
+        );
     }
     eprintln!("  k > MAX_TOPK ({k}) falls back to distance-matrix path + stays exact OK");
 }
@@ -332,7 +368,11 @@ fn gemm_tiled_matches_cpu_oracle() {
                 let oracle = cpu.search_knn(q, k);
                 assert_eq!(oracle.len(), k, "{metric:?} k={k} q{qi}: oracle len");
                 assert_eq!(tiled[qi].len(), k, "{metric:?} k={k} q{qi}: gemm len");
-                assert_same(&format!("gemm {metric:?} k={k} q{qi} vs oracle"), &tiled[qi], &oracle);
+                assert_same(
+                    &format!("gemm {metric:?} k={k} q{qi} vs oracle"),
+                    &tiled[qi],
+                    &oracle,
+                );
             }
         }
         eprintln!("  GEMM-tiled == CPU oracle OK for {metric:?} (k ∈ 1,10,32)");
@@ -356,7 +396,11 @@ fn gemm_tiled_matches_topk_path() {
             let topk = index.search_knn_batch_topk_tiled(&queries, k, queries.len());
             assert_eq!(tiled.len(), topk.len());
             for qi in 0..queries.len() {
-                assert_same(&format!("{metric:?} k={k} q{qi} gemm vs topk"), &tiled[qi], &topk[qi]);
+                assert_same(
+                    &format!("{metric:?} k={k} q{qi} gemm vs topk"),
+                    &tiled[qi],
+                    &topk[qi],
+                );
             }
         }
     }
@@ -377,8 +421,14 @@ fn gemm_tiled_tile_boundaries_and_tombstones() {
     // (spanning >1 query-tile with a ragged last tile).
     let n_boundary = 130 * TILE_N_GEMM + 7;
     let nq_boundary = 2 * TILE_Q_GEMM + 5;
-    assert!(!n_boundary.is_multiple_of(TILE_N_GEMM), "n must be off a TILE_N boundary");
-    assert!(!nq_boundary.is_multiple_of(TILE_Q_GEMM), "nq must be off a TILE_Q boundary");
+    assert!(
+        !n_boundary.is_multiple_of(TILE_N_GEMM),
+        "n must be off a TILE_N boundary"
+    );
+    assert!(
+        !nq_boundary.is_multiple_of(TILE_Q_GEMM),
+        "nq must be off a TILE_Q boundary"
+    );
 
     let mut collection =
         dataset::random_collection("gemm-b", n_boundary, DIM, Metric::L2, DATASET_SEED);
@@ -398,9 +448,17 @@ fn gemm_tiled_tile_boundaries_and_tombstones() {
         assert_eq!(tiled.len(), queries.len());
         for (qi, q) in queries.iter().enumerate() {
             for nb in &tiled[qi] {
-                assert!(!deleted.contains(&nb.row), "k={k} q{qi}: tombstoned row {} selected", nb.row);
+                assert!(
+                    !deleted.contains(&nb.row),
+                    "k={k} q{qi}: tombstoned row {} selected",
+                    nb.row
+                );
             }
-            assert_same(&format!("boundary k={k} q{qi}"), &tiled[qi], &cpu.search_knn(q, k));
+            assert_same(
+                &format!("boundary k={k} q{qi}"),
+                &tiled[qi],
+                &cpu.search_knn(q, k),
+            );
         }
     }
     eprintln!(
@@ -421,7 +479,10 @@ fn gemm_tiled_falls_back_for_unsupported_dim() {
     };
     // dim = 50 is not a multiple of 4 → tiled kernel ineligible → topk fallback.
     let dim = 50usize;
-    assert!(!dim.is_multiple_of(4), "test dim must be vec4-unaligned to force the fallback");
+    assert!(
+        !dim.is_multiple_of(4),
+        "test dim must be vec4-unaligned to force the fallback"
+    );
     let collection = dataset::random_collection("gemm-fb", 1500, dim, Metric::L2, DATASET_SEED);
     let queries = dataset::random_queries(N_QUERIES, dim, QUERY_SEED);
     let cpu = CpuFlatIndex::new(&collection);
@@ -430,7 +491,11 @@ fn gemm_tiled_falls_back_for_unsupported_dim() {
     let batched = index.search_knn_batch(&queries, K);
     for (qi, q) in queries.iter().enumerate() {
         assert_eq!(batched[qi].len(), K, "q{qi}: fallback should return K");
-        assert_same(&format!("dim-fallback q{qi}"), &batched[qi], &cpu.search_knn(q, K));
+        assert_same(
+            &format!("dim-fallback q{qi}"),
+            &batched[qi],
+            &cpu.search_knn(q, K),
+        );
     }
     eprintln!("  vec4-unaligned dim={dim} falls back to top-k path + stays exact OK");
 }

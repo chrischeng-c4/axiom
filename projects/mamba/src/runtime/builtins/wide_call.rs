@@ -145,7 +145,9 @@ impl ShimJit {
             );
         }
 
-        let call = builder.ins().call_indirect(sig_ref, target_addr, &call_args);
+        let call = builder
+            .ins()
+            .call_indirect(sig_ref, target_addr, &call_args);
         let results = builder.inst_results(call).to_vec();
         builder.ins().return_(&results);
         builder.finalize();
