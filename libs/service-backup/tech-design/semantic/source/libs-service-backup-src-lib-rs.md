@@ -21,19 +21,28 @@ Public API manifest for `libs/service-backup/src/lib.rs` captured during libs co
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `llm` | libs/service-backup/src/lib.rs | module | pub | 17 | pub mod llm; |
-| `BackupDestination` | libs/service-backup/src/lib.rs | re-export | pub | 25 | pub use destination::BackupDestination; |
-| `BackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
-| `ScheduledBackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
-| `RetentionPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy}; |
-| `run_backup_once` | libs/service-backup/src/lib.rs | re-export | pub | 27 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
-| `BackupObject` | libs/service-backup/src/lib.rs | re-export | pub | 27 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
-| `BackupRunResult` | libs/service-backup/src/lib.rs | re-export | pub | 27 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
-| `sink_from_destination` | libs/service-backup/src/lib.rs | re-export | pub | 28 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
-| `BackupSink` | libs/service-backup/src/lib.rs | re-export | pub | 28 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
-| `LocalFsSink` | libs/service-backup/src/lib.rs | re-export | pub | 28 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
-| `UnsupportedCloudSink` | libs/service-backup/src/lib.rs | re-export | pub | 28 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
-| `fetch_backup_object` | libs/service-backup/src/lib.rs | re-export | pub | 29 | pub use source::fetch_backup_object; |
+| `llm` | libs/service-backup/src/lib.rs | module | pub | 21 | pub mod llm; |
+| `BackupDestination` | libs/service-backup/src/lib.rs | re-export | pub | 29 | pub use destination::{BackupDestination, SchemeInfo, SUPPORTED_SCHEMES}; |
+| `SchemeInfo` | libs/service-backup/src/lib.rs | re-export | pub | 29 | pub use destination::{BackupDestination, SchemeInfo, SUPPORTED_SCHEMES}; |
+| `SUPPORTED_SCHEMES` | libs/service-backup/src/lib.rs | re-export | pub | 29 | pub use destination::{BackupDestination, SchemeInfo, SUPPORTED_SCHEMES}; |
+| `BackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 33 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
+| `ScheduledBackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 33 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
+| `RetentionPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 33 | pub use policy::{BackupPolicy, RetentionPolicy}; |
+| `run_backup_once` | libs/service-backup/src/lib.rs | re-export | pub | 34 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
+| `BackupObject` | libs/service-backup/src/lib.rs | re-export | pub | 34 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
+| `BackupRunResult` | libs/service-backup/src/lib.rs | re-export | pub | 34 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
+| `sink_from_destination` | libs/service-backup/src/lib.rs | re-export | pub | 35 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
+| `BackupSink` | libs/service-backup/src/lib.rs | re-export | pub | 35 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
+| `LocalFsSink` | libs/service-backup/src/lib.rs | re-export | pub | 35 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
+| `UnsupportedCloudSink` | libs/service-backup/src/lib.rs | re-export | pub | 35 | pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink}; |
+| `fetch_backup_object` | libs/service-backup/src/lib.rs | re-export | pub | 36 | pub use source::fetch_backup_object; |
+
+#2494: `SchemeInfo`/`SUPPORTED_SCHEMES` are now re-exported from
+`destination` so CLI composition can reference
+`service_backup::SUPPORTED_SCHEMES` directly for `llm` topic `Generated`
+sections. Also reflects the previously-landed `http-client` feature's
+`mod http` + `fetch_admin_snapshot`/`run_admin_snapshot_backup` re-export,
+which this mirror had not yet captured.
 
 
 ## Source
@@ -53,10 +62,13 @@ Public API manifest for `libs/service-backup/src/lib.rs` captured during libs co
 //! returned bytes through a [`BackupSink`]. Local and GCS are always available;
 //! S3 is feature-gated. GCS uses workload identity in production and Vat's
 //! `STORAGE_EMULATOR_HOST` locally. Bootstrap/restore reads exact object URIs
-//! through [`fetch_backup_object`].
+//! through [`fetch_backup_object`]. The optional `http-client` feature adds the
+//! standard authenticated admin-snapshot transport used by service backup CLIs.
 
 mod destination;
 mod gcs;
+#[cfg(feature = "http-client")]
+mod http;
 pub mod llm;
 mod policy;
 mod runner;
@@ -65,9 +77,11 @@ mod s3;
 mod sink;
 mod source;
 
-pub use destination::BackupDestination;
-pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy};
+pub use destination::{BackupDestination, SchemeInfo, SUPPORTED_SCHEMES};
 pub use gcs::GcsSink;
+#[cfg(feature = "http-client")]
+pub use http::{fetch_admin_snapshot, run_admin_snapshot_backup};
+pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy};
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};
 pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink};
 pub use source::fetch_backup_object;
@@ -85,4 +99,8 @@ changes:
     impl_mode: codegen
     description: |
       rust-source-unit (td_ast) source for `libs/service-backup/src/lib.rs` captured during libs codegen standardization.
+      #2494: re-export `SchemeInfo`/`SUPPORTED_SCHEMES` from `destination`
+      alongside `BackupDestination`. Mirror also reconciled with the
+      previously-landed `http-client` feature module/re-export that this
+      TD had not yet captured.
 ```

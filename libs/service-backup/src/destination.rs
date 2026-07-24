@@ -40,6 +40,47 @@ pub enum BackupDestination {
     },
 }
 
+/// One backup destination scheme [`BackupDestination::from_uri`] accepts,
+/// paired with a human-readable description and whether a live upload sink
+/// is linked into this build (see `sink_from_destination` in `sink.rs`).
+///
+/// This is the canonical scheme inventory: CLI `llm` topics render it at
+/// call time (`cli_std::llm::TopicSection::Generated`) instead of
+/// hand-copying the scheme list into a `&'static str`, so a topic body can
+/// never drift from what `from_uri`/`sink_from_destination` actually accept
+/// (#2494).
+#[derive(Clone, Copy, Debug)]
+pub struct SchemeInfo {
+    pub scheme: &'static str,
+    pub description: &'static str,
+    /// `false` means the scheme still parses via `from_uri`, but
+    /// `BackupSink::put`/`prune` fail loud through `UnsupportedCloudSink`
+    /// because the adapter crate feature isn't linked into this build.
+    pub sink_available: bool,
+}
+
+/// Canonical scheme table backing [`BackupDestination::from_uri`], ordered
+/// to match its parse order. `sink_available` reflects the *this build's*
+/// linked feature set via `cfg!`, so it can't go stale independent of the
+/// actual `Cargo.toml` feature wiring.
+pub const SUPPORTED_SCHEMES: &[SchemeInfo] = &[
+    SchemeInfo {
+        scheme: "file://",
+        description: "local filesystem path — dev/tests and PVC-backed local runs",
+        sink_available: true,
+    },
+    SchemeInfo {
+        scheme: "s3://",
+        description: "Amazon S3-compatible object store",
+        sink_available: cfg!(feature = "s3"),
+    },
+    SchemeInfo {
+        scheme: "gs://",
+        description: "Google Cloud Storage — workload identity in production, `STORAGE_EMULATOR_HOST` locally",
+        sink_available: true,
+    },
+];
+
 /// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 impl BackupDestination {
     /// Parse the common URI spellings used by operators and CLIs.
@@ -72,7 +113,14 @@ impl BackupDestination {
                 credentials_secret: None,
             });
         }
-        bail!("unsupported backup destination URI `{raw}`; use file://, s3://, or gs://")
+        bail!(
+            "unsupported backup destination URI `{raw}`; use {}",
+            SUPPORTED_SCHEMES
+                .iter()
+                .map(|s| s.scheme)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     pub fn identity(&self) -> String {
@@ -136,6 +184,42 @@ mod tests {
     fn rejects_missing_bucket() {
         assert!(BackupDestination::from_uri("s3:///prefix").is_err());
         assert!(BackupDestination::from_uri("gs://").is_err());
+    }
+
+    #[test]
+    fn supported_schemes_match_from_uri_error_message() {
+        let err = BackupDestination::from_uri("ftp://nope")
+            .unwrap_err()
+            .to_string();
+        for info in SUPPORTED_SCHEMES {
+            assert!(
+                err.contains(info.scheme),
+                "error message {err:?} missing scheme {}",
+                info.scheme
+            );
+        }
+    }
+
+    #[test]
+    fn supported_schemes_each_parse_successfully() {
+        for info in SUPPORTED_SCHEMES {
+            let uri = match info.scheme {
+                "file://" => "file:///tmp/backups".to_string(),
+                other => format!("{other}bucket/prefix"),
+            };
+            assert!(
+                BackupDestination::from_uri(&uri).is_ok(),
+                "scheme {} failed to parse a well-formed URI",
+                info.scheme
+            );
+        }
+    }
+
+    #[test]
+    fn local_and_gcs_sinks_always_available() {
+        let by_scheme = |scheme: &str| SUPPORTED_SCHEMES.iter().find(|s| s.scheme == scheme);
+        assert!(by_scheme("file://").unwrap().sink_available);
+        assert!(by_scheme("gs://").unwrap().sink_available);
     }
 }
 // CODEGEN-END

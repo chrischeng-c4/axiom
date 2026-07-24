@@ -21,7 +21,13 @@ Public API manifest for `libs/service-backup/src/source.rs` captured during libs
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `fetch_backup_object` | libs/service-backup/src/source.rs | function | pub | 12 | pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> { |
+| `fetch_backup_object` | libs/service-backup/src/source.rs | function | pub | 17 | pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> { |
+
+#2494: the trailing `unsupported backup object URI` error now derives its
+scheme list from `crate::destination::SUPPORTED_SCHEMES` instead of a
+hand-copied `file://, s3://, or gs://` literal, so it stays in lockstep
+with `BackupDestination::from_uri`'s own error message and can't omit or
+misname a scheme this crate actually accepts.
 
 
 ## Source
@@ -30,6 +36,7 @@ Public API manifest for `libs/service-backup/src/source.rs` captured during libs
 ````rust
 use anyhow::{bail, ensure, Context, Result};
 
+use crate::destination::SUPPORTED_SCHEMES;
 use crate::gcs;
 #[cfg(feature = "s3")]
 use crate::s3;
@@ -64,7 +71,14 @@ pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> {
     if uri.starts_with("gs://") {
         return gcs::get_exact_object(uri);
     }
-    bail!("unsupported backup object URI `{uri}`; use file://, s3://, or gs://")
+    bail!(
+        "unsupported backup object URI `{uri}`; use {}",
+        SUPPORTED_SCHEMES
+            .iter()
+            .map(|s| s.scheme)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn split_bucket_key(rest: &str, scheme: &str) -> Result<(String, String)> {
@@ -105,6 +119,18 @@ mod tests {
         assert!(fetch_backup_object("s3:///key").is_err());
         assert!(fetch_backup_object("s3://bucket/").is_err());
     }
+
+    #[test]
+    fn unsupported_scheme_error_lists_every_supported_scheme() {
+        let err = fetch_backup_object("ftp://nope").unwrap_err().to_string();
+        for info in SUPPORTED_SCHEMES {
+            assert!(
+                err.contains(info.scheme),
+                "error message {err:?} missing scheme {}",
+                info.scheme
+            );
+        }
+    }
 }
 ````
 
@@ -120,4 +146,9 @@ changes:
     impl_mode: codegen
     description: |
       rust-source-unit (td_ast) source for `libs/service-backup/src/source.rs` captured during libs codegen standardization.
+      #2494: `fetch_backup_object`'s unsupported-scheme error message now
+      derives its scheme list from `crate::destination::SUPPORTED_SCHEMES`
+      instead of a hand-copied `file://, s3://, or gs://` literal, matching
+      the same fix already applied to `BackupDestination::from_uri` in
+      `destination.rs`.
 ```

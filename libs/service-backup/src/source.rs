@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 use anyhow::{bail, ensure, Context, Result};
 
+use crate::destination::SUPPORTED_SCHEMES;
 use crate::gcs;
 #[cfg(feature = "s3")]
 use crate::s3;
@@ -37,7 +38,14 @@ pub fn fetch_backup_object(raw_uri: &str) -> Result<Vec<u8>> {
     if uri.starts_with("gs://") {
         return gcs::get_exact_object(uri);
     }
-    bail!("unsupported backup object URI `{uri}`; use file://, s3://, or gs://")
+    bail!(
+        "unsupported backup object URI `{uri}`; use {}",
+        SUPPORTED_SCHEMES
+            .iter()
+            .map(|s| s.scheme)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn split_bucket_key(rest: &str, scheme: &str) -> Result<(String, String)> {
@@ -77,6 +85,18 @@ mod tests {
         assert!(fetch_backup_object("s3://bucket").is_err());
         assert!(fetch_backup_object("s3:///key").is_err());
         assert!(fetch_backup_object("s3://bucket/").is_err());
+    }
+
+    #[test]
+    fn unsupported_scheme_error_lists_every_supported_scheme() {
+        let err = fetch_backup_object("ftp://nope").unwrap_err().to_string();
+        for info in SUPPORTED_SCHEMES {
+            assert!(
+                err.contains(info.scheme),
+                "error message {err:?} missing scheme {}",
+                info.scheme
+            );
+        }
     }
 }
 // CODEGEN-END

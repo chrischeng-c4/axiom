@@ -21,10 +21,18 @@ Public API manifest for `libs/service-backup/src/destination.rs` captured during
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `BackupDestination` | libs/service-backup/src/destination.rs | enum | pub | 8 | pub enum BackupDestination { |
-| `from_uri` | libs/service-backup/src/destination.rs | function | pub | 46 | pub fn from_uri(raw: &str) -> Result<Self> { |
-| `identity` | libs/service-backup/src/destination.rs | function | pub | 77 | pub fn identity(&self) -> String { |
-| `default_prefix` | libs/service-backup/src/destination.rs | function | pub | 87 | pub fn default_prefix(&self) -> String { |
+| `BackupDestination` | libs/service-backup/src/destination.rs | enum | pub | 11 | pub enum BackupDestination { |
+| `SchemeInfo` | libs/service-backup/src/destination.rs | struct | pub | 52 | pub struct SchemeInfo { |
+| `SUPPORTED_SCHEMES` | libs/service-backup/src/destination.rs | const | pub | 66 | pub const SUPPORTED_SCHEMES: &[SchemeInfo] = &[ |
+| `from_uri` | libs/service-backup/src/destination.rs | function | pub | 88 | pub fn from_uri(raw: &str) -> Result<Self> { |
+| `identity` | libs/service-backup/src/destination.rs | function | pub | 126 | pub fn identity(&self) -> String { |
+| `default_prefix` | libs/service-backup/src/destination.rs | function | pub | 136 | pub fn default_prefix(&self) -> String { |
+
+#2494: `SchemeInfo`/`SUPPORTED_SCHEMES` are the canonical scheme inventory
+(scheme, description, `cfg!`-derived sink availability) backing
+`from_uri`'s accepted prefixes. `from_uri`'s error message is now built
+from `SUPPORTED_SCHEMES` instead of a hand-copied literal, so it cannot
+list a scheme it doesn't actually parse (or omit one it does).
 
 
 ## Source
@@ -70,6 +78,47 @@ pub enum BackupDestination {
     },
 }
 
+/// One backup destination scheme [`BackupDestination::from_uri`] accepts,
+/// paired with a human-readable description and whether a live upload sink
+/// is linked into this build (see `sink_from_destination` in `sink.rs`).
+///
+/// This is the canonical scheme inventory: CLI `llm` topics render it at
+/// call time (`cli_std::llm::TopicSection::Generated`) instead of
+/// hand-copying the scheme list into a `&'static str`, so a topic body can
+/// never drift from what `from_uri`/`sink_from_destination` actually accept
+/// (#2494).
+#[derive(Clone, Copy, Debug)]
+pub struct SchemeInfo {
+    pub scheme: &'static str,
+    pub description: &'static str,
+    /// `false` means the scheme still parses via `from_uri`, but
+    /// `BackupSink::put`/`prune` fail loud through `UnsupportedCloudSink`
+    /// because the adapter crate feature isn't linked into this build.
+    pub sink_available: bool,
+}
+
+/// Canonical scheme table backing [`BackupDestination::from_uri`], ordered
+/// to match its parse order. `sink_available` reflects the *this build's*
+/// linked feature set via `cfg!`, so it can't go stale independent of the
+/// actual `Cargo.toml` feature wiring.
+pub const SUPPORTED_SCHEMES: &[SchemeInfo] = &[
+    SchemeInfo {
+        scheme: "file://",
+        description: "local filesystem path — dev/tests and PVC-backed local runs",
+        sink_available: true,
+    },
+    SchemeInfo {
+        scheme: "s3://",
+        description: "Amazon S3-compatible object store",
+        sink_available: cfg!(feature = "s3"),
+    },
+    SchemeInfo {
+        scheme: "gs://",
+        description: "Google Cloud Storage — workload identity in production, `STORAGE_EMULATOR_HOST` locally",
+        sink_available: true,
+    },
+];
+
 impl BackupDestination {
     /// Parse the common URI spellings used by operators and CLIs.
     /// `gs://bucket/prefix` selects the always-linked GCS adapter.
@@ -101,7 +150,14 @@ impl BackupDestination {
                 credentials_secret: None,
             });
         }
-        bail!("unsupported backup destination URI `{raw}`; use file://, s3://, or gs://")
+        bail!(
+            "unsupported backup destination URI `{raw}`; use {}",
+            SUPPORTED_SCHEMES
+                .iter()
+                .map(|s| s.scheme)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     pub fn identity(&self) -> String {
@@ -166,6 +222,42 @@ mod tests {
         assert!(BackupDestination::from_uri("s3:///prefix").is_err());
         assert!(BackupDestination::from_uri("gs://").is_err());
     }
+
+    #[test]
+    fn supported_schemes_match_from_uri_error_message() {
+        let err = BackupDestination::from_uri("ftp://nope")
+            .unwrap_err()
+            .to_string();
+        for info in SUPPORTED_SCHEMES {
+            assert!(
+                err.contains(info.scheme),
+                "error message {err:?} missing scheme {}",
+                info.scheme
+            );
+        }
+    }
+
+    #[test]
+    fn supported_schemes_each_parse_successfully() {
+        for info in SUPPORTED_SCHEMES {
+            let uri = match info.scheme {
+                "file://" => "file:///tmp/backups".to_string(),
+                other => format!("{other}bucket/prefix"),
+            };
+            assert!(
+                BackupDestination::from_uri(&uri).is_ok(),
+                "scheme {} failed to parse a well-formed URI",
+                info.scheme
+            );
+        }
+    }
+
+    #[test]
+    fn local_and_gcs_sinks_always_available() {
+        let by_scheme = |scheme: &str| SUPPORTED_SCHEMES.iter().find(|s| s.scheme == scheme);
+        assert!(by_scheme("file://").unwrap().sink_available);
+        assert!(by_scheme("gs://").unwrap().sink_available);
+    }
 }
 ````
 
@@ -181,4 +273,9 @@ changes:
     impl_mode: codegen
     description: |
       rust-source-unit (td_ast) source for `libs/service-backup/src/destination.rs` captured during libs codegen standardization.
+      #2494: added `SchemeInfo`/`SUPPORTED_SCHEMES`, the canonical scheme
+      inventory (scheme, description, `cfg!`-derived sink availability) that
+      `from_uri`'s error message now derives from instead of a hand-copied
+      literal — the single source of truth CLI `llm` topics render for
+      destination-scheme facts.
 ```
