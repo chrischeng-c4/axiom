@@ -357,6 +357,169 @@ fn test_scope_missing_spec_uses_legacy_all_markers() {
     assert_eq!(scoped[1].source_path, markers[1].source_path);
 }
 
+/// #2535: `aw goal wi` may resolve a GitHub WI after the ephemeral local
+/// projection was lost. The exact emitted `aw td fill <id>` command must
+/// hydrate that projection before creating the marker-fill lock.
+#[tokio::test]
+async fn td_fill_brief_hydrates_missing_remote_projection() {
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let root = tempfile::tempdir().expect("tempdir");
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root.path())
+        .args(["init", "-b", "project-test"])
+        .status()
+        .expect("git init");
+    for (key, value) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root.path())
+            .args(["config", key, value])
+            .status()
+            .unwrap();
+    }
+
+    std::fs::write(
+        root.path().join("aw.toml"),
+        concat!(
+            "[agentic_workflow.issue_platform]\n",
+            "type = \"github\"\n",
+            "repo = \"fixture/configured\"\n",
+        ),
+    )
+    .unwrap();
+    let spec_rel = "apps/demo/tech-design/logic/remote-fill.md";
+    let source_rel = "apps/demo/src/lib.rs";
+    let spec = root.path().join(spec_rel);
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(
+        &spec,
+        format!(
+            "## Changes\n```yaml\nchanges:\n  - path: {source_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
+        ),
+    )
+    .unwrap();
+    let source = root.path().join(source_rel);
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        &source,
+        format!(
+            "{}\n// TODO: hand-write content for `{source_rel}`.\n{}\n",
+            handwrite_begin(
+                "gap=\"remote-fill-marker\" tracker=\"pending-tracker\" reason=\"fixture\""
+            ),
+            handwrite_end(),
+        ),
+    )
+    .unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root.path())
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root.path())
+        .args(["commit", "-m", "seed remote fill fixture"])
+        .status()
+        .unwrap();
+
+    let tool_home = tempfile::tempdir().expect("tool home");
+    let home = tool_home.path();
+    let gh = home.join(".rustup/toolchains/stable-aarch64-apple-darwin/bin/gh");
+    std::fs::create_dir_all(gh.parent().unwrap()).unwrap();
+    let issue_json = serde_json::json!({
+        "number": 2535,
+        "title": "remote fill hydration fixture",
+        "state": "OPEN",
+        "labels": [
+            {"name": "type:change"},
+            {"name": "phase:cb_genned"},
+            {"name": "project:agentic-workflow"}
+        ],
+        "author": {"login": "fixture"},
+        "createdAt": "2026-07-24T00:00:00Z",
+        "updatedAt": "2026-07-24T00:00:00Z",
+        "url": "https://example.invalid/fixture/issues/2535",
+        "body": "remote-only WI fixture"
+    })
+    .to_string();
+    let gh_script = format!(
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AW_GH_LOG"
+case "$*" in
+  *" list "*) printf '%s\n' '[]' ;;
+  *" view 2535 "*) printf '%s\n' '{issue_json}' ;;
+  label\ create*) printf '%s\n' '{{}}' ;;
+  api\ -X\ PATCH*) printf '%s\n' '{{}}' ;;
+  *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 1 ;;
+esac
+"#
+    );
+    std::fs::write(&gh, gh_script).unwrap();
+    let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&gh, permissions).unwrap();
+    let gh_log = home.join("gh.log");
+
+    let backend = LocalBackend::from_project_root(root.path());
+    assert!(
+        backend.get("2535").await.unwrap().is_none(),
+        "fixture must begin without a local issue projection"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aw"))
+        .args(["td", "fill", "2535", "--spec-path", spec_rel])
+        .current_dir(root.path())
+        .env("HOME", home)
+        .env("GH_TOKEN", "fixture-token")
+        .env("AW_GH_LOG", &gh_log)
+        .env("AW_DISABLE_CAP", "1")
+        .output()
+        .expect("run repo-built aw td fill");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "remote fill brief must succeed:\nstdout={stdout}\nstderr={stderr}"
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("fill envelope JSON");
+    assert_eq!(envelope["action"], "dispatch");
+    assert_eq!(envelope["slug"], "2535");
+    assert_eq!(
+        envelope["invoke"]["args"]["marker_list"][0]["id"],
+        "remote-fill-marker"
+    );
+
+    let hydrated = backend
+        .get("2535")
+        .await
+        .unwrap()
+        .expect("hydrated local issue projection");
+    assert_eq!(hydrated.phase.as_deref(), Some("cb_genned"));
+    assert_eq!(hydrated.github_id, Some(2535));
+    let calls = std::fs::read_to_string(&gh_log).unwrap();
+    assert!(calls.contains(" view 2535 "), "{calls}");
+    assert!(calls.contains("api -X PATCH"), "{calls}");
+
+    let _ = std::fs::remove_dir_all(backend.issues_dir());
+}
+
 // ── R6 — collision regression (bug-cb-fill-payload-routes-by-marker-id-alone-collides) ──
 
 /// R6: when two HANDWRITE markers in different files share the same base

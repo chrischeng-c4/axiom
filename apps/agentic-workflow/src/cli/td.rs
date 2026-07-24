@@ -366,7 +366,7 @@ pub(crate) fn td_workspace_path(project_root: &std::path::Path, _slug: &str) -> 
     project_root.to_path_buf()
 }
 
-fn workflow_slug_for_issue(issue: &Issue, fallback: &str) -> String {
+pub(crate) fn workflow_slug_for_issue(issue: &Issue, fallback: &str) -> String {
     issue
         .github_id
         .or(issue.gitlab_id)
@@ -884,7 +884,10 @@ async fn reset_unreachable_td_init(
     Ok(())
 }
 
-async fn bootstrap_td_issue(project_root: &std::path::Path, issue_ref: &str) -> Result<Issue> {
+pub(crate) async fn bootstrap_td_issue(
+    project_root: &std::path::Path,
+    issue_ref: &str,
+) -> Result<Issue> {
     let local = LocalBackend::from_project_root(project_root);
     if let Some(issue) = local.get(issue_ref).await? {
         return Ok(issue);
