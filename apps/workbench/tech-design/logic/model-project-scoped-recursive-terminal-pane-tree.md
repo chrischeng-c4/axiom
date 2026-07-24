@@ -54,7 +54,6 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchModelTests
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
