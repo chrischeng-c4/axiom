@@ -106,6 +106,18 @@ pub struct RunRecord {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Signal observed by VAT for the direct child, when interrupted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    /// Owned process-group id only while its leader remains unreaped. Reaped
+    /// leaders never retain a numeric identity that the OS may later reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_pgid: Option<u32>,
+    /// A non-empty value means VAT could not prove the direct child process
+    /// group absent. This is an active retention obligation and blocks GC even
+    /// with `--include-failed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
 }
 
 /// Persisted, on-disk record of a vat. Stored as `meta.json`.
@@ -227,6 +239,11 @@ pub struct RunnerRunRecord {
     /// than treating this persisted value as a signal target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// A non-empty value means VAT could not prove the owned runner process
+    /// group absent. The VAT must be retained instead of discarding the only
+    /// durable cleanup diagnosis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
     pub stdout_log: String,
     pub stderr_log: String,
 }
@@ -297,6 +314,11 @@ pub struct TestRunEvidence {
     pub runners: Vec<RunnerRunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
+    /// Cleanup failure for a run-owned auxiliary process that is neither a
+    /// service nor a runner (currently setup commands). Non-empty means the
+    /// VAT must be retained for diagnosis and must not be garbage-collected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
 }
 
 /// Filesystem changes vs. the base manifest. Full lists; the projection

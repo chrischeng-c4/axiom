@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
+use beam::application::search_service::SearchApplicationService;
 use beam::domain::collection::Collection;
 use beam::domain::ports::{DistanceCalculator, VectorRepository};
 use beam::domain::scheduler::{PipelineScheduler, QueryBatch};
-use beam::application::search_service::SearchApplicationService;
 use beam::infrastructure::io_uring_repo::IoUringVectorRepository;
 use beam::infrastructure::wgpu_engine::WgpuDistanceEngine;
 
@@ -59,11 +59,17 @@ async fn test_r1_domain_isolation() {
     // R1: Validate that the Domain Layer (Collection, PipelineScheduler) runs and
     // is fully testable in absolute isolation using mocks.
     let mut collection = Collection::new("test_coll".to_string(), 3, beam::collection::Metric::Dot);
-    
+
     // Set up mock candidates and offsets mapping
     collection.payload.offsets.insert("vector_0".to_string(), 0);
-    collection.payload.offsets.insert("vector_1".to_string(), 12);
-    collection.payload.offsets.insert("vector_2".to_string(), 24);
+    collection
+        .payload
+        .offsets
+        .insert("vector_1".to_string(), 12);
+    collection
+        .payload
+        .offsets
+        .insert("vector_2".to_string(), 24);
 
     let scheduler = PipelineScheduler::new(MockVectorRepository, MockDistanceCalculator);
     let batch = QueryBatch {
@@ -74,7 +80,7 @@ async fn test_r1_domain_isolation() {
 
     let results = scheduler.execute_batch(&collection, &batch).await.unwrap();
     assert_eq!(results.len(), 1);
-    
+
     // Each target is filled with 1.0 floats. Query is [0.5, 0.5, 0.5].
     // Dot product is 0.5 * 1.0 + 0.5 * 1.0 + 0.5 * 1.0 = 1.5.
     let query_results = &results[0];
@@ -116,15 +122,21 @@ async fn test_r2_r3_infrastructure_and_e2e_pipeline() {
 
     // Setup Collection Aggregate Root
     let mut collection = Collection::new("e2e_coll".to_string(), 3, beam::collection::Metric::L2);
-    
+
     // Map offsets: v0 starts at 0, v1 starts at 12 bytes, v2 starts at 24 bytes
     collection.payload.offsets.insert("vector_0".to_string(), 0);
-    collection.payload.offsets.insert("vector_1".to_string(), 12);
-    collection.payload.offsets.insert("vector_2".to_string(), 24);
+    collection
+        .payload
+        .offsets
+        .insert("vector_1".to_string(), 12);
+    collection
+        .payload
+        .offsets
+        .insert("vector_2".to_string(), 24);
 
     // Initialize actual infrastructure adapters
     let repo = IoUringVectorRepository::new(file_path.clone()).unwrap();
-    
+
     // Initialize GPU context if available, else standard fallback
     let gpu = beam::gpu::GpuContext::new().map(Arc::new);
     let calc = WgpuDistanceEngine::new(gpu);
@@ -142,7 +154,7 @@ async fn test_r2_r3_infrastructure_and_e2e_pipeline() {
 
     // First neighbor must be vector_0 (it's the closest)
     assert_eq!(topk[0].0, "vector_0");
-    
+
     // Verify L2 distance for vector_0: (0.9 - 1.0)^2 + (0.1 - 0.0)^2 + (0.0 - 0.0)^2 = 0.01 + 0.01 = 0.02
     assert!((topk[0].1 - 0.02).abs() < 1e-5);
 

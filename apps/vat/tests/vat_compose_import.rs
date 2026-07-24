@@ -7,10 +7,10 @@
 
 #[cfg(test)]
 mod tests {
-    use vat::compose;
-    use vat::config::ServiceRuntime;
     use std::fs;
     use tempfile::TempDir;
+    use vat::compose;
+    use vat::config::ServiceRuntime;
 
     fn write_compose(tmpdir: &TempDir, content: &str) -> std::path::PathBuf {
         let file = tmpdir.path().join("docker-compose.yml");
@@ -60,7 +60,7 @@ services:
 
         assert_eq!(services[0].container_port, Some(3000));
         match &services[0].port {
-            vat::config::PortSpec::Auto(_) => {},
+            vat::config::PortSpec::Auto(_) => {}
             _ => panic!("expected Auto port"),
         }
     }
@@ -191,13 +191,25 @@ services:
         compose::materialize(&services, &vat_toml).unwrap();
 
         let content = fs::read_to_string(&vat_toml).unwrap();
-        assert!(content.contains("[[services]]"), "Missing [[services]] section");
+        assert!(
+            content.contains("[[services]]"),
+            "Missing [[services]] section"
+        );
         assert!(content.contains("id = \"web\""), "Missing web service");
         assert!(content.contains("id = \"api\""), "Missing api service");
-        assert!(content.contains("[[runners]]"), "Missing [[runners]] section");
-        assert!(content.contains("id = \"project.up\""), "Missing project.up runner");
-        assert!(content.contains("requires") && content.contains("web") && content.contains("api"),
-                "Missing requires array with services: {}", content);
+        assert!(
+            content.contains("[[runners]]"),
+            "Missing [[runners]] section"
+        );
+        assert!(
+            content.contains("id = \"project.up\""),
+            "Missing project.up runner"
+        );
+        assert!(
+            content.contains("requires") && content.contains("web") && content.contains("api"),
+            "Missing requires array with services: {}",
+            content
+        );
     }
 
     #[test]

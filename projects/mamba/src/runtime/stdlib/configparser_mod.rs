@@ -2592,11 +2592,9 @@ mod tests {
                 // #1566: bare `.get("__class__")` misses the hash domain —
                 // use dict_get_exact_str like the non-test call sites.
                 assert_eq!(
-                    extract_str(super::super::super::dict_ops::dict_get_exact_str(
-                        &m,
-                        "__class__"
-                    )
-                    .unwrap()),
+                    extract_str(
+                        super::super::super::dict_ops::dict_get_exact_str(&m, "__class__").unwrap()
+                    ),
                     Some("ConfigParser".to_string())
                 );
             } else {

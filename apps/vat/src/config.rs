@@ -540,7 +540,10 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
         }
         if let Some(preset) = service.preset {
             if preset == ServicePreset::Lumen {
-                if !matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+                if !matches!(
+                    service.runtime,
+                    ServiceRuntime::Auto | ServiceRuntime::Native
+                ) {
                     bail!("service `{}` preset `lumen` is native-only; use runtime `auto` or `native`", service.id);
                 }
                 crate::lumen_release::normalize_selector(service.version.as_deref())?;
@@ -1491,10 +1494,8 @@ network = "hermetic"
 
         for legacy in ["firestore", "pubsub", "datastore", "bigtable", "spanner"] {
             assert!(
-                serde_json::from_value::<ServicePreset>(serde_json::Value::String(
-                    legacy.into()
-                ))
-                .is_err(),
+                serde_json::from_value::<ServicePreset>(serde_json::Value::String(legacy.into()))
+                    .is_err(),
                 "GCP gcloud presets must use the gcloud- prefix: {legacy}"
             );
         }

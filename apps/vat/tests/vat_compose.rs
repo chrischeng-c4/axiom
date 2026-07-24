@@ -28,6 +28,10 @@ mod tests {
     }
 
     const REAL_DOCKER_E2E_REQUIRED: &str = "VAT_COMPOSE_REAL_DOCKER_E2E_REQUIRED";
+    const FAKE_DOCKER_OWNED_ID: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const FAKE_DOCKER_REPLACEMENT_ID: &str =
+        "2222222222222222222222222222222222222222222222222222222222222222";
 
     /// Check if Docker is available (skip test if not) -- the compose full
     /// cycle test runs services via `--runtime docker`.
@@ -214,49 +218,127 @@ cmd = ["/bin/sh", "-c", "sleep 10"]
         fs::write(
             &script,
             r#"#!/bin/sh
+root=$(dirname "$0")
+owned_id=1111111111111111111111111111111111111111111111111111111111111111
 if [ -n "${VAT_FAKE_DOCKER_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$VAT_FAKE_DOCKER_LOG"
 fi
 
 case "${1:-}" in
   info)
-    if [ -e "$(dirname "$0")/.vat-fake-docker-info-failure" ]; then
+    if [ -e "$root/.vat-fake-docker-info-hang" ]; then
+      exec /bin/sleep 20
+    fi
+    if [ -e "$root/.vat-fake-docker-info-failure" ]; then
       exit 42
     fi
     ;;
-  run)
+  create)
     shift
+    live_name=
     while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--name" ]; then
-        printf '%s\n' "$2" > "$(dirname "$0")/.vat-fake-docker-live-name"
-        break
-      fi
-      shift
+      case "$1" in
+        --name)
+          live_name=${2:-}
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
     done
+    [ -n "$live_name" ] || exit 65
+    printf '%s\n' "$owned_id" > "$root/.vat-fake-docker-live-id"
+    printf '%s\n' "$live_name" > "$root/.vat-fake-docker-live-name"
+    printf '%s\n' created > "$root/.vat-fake-docker-live-state"
+    printf '%s\n' "$owned_id"
+    ;;
+  start)
+    [ "$#" -eq 3 ] || exit 79
+    [ "${2:-}" = "--attach" ] || exit 80
+    [ "${3:-}" = "$owned_id" ] || exit 81
+    live_name=$(cat "$root/.vat-fake-docker-live-name" 2>/dev/null || true)
+    if [ -e "$root/.vat-fake-docker-require-created-evidence" ]; then
+      verified=0
+      for meta in "$VAT_HOME"/vats/*/meta.json; do
+        [ -f "$meta" ] || continue
+        if /usr/bin/grep -Fq "\"docker_id\": \"$owned_id\"" "$meta" &&
+           /usr/bin/grep -Fq "\"docker_name\": \"$live_name\"" "$meta" &&
+           /usr/bin/grep -Fq '"status": "created"' "$meta"; then
+          verified=1
+          break
+        fi
+      done
+      [ "$verified" -eq 1 ] || exit 82
+      : > "$root/.vat-fake-docker-created-evidence-verified"
+    fi
+    if [ -e "$root/.vat-fake-docker-start-failure" ]; then
+      exit 83
+    fi
+    printf '%s\n' running > "$root/.vat-fake-docker-live-state"
     exec /bin/sleep 30
     ;;
   container)
-    [ "${2:-}" = "ls" ] || exit 2
-    if [ -e "$(dirname "$0")/.vat-fake-docker-list-error" ]; then
+    live_name=$(cat "$root/.vat-fake-docker-live-name" 2>/dev/null || true)
+    escaped_name=$(printf '%s' "$live_name" | /usr/bin/sed 's/[.]/\\./g')
+    expected_filter="name=^/$escaped_name$"
+    expected_format='{{.ID}}	{{.Names}}	{{.State}}'
+    [ "$#" -eq 8 ] || exit 66
+    [ "${2:-}" = "ls" ] || exit 67
+    [ "${3:-}" = "--all" ] || exit 68
+    [ "${4:-}" = "--no-trunc" ] || exit 69
+    [ "${5:-}" = "--filter" ] || exit 70
+    [ "${6:-}" = "$expected_filter" ] || exit 71
+    [ "${7:-}" = "--format" ] || exit 72
+    [ "${8:-}" = "$expected_format" ] || exit 73
+    if [ -e "$root/.vat-fake-docker-rm-attempted" ] && [ -e "$root/.vat-fake-docker-list-error" ]; then
       exit 71
     fi
-    if [ -e "$(dirname "$0")/.vat-fake-docker-list-empty" ]; then
+    if [ -e "$root/.vat-fake-docker-rm-attempted" ] && [ -e "$root/.vat-fake-docker-list-empty" ]; then
       exit 0
     fi
-    cat "$(dirname "$0")/.vat-fake-docker-live-name" 2>/dev/null || true
+    live_id=$(cat "$root/.vat-fake-docker-live-id" 2>/dev/null || true)
+    live_state=$(cat "$root/.vat-fake-docker-live-state" 2>/dev/null || true)
+    if [ -n "$live_id" ] && [ -n "$live_name" ] && [ -n "$live_state" ]; then
+      printf '%s\t%s\t%s\n' "$live_id" "$live_name" "$live_state"
+    fi
     ;;
   inspect)
-    if [ -e "$(dirname "$0")/.vat-fake-docker-inspect-absent" ]; then
+    if [ -e "$root/.vat-fake-docker-inspect-hang" ]; then
+      exec /bin/sleep 10
+    fi
+    if [ -e "$root/.vat-fake-docker-inspect-absent" ]; then
       exit 1
     fi
     ;;
+  kill)
+    [ "$#" -eq 2 ] || exit 74
+    live_id=$(cat "$root/.vat-fake-docker-live-id" 2>/dev/null || true)
+    [ "${2:-}" = "$live_id" ] || exit 75
+    printf '%s\n' exited > "$root/.vat-fake-docker-live-state"
+    if [ -e "$root/.vat-fake-docker-kill-hang-after-effect" ]; then
+      printf '%s\n' "$$" > "$root/.vat-fake-docker-kill-helper-pgid"
+      exec /bin/sleep 20
+    fi
+    ;;
   rm)
-    if [ -e "$(dirname "$0")/.vat-fake-docker-rm-hang" ]; then
+    [ "$#" -eq 3 ] || exit 76
+    [ "${2:-}" = "-f" ] || exit 77
+    live_id=$(cat "$root/.vat-fake-docker-live-id" 2>/dev/null || true)
+    [ "${3:-}" = "$live_id" ] || exit 78
+    : > "$root/.vat-fake-docker-rm-attempted"
+    if [ -e "$root/.vat-fake-docker-rm-hang" ]; then
       exec /bin/sleep 5
     fi
-    if [ -e "$(dirname "$0")/.vat-fake-docker-rm-failure" ]; then
+    if [ -e "$root/.vat-fake-docker-rm-delay" ]; then
+      /bin/sleep 2.2
+    fi
+    if [ -e "$root/.vat-fake-docker-rm-failure" ]; then
       exit 23
     fi
+    # Keep the historical name so the final anchored query can prove that
+    # exact name absent while ID/state are gone.
+    rm -f "$root/.vat-fake-docker-live-id" "$root/.vat-fake-docker-live-state"
     ;;
   *)
     exit 2
@@ -296,7 +378,7 @@ esac
         command
     }
 
-    fn write_docker_compose_vat_toml(registry: &Path, port: u16) {
+    fn write_docker_compose_vat_toml(registry: &Path, port: u16, runner_ready_marker: &Path) {
         fs::create_dir_all(registry).expect("create compose registry");
         fs::write(
             registry.join("vat.toml"),
@@ -317,8 +399,9 @@ timeout_s = 2
 [[runners]]
 id = "project.up"
 requires = ["web"]
-cmd = ["/bin/sh", "-c", "sleep 10"]
-"#
+cmd = ["/bin/sh", "-c", "trap 'exit 0' TERM INT; touch '{runner_ready_marker}'; while :; do /bin/sleep 1; done"]
+"#,
+                runner_ready_marker = runner_ready_marker.display(),
             ),
         )
         .expect("write Docker compose vat.toml");
@@ -546,6 +629,82 @@ cmd = ["true"]
         );
     }
 
+    /// The Docker cleanup regressions exercise an explicit compose-down of a
+    /// live run. A fixed-duration runner can naturally finish while detached
+    /// startup spends its bounded handoff budget under load, silently turning
+    /// down into a persisted-cleanup retry. Pin the intended precondition with
+    /// both runner evidence and the fake runtime command log.
+    fn assert_fake_docker_run_is_active_before_down(
+        vat_home: &TempDir,
+        vat_id: &str,
+        runner_ready_marker: &Path,
+        fake_log: &Path,
+    ) {
+        wait_for_path(runner_ready_marker, "fake Docker runner ready marker");
+        let state = vat_state(vat_home, vat_id);
+        let runner = state["test_run"]["runners"]
+            .as_array()
+            .and_then(|runners| runners.iter().find(|runner| runner["id"] == "project.up"))
+            .expect("persisted fake Docker runner");
+        assert_eq!(runner["status"], "running", "state: {state}");
+        assert!(runner["pid"].is_number(), "state: {state}");
+        let service = state["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted fake Docker service");
+        assert_eq!(
+            service["docker_id"], FAKE_DOCKER_OWNED_ID,
+            "the docker-create full ID must be durable before detached handoff: {state}"
+        );
+        assert!(
+            service["docker_name"].as_str().is_some(),
+            "the Docker runtime name must remain paired with its full ID: {state}"
+        );
+
+        let calls = fs::read_to_string(fake_log).expect("fake Docker command log");
+        assert_eq!(
+            docker_removal_count(&calls),
+            0,
+            "fixture runner cleaned Docker before explicit compose down: {calls}"
+        );
+    }
+
+    fn docker_removal_count(calls: &str) -> usize {
+        calls
+            .lines()
+            .filter(|line| line.starts_with("rm -f "))
+            .count()
+    }
+
+    fn exact_docker_identity_query(docker_name: &str) -> String {
+        let escaped_name = docker_name.replace('.', "\\.");
+        format!(
+            "container ls --all --no-trunc --filter name=^/{escaped_name}$ --format {{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.State}}}}"
+        )
+    }
+
+    fn assert_exact_docker_identity_query(calls: &str, docker_name: &str) {
+        let expected = exact_docker_identity_query(docker_name);
+        assert!(
+            calls.lines().any(|line| line == expected),
+            "cleanup must use the strict anchored full-ID/name/state query `{expected}`: {calls}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn assert_process_group_absent(pgid: u32) {
+        let result = unsafe { libc::kill(-(pgid as libc::pid_t), 0) };
+        assert_eq!(result, -1, "helper process group {pgid} still exists");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH),
+            "helper process group {pgid} did not have an exact absence proof"
+        );
+    }
+
+    #[cfg(not(unix))]
+    fn assert_process_group_absent(_pgid: u32) {}
+
     fn docker_cleanup_error_is_retained_until_retry(failure: DockerCleanupFailure) {
         let vat_home = TempDir::new().expect("VAT_HOME");
         let fake_bin = TempDir::new().expect("fake Docker bin");
@@ -565,7 +724,8 @@ cmd = ["true"]
             DockerCleanupFailure::Hang => "docker-cleanup-hang",
         };
         let registry = registry_dir(&vat_home, project);
-        write_docker_compose_vat_toml(&registry, port);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
         write_registry(&registry, project, "imported", None);
 
         let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
@@ -583,6 +743,12 @@ cmd = ["true"]
             .as_str()
             .expect("active Docker VAT id")
             .to_string();
+        assert_fake_docker_run_is_active_before_down(
+            &vat_home,
+            &vat_id,
+            &runner_ready_marker,
+            &fake_log,
+        );
 
         let started = Instant::now();
         let failed_down = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
@@ -602,6 +768,12 @@ cmd = ["true"]
             String::from_utf8_lossy(&failed_down.stdout),
             String::from_utf8_lossy(&failed_down.stderr)
         );
+        let failed_calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        assert_eq!(
+            docker_removal_count(&failed_calls),
+            1,
+            "one compose-down lifecycle must attempt Docker cleanup exactly once: {failed_calls}"
+        );
 
         let retained = read_registry(&registry);
         assert_eq!(retained["vat_id"], vat_id, "registry: {retained}");
@@ -611,6 +783,10 @@ cmd = ["true"]
             .as_array()
             .and_then(|services| services.iter().find(|service| service["id"] == "web"))
             .expect("persisted Docker service");
+        let docker_name = failed_service["docker_name"]
+            .as_str()
+            .expect("persisted Docker runtime name");
+        assert_exact_docker_identity_query(&failed_calls, docker_name);
         let cleanup_error = failed_service["cleanup_error"]
             .as_str()
             .expect("unconfirmed Docker cleanup must be persisted");
@@ -671,10 +847,7 @@ cmd = ["true"]
         );
 
         let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
-        let removals = calls
-            .lines()
-            .filter(|line| line.starts_with("rm -f "))
-            .count();
+        let removals = docker_removal_count(&calls);
         assert_eq!(
             removals, 2,
             "expected initial Docker cleanup plus one retry: {calls}"
@@ -711,7 +884,8 @@ cmd = ["true"]
             .port();
         let project = result.project();
         let registry = registry_dir(&vat_home, project);
-        write_docker_compose_vat_toml(&registry, port);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
         write_registry(&registry, project, "imported", None);
 
         let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
@@ -729,17 +903,49 @@ cmd = ["true"]
             .as_str()
             .expect("active Docker VAT id")
             .to_string();
+        assert_fake_docker_run_is_active_before_down(
+            &vat_home,
+            &vat_id,
+            &runner_ready_marker,
+            &fake_log,
+        );
 
+        if matches!(result, DockerExactList::Error) {
+            fs::write(
+                fake_bin.path().join(".vat-fake-docker-inspect-hang"),
+                b"force the Docker progress probe past its hard deadline",
+            )
+            .expect("configure fake Docker inspect hang");
+        }
+
+        let down_started = Instant::now();
         let down = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
             .args(["compose", "down", project])
             .output()
             .expect("compose down after fake Docker auto-removal");
+        if matches!(result, DockerExactList::Error) {
+            assert!(
+                down_started.elapsed() < Duration::from_secs(8),
+                "hung Docker inspect escaped its hard cleanup bound: {:?}",
+                down_started.elapsed()
+            );
+        }
         let lifecycle = vat_state(&vat_home, &vat_id);
         let service = lifecycle["test_run"]["services"]
             .as_array()
             .and_then(|services| services.iter().find(|service| service["id"] == "web"))
             .expect("persisted Docker service");
         let record = read_registry(&registry);
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        let docker_name = service["docker_name"]
+            .as_str()
+            .expect("persisted Docker runtime name");
+        assert_exact_docker_identity_query(&calls, docker_name);
+        assert_eq!(
+            docker_removal_count(&calls),
+            1,
+            "one compose-down lifecycle must attempt Docker cleanup exactly once: {calls}"
+        );
 
         if result.confirms_absence() {
             assert!(
@@ -753,6 +959,23 @@ cmd = ["true"]
             assert!(
                 service["cleanup_error"].is_null(),
                 "confirmed Docker auto-removal must not persist cleanup evidence: {lifecycle}"
+            );
+
+            let second_down =
+                fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+                    .args(["compose", "down", project])
+                    .output()
+                    .expect("second idempotency compose down");
+            assert!(
+                !second_down.status.success(),
+                "a released import has no second active lifecycle to remove"
+            );
+            let calls_after_second_down =
+                fs::read_to_string(&fake_log).expect("fake Docker command log after second down");
+            assert_eq!(
+                docker_removal_count(&calls_after_second_down),
+                1,
+                "a second finalizer must not repeat the exact-ID remove: {calls_after_second_down}"
             );
         } else {
             assert!(
@@ -771,7 +994,6 @@ cmd = ["true"]
             );
         }
 
-        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
         let cleanup_start = calls
             .lines()
             .position(|line| line.starts_with("rm -f "))
@@ -835,27 +1057,57 @@ services:
             .args(["compose", "up", "--project", &project, "--detach"])
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "compose up --detach failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let up_json: serde_json::Value =
-            serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
-                panic!(
-                    "compose up did not print JSON: {e}\n{}",
-                    String::from_utf8_lossy(&output.stdout)
-                )
-            });
-        assert!(
-            matches!(up_json["status"].as_str(), Some("starting" | "ready")),
-            "up_json: {up_json}"
-        );
-        assert_ne!(up_json["status"], "started", "up_json: {up_json}");
-        assert!(
-            up_json["vat_id"].is_string() || up_json["vat_id"].is_null(),
-            "up_json: {up_json}"
-        );
+        let retained_at_deadline = if output.status.success() {
+            let up_json: serde_json::Value =
+                serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+                    panic!(
+                        "compose up did not print JSON: {e}\n{}",
+                        String::from_utf8_lossy(&output.stdout)
+                    )
+                });
+            assert!(
+                matches!(up_json["status"].as_str(), Some("starting" | "ready")),
+                "up_json: {up_json}"
+            );
+            assert_ne!(up_json["status"], "started", "up_json: {up_json}");
+            assert!(
+                up_json["vat_id"].is_string() || up_json["vat_id"].is_null(),
+                "up_json: {up_json}"
+            );
+            false
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("VAT evidence is temporarily unavailable")
+                    && stderr.contains(
+                        "remained Starting through the detached handoff deadline",
+                    )
+                    && stderr.contains("registry retained"),
+                "compose up returned an error other than the exact retained-Starting deadline outcome: {stderr}"
+            );
+            true
+        };
+        let initial_record = read_registry(&registry_dir(&vat_home, &project));
+        if retained_at_deadline {
+            assert_eq!(
+                initial_record["status"], "starting",
+                "deadline-retained registry: {initial_record}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    initial_record["status"].as_str(),
+                    Some("starting" | "ready")
+                ),
+                "successful-up registry: {initial_record}"
+            );
+        }
+        let expected_vat_id = initial_record["vat_id"]
+            .as_str()
+            .unwrap_or_else(|| {
+                panic!("completed handoff must retain an exact VAT id: {initial_record}")
+            })
+            .to_string();
 
         // ps -- poll briefly since the service becomes visible only once the
         // detached `vat run` has persisted its first ServiceRunRecord.
@@ -880,6 +1132,12 @@ services:
         assert!(
             ps_text.contains("ready") && ps_text.contains("web"),
             "compose ps never reached a ready `web` service: {ps_text}"
+        );
+        let ready_record = read_registry(&registry_dir(&vat_home, &project));
+        assert_eq!(ready_record["status"], "ready", "registry: {ready_record}");
+        assert_eq!(
+            ready_record["vat_id"], expected_vat_id,
+            "readiness must not switch compose lifecycle identity: {ready_record}"
         );
 
         // logs (must not error, even if nginx hasn't written much yet).
@@ -1054,9 +1312,17 @@ cmd = ["true"]
             !retry.status.success(),
             "the deliberately failing retried service must not report a false startup success"
         );
+        let retry_stdout = String::from_utf8_lossy(&retry.stdout);
+        assert!(
+            !retry_stdout.contains("\"status\": \"starting\"")
+                && !retry_stdout.contains("\"status\":\"starting\"")
+                && !retry_stdout.contains("\"vat_id\": null")
+                && !retry_stdout.contains("\"vat_id\":null"),
+            "publication followed by a quick terminal state must not print a Starting/null success: {retry_stdout}"
+        );
         let retry_stderr = String::from_utf8_lossy(&retry.stderr);
         assert!(
-            retry_stderr.contains("service `web`") || retry_stderr.contains("startup failed"),
+            retry_stderr.contains("startup failed") && retry_stderr.contains("vat state"),
             "stderr: {retry_stderr}"
         );
         let retried: Value = serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
@@ -1226,6 +1492,568 @@ cmd = ["true"]
     }
 
     #[test]
+    fn test_compose_terminal_exact_id_gets_bounded_remove_slice() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let fake_bin = TempDir::new().expect("fake Docker bin");
+        let fake_log = fake_bin.path().join("docker.log");
+        fake_docker_path(fake_bin.path());
+        fs::write(
+            fake_bin.path().join(".vat-fake-docker-rm-delay"),
+            b"terminal exact-ID removal needs more than the unproven slice",
+        )
+        .expect("configure delayed fake Docker rm");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Docker readiness port");
+        let port = listener
+            .local_addr()
+            .expect("fake Docker readiness address")
+            .port();
+        let project = "docker-terminal-rm-slice";
+        let registry = registry_dir(&vat_home, project);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
+        write_registry(&registry, project, "imported", None);
+
+        let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with delayed fake Docker rm");
+        assert!(
+            up.status.success(),
+            "compose up failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&up.stdout),
+            String::from_utf8_lossy(&up.stderr)
+        );
+        wait_for_compose_ready(&vat_home, project);
+        let vat_id = read_registry(&registry)["vat_id"]
+            .as_str()
+            .expect("active Docker VAT id")
+            .to_string();
+        assert_fake_docker_run_is_active_before_down(
+            &vat_home,
+            &vat_id,
+            &runner_ready_marker,
+            &fake_log,
+        );
+
+        let started = Instant::now();
+        let down = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "down", project])
+            .output()
+            .expect("compose down with delayed terminal Docker rm");
+        let elapsed = started.elapsed();
+        assert!(
+            down.status.success(),
+            "terminal exact-ID cleanup failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&down.stdout),
+            String::from_utf8_lossy(&down.stderr)
+        );
+        assert!(
+            elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(4),
+            "terminal exact-ID rm should receive the measured 3s slice, elapsed {elapsed:?}"
+        );
+
+        let released = read_registry(&registry);
+        assert_eq!(released["status"], "imported", "registry: {released}");
+        assert!(released["vat_id"].is_null(), "registry: {released}");
+        let state = vat_state(&vat_home, &vat_id);
+        let service = state["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted Docker service");
+        assert!(service["cleanup_error"].is_null(), "state: {state}");
+        let docker_name = service["docker_name"]
+            .as_str()
+            .expect("persisted Docker runtime name");
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        assert_exact_docker_identity_query(&calls, docker_name);
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| *line == format!("kill {FAKE_DOCKER_OWNED_ID}"))
+                .count(),
+            1,
+            "the running full ID must be killed once before removal: {calls}"
+        );
+        assert_eq!(docker_removal_count(&calls), 1, "calls: {calls}");
+        assert!(
+            calls
+                .lines()
+                .any(|line| line == format!("rm -f {FAKE_DOCKER_OWNED_ID}")),
+            "the remove target must be the immutable full ID: {calls}"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn test_compose_hung_kill_client_preserves_proof_budget_and_reaps_helper() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let fake_bin = TempDir::new().expect("fake Docker bin");
+        let fake_log = fake_bin.path().join("docker.log");
+        fake_docker_path(fake_bin.path());
+        fs::write(
+            fake_bin
+                .path()
+                .join(".vat-fake-docker-kill-hang-after-effect"),
+            b"apply the daemon-side kill transition, then hang the client",
+        )
+        .expect("configure hung fake Docker kill client");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Docker readiness port");
+        let port = listener
+            .local_addr()
+            .expect("fake Docker readiness address")
+            .port();
+        let project = "docker-kill-helper-envelope";
+        let registry = registry_dir(&vat_home, project);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
+        write_registry(&registry, project, "imported", None);
+
+        let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with delayed Docker kill client");
+        assert!(
+            up.status.success(),
+            "compose up failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&up.stdout),
+            String::from_utf8_lossy(&up.stderr)
+        );
+        wait_for_compose_ready(&vat_home, project);
+        let vat_id = read_registry(&registry)["vat_id"]
+            .as_str()
+            .expect("active Docker VAT id")
+            .to_string();
+        assert_fake_docker_run_is_active_before_down(
+            &vat_home,
+            &vat_id,
+            &runner_ready_marker,
+            &fake_log,
+        );
+
+        let down = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "down", project])
+            .output()
+            .expect("compose down with hung Docker kill client");
+        assert!(
+            down.status.success(),
+            "a finalized kill helper must leave the later proof/remove slices usable: stdout={} stderr={}",
+            String::from_utf8_lossy(&down.stdout),
+            String::from_utf8_lossy(&down.stderr)
+        );
+
+        let helper_pgid =
+            fs::read_to_string(fake_bin.path().join(".vat-fake-docker-kill-helper-pgid"))
+                .expect("hung kill helper published its PGID")
+                .trim()
+                .parse::<u32>()
+                .expect("kill helper PGID is numeric");
+        assert_process_group_absent(helper_pgid);
+
+        let released = read_registry(&registry);
+        assert_eq!(released["status"], "imported", "registry: {released}");
+        assert!(released["vat_id"].is_null(), "registry: {released}");
+        let state = vat_state(&vat_home, &vat_id);
+        let service = state["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted Docker service");
+        assert!(service["cleanup_error"].is_null(), "state: {state}");
+        let docker_name = service["docker_name"]
+            .as_str()
+            .expect("persisted Docker runtime name");
+
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        let lines = calls.lines().collect::<Vec<_>>();
+        let query = exact_docker_identity_query(docker_name);
+        let kill = format!("kill {FAKE_DOCKER_OWNED_ID}");
+        let remove = format!("rm -f {FAKE_DOCKER_OWNED_ID}");
+        let kill_index = lines
+            .iter()
+            .position(|line| *line == kill)
+            .expect("cleanup issued one immutable-ID kill");
+        let post_kill_query = lines
+            .iter()
+            .enumerate()
+            .skip(kill_index + 1)
+            .find_map(|(index, line)| (*line == query).then_some(index))
+            .expect("post-kill anchored identity proof retained its budget");
+        let remove_index = lines
+            .iter()
+            .enumerate()
+            .skip(post_kill_query + 1)
+            .find_map(|(index, line)| (*line == remove).then_some(index))
+            .expect("cleanup retained one immutable-ID remove phase");
+        let final_query = lines
+            .iter()
+            .enumerate()
+            .skip(remove_index + 1)
+            .find_map(|(index, line)| (*line == query).then_some(index))
+            .expect("final anchored absence proof retained its budget");
+        assert!(
+            kill_index < post_kill_query
+                && post_kill_query < remove_index
+                && remove_index < final_query,
+            "cleanup phases were not ordered under one shared deadline: {calls}"
+        );
+        assert_eq!(
+            lines.iter().filter(|line| **line == kill).count(),
+            1,
+            "kill target must be the stored full Docker ID exactly once: {calls}"
+        );
+        assert_eq!(docker_removal_count(&calls), 1, "calls: {calls}");
+        drop(listener);
+    }
+
+    #[test]
+    fn test_compose_does_not_signal_or_remove_same_name_replacement() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let fake_bin = TempDir::new().expect("fake Docker bin");
+        let fake_log = fake_bin.path().join("docker.log");
+        fake_docker_path(fake_bin.path());
+        let failure_marker = fake_bin.path().join(".vat-fake-docker-rm-failure");
+        fs::write(
+            &failure_marker,
+            b"retain the original immutable-ID obligation",
+        )
+        .expect("configure initial fake Docker rm failure");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Docker readiness port");
+        let port = listener
+            .local_addr()
+            .expect("fake Docker readiness address")
+            .port();
+        let project = "docker-replacement-id";
+        let registry = registry_dir(&vat_home, project);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
+        write_registry(&registry, project, "imported", None);
+
+        let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with fake Docker replacement fixture");
+        assert!(
+            up.status.success(),
+            "compose up failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&up.stdout),
+            String::from_utf8_lossy(&up.stderr)
+        );
+        wait_for_compose_ready(&vat_home, project);
+        let vat_id = read_registry(&registry)["vat_id"]
+            .as_str()
+            .expect("active Docker VAT id")
+            .to_string();
+        assert_fake_docker_run_is_active_before_down(
+            &vat_home,
+            &vat_id,
+            &runner_ready_marker,
+            &fake_log,
+        );
+
+        let first_down = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "down", project])
+            .output()
+            .expect("initial retained Docker cleanup");
+        assert!(!first_down.status.success());
+        fs::remove_file(&failure_marker).expect("repair original rm failure");
+        fs::write(
+            fake_bin.path().join(".vat-fake-docker-live-id"),
+            format!("{FAKE_DOCKER_REPLACEMENT_ID}\n"),
+        )
+        .expect("install same-name replacement ID");
+        fs::write(
+            fake_bin.path().join(".vat-fake-docker-live-state"),
+            b"running\n",
+        )
+        .expect("mark replacement running");
+
+        let retry = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "down", project])
+            .output()
+            .expect("retry cleanup after same-name replacement");
+        assert!(
+            !retry.status.success(),
+            "same-name replacement must retain the original cleanup obligation"
+        );
+        let stderr = String::from_utf8_lossy(&retry.stderr);
+        assert!(
+            stderr.contains(FAKE_DOCKER_REPLACEMENT_ID)
+                && stderr.contains("replacement was not signalled or removed"),
+            "stderr: {stderr}"
+        );
+        let retained = read_registry(&registry);
+        assert_eq!(retained["vat_id"], vat_id, "registry: {retained}");
+        assert_ne!(retained["status"], "imported", "registry: {retained}");
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        assert_eq!(docker_removal_count(&calls), 1, "calls: {calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("kill "))
+                .count(),
+            1,
+            "replacement detection must happen before a second kill: {calls}"
+        );
+        assert!(
+            !calls.lines().any(|line| {
+                line == format!("kill {FAKE_DOCKER_REPLACEMENT_ID}")
+                    || line == format!("rm -f {FAKE_DOCKER_REPLACEMENT_ID}")
+            }),
+            "the replacement ID must never be signalled or removed: {calls}"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn test_compose_docker_daemon_probe_hang_is_bounded() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let fake_bin = TempDir::new().expect("fake Docker bin");
+        let fake_log = fake_bin.path().join("docker.log");
+        fake_docker_path(fake_bin.path());
+        fs::write(
+            fake_bin.path().join(".vat-fake-docker-info-hang"),
+            b"force the daemon probe beyond its bound",
+        )
+        .expect("configure fake Docker info hang");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Docker readiness port");
+        let port = listener
+            .local_addr()
+            .expect("fake Docker readiness address")
+            .port();
+        let project = "docker-info-hang";
+        let registry = registry_dir(&vat_home, project);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
+        write_registry(&registry, project, "imported", None);
+
+        let started = Instant::now();
+        let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with hung Docker daemon probe");
+        let elapsed = started.elapsed();
+        assert!(
+            !up.status.success(),
+            "a hung daemon probe cannot report startup"
+        );
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "Docker daemon probe escaped its 5s command bound: {elapsed:?}"
+        );
+        let stderr = String::from_utf8_lossy(&up.stderr);
+        assert!(
+            stderr.contains("startup failed") || stderr.contains("Docker"),
+            "stderr: {stderr}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&up.stdout).contains("\"status\": \"starting\""),
+            "a timed-out daemon probe must not print detached startup success"
+        );
+        let record = read_registry(&registry);
+        assert_eq!(record["status"], "imported", "registry: {record}");
+        assert!(record["vat_id"].is_null(), "registry: {record}");
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        assert!(calls.lines().any(|line| line == "info"), "calls: {calls}");
+        assert!(
+            !calls.lines().any(|line| line.starts_with("create ")),
+            "a failed daemon probe must precede Docker service spawn: {calls}"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn test_compose_persists_created_full_id_before_start_and_cleans_start_failure() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let fake_bin = TempDir::new().expect("fake Docker bin");
+        let fake_log = fake_bin.path().join("docker.log");
+        fake_docker_path(fake_bin.path());
+        fs::write(
+            fake_bin
+                .path()
+                .join(".vat-fake-docker-require-created-evidence"),
+            b"start may run only after Created/name/full-ID persistence",
+        )
+        .expect("require created evidence before fake Docker start");
+        fs::write(
+            fake_bin.path().join(".vat-fake-docker-start-failure"),
+            b"fail after verifying the durable created checkpoint",
+        )
+        .expect("configure fake Docker start failure");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Docker readiness port");
+        let port = listener
+            .local_addr()
+            .expect("fake Docker readiness address")
+            .port();
+        let project = "docker-created-checkpoint";
+        let registry = registry_dir(&vat_home, project);
+        let runner_ready_marker = registry.join("runner-ready.marker");
+        write_docker_compose_vat_toml(&registry, port, &runner_ready_marker);
+        write_registry(&registry, project, "imported", None);
+
+        let up = fake_docker_vat_command(&registry, &vat_home, fake_bin.path(), &fake_log)
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with fake Docker start failure");
+        assert!(
+            !up.status.success(),
+            "a failed foreground Docker start cannot report compose success"
+        );
+        assert!(
+            fake_bin
+                .path()
+                .join(".vat-fake-docker-created-evidence-verified")
+                .exists(),
+            "fake Docker start did not observe durable Created/name/full-ID evidence"
+        );
+        let record = read_registry(&registry);
+        assert_eq!(record["status"], "imported", "registry: {record}");
+        assert!(record["vat_id"].is_null(), "registry: {record}");
+
+        let vats = fs::read_dir(vat_home.path().join("vats"))
+            .expect("read retained VATs after Docker start failure")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .collect::<Vec<_>>();
+        assert_eq!(vats.len(), 1, "one failed Docker VAT must be retained");
+        let vat_id = vats[0].file_name().into_string().expect("UTF-8 VAT id");
+        let state = vat_state(&vat_home, &vat_id);
+        let service = state["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted failed Docker service");
+        assert_eq!(service["docker_id"], FAKE_DOCKER_OWNED_ID, "state: {state}");
+        assert!(
+            service["cleanup_error"].is_null(),
+            "exact-ID created cleanup must be confirmed: {state}"
+        );
+        let calls = fs::read_to_string(&fake_log).expect("fake Docker command log");
+        assert!(
+            calls.lines().any(|line| line.starts_with("create --rm ")),
+            "missing bounded Docker create: {calls}"
+        );
+        assert!(
+            calls
+                .lines()
+                .any(|line| line == format!("start --attach {FAKE_DOCKER_OWNED_ID}")),
+            "missing exact-ID foreground Docker start: {calls}"
+        );
+        assert!(
+            !calls.lines().any(|line| line.starts_with("kill ")),
+            "same-ID created state must not be killed before its short rm: {calls}"
+        );
+        assert_eq!(docker_removal_count(&calls), 1, "calls: {calls}");
+        drop(listener);
+    }
+
+    #[test]
+    fn test_compose_detached_slow_start_deadline_is_error_and_retains_binding() {
+        let vat_home = TempDir::new().expect("VAT_HOME");
+        let project = "slow-definitive-handoff";
+        let registry = registry_dir(&vat_home, project);
+        fs::create_dir_all(&registry).expect("create slow-start registry");
+        fs::write(
+            registry.join("vat.toml"),
+            r#"version = 1
+
+[workspace]
+keep = "always"
+
+[[services]]
+id = "web"
+cmd = ["/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do /bin/sleep 1; done"]
+ready_http = "http://127.0.0.1:{port}/ready"
+timeout_s = 120
+
+[[runners]]
+id = "project.up"
+requires = ["web"]
+cmd = ["true"]
+"#,
+        )
+        .expect("write slow-start vat.toml");
+        write_registry(&registry, project, "imported", None);
+
+        let started = Instant::now();
+        let up = Command::new(vat_bin())
+            .current_dir(&registry)
+            .env("VAT_HOME", vat_home.path())
+            .args(["compose", "up", "--project", project, "--detach"])
+            .output()
+            .expect("compose up with slow readiness");
+        let elapsed = started.elapsed();
+        assert!(
+            !up.status.success(),
+            "the handoff deadline cannot turn Starting into compose success"
+        );
+        assert!(
+            elapsed >= Duration::from_secs(9),
+            "generic detached startup returned before its original 10s handoff deadline: {elapsed:?}"
+        );
+        // The semantic upper bound belongs to the child-owned handoff phase,
+        // which is proved below by the deadline-specific error and retained
+        // Running evidence. End-to-end wall time also includes host process
+        // scheduling and filesystem persistence, so it is not a stable upper
+        // bound under concurrent workspace compilation.
+        let stderr = String::from_utf8_lossy(&up.stderr);
+        assert!(
+            stderr.contains("VAT evidence is temporarily unavailable")
+                && stderr.contains("remained Starting through the detached handoff deadline")
+                && stderr.contains("registry retained"),
+            "stderr: {stderr}"
+        );
+
+        let retained = read_registry(&registry);
+        let vat_id = retained["vat_id"]
+            .as_str()
+            .expect("slow startup must retain its published VAT id")
+            .to_string();
+        assert_eq!(retained["status"], "starting", "registry: {retained}");
+        let state = vat_state(&vat_home, &vat_id);
+        let service = state["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted slow-start service");
+        assert_eq!(service["status"], "running", "state: {state}");
+
+        let down = Command::new(vat_bin())
+            .current_dir(&registry)
+            .env("VAT_HOME", vat_home.path())
+            .args(["compose", "down", project])
+            .output()
+            .expect("compose down retained slow startup");
+        assert!(
+            down.status.success(),
+            "retained slow startup must remain recoverable: stdout={} stderr={}",
+            String::from_utf8_lossy(&down.stdout),
+            String::from_utf8_lossy(&down.stderr)
+        );
+        let terminal = vat_state(&vat_home, &vat_id);
+        assert_eq!(terminal["status"]["state"], "exited", "state: {terminal}");
+        let terminal_service = terminal["test_run"]["services"]
+            .as_array()
+            .and_then(|services| services.iter().find(|service| service["id"] == "web"))
+            .expect("persisted terminal slow-start service");
+        assert_eq!(terminal_service["status"], "exited", "state: {terminal}");
+        assert!(terminal_service["pid"].is_null(), "state: {terminal}");
+        assert!(
+            terminal_service["cleanup_error"].is_null(),
+            "state: {terminal}"
+        );
+        assert!(
+            terminal_service["docker_name"].is_null(),
+            "state: {terminal}"
+        );
+        assert!(terminal_service["docker_id"].is_null(), "state: {terminal}");
+        let released = read_registry(&registry);
+        assert_eq!(released["status"], "imported", "registry: {released}");
+        assert!(released["vat_id"].is_null(), "registry: {released}");
+    }
+
+    #[test]
     fn test_compose_accepts_docker_auto_remove_after_empty_exact_name_list() {
         docker_failed_rm_with_exact_name_list(DockerExactList::Empty);
     }
@@ -1236,7 +2064,7 @@ cmd = ["true"]
     }
 
     #[test]
-    fn test_compose_retains_docker_auto_remove_when_exact_name_list_errors() {
+    fn test_compose_retains_docker_auto_remove_when_exact_name_list_errors_and_inspect_hangs() {
         docker_failed_rm_with_exact_name_list(DockerExactList::Error);
     }
 

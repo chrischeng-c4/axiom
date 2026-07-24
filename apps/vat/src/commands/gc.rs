@@ -12,7 +12,9 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::paths;
-use crate::state::Status;
+#[cfg(test)]
+use crate::state::ProcessStatus;
+use crate::state::{Status, VatMeta};
 use crate::store;
 
 #[derive(Debug, Clone)]
@@ -115,8 +117,14 @@ fn build_report(args: &Args) -> Result<GcReport> {
         total_disk_size_bytes = add_optional(total_disk_size_bytes, disk_size_bytes);
         total_apparent_size_bytes = add_optional(total_apparent_size_bytes, apparent_size_bytes);
         let age_days = (now - vat.meta.updated_at).num_days().max(0);
-        let (candidate, reason) =
-            candidate_reason(args, &protected, &vat.meta.status, &vat.meta.id, age_days);
+        let (candidate, reason) = candidate_reason(
+            args,
+            &protected,
+            &vat.meta.status,
+            &vat.meta.id,
+            age_days,
+            has_cleanup_obligation(&vat.meta),
+        );
         if candidate {
             reclaimable_disk_size_bytes =
                 add_optional(reclaimable_disk_size_bytes, disk_size_bytes);
@@ -167,7 +175,11 @@ fn candidate_reason(
     status: &Status,
     id: &str,
     age_days: i64,
+    cleanup_unconfirmed: bool,
 ) -> (bool, String) {
+    if cleanup_unconfirmed {
+        return (false, "cleanup_unconfirmed_retained".to_string());
+    }
     if matches!(status, Status::Running) {
         return (false, "running".to_string());
     }
@@ -189,6 +201,31 @@ fn candidate_reason(
         }
     }
     (true, "candidate".to_string())
+}
+
+fn has_cleanup_obligation(meta: &VatMeta) -> bool {
+    if meta
+        .last_run
+        .as_ref()
+        .is_some_and(|run| run.cleanup_error.is_some() || run.owned_pgid.is_some())
+    {
+        return true;
+    }
+    meta.test_run.as_ref().is_some_and(|run| {
+        run.cleanup_error.is_some()
+            || run.runner.iter().chain(run.runners.iter()).any(|runner| {
+                // Any retained runner PID is an ownership obligation. In
+                // particular, Running+PID must not become collectible merely
+                // because a stale top-level VAT status says Exited/Created.
+                runner.cleanup_error.is_some() || runner.pid.is_some()
+            })
+            || run.services.iter().any(|service| {
+                // Created/Running/Ready are active service states, not GC
+                // exemptions. A persisted PID/PGID blocks removal for every
+                // lifecycle value until cleanup clears it explicitly.
+                service.cleanup_error.is_some() || service.pid.is_some()
+            })
+    })
 }
 
 fn apparent_size(path: &Path) -> u64 {
@@ -293,6 +330,138 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1}K", value / KIB)
     } else {
         format!("{bytes}B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::RetentionPolicy;
+    use crate::spec::EnvSpec;
+    use crate::state::{ConfigRef, RunnerRunRecord, ServiceRunRecord, TestRunEvidence};
+
+    fn gc_args() -> Args {
+        Args {
+            execute: false,
+            keep_last: 0,
+            include_failed: true,
+            include_snapshots: true,
+            older_than_days: None,
+            measure: false,
+            apparent: false,
+            json: true,
+        }
+    }
+
+    fn meta_with_evidence(status: Status, run: TestRunEvidence) -> VatMeta {
+        let now = Utc::now();
+        VatMeta {
+            id: "gc-owned-runtime".to_string(),
+            name: None,
+            status,
+            created_at: now,
+            updated_at: now,
+            spec: EnvSpec::default(),
+            lineage: Vec::new(),
+            last_run: None,
+            test_run: Some(run),
+            plan: None,
+        }
+    }
+
+    fn empty_evidence() -> TestRunEvidence {
+        TestRunEvidence {
+            config: ConfigRef {
+                path: "vat.toml".to_string(),
+                digest: "test".to_string(),
+            },
+            runner_id: "project.up".to_string(),
+            retention: RetentionPolicy::Never,
+            services: Vec::new(),
+            scenario: None,
+            runner: None,
+            runners: Vec::new(),
+            artifacts: Vec::new(),
+            cleanup_error: None,
+            plan: None,
+            topology: None,
+        }
+    }
+
+    #[test]
+    fn running_runner_pid_blocks_gc_despite_terminal_top_level_status() {
+        let mut run = empty_evidence();
+        run.runners.push(RunnerRunRecord {
+            id: "project.up".to_string(),
+            command: vec!["runner".to_string()],
+            status: ProcessStatus::Running,
+            exit_code: None,
+            duration_ms: None,
+            pid: Some(std::process::id()),
+            cleanup_error: None,
+            stdout_log: String::new(),
+            stderr_log: String::new(),
+        });
+        let meta = meta_with_evidence(Status::Exited { code: 0 }, run);
+        assert!(has_cleanup_obligation(&meta));
+        let (candidate, reason) = candidate_reason(
+            &gc_args(),
+            &BTreeSet::new(),
+            &meta.status,
+            &meta.id,
+            365,
+            has_cleanup_obligation(&meta),
+        );
+        assert!(!candidate);
+        assert_eq!(reason, "cleanup_unconfirmed_retained");
+    }
+
+    #[test]
+    fn active_service_pid_blocks_gc_for_created_running_and_ready() {
+        for service_status in [
+            ProcessStatus::Created,
+            ProcessStatus::Running,
+            ProcessStatus::Ready,
+        ] {
+            let mut run = empty_evidence();
+            run.services.push(ServiceRunRecord {
+                id: "db".to_string(),
+                command: vec!["db".to_string()],
+                status: service_status,
+                preset: None,
+                host: None,
+                port: None,
+                owned_by_vat: Some(true),
+                prepare_mode: None,
+                cache_key: None,
+                prepare_duration_ms: None,
+                ready_duration_ms: None,
+                exported_env: Vec::new(),
+                pid: Some(std::process::id()),
+                exit_code: None,
+                ready_http: None,
+                docker_name: None,
+                docker_id: None,
+                microvm_name: None,
+                readiness_error: None,
+                cleanup_error: None,
+                cluster: None,
+                stdout_log: String::new(),
+                stderr_log: String::new(),
+            });
+            for status in [
+                Status::Created,
+                Status::Snapshot,
+                Status::Exited { code: 0 },
+            ] {
+                let meta = meta_with_evidence(status.clone(), run.clone());
+                assert!(
+                    has_cleanup_obligation(&meta),
+                    "{service_status:?} service PID must retain {status:?} VAT"
+                );
+            }
+        }
     }
 }
 // CODEGEN-END

@@ -50,7 +50,8 @@ fn documented_agent_commands_match_help() {
 
     for command in ["build", "compose", "docker", "k8s"] {
         assert!(
-            help.lines().any(|line| line.trim_start().starts_with(command)),
+            help.lines()
+                .any(|line| line.trim_start().starts_with(command)),
             "vat --help is missing documented `{command}` command:\n{help}"
         );
         assert!(

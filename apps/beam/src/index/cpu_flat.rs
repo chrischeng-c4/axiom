@@ -66,8 +66,7 @@ impl CpuFlatIndex<'_> {
         let mut nkeep = 0usize;
         let scores: Vec<f32> = (0..cap)
             .map(|i| {
-                let keep = live[i]
-                    && filter.is_none_or(|f| f.matches(self.collection.payload(i)));
+                let keep = live[i] && filter.is_none_or(|f| f.matches(self.collection.payload(i)));
                 if keep {
                     nkeep += 1;
                     score(metric, &q, self.collection.row(i))
@@ -78,7 +77,12 @@ impl CpuFlatIndex<'_> {
             .collect();
         // Cap the result to the number of kept rows: sentinels sort last, so the
         // top `min(k, nkeep)` are exactly the best live-and-matching rows.
-        topk(&scores, metric, k.min(nkeep), self.collection.external_ids())
+        topk(
+            &scores,
+            metric,
+            k.min(nkeep),
+            self.collection.external_ids(),
+        )
     }
 }
 
