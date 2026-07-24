@@ -133,9 +133,12 @@ impl ProjectConfigRow {
         }
     }
 
-    /// Compatibility model used when `artifact_model` is absent from aw.toml.
+    /// The Python artifact lifecycle is canonical for every project.
+    ///
+    /// Keep the configured value available for read compatibility and config
+    /// projection, but never let it route a project back to legacy EC/TD.
     pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
-        self.artifact_model.unwrap_or_default()
+        ProjectArtifactModel::PythonV1
     }
 }
 
@@ -1341,5 +1344,4 @@ mod resolver_tests {
         assert_eq!(err.kind, "td_path_escapes_repo_root");
     }
 }
-
 // CODEGEN-END

@@ -114,14 +114,17 @@ pub enum ProjectArtifactModel {
 
 impl Default for ProjectArtifactModel {
     fn default() -> Self {
-        Self::Legacy
+        Self::PythonV1
     }
 }
 
 impl Project {
-    /// Compatibility model used when a project omits `spec_model`.
+    /// The Python artifact lifecycle is canonical for every project.
+    ///
+    /// `spec_model` remains read-compatible while adopters remove legacy
+    /// configuration, but it no longer selects a different lifecycle.
     pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
-        self.artifact_model.unwrap_or_default()
+        ProjectArtifactModel::PythonV1
     }
 }
 

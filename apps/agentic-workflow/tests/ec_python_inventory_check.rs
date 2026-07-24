@@ -201,7 +201,7 @@ test_path = "src/security.py"
 }
 
 #[test]
-fn ec_python_inventory_check_keeps_legacy_dispatch_when_python_mode_is_not_opted_in() {
+fn ec_python_inventory_check_uses_python_when_spec_model_is_omitted() {
     let temp = tempfile::tempdir().unwrap();
     write_project(temp.path(), VALID_CASES);
     let config_path = temp.path().join("aw.toml");
@@ -216,10 +216,13 @@ fn ec_python_inventory_check_keeps_legacy_dispatch_when_python_mode_is_not_opted
 
     assert!(
         output.status.success(),
-        "legacy check must ignore the Python inventory unless opted in"
+        "unconfigured projects must use the canonical Python inventory"
     );
     assert_eq!(summary["clean"], true);
-    assert_eq!(summary["configured"], false);
-    assert_eq!(summary["inventory_path"], "projects/demo/aw.toml");
+    assert_eq!(summary["configured"], true);
+    assert_eq!(
+        summary["inventory_path"],
+        "projects/demo/external-contracts/pyproject.toml"
+    );
 }
 // HANDWRITE-END

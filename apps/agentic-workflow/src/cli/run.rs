@@ -633,11 +633,12 @@ fn python_td_check_command(project_root: &Path, project: &str, wi: &str) -> Resu
     ))
 }
 
-/// Resolve a `python-v1` artifact phase to one runnable worker command.
+/// Resolve the canonical Python artifact phase to one runnable worker command.
 ///
-/// `None` means the project is deliberately on the compatibility `legacy`
-/// model.  All three root kinds call this same table: WI directly, backlog via
-/// its selected WI, and capability through its active-WI adapter.
+/// The optional return shape is retained for call-site compatibility, but a
+/// valid project always resolves to this table. All three root kinds call the
+/// same table: WI directly, backlog via its selected WI, and capability through
+/// its active-WI adapter.
 pub(crate) fn python_artifact_lifecycle_step(
     project_root: &Path,
     project: &str,
@@ -682,7 +683,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         PythonArtifactPhase::EcAuthoring => PythonArtifactLifecycleStep {
             phase,
             command: format!("aw ec check --project {} --wi {wi}", row.name),
-            reason: "python-v1 starts EC-first: author external-contracts Python source, then structurally check its contract".to_string(),
+            reason: "the Python artifact lifecycle starts EC-first: author external-contracts Python source, then structurally check its contract".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::EcReview => PythonArtifactLifecycleStep {
@@ -4102,7 +4103,7 @@ mod tests {
         assert!(!serialized.contains("aw wi sprintize"));
     }
 
-    fn python_v1_project_root() -> tempfile::TempDir {
+    fn python_project_root() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("projects/demo/tech-design")).unwrap();
         std::fs::write(
@@ -4121,9 +4122,13 @@ workspaces = []
 
     #[test]
     fn python_artifact_goal_routing_uses_one_ec_first_phase_table() {
-        let root = python_v1_project_root();
+        let root = python_project_root();
         let cases = [
             (None, "aw ec check --project demo --wi 42"),
+            (
+                Some("td_contract_in_progress"),
+                "aw ec check --project demo --wi 42",
+            ),
             (Some("ec_checked"), "aw ec review --project demo --wi 42"),
             (Some("ec_reviewed"), "aw td check "),
             (
@@ -4146,7 +4151,7 @@ workspaces = []
         for (label, expected_command) in cases {
             let step = python_artifact_lifecycle_step(root.path(), "demo", "42", label)
                 .unwrap()
-                .expect("python-v1 project must use the artifact phase table");
+                .expect("every project must use the Python artifact phase table");
             assert!(
                 step.command.starts_with(expected_command),
                 "phase {label:?} emitted `{}` rather than `{expected_command}`",
@@ -4162,7 +4167,7 @@ workspaces = []
 
     #[test]
     fn python_artifact_goal_routing_separates_red_dimensions_and_contract_repairs() {
-        let root = python_v1_project_root();
+        let root = python_project_root();
         let behavior =
             python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_behavior_red"))
                 .unwrap()
@@ -4199,7 +4204,7 @@ workspaces = []
 
     #[test]
     fn python_artifact_prompt_contracts_preserve_stage_owner_and_gate() {
-        let root = python_v1_project_root();
+        let root = python_project_root();
         let cases = [
             (
                 None,
@@ -4433,7 +4438,7 @@ workspaces = []
     }
 
     #[test]
-    fn python_artifact_goal_routing_keeps_legacy_projects_on_the_legacy_table() {
+    fn python_artifact_goal_routing_defaults_unconfigured_projects_to_python() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join("aw.toml"),
@@ -4445,11 +4450,10 @@ workspaces = []
 "#,
         )
         .unwrap();
-        assert!(
-            python_artifact_lifecycle_step(root.path(), "demo", "42", None)
-                .unwrap()
-                .is_none()
-        );
+        let step = python_artifact_lifecycle_step(root.path(), "demo", "42", None)
+            .unwrap()
+            .expect("unconfigured projects must use the Python artifact table");
+        assert_eq!(step.command, "aw ec check --project demo --wi 42");
     }
 
     #[test]

@@ -126,7 +126,7 @@ fn python_artifact_readiness_routes_missing_evidence_to_one_stage_command() {
 }
 
 #[test]
-fn python_artifact_readiness_leaves_legacy_projects_unchanged() {
+fn python_artifact_readiness_ignores_legacy_config_and_uses_python() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path(), true);
     let config = fs::read_to_string(root.path().join("aw.toml")).unwrap();
@@ -139,6 +139,9 @@ fn python_artifact_readiness_leaves_legacy_projects_unchanged() {
     )
     .unwrap();
 
-    assert!(evaluate(root.path(), "demo").unwrap().is_none());
+    let readiness = evaluate(root.path(), "demo")
+        .unwrap()
+        .expect("legacy config remains readable but cannot disable Python artifacts");
+    assert!(readiness.ready, "{:#?}", readiness.blockers);
 }
 // HANDWRITE-END

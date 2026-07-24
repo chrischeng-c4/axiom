@@ -29,8 +29,8 @@ test_cmd = "python -m pytest"
 "#;
 
 #[test]
-fn spec_model_config_parses_canonical_python_and_legacy_compatibility_values() {
-    for (value, expected) in [
+fn spec_model_config_keeps_legacy_values_readable_but_always_routes_python() {
+    for (value, parsed) in [
         ("legacy", ProjectArtifactModel::Legacy),
         ("python", ProjectArtifactModel::PythonV1),
     ] {
@@ -38,15 +38,21 @@ fn spec_model_config_parses_canonical_python_and_legacy_compatibility_values() {
         let project = load_projects(root.path()).unwrap().remove(0);
         let row = resolve_project_config_row(root.path(), "demo").unwrap();
 
-        assert_eq!(project.artifact_model, Some(expected));
-        assert_eq!(project.effective_artifact_model(), expected);
-        assert_eq!(row.artifact_model, Some(expected));
-        assert_eq!(row.effective_artifact_model(), expected);
+        assert_eq!(project.artifact_model, Some(parsed));
+        assert_eq!(
+            project.effective_artifact_model(),
+            ProjectArtifactModel::PythonV1
+        );
+        assert_eq!(row.artifact_model, Some(parsed));
+        assert_eq!(
+            row.effective_artifact_model(),
+            ProjectArtifactModel::PythonV1
+        );
     }
 }
 
 #[test]
-fn artifact_model_config_defaults_unconfigured_projects_to_legacy() {
+fn artifact_model_config_defaults_unconfigured_projects_to_python() {
     let root = root_with_config(
         &PROJECT_WITH_WORKSPACE.replace("spec_model = \"{artifact_model}\"\n", ""),
     );
@@ -56,10 +62,13 @@ fn artifact_model_config_defaults_unconfigured_projects_to_legacy() {
     assert_eq!(project.artifact_model, None);
     assert_eq!(
         project.effective_artifact_model(),
-        ProjectArtifactModel::Legacy
+        ProjectArtifactModel::PythonV1
     );
     assert_eq!(row.artifact_model, None);
-    assert_eq!(row.effective_artifact_model(), ProjectArtifactModel::Legacy);
+    assert_eq!(
+        row.effective_artifact_model(),
+        ProjectArtifactModel::PythonV1
+    );
 }
 
 #[test]
