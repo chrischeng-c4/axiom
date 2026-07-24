@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in lib.rs is hand-written pending codegen support">
 /// A rendered element tree shared by framework runtimes.
 #[derive(Clone)]
 /// @spec libs/surface/tech-design/semantic/source/libs-surface-src-lib-rs.md#source
@@ -30,6 +31,7 @@ pub enum Element {
     /// Transparent container for a dynamic list of elements.
     Fragment(Vec<Element>),
 }
+// </HANDWRITE>
 
 /// @spec libs/surface/tech-design/semantic/source/libs-surface-src-lib-rs.md#source
 impl Element {
