@@ -21,6 +21,7 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
+| `body_limit` | libs/service-http/src/lib.rs | module | pub | 87 | pub mod body_limit; |
 | `config` | libs/service-http/src/lib.rs | module | pub | 74 | pub mod config; |
 | `error` | libs/service-http/src/lib.rs | module | pub | 75 | pub mod error; |
 | `logging` | libs/service-http/src/lib.rs | module | pub | 76 | pub mod logging; |
@@ -30,6 +31,9 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 | `server_timing` | libs/service-http/src/lib.rs | module | pub | 90 | pub mod server_timing; |
 | `signal` | libs/service-http/src/lib.rs | module | pub | 91 | pub mod signal; |
 | `transport` | libs/service-http/src/lib.rs | module | pub | 92 | pub mod transport; |
+| `body_limit_layer` | libs/service-http/src/lib.rs | re-export | pub | 103 | pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService}; |
+| `BodyLimitLayer` | libs/service-http/src/lib.rs | re-export | pub | 103 | pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService}; |
+| `BodyLimitService` | libs/service-http/src/lib.rs | re-export | pub | 103 | pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService}; |
 | `HttpConfig` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
 | `LogFormat` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
 | `ServiceIdentity` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
@@ -65,7 +69,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
 //! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
 //! readiness/shutdown re-exports, runtime delegation, per-request
-//! `Server-Timing` attribution ([`server_timing`]), and the
+//! `Server-Timing` attribution ([`server_timing`]), the shared
+//! request-body byte cap ([`body_limit`]), and the
 //! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
 //! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
@@ -78,7 +83,9 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //!
 //! It composes, it does not replace: [`transport::serve`] delegates listener
 //! ownership to `server-http`; [`probes::standard_probe_routes`] returns an `axum::Router`
-//! a service `.merge`s its own (auth'd, body-limited) data plane onto.
+//! a service `.merge`s its own (auth'd, body-limited) data plane onto —
+//! [`body_limit::body_limit_layer`] is the body-limiting piece of that data
+//! plane (see its module docs for placement and the recommended default).
 //!
 //! ## What a service wires
 //!
@@ -139,6 +146,7 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! to be adopted directly.
 
 pub mod admission;
+pub mod body_limit;
 pub mod config;
 pub mod error;
 pub mod logging;
@@ -154,6 +162,7 @@ pub use admission::{
     AdmissionDecision, AdmissionEvent, AdmissionInput, AdmissionMiddleware, AdmissionObserver,
     AdmissionOutcome, AdmissionPolicy, AdmissionPolicyError, NoopAdmissionObserver,
 };
+pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService};
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
 #[cfg(feature = "otlp")]
@@ -192,4 +201,15 @@ changes:
       middleware, its ServerTimingExt phase-append extension, and the
       ServerTimingDisclosure posture type) into the crate's public
       re-export surface. #2490
+  - path: "libs/service-http/src/lib.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      Wire the new body_limit module (body_limit_layer / BodyLimitLayer /
+      BodyLimitService — a tower Layer/Service enforcing a request-body byte
+      cap with the crate's structured {error, message} 413 envelope) into
+      the crate's public re-export surface, and document it in the crate
+      doc comment's module list and Composition section as the
+      body-limiting piece of a service's data plane. #2484
 ```

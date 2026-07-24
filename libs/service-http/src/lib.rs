@@ -7,7 +7,8 @@
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
 //! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
 //! readiness/shutdown re-exports, runtime delegation, per-request
-//! `Server-Timing` attribution ([`server_timing`]), and the
+//! `Server-Timing` attribution ([`server_timing`]), the shared
+//! request-body byte cap ([`body_limit`]), and the
 //! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
 //! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
@@ -20,7 +21,9 @@
 //!
 //! It composes, it does not replace: [`transport::serve`] delegates listener
 //! ownership to `server-http`; [`probes::standard_probe_routes`] returns an `axum::Router`
-//! a service `.merge`s its own (auth'd, body-limited) data plane onto.
+//! a service `.merge`s its own (auth'd, body-limited) data plane onto —
+//! [`body_limit::body_limit_layer`] is the body-limiting piece of that data
+//! plane (see its module docs for placement and the recommended default).
 //!
 //! ## What a service wires
 //!
@@ -81,6 +84,7 @@
 //! to be adopted directly.
 
 pub mod admission;
+pub mod body_limit;
 pub mod config;
 pub mod error;
 pub mod logging;
@@ -96,6 +100,7 @@ pub use admission::{
     AdmissionDecision, AdmissionEvent, AdmissionInput, AdmissionMiddleware, AdmissionObserver,
     AdmissionOutcome, AdmissionPolicy, AdmissionPolicyError, NoopAdmissionObserver,
 };
+pub use body_limit::{body_limit_layer, BodyLimitLayer, BodyLimitService};
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
 #[cfg(feature = "otlp")]

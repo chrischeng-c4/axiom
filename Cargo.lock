@@ -12192,6 +12192,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
+ "futures-util",
  "http-body-util",
  "opentelemetry",
  "serde",
