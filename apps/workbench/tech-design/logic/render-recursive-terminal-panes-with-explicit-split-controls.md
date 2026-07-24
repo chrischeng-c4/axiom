@@ -35,3 +35,30 @@ flowchart LR
 This design applies only to the native macOS presentation of the project-scoped `TerminalPaneTree` introduced by #2499. It replaces the flat pane `HStack` with a recursive SwiftUI renderer, exposes explicit Split Right and Split Down profile actions, and allows a split ratio to be updated without changing terminal-session identity. Rust remains the sole PTY owner and the existing `TerminalSurface` continues to render bytes for the referenced `TerminalTab`.
 
 Drag-to-split, worktree lifecycle, persisted restart restoration, tabs inside a pane, and Auxiliary feature expansion remain outside this slice.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Sources/WorkbenchMacCore/WorkbenchModel.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchModel
+  - path: apps/workbench/macos/Sources/WorkbenchMac/WorkbenchView.swift
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: WorkbenchView
+  - path: apps/workbench/macos/Tests/WorkbenchMacCoreTests/WorkbenchModelTests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchModelTests
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
