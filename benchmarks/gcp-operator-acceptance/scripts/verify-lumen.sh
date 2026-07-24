@@ -115,6 +115,36 @@ wait_for_split() {
   return 1
 }
 
+# The admission leg (#2477) patches the main CR, not the StatefulSet, so the
+# OPERATOR — not kubectl — propagates `LUMEN_ADMISSION_*` onto the pod spec.
+# A bare `rollout status` immediately after the patch races that propagation:
+# until the operator re-renders the StatefulSet it still reports the pre-patch
+# generation as fully rolled out, so the env read sees stale, admission-free
+# env (GKE run v4 0724045952 died here with observedGeneration lagging
+# metadata.generation). Waiting on `observedGeneration` is itself unreliable
+# here because the operator writes `spec.shardMap`/`spec.reshardPolicy.workflow`
+# back into spec, advancing `metadata.generation` out from under the poll, so
+# poll the actual observable — the rendered StatefulSet pod-template env — until
+# the admission grammar lands.
+wait_for_admission_env() {
+  local envfile="$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
+  local deadline=$((SECONDS + 300))
+  while (( SECONDS < deadline )); do
+    kubectl -n lumen get statefulset/lumen \
+      -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+      > "$envfile" 2>/dev/null || true
+    if grep -qx 'LUMEN_ADMISSION_READ_CAPACITY=100' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_WRITE_CAPACITY=50' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_ADMIN_CAPACITY=10' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_REFILL_SECS=30' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_MAX_KEYS=256' "$envfile"; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
 # ---- lumen-restore: second instance for the cold-restore leg (#2492) ----
 start_restore_forward() {
   stop_restore_forward
@@ -198,23 +228,14 @@ jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-search-before-restart.json" 
 stop_forward
 kubectl -n lumen patch lumen/lumen --type=merge --patch \
   '{"spec":{"admission":{"readCapacity":100,"writeCapacity":50,"adminCapacity":10,"refillSecs":30,"maxKeys":256}}}'
-kubectl -n lumen rollout status statefulset/lumen --timeout=600s
-kubectl -n lumen wait --for=condition=Ready pod/lumen-0 --timeout=300s
-kubectl -n lumen get statefulset/lumen \
-  -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
-  > "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
-if ! {
-  grep -qx 'LUMEN_ADMISSION_READ_CAPACITY=100' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
-  && grep -qx 'LUMEN_ADMISSION_WRITE_CAPACITY=50' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
-  && grep -qx 'LUMEN_ADMISSION_ADMIN_CAPACITY=10' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
-  && grep -qx 'LUMEN_ADMISSION_REFILL_SECS=30' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" \
-  && grep -qx 'LUMEN_ADMISSION_MAX_KEYS=256' "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
-}; then
+if ! wait_for_admission_env; then
   echo "StatefulSet pod spec did not carry the expected LUMEN_ADMISSION_* env after the CR patch" >&2
   cat "$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt" >&2 || true
   kubectl -n lumen get lumen/lumen -o yaml >&2 || true
   exit 1
 fi
+kubectl -n lumen rollout status statefulset/lumen --timeout=600s
+kubectl -n lumen wait --for=condition=Ready pod/lumen-0 --timeout=300s
 kubectl -n lumen patch lumen/lumen --type=json \
   --patch '[{"op":"remove","path":"/spec/admission"}]'
 kubectl -n lumen rollout status statefulset/lumen --timeout=600s
