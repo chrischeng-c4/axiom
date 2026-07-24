@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-test-artifact-routing
+id: workbench-test-artifact-routing-contract
 entry: test
 nodes:
-  test: { kind: start, label: "test run" }
+  test: { kind: start, label: "routine test" }
   runtime: { kind: terminal, label: "ignored runtime artifacts" }
-  refresh: { kind: process, label: "explicit refresh" }
-  retained: { kind: terminal, label: "tracked evidence" }
+  refresh: { kind: process, label: "WORKBENCH_REFRESH_EVIDENCE=1" }
+  retained: { kind: terminal, label: "tracked evidence baseline" }
 edges:
   - { from: test, to: runtime }
   - { from: refresh, to: retained }
 ---
 flowchart LR
-  test[Test run] --> runtime[Ignored runtime artifacts]
-  refresh[Explicit refresh] --> retained[Tracked evidence]
+  test[Routine test] --> runtime[.axiom-workbench/test-artifacts]
+  refresh[Explicit refresh] --> retained[Tracked evidence baseline]
 ```
 
-Routine tests write run-specific screenshots, transcripts, and measurements below repository-local ignored runtime state. The existing tracked evidence remains the retained review baseline and is updated only through an explicit refresh environment switch.
-
+Both Rust and browser production journeys resolve one artifact root. The default is `<repo>/.axiom-workbench/test-artifacts/production-journey/v1`; `WORKBENCH_REFRESH_EVIDENCE=1` selects the retained `apps/workbench/evidence/production-journey/v1` path. The runtime root is repository-ignored. Assertions and manifest schema remain unchanged.
 ## Changes
 <!-- type: changes lang: yaml -->
 
