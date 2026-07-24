@@ -109,6 +109,13 @@ pub struct TapeSpec {
     /// alone would then look like a fresh empty PVC again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_seed_uri: Option<String>,
+
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB. Unset means the server
+    /// default (#2484).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_limit_bytes: Option<u64>,
 }
 
 /// Status subresource, written back by the reconcile loop.

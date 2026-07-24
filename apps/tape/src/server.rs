@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{DefaultBodyLimit, Extension, Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
@@ -38,24 +38,14 @@ use crate::{
     SubscriptionError, TapeError, TapeEvent, TapeJournal,
 };
 
-/// Data-plane request body cap. `libs/service-http::HttpConfig` documents
-/// `body_limit_bytes` as the max request body size (bytes) for the data
-/// plane, with no exported default constant (`HttpConfig::new` takes it as a
-/// required, service-supplied argument) and no size limit on the probe
-/// routes; this mirrors the 8 MiB literal `HttpConfig`'s own tests use as
-/// that field's value (`libs/service-http/src/config.rs`), the same
-/// local-constant pattern `apps/keep/src/http/mod.rs::DEFAULT_BODY_LIMIT`
-/// uses for its own data plane. Probes are exempt (unbounded), matching
-/// `service_http`'s documented probe behavior.
-const DEFAULT_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
-
 /// Shared application state: the journal (behind a `std::sync::Mutex` — an
 /// in-memory `BTreeMap` core with no async internal awaits), the per-op
 /// request metrics, the drain flag `/readyz` reports, the optional file the
 /// journal persists to on every mutation (`--store`, mirroring the CLI's
 /// `load_journal`/`save_journal`), the bearer verifier the data-plane auth
-/// layer runs (#1326), and the optional raft group (#1327) that replicates
-/// append/checkpoint-put in HA (`REPLICAS_PER_SHARD > 1`) mode. `raft` stays
+/// layer runs (#1326), the optional raft group (#1327) that replicates
+/// append/checkpoint-put in HA (`REPLICAS_PER_SHARD > 1`) mode, and the
+/// configured data-plane request body size limit (#2484). `raft` stays
 /// `None` in single-node serving — the direct-journal path below is
 /// unchanged.
 #[derive(Clone)]
@@ -66,14 +56,16 @@ pub struct AppState {
     store: Option<PathBuf>,
     verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<TapeRaft>>,
+    body_limit_bytes: usize,
 }
 
 impl AppState {
     /// Build state from an already-loaded journal (empty when no `--store`
     /// file exists yet, mirroring the CLI's `load_journal`). Auth is open
     /// (tokenless — the `TAPE_AUTH=off` default); production serving builds
-    /// through [`AppState::with_auth`].
-    pub fn new(journal: TapeJournal, store: Option<PathBuf>) -> Self {
+    /// through [`AppState::with_auth`]. The `body_limit_bytes` parameter
+    /// configures the data-plane request body size limit (#2484).
+    pub fn new(journal: TapeJournal, store: Option<PathBuf>, body_limit_bytes: usize) -> Self {
         Self {
             journal: Arc::new(Mutex::new(journal)),
             metrics: Arc::new(TapeMetrics::new()),
@@ -81,6 +73,7 @@ impl AppState {
             store,
             verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
+            body_limit_bytes,
         }
     }
 
@@ -91,8 +84,9 @@ impl AppState {
         journal: TapeJournal,
         store: Option<PathBuf>,
         auth: crate::auth::AuthConfig,
+        body_limit_bytes: usize,
     ) -> Self {
-        let mut state = Self::new(journal, store);
+        let mut state = Self::new(journal, store, body_limit_bytes);
         state.verifier = Arc::new(auth.verifier());
         state
     }
@@ -123,6 +117,11 @@ impl AppState {
     /// The raft group this state proposes through, when running in HA mode.
     pub fn raft(&self) -> Option<Arc<TapeRaft>> {
         self.raft.clone()
+    }
+
+    /// The configured data-plane request body size limit (bytes).
+    pub fn body_limit_bytes(&self) -> usize {
+        self.body_limit_bytes
     }
 
     /// Flip readiness to draining so `/readyz` returns 503. Called on
@@ -212,6 +211,7 @@ pub fn router_with_admission(
     let req_metrics = state.metrics();
     let verifier = state.verifier();
     let raft = state.raft();
+    let body_limit = state.body_limit_bytes();
     let data_plane = Router::new()
         .route("/topics/{topic}/append", axum::routing::post(append))
         .route("/topics/{topic}/replay", get(replay))
@@ -260,7 +260,8 @@ pub fn router_with_admission(
         .with_state(state.clone())
         // Data-plane-only request body cap (#2484); probes below stay
         // unbounded, matching `service_http`'s documented probe behavior.
-        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT_BYTES));
+        // Enforces the configured body_limit_bytes with a structured 413 envelope.
+        .layer(service_http::body_limit_layer(body_limit));
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {
@@ -1063,7 +1064,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_replay_and_checkpoint_round_trip() {
-        let state = AppState::new(TapeJournal::default(), None);
+        let state = AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024);
         let app = router(state);
 
         let resp = crate::server::tests::post_json(
@@ -1096,7 +1097,7 @@ mod tests {
 
     #[tokio::test]
     async fn pull_subscription_is_bounded_side_effect_free_and_explicitly_acked() {
-        let app = router(AppState::new(TapeJournal::default(), None));
+        let app = router(AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024));
         for n in 0..2 {
             let response = post_json(
                 app.clone(),
@@ -1188,7 +1189,7 @@ mod tests {
         let auth = crate::auth::AuthConfig::resolve("required", None, Some(&tokens)).unwrap();
         let mut journal = TapeJournal::default();
         journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
-        let state = AppState::with_auth(journal, None, auth);
+        let state = AppState::with_auth(journal, None, auth, 8 * 1024 * 1024);
         let handle = state.journal_handle();
         let app = router(state);
 
@@ -1244,7 +1245,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let mut state = AppState::new(TapeJournal::default(), None);
+        let mut state = AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024);
         state.set_raft(raft);
 
         let response = router_without_raft_routes(state)

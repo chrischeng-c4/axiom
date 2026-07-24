@@ -35,6 +35,11 @@ spec:
                 default: "off"
                 description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
                 type: string
+              bodyLimitBytes:
+                description: Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB. Unset means the server default (#2484).
+                type: integer
+                minimum: 0.0
+                nullable: true
               bootstrapSeedUri:
                 description: 'Exact backup object URI consulted to seed a replica whose data directory is still EMPTY before Raft catch-up. Bootstrap-if-empty (#2468): the server probes the durable data directory first — a pod that already has raft state (including a routine restart onto its own PVC) skips the seed and boots from that existing state instead of refusing, so this field may harmlessly stay set on the CR after a successful bootstrap. It only ever seeds a fresh (empty) data directory, so this is cold recovery rather than live replica synchronization. Recommended hygiene: remove it once the bootstrap converges anyway, so the CR does not silently re-seed if the PVC is ever recreated (e.g. deleted-and-reprovisioned) — the field''s presence alone would then look like a fresh empty PVC again.'
                 nullable: true

@@ -257,6 +257,11 @@ struct ServeArgs {
     /// `TAPE_PEER_MTLS=on`. The public h2c port remains unchanged.
     #[arg(long, env = "TAPE_RAFT_PORT", default_value_t = 7138)]
     raft_port: u16,
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB (`TAPE_BODY_LIMIT_BYTES`).
+    #[arg(long, env = "TAPE_BODY_LIMIT_BYTES", default_value_t = 8 * 1024 * 1024)]
+    body_limit_bytes: usize,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -832,7 +837,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         "info",
         log_format,
         args.grace_secs,
-        0,
+        args.body_limit_bytes,
         args.otlp_endpoint.clone(),
     );
     let tracing_identity = service_http::ServiceIdentity::new("tape", env!("CARGO_PKG_VERSION"))?;
@@ -875,7 +880,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
-    let mut state = tape::server::AppState::with_auth(journal, store, auth);
+    let mut state = tape::server::AppState::with_auth(journal, store, auth, args.body_limit_bytes);
     if let Some(path) = args.token_registry_file.as_deref() {
         // `AppState` owns this exact verifier instance, so a Secret/CSI file
         // replacement becomes visible to the live data-plane middleware
@@ -1473,6 +1478,8 @@ mod tests {
         // and a 10s default grace window; existing commands keep parsing.
         // #1326: `serve` also gains --auth/--token-registry-file, defaulting
         // to tokenless (`off`).
+        // #2484: `serve` gains --body-limit-bytes (env TAPE_BODY_LIMIT_BYTES,
+        // default 8 MiB).
         let cli = Cli::try_parse_from(["tape", "serve"]).unwrap();
         let Command::Serve(args) = cli.command else {
             panic!("expected Serve");
@@ -1482,6 +1489,7 @@ mod tests {
         assert_eq!(args.grace_secs, 10);
         assert_eq!(args.auth, "off");
         assert!(args.token_registry_file.is_none());
+        assert_eq!(args.body_limit_bytes, 8 * 1024 * 1024);
 
         let cli = Cli::try_parse_from([
             "tape",
@@ -1496,6 +1504,8 @@ mod tests {
             "required",
             "--token-registry-file",
             "/tmp/tape-token-registry.json",
+            "--body-limit-bytes",
+            "16777216",
         ])
         .unwrap();
         let Command::Serve(args) = cli.command else {
@@ -1509,6 +1519,7 @@ mod tests {
             args.token_registry_file,
             Some(PathBuf::from("/tmp/tape-token-registry.json"))
         );
+        assert_eq!(args.body_limit_bytes, 16777216);
 
         let cli =
             Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();
