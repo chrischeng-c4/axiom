@@ -138,7 +138,7 @@ impl ProjectConfigRow {
     /// Keep the configured value available for read compatibility and config
     /// projection, but never let it route a project back to legacy EC/TD.
     pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
-        ProjectArtifactModel::PythonV1
+        crate::models::project::effective_project_artifact_model(self.artifact_model)
     }
 }
 

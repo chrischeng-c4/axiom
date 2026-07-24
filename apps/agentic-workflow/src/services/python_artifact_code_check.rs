@@ -192,10 +192,14 @@ fn validate_identity_edges(
             Some(id) => {
                 artifacts.insert(id.to_string());
             }
-            None => findings.push(format!(
+            None if !module.declarations.is_empty() => findings.push(format!(
                 "Python TD module `{}` has no explicit artifact:<context>/<name> identity",
                 module.path
             )),
+            // Package markers and other declaration-free modules carry no
+            // domain edge of their own, so forcing an artifact identity onto
+            // them would create duplicate/fake DDD nodes.
+            None => {}
         }
     }
     if artifacts.is_empty() {

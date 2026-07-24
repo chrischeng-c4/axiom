@@ -3431,16 +3431,15 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
             if row.effective_artifact_model()
                 == crate::models::project::ProjectArtifactModel::PythonV1
             {
-                let target =
-                    crate::cli::run::python_artifact_codegen_target(&project_root, &row.name)?;
-                let output_dir = project_root.join(&row.path);
+                crate::cli::td_lock::write_project_td_lock_snapshot_at_root(
+                    &project_root,
+                    &row.name,
+                )?;
                 crate::cli::ec::persist_ec_first_next_action(
                     &project_root,
                     wi,
                     format!(
-                        "aw cb gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
-                        shell_quote_td_arg(&candidate.display().to_string()),
-                        shell_quote_td_arg(&output_dir.display().to_string()),
+                        "aw ec verify --project {} --required-only --stage td --wi {wi}",
                         row.name,
                     ),
                 )?;

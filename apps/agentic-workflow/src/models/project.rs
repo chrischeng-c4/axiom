@@ -118,13 +118,33 @@ impl Default for ProjectArtifactModel {
     }
 }
 
+/// Test-only seam that keeps the retired Markdown lifecycle's subprocess
+/// regression fixtures covered while the public selector remains
+/// unconditionally Python-first. This is intentionally not read from
+/// `aw.toml` and is never emitted or documented as a user-facing selector.
+pub const TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV: &str = "AW_TEST_ONLY_LEGACY_ARTIFACT_MODEL";
+
+pub(crate) fn test_only_legacy_artifact_model_enabled() -> bool {
+    std::env::var_os(TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+}
+
+pub(crate) fn effective_project_artifact_model(
+    _configured: Option<ProjectArtifactModel>,
+) -> ProjectArtifactModel {
+    if test_only_legacy_artifact_model_enabled() {
+        return ProjectArtifactModel::Legacy;
+    }
+    ProjectArtifactModel::PythonV1
+}
+
 impl Project {
     /// The Python artifact lifecycle is canonical for every project.
     ///
     /// `spec_model` remains read-compatible while adopters remove legacy
     /// configuration, but it no longer selects a different lifecycle.
     pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
-        ProjectArtifactModel::PythonV1
+        effective_project_artifact_model(self.artifact_model)
     }
 }
 

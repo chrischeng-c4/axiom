@@ -329,6 +329,9 @@ struct SelfHostingPolicyEnvelope {
     completion: CanonicalWorkflowCompletion,
     next: CanonicalWorkflowNext,
     policy_mode: &'static str,
+    required_trailer: &'static str,
+    root_runner_allowed: bool,
+    direct_repair_default: bool,
     hard_gates: &'static [&'static str],
     advisory_axes: &'static [&'static str],
     remediation: Vec<&'static str>,
@@ -367,6 +370,9 @@ fn self_hosting_policy_envelope(
             payload_path: None,
         },
         policy_mode: SELF_HOSTING_POLICY_MODE,
+        required_trailer: "Refs #<issue>",
+        root_runner_allowed: false,
+        direct_repair_default: true,
         hard_gates: self_hosting_hard_gates(),
         advisory_axes: self_hosting_advisory_axes(),
         remediation: vec![
@@ -606,15 +612,18 @@ fn shell_quote_goal_arg(value: &str) -> String {
     }
 }
 
-fn python_target_gen_command(
+pub(crate) fn python_target_gen_command(
     project_root: &Path,
     project: &str,
     target: &str,
     wi: &str,
 ) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
-    let source_root = project_root.join(&row.path).join("tech-design");
-    let output_dir = project_root.join(&row.path);
+    let output_dir = project_root
+        .join(&row.path)
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.join(&row.path));
+    let source_root = output_dir.join("tech-design");
     Ok(format!(
         "aw cb gen --target {target} --source-root {} --output-dir {} --project {} --wi {wi}",
         shell_quote_goal_arg(&source_root.display().to_string()),
@@ -815,10 +824,17 @@ pub(crate) fn python_artifact_lifecycle_step(
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
-/// via the shared root loop. Project identity never changes root admission:
-/// Agentic Workflow dogfoods this same EC-first path.
+/// via the shared root loop. Agentic Workflow itself is rejected before the
+/// progress stream or local lifecycle ledger can mutate: a broken root loop
+/// cannot be its own repair prerequisite.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    if let Some(issue) = resolve_issue(id, &project_root).await? {
+        if issue_is_self_hosting(&issue) {
+            return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
+        }
+    }
     let root = ResolvedRunRoot::Wi {
         wi: id.to_string(),
         command: wi_run_command(id),
@@ -839,13 +855,16 @@ pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> Stri
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Thin shell: `aw goal capability <capability-id>` -- drive that
 /// capability's next work-root tick via the shared root loop. Agentic
-/// Workflow follows the same verifier as every other project.
+/// Workflow itself uses the sanctioned direct-commit repair policy.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_capability_root(
     project: &str,
     capability_id: &str,
     print: RunPrintOptions,
 ) -> Result<()> {
+    if is_self_hosting_project(project) {
+        return emit_self_hosting_policy_error(project, "capability", capability_id, print);
+    }
     let root = ResolvedRunRoot::Capability {
         project: project.to_string(),
         capability_id: capability_id.to_string(),
@@ -857,8 +876,8 @@ pub(crate) async fn run_capability_root(
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in run.rs is hand-written pending codegen support">
 /// Command string for the project-scoped capability completion loop that
-/// subsumes a project root. Self-hosting projects use the same bounded root
-/// tick as every other project.
+/// subsumes a project root. Self-hosting admission rejects this command before
+/// execution and directs the agent to bounded direct repair.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
     format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
@@ -1062,6 +1081,9 @@ async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
 /// <epic>` for the existing terminal rollup and is never re-atomized.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> Result<()> {
+    if is_self_hosting_project(project) {
+        return emit_self_hosting_policy_error(project, "backlog", project, print);
+    }
     let project_root = crate::find_project_root()?;
     let root = WorkflowNode {
         kind: "backlog".to_string(),
@@ -4883,7 +4905,7 @@ workspaces = []
         assert!(is_self_hosting_project("aw"));
         assert_eq!(
             project_capability_rollup_command("agentic-workflow"),
-            "aw health --project agentic-workflow claims"
+            "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1"
         );
     }
 

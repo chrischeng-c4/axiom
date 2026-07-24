@@ -67,9 +67,10 @@ not a lifecycle bypass.
 | Verb | About |
 |------|-------|
 | `aw meta` | Initialize, synchronize, and check repository/project META-docs |
-| `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends |
+| `aw wi` | Manage work-items — list/graph/show/create/validate across local + GitHub backends |
 | `aw capability` | Product capability completion loop: report/next/run/check |
-| `aw td` | Tech-design and generated-code lifecycle |
+| `aw td` | Tech-design authoring and validation lifecycle |
+| `aw cb` | Codebase materialization lifecycle: generate, fill, check, and promote |
 | `aw ec` | External-contract lifecycle: draft/fill, independent semantic review, generate, and verify |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
@@ -97,25 +98,27 @@ the host has no such tool, present every field as a blocking human question.
 run` verbs are gone — `wi`/`capability`/`backlog` are `aw goal` root types
 now.)
 
-`aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
-`create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
+`aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `graph`, `show`,
+`create`, `update`, `close`, `find`, canonical two-stage `plan`, compatibility
+`epicize`/`atomize`/`prioritize`,
 `enrich`, `validate`, `fill-section`; drive one WI to terminal with `aw goal
-wi <id>` (see above). Planning commands write local artifacts under
-`/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
+wi <id>` (see above). Planning producers write local artifacts under
+`/tmp/aw/workspaces/<workspace>/workitems/{project}/...` without tracker
+mutation. An accepted independent `project_plan` review preflights the exact
+reviewed tracker snapshot, then applies its digest-bound ordered mutation
+manifest as one retry-safe transaction; `needs_revision` writes nothing. There is no
 `estimate`/`sprintize`; use `aw goal backlog --project <name>` to drain every
 open issue for a project, or `aw goal capability --project <name>` as the
 run-to-end driver for one capability/the whole project, instead of
 cron-style sprint batches.
 
-`aw td` is the tech-design + generated-code lifecycle (LINEAR — no
-review/revise; the gate is EC via `code-check`): `create`, `gen`, `fill`,
-plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `lock`,
-`claim`, `gen-source`, `code-check`, `promote`, `audit-record`.
-(Code-artifact verbs are folded in here; the former standalone
-code-artifact namespace and the merge verb were removed — `code-check` is
-the terminal step. `aw td`'s retired `validate` subcommand folded into
+`aw td` is the tech-design authoring lifecycle: `create`, plus read-only or
+utility verbs `check`, `ast`, `migrate-mermaid`, `lock`, `claim`, and
+`audit-record`. `aw cb` owns codebase materialization: `gen`, `gen-source`,
+`fill`, `check`, and `promote`; `aw cb check` is the terminal step.
+`aw td`'s retired `validate` subcommand folded into
 `check` (#1277) and its retired `code-claim` subcommand folded into
-`create --from-source` (#1273).) `aw td check`
+`create --from-source` (#1273). `aw td check`
 specifically checks TD/spec files for structure, section-format rules, and
 logical consistency. TD defines candidate implementation structure;
 capability and EC gates remain the source of product truth.
@@ -143,9 +146,9 @@ record`) is retired (#1278, epic #1270). Existing-project takeover uses
 `aw health`'s `takeover-audit` axis to check it. Readiness layer metrics
 (`capability`, `managed`, `semantic`, `traceability`, `regenerable`) live
 entirely in `aw health`, whose `next.command` names the worker verb for the
-top gap (`aw td promote`, `aw td create --from-source`, `aw td gen`, `aw wi
+top gap (`aw cb promote`, `aw td create --from-source`, `aw cb gen`, `aw wi
 create`, ...). Capability remediation is `aw capability`; HANDWRITE→CODEGEN
-promotion is `aw td promote`.
+promotion is `aw cb promote`.
 
 `aw capability` is the product capability completion loop: `report`,
 `next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and
@@ -172,7 +175,7 @@ picture, or pass a focused `[SECTION]` (e.g. `regenerable`, `gates`,
 `--verify-traceability --verify-cb --verify-cold --verify-tests` when
 production readiness must be evaluated. `aw health` never mutates; its
 `next.command` field already names the exact remediation command to run
-next (`aw goal capability`, `aw td promote <path>`, `aw ec gen --verify`,
+next (`aw goal capability`, `aw cb promote <path>`, `aw ec gen --verify`,
 ...), so there is no `aw health fix` — diagnosis and remediation are
 deliberately separate commands.
 
@@ -275,10 +278,17 @@ CLI surface.
   flags to `aw wi`.
 - `--label` is not the public create path. Labels are derived from typed flags:
   `--type`, `--project`, `--priority`, and `--agent`.
+- Work-item type is canonically `epic | change`. Legacy `bug`, `enhancement`,
+  `refactor`, and `test` labels are read-only compatibility aliases for
+  `change`; new authoring never emits them.
+- Every open change has exactly one epic owner; only epics may own children.
+  Run `aw wi graph --project <name> --json` to validate the deterministic
+  issue-platform projection, effective priority inheritance, dependencies,
+  duplicate recommendations, and sibling-only supersession without writes.
 - Non-epic work-items must be bounded before TD: include `## Capability
   Alignment`, `## Scope`, `## Acceptance Criteria`, and `## Reference
   Context`. Roadmap-sized or decision-blocked work must go through `aw wi
-  atomize` or HITL review before `aw td`.
+  plan` or review before `aw td`.
 
 ## SDD and Codegen Rules
 
@@ -302,7 +312,7 @@ evidence before production readiness can be claimed.
 
 Every implementation change goes through Agentic Workflow unless the user explicitly asks
 to bypass it. The lifecycle is LINEAR (no review/revise; the gate is EC):
-`aw wi` -> `aw td` (author -> `gen` -> `fill`) -> `aw td code-check`. The
+`aw wi` -> `aw ec` -> `aw td` (author/check) -> `aw cb` (gen/fill/check). The
 CLI owns the concrete phase queue, prompt text, validation gates, commits, git
 trailers, and next command. Run `aw llm` for the binary-owned orientation (the
 loop model: aw=loop, wi=state, caps=goal, ec=verifier, td=artifact).
@@ -350,7 +360,7 @@ or configured `cap_path`; capability document structure is Markdown-first:
 `## Capabilities` owns the capability registry, and `### Capability Index`
 is the compact scan surface. H3-Hn capability headings use field-style
 contracts and work-root tables to map headings to epic/subepic WI roots.
-Atomic `change` WIs usually come from `aw wi atomize` rather than
+Atomic `change` WIs usually come from the second stage of `aw wi plan` rather than
 CAPABILITIES.md rows. README-resident capability structure is migration
 input — `aw capability migrate` relocates it to CAPABILITIES.md and leaves
 a human-readable summary in README. YAML `## Capability:` sections and

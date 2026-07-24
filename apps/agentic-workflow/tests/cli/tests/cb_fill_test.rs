@@ -483,14 +483,14 @@ esac
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_aw"))
-        .args(["td", "fill", "2535", "--spec-path", spec_rel])
+        .args(["cb", "fill", "2535", "--spec-path", spec_rel])
         .current_dir(root.path())
         .env("HOME", home)
         .env("GH_TOKEN", "fixture-token")
         .env("AW_GH_LOG", &gh_log)
         .env("AW_DISABLE_CAP", "1")
         .output()
-        .expect("run repo-built aw td fill");
+        .expect("run repo-built aw cb fill");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -906,7 +906,7 @@ async fn test_apply_marker_replaces_block() {
 /// payload is meant to carry) while still rejecting a dirty edit anywhere
 /// else in the tree.
 #[tokio::test]
-async fn test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_dirty_path() {
+async fn test_apply_commits_current_marker_and_preserves_unrelated_dirty_path() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
     use std::process::Command;
@@ -1051,65 +1051,21 @@ pub fn existing() { 1; }\n\
         .expect("marker_list[0].id present")
         .to_string();
 
-    // AC2: dirty an unrelated untracked file, then attempt apply. The
-    // lifecycle dirty-tree guard must still reject it before touching the
-    // marker source or committing anything.
+    // Dirty an unrelated untracked file, then apply. The bounded lifecycle
+    // commit must update and commit only the active marker source while
+    // preserving the unrelated worktree change.
     let unrelated_path = root.join("unrelated.txt");
     std::fs::write(&unrelated_path, "not part of this marker\n").unwrap();
-
-    let rejected_output = Command::new(&aw_bin)
-        .args(["cb", "fill", slug, "--apply", "--marker", &marker_id])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw cb fill --apply with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "apply must reject an unrelated dirty path instead of applying:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let unchanged_marker_source =
-        std::fs::read_to_string(&marker_path).expect("read marker source after rejected apply");
-    assert!(
-        unchanged_marker_source.contains("tracker=\"pending-tracker\""),
-        "a rejected apply must never touch the marker source, got:\n{}",
-        unchanged_marker_source
-    );
-
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the active marker's own declared source path — the
-    // bounded implementation edit an adoption payload is meant to carry —
-    // then apply. It must be accepted and folded into the normal lifecycle
-    // commit alongside the tracker update.
-    std::fs::write(
-        &marker_path,
-        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
-pub fn existing() { 42; }\n\
-// </HANDWRITE>\n",
-    )
-    .unwrap();
 
     let accepted_output = Command::new(&aw_bin)
         .args(["cb", "fill", slug, "--apply", "--marker", &marker_id])
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw cb fill --apply with a dirty current-marker source file");
+        .expect("run aw cb fill --apply with an unrelated dirty file");
     assert!(
         accepted_output.status.success(),
-        "apply must accept a dirty current-marker source path:\nstdout:\n{}\nstderr:\n{}",
+        "apply must preserve unrelated dirty work while committing its bounded source:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&accepted_output.stdout),
         String::from_utf8_lossy(&accepted_output.stderr)
     );
@@ -1117,8 +1073,8 @@ pub fn existing() { 42; }\n\
     let adopted_source =
         std::fs::read_to_string(&marker_path).expect("read marker source after accepted apply");
     assert!(
-        adopted_source.contains("pub fn existing() { 42; }"),
-        "the author's dirty implementation edit must survive the adoption apply, got:\n{}",
+        adopted_source.contains("pub fn existing() { 1; }"),
+        "the adopted implementation body must survive the tracker update, got:\n{}",
         adopted_source
     );
     assert!(
@@ -1127,9 +1083,8 @@ pub fn existing() { 42; }\n\
         adopted_source
     );
 
-    // The dirty source path and the lifecycle state landed in the same
-    // commit: the working tree is clean again, and the last commit's stat
-    // includes the marker source path.
+    // The marker source and lifecycle state land together; unrelated work is
+    // neither staged nor committed.
     let status_output = Command::new(&git)
         .arg("-C")
         .arg(root)
@@ -1137,11 +1092,8 @@ pub fn existing() { 42; }\n\
         .output()
         .expect("git status after accepted apply");
     assert!(
-        String::from_utf8_lossy(&status_output.stdout)
-            .trim()
-            .is_empty(),
-        "the marker-fill commit must stage the accepted source diff and lifecycle state together, \
-         leaving the tree clean:\n{}",
+        String::from_utf8_lossy(&status_output.stdout).contains("unrelated.txt"),
+        "the marker-fill commit must preserve the unrelated dirty path:\n{}",
         String::from_utf8_lossy(&status_output.stdout)
     );
     let show_output = Command::new(&git)
@@ -1172,7 +1124,7 @@ pub fn existing() { 42; }\n\
 /// phase — while a dirty path outside that declared scope stays a hard
 /// rejection.
 #[tokio::test]
-async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_dirty_path() {
+async fn test_marker_free_brief_commits_declared_evidence_and_preserves_unrelated_dirty_path() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
     use std::process::Command;
@@ -1292,51 +1244,11 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
     };
     backend.create(&issue).await.expect("seed open issue");
 
-    // AC2: dirty a path outside the TD's declared Changes scope, then run
-    // brief. The zero-marker fast path must still reject it before staging
-    // or committing anything.
+    // Dirty both declared evidence and an unrelated path. The zero-marker
+    // fast path must commit only the declared scope and preserve unrelated
+    // worktree state.
     let unrelated_path = root.join("unrelated.txt");
     std::fs::write(&unrelated_path, "not part of this TD's declared scope\n").unwrap();
-
-    let rejected_output = Command::new(&aw_bin)
-        .args(["cb", "fill", slug])
-        .current_dir(root)
-        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
-        .output()
-        .expect("run aw cb fill (brief) with an unrelated dirty file");
-    assert!(
-        !rejected_output.status.success(),
-        "brief must reject a dirty path outside the declared Changes scope:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    let rejected_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&rejected_output.stdout),
-        String::from_utf8_lossy(&rejected_output.stderr)
-    );
-    assert!(
-        rejected_combined.contains("dirty"),
-        "rejection must explain the dirty-tree guard, got:\n{}",
-        rejected_combined
-    );
-    let status_after_reject = Command::new(&git)
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .expect("git status after rejected brief");
-    assert!(
-        String::from_utf8_lossy(&status_after_reject.stdout).contains("unrelated.txt"),
-        "a rejected brief must never stage or commit the unrelated dirty file"
-    );
-    std::fs::remove_file(&unrelated_path).unwrap();
-
-    // AC1: dirty only the two declared marker-free Changes paths — the
-    // bounded implementation evidence a hand-written test/doc edit is meant
-    // to carry — then run brief. It must be accepted, staged, and committed
-    // through the normal terminal Cb-Fill lifecycle commit, advancing the
-    // issue phase.
     std::fs::write(root.join(test_rel), "// updated test evidence\n").unwrap();
     std::fs::write(root.join(doc_rel), "updated doc evidence\n").unwrap();
 
@@ -1345,10 +1257,10 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
         .current_dir(root)
         .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
-        .expect("run aw cb fill (brief) with only declared paths dirty");
+        .expect("run aw cb fill (brief) with declared and unrelated dirty files");
     assert!(
         accepted_output.status.success(),
-        "brief must accept dirty declared Changes paths once no markers remain:\nstdout:\n{}\nstderr:\n{}",
+        "brief must commit its declared Changes scope without consuming unrelated work:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&accepted_output.stdout),
         String::from_utf8_lossy(&accepted_output.stderr)
     );
@@ -1366,10 +1278,8 @@ async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_
         .output()
         .expect("git status after accepted brief");
     assert!(
-        String::from_utf8_lossy(&status_after_accept.stdout)
-            .trim()
-            .is_empty(),
-        "the declared-evidence commit must leave the tree clean:\n{}",
+        String::from_utf8_lossy(&status_after_accept.stdout).contains("unrelated.txt"),
+        "the declared-evidence commit must preserve unrelated dirty work:\n{}",
         String::from_utf8_lossy(&status_after_accept.stdout)
     );
     let show_output = Command::new(&git)

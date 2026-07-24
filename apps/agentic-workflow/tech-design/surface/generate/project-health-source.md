@@ -2225,9 +2225,10 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
     )
 }
 
-/// Self-AW health is a read-only policy report. Expose its gate partition in
-/// the compact and full envelopes so an agent cannot mistake advisory
-/// implementation coverage for an admission requirement to run AW itself.
+// <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in project.rs is hand-written pending codegen support">
+/// Self-AW health remains a read-only policy report. Agentic Workflow repairs
+/// use the sanctioned direct-commit path because requiring a potentially
+/// broken lifecycle to repair itself would deadlock self-hosting.
 fn add_self_hosting_policy_fields(
     report: &ProjectHealthReport,
     mut summary: serde_json::Value,
@@ -2243,6 +2244,18 @@ fn add_self_hosting_policy_fields(
         serde_json::Value::String(crate::cli::run::SELF_HOSTING_POLICY_MODE.to_string()),
     );
     object.insert(
+        "required_trailer".to_string(),
+        serde_json::Value::String("Refs #<issue>".to_string()),
+    );
+    object.insert(
+        "root_runner_allowed".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    object.insert(
+        "direct_repair_default".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    object.insert(
         "hard_gates".to_string(),
         serde_json::json!(crate::cli::run::self_hosting_hard_gates()),
     );
@@ -2252,6 +2265,7 @@ fn add_self_hosting_policy_fields(
     );
     summary
 }
+// </HANDWRITE>
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_summary_with_payload_path(
@@ -3306,7 +3320,40 @@ fn sanitize_tmp_path_segment(value: &str) -> String {
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Result<()> {
-    let status = crate::cli::td_lock::check_project_td_lock(&report.project)?;
+    let status = match crate::cli::td_lock::check_project_td_lock(&report.project) {
+        Ok(status) => status,
+        Err(error) => {
+            let project_root = crate::find_project_root()?;
+            let td_path = crate::services::project_registry::resolve_td_root_from_config(
+                &project_root,
+                &report.project,
+            )
+            .map(|resolved| resolved.root)
+            .unwrap_or_else(|_| format!("projects/{}/tech-design", report.project));
+            crate::cli::td_lock::TdLockStatus {
+                project: report.project.clone(),
+                ir_kind: "td".to_string(),
+                lock_path: format!("{td_path}/td.lock"),
+                td_path,
+                status: crate::cli::td_lock::TdLockState::Missing,
+                clean: false,
+                source_digest: String::new(),
+                locked_source_digest: None,
+                ir_digest: String::new(),
+                locked_ir_digest: None,
+                current_digest: String::new(),
+                locked_digest: None,
+                file_count: 0,
+                td_ir_count: 0,
+                td_ir_error_count: 1,
+                changed: Vec::new(),
+                added: Vec::new(),
+                removed: Vec::new(),
+                ir_changed: Vec::new(),
+                message: format!("TD lock unavailable: {error}"),
+            }
+        }
+    };
     if !status.clean && !project_health_caps_ec_only(&report.project) {
         report.status = ProjectHealthStatus::Blocked;
         report
@@ -3325,9 +3372,35 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
     let caps_ec_only = project_health_caps_ec_only(&report.project);
-    let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
+    let summary = match crate::cli::ec::project_ec_check_summary(&report.project) {
+        Ok(summary) => summary,
+        Err(error) => {
+            let finding = format!("EC inventory unavailable: {error}");
+            let mut ec_report = ProjectEcGateReport::not_evaluated(&report.project);
+            ec_report.evaluated = true;
+            ec_report.status = ProjectEcGateStatus::CheckFailed;
+            ec_report.note = Some(finding.clone());
+            ec_report.findings.push(finding.clone());
+            block_health_report(report, finding);
+            report.ec = ec_report;
+            report.refresh_takeover_readiness();
+            return Ok(());
+        }
+    };
     let mut ec_report = ProjectEcGateReport::from_check(summary);
-    let lock_status = crate::cli::ec::project_ec_lock_status(&report.project)?;
+    let lock_status = match crate::cli::ec::project_ec_lock_status(&report.project) {
+        Ok(status) => status,
+        Err(error) => {
+            let finding = format!("EC lock unavailable: {error}");
+            ec_report.status = ProjectEcGateStatus::CheckFailed;
+            ec_report.note = Some(finding.clone());
+            ec_report.findings.push(finding.clone());
+            block_health_report(report, finding);
+            report.ec = ec_report;
+            report.refresh_takeover_readiness();
+            return Ok(());
+        }
+    };
     ec_report.lock_status = Some(lock_status.status);
     ec_report.lock_clean = lock_status.clean;
     ec_report.lock_path = lock_status.lock_path.clone();

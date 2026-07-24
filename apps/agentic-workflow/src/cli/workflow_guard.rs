@@ -422,6 +422,15 @@ pub async fn issue_locks(project_root: &Path) -> Result<Vec<IssueLockView>> {
     // The remote tracker owns workflow-lock truth.  The local lifecycle ledger
     // is deliberately write-optimized and can retain a lock after an issue was
     // closed outside `aw`; consulting it here would deadlock unrelated work.
+    //
+    // A repository without a configured issue/repo platform has no remote
+    // lock authority to consult. Internal TD/CB lifecycle commands still use
+    // the temp-backed LocalBackend in that mode, so treat the lock set as
+    // empty. Public `aw wi` commands continue to call
+    // `resolve_default_backend` themselves and therefore remain strict.
+    if !has_configured_issue_platform(project_root)? {
+        return Ok(Vec::new());
+    }
     let (kind, repo, host) = resolve_default_backend(project_root)?;
     let backend = make_backend(&kind, project_root, repo, host)
         .context("failed to create workflow-lock issue backend")?;
@@ -434,6 +443,22 @@ pub async fn issue_locks(project_root: &Path) -> Result<Vec<IssueLockView>> {
         .iter()
         .filter_map(IssueLockView::from_issue)
         .collect())
+}
+
+fn has_configured_issue_platform(project_root: &Path) -> Result<bool> {
+    let config_path = project_root.join("aw.toml");
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(&config_path)?;
+    let config: toml::Value = toml::from_str(&content)?;
+    let Some(workflow) = config
+        .get("agentic_workflow")
+        .and_then(toml::Value::as_table)
+    else {
+        return Ok(false);
+    };
+    Ok(workflow.contains_key("issue_platform") || workflow.contains_key("repo_platform"))
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/workflow_guard.md#source
@@ -820,6 +845,24 @@ mod tests {
             "aw td review 123 --apply",
             "aw td create 123 --apply"
         ));
+    }
+
+    #[test]
+    fn unconfigured_issue_platform_has_no_remote_lock_authority() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("aw.toml"), "").unwrap();
+        assert!(!has_configured_issue_platform(tmp.path()).unwrap());
+    }
+
+    #[test]
+    fn configured_issue_platform_retains_remote_lock_authority() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            "[agentic_workflow.issue_platform]\ntype = \"github\"\n",
+        )
+        .unwrap();
+        assert!(has_configured_issue_platform(tmp.path()).unwrap());
     }
 }
 // CODEGEN-END

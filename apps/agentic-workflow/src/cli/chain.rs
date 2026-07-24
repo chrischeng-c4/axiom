@@ -1594,13 +1594,13 @@ mod tests {
             "wi.close",
             "wi.fill-section",
             "td.create",
-            "td.gen",
-            "td.gen-source",
-            "td.fill",
+            "cb.gen",
+            "cb.gen-source",
+            "cb.fill",
             "td.claim",
-            "td.promote",
+            "cb.promote",
             "td.audit-record",
-            "td.code-check",
+            "cb.check",
             "ec.gen",
             "ec.lock",
             "capability.apply-draft",
@@ -1662,13 +1662,13 @@ mod tests {
     // a raw `std::env::args()`-shaped slice (program name in slot 0).
     #[test]
     fn resolve_invoked_verb_path_recovers_leaf_path() {
-        let args: Vec<String> = ["aw", "td", "fill", "some-slug"]
+        let args: Vec<String> = ["aw", "cb", "fill", "some-slug"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         assert_eq!(
             resolve_invoked_verb_path(&args),
-            Some("td.fill".to_string())
+            Some("cb.fill".to_string())
         );
     }
 
@@ -1858,7 +1858,10 @@ mod tests {
     fn legacy_aw_run_project_only_normalizes_to_capability_rollup() {
         assert_eq!(
             normalize_legacy_next_action("aw run --project agentic-workflow", "irrelevant"),
-            Some("aw health --project agentic-workflow claims".to_string())
+            Some(
+                "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1"
+                    .to_string()
+            )
         );
     }
 

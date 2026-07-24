@@ -29,10 +29,8 @@ fn test_recovery_verbs_present() {
         td.find_subcommand("idle").is_none(),
         "td idle was removed with the old .aw/worktrees recovery model"
     );
-    assert!(
-        cmd.find_subcommand("cb").is_none(),
-        "cb namespace is retired into td"
-    );
+    cmd.find_subcommand("cb")
+        .expect("cb codebase-materialization namespace");
     assert!(
         td.find_subcommand("code-claim").is_none(),
         "td code-claim was folded into td create --from-source (#1273)"

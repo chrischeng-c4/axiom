@@ -1211,6 +1211,16 @@ mod tests {
         let args = args_for("apps/demo", false);
         let scope = resolve_scope(temp.path(), &args).unwrap();
         execute(temp.path(), &scope, &args, ApplyMode::Init).unwrap();
+        let project_readme = temp.path().join("apps/demo/README.md");
+        let project_readme_body = fs::read_to_string(&project_readme).unwrap();
+        fs::write(
+            &project_readme,
+            project_readme_body.replace(
+                PROJECT_BRIEF_PLACEHOLDER,
+                "Demo exercises META-doc drift and repair.",
+            ),
+        )
+        .unwrap();
         let targets = [
             ("AGENTS.md", AW_START_MARKER),
             ("CLAUDE.md", AW_START_MARKER),

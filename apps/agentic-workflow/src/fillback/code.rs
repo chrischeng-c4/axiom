@@ -2664,7 +2664,11 @@ enum InternalEnum {
         assert_eq!(blocks[0].spec_ref, spec_ref);
 
         let stale_source = "export const stale = 0;\n";
-        let stale_partitions = partition_text_source(stale_source, None);
+        let mut analyzer = AstAnalyzer::new().unwrap();
+        let stale_boundaries = analyzer
+            .top_level_byte_boundaries(Path::new("fixture.ts"), stale_source)
+            .unwrap();
+        let stale_partitions = partition_text_source(stale_source, Some(&stale_boundaries));
         let format = SourceUnitFormat::for_language(SupportedLanguage::TypeScript);
         let stale_spec = render_source_unit_spec(
             "apps/demo/src/fixture.ts",
@@ -3105,7 +3109,7 @@ enum InternalEnum {
     }
 
     #[test]
-    fn existing_owner_refresh_is_fence_aware_and_replaces_all_old_partitions() {
+    fn invalid_existing_owner_is_fence_aware_and_fails_closed() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
         let source_path = root.join("apps/demo/src/raw_doc.rs");
@@ -3123,22 +3127,21 @@ enum InternalEnum {
         let existing = format!(
             "---\nid: raw-doc\ncapability_refs:\n  - id: keep-me\n    role: primary\n    gap: keep-gap\n    claim: keep-gap\n    coverage: full\nfill_sections: [rust-source-unit, changes]\n---\n\n# Raw Doc\n\n## Source\n<!-- type: rust-source-unit lang: rust -->\n\n````rust\nconst OLD: &str = r#\"\n## Fake\n\"#;\n````\n\n### Source Partition 9999\n<!-- aw-source-partition: index=9999 count=9999 bytes=1 payload_bytes=4 encoding=base64 digest=sha256:bad boundary=ast terminal_newline=false -->\n\n```text\neA==\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/demo/src/raw_doc.rs\n    action: modify\n    section: rust-source-unit\n    impl_mode: codegen\n```\n"
         );
-        fs::write(&spec_path, existing).unwrap();
+        fs::write(&spec_path, &existing).unwrap();
 
         let outcome = CodeStrategy::new()
             .import_explicit_source_file(&source_path, root, &output_dir)
             .unwrap();
-        assert!(!outcome.requires_hitl, "{}", outcome.message);
-        let refreshed = fs::read_to_string(&spec_path).unwrap();
-        assert!(refreshed.contains("id: keep-me"));
-        assert!(!refreshed.contains("Source Partition 9999"));
-        assert_eq!(
-            crate::generate::apply::decode_partitioned_source(&refreshed)
-                .unwrap()
-                .as_ref()
-                .map(|decoded| decoded.source.as_str()),
-            Some(source.as_str())
+        assert!(outcome.requires_hitl, "{}", outcome.message);
+        assert!(
+            outcome
+                .message
+                .contains("partition controls require exactly one canonical source manifest"),
+            "{}",
+            outcome.message
         );
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), existing);
+        assert_eq!(fs::read_to_string(&source_path).unwrap(), source);
     }
 
     #[test]

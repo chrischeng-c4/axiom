@@ -324,7 +324,6 @@ fn write_project_td_lock_file_at_root(
 /// Write a TD lock snapshot without creating the lifecycle commit used by the
 /// public CLI.  Hermetic graph-verification tests use this to prepare a
 /// committed-equivalent lock without depending on a git fixture.
-#[cfg(test)]
 pub(crate) fn write_project_td_lock_snapshot_at_root(
     project_root: &Path,
     project: &str,
@@ -825,7 +824,7 @@ struct TdSnapshot {
 
 fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
     let mut files = Vec::new();
-    collect_td_files(td_root, td_root, &mut files)?;
+    collect_td_files_with_policy(td_root, td_root, &mut files, false)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let source_digest = root_digest(&files);
     let ir_digest = root_ir_digest(&files);
@@ -837,8 +836,20 @@ fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
 }
 
 fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
-    let mut snapshot = snapshot_td_root(&target.td_path)?;
-    if target.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+    let python_v1 = target.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1;
+    let mut snapshot = if python_v1 {
+        let mut files = Vec::new();
+        collect_td_files_with_policy(&target.td_path, &target.td_path, &mut files, true)?;
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        TdSnapshot {
+            source_digest: root_digest(&files),
+            ir_digest: root_ir_digest(&files),
+            files,
+        }
+    } else {
+        snapshot_td_root(&target.td_path)?
+    };
+    if python_v1 {
         snapshot.ir_digest =
             crate::services::python_td::compile_python_td_project(&target.td_path)?.semantic_digest;
         // Python-v1 has one compiler-owned semantic root digest. Markdown
@@ -852,7 +863,17 @@ fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
     Ok(snapshot)
 }
 
+#[cfg(test)]
 fn collect_td_files(root: &Path, current: &Path, files: &mut Vec<TdLockEntry>) -> Result<()> {
+    collect_td_files_with_policy(root, current, files, false)
+}
+
+fn collect_td_files_with_policy(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<TdLockEntry>,
+    ignore_python_runtime_artifacts: bool,
+) -> Result<()> {
     let mut entries = fs::read_dir(current)
         .with_context(|| format!("read td directory {}", current.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -864,7 +885,23 @@ fn collect_td_files(root: &Path, current: &Path, files: &mut Vec<TdLockEntry>) -
             .file_type()
             .with_context(|| format!("stat {}", path.display()))?;
         if file_type.is_dir() {
-            collect_td_files(root, &path, files)?;
+            if ignore_python_runtime_artifacts
+                && matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some(
+                        "__pycache__"
+                            | ".venv"
+                            | "venv"
+                            | ".pytest_cache"
+                            | ".mypy_cache"
+                            | ".ruff_cache"
+                            | ".tox"
+                    )
+                )
+            {
+                continue;
+            }
+            collect_td_files_with_policy(root, &path, files, ignore_python_runtime_artifacts)?;
             continue;
         }
         if !file_type.is_file()
@@ -1064,6 +1101,10 @@ path = "projects/demo"
         write(
             &root.join("projects/demo/tech-design/design.md"),
             "# Demo design\n",
+        );
+        write(
+            &root.join("projects/demo/tech-design/src/demo/design.py"),
+            "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
         write(&root.join("notes/staged.txt"), "staged baseline\n");
         write(&root.join("notes/unstaged.txt"), "unstaged baseline\n");
@@ -1360,6 +1401,10 @@ path = "projects/demo"
             &td_root.join("invoice.py"),
             "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\ndef issue_invoice() -> None:\n    pass\n",
         );
+        write(
+            &td_root.join("__pycache__/invoice.cpython-313.pyc"),
+            "runtime cache\n",
+        );
 
         let target = resolve_td_lock_target(root.path(), "demo").unwrap();
         let snapshot = snapshot_td_lock_target(&target).unwrap();
@@ -1372,6 +1417,8 @@ path = "projects/demo"
             .iter()
             .all(|entry| entry.parse_error.is_none()));
         assert!(snapshot.files.iter().all(|entry| entry.ir_digest.is_none()));
+        assert_eq!(snapshot.files.len(), 1);
+        assert_eq!(snapshot.files[0].path, "src/demo/domain/invoice.py");
     }
 
     #[test]
@@ -1389,6 +1436,11 @@ path = "projects/demo"
         write(
             &tmp.path().join("projects/demo/tech-design/design.md"),
             "design\n",
+        );
+        write(
+            &tmp.path()
+                .join("projects/demo/tech-design/src/demo/design.py"),
+            "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
         );
 
         let status = check_project_td_lock_at_root(tmp.path(), "d").unwrap();
@@ -1412,6 +1464,11 @@ path = "projects/demo"
         );
         let spec = tmp.path().join("projects/demo/tech-design/design.md");
         write(&spec, "design\n");
+        write(
+            &tmp.path()
+                .join("projects/demo/tech-design/src/demo/design.py"),
+            "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
+        );
 
         let status = check_project_td_lock_for_spec_at_root(tmp.path(), &spec).unwrap();
 
@@ -1452,6 +1509,11 @@ td_path = "projects/demo/tech-design"
         );
         let td_root = tmp.path().join("projects/demo/tech-design");
         write(&td_root.join("design.md"), "before\n");
+        let python_td = td_root.join("src/demo/design.py");
+        write(
+            &python_td,
+            "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    pass\n",
+        );
         let snapshot = snapshot_td_root(&td_root).unwrap();
         let lock = TdLockFile {
             version: TD_LOCK_VERSION,
@@ -1469,12 +1531,15 @@ td_path = "projects/demo/tech-design"
             &toml::to_string_pretty(&lock).unwrap(),
         );
 
-        write(&td_root.join("design.md"), "after\n");
+        write(
+            &python_td,
+            "__aw_artifact_id__ = \"artifact:demo/design\"\n\ndef design() -> None:\n    return None\n",
+        );
         let status = check_project_td_lock_at_root(tmp.path(), "demo").unwrap();
 
         assert_eq!(status.status, TdLockState::Stale);
         assert!(!status.clean);
-        assert_eq!(status.changed, vec!["design.md"]);
+        assert_eq!(status.changed, vec!["src/demo/design.py"]);
     }
 }
 // CODEGEN-END

@@ -1234,7 +1234,7 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
     );
     assert_eq!(
         err.command,
-        vec!["td".to_string(), "code-check".to_string(), slug.to_string()],
+        vec!["cb".to_string(), "check".to_string(), slug.to_string()],
         "the failure must name the exact command executed, got: {err}"
     );
     let envelope = err
@@ -1261,7 +1261,7 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
         "Display impl must name the hop index, got:\n{rendered}"
     );
     assert!(
-        rendered.contains("td code-check"),
+        rendered.contains("cb check"),
         "Display impl must name the command, got:\n{rendered}"
     );
     assert!(

@@ -494,9 +494,18 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 }
 
 // Brief mode (default): enumerate markers, emit dispatch envelope.
-async fn run_brief(args: CbFillArgs) -> Result<()> {
+async fn run_brief(mut args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let slug = args.slug.clone();
+    let requested_slug = args.slug.clone();
+    let issue = match crate::cli::td::bootstrap_td_issue(&project_root, &requested_slug).await {
+        Ok(issue) => issue,
+        Err(error) => {
+            emit_error(&requested_slug, &error.to_string())?;
+            std::process::exit(2);
+        }
+    };
+    let slug = crate::cli::td::workflow_slug_for_issue(&issue, &requested_slug);
+    args.slug = slug.clone();
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -506,11 +515,51 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         std::process::exit(2);
     }
 
+    let python_project = issue.labels.iter().find_map(|label| {
+        label
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
+            .or_else(|| label.strip_prefix("lib:"))
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+            .and_then(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    &project_root,
+                    project,
+                )
+                .ok()
+                .filter(|row| {
+                    row.effective_artifact_model()
+                        == crate::models::project::ProjectArtifactModel::PythonV1
+                })
+                .map(|row| row.name)
+            })
+    });
+    if python_project.is_some() && enumerate_worktree_markers(&worktree_abs).is_empty() {
+        crate::cli::ec::persist_ec_first_next_action(
+            &project_root,
+            &slug,
+            format!("aw cb check {slug}"),
+        )?;
+        let env = serde_json::json!({
+            "action": "dispatch",
+            "agent": serde_json::Value::Null,
+            "slug": slug,
+            "next": format!("aw cb check {slug}"),
+            "invoke": {
+                "command": "aw cb check",
+                "args": { "target": slug },
+            },
+        });
+        print_compact_json(&env)?;
+        return Ok(());
+    }
+
     // Look up the spec_path from the explicit CLI arg, issue frontmatter, or
     // the unique TD spec touched by this branch. If none is available, preserve
     // the legacy all-marker behavior.
     let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend.get(&slug).await.ok().flatten();
+    let issue = Some(issue);
     let (markers, change_paths, spec_path) =
         match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
             Ok(queue) => queue,
@@ -554,7 +603,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
                 .await?;
             let issue_path = backend.issue_path(issue);
             let issue_path_s = issue_path.to_string_lossy().into_owned();
-            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s, None)
+            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s, scope)
             {
                 emit_error(&slug, &format!("git commit failed: {error}"))?;
                 std::process::exit(1);
@@ -1057,7 +1106,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         &worktree_abs,
         &slug,
         &issue_path_s,
-        Some(&target.source_path),
+        std::slice::from_ref(&target.source_path),
     ) {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
@@ -1459,7 +1508,7 @@ fn stage_and_commit_cb_fill(
     worktree: &Path,
     slug: &str,
     issue_path: &str,
-    final_source_path: Option<&str>,
+    source_paths: &[String],
 ) -> Result<()> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
@@ -1479,11 +1528,11 @@ fn stage_and_commit_cb_fill(
             );
         }
     }
-    if let Some(source_path) = final_source_path {
+    for source_path in source_paths {
         let add = std::process::Command::new(&git_bin)
             .arg("-C")
             .arg(worktree)
-            .args(["add", "--", source_path])
+            .args(["add", "--", source_path.as_str()])
             .output()
             .context("git add final Cb-Fill source path")?;
         if !add.status.success() {
@@ -1698,13 +1747,9 @@ mod tests {
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/final.rs"), "pub fn filled() {}\n").unwrap();
         std::fs::write(root.join("ec-review.json"), "{}\n").unwrap();
-        stage_and_commit_cb_fill(
-            root,
-            "2179",
-            "/tmp/aw/outside-issue.json",
-            Some("src/final.rs"),
-        )
-        .unwrap();
+        let source_paths = vec!["src/final.rs".to_string()];
+        stage_and_commit_cb_fill(root, "2179", "/tmp/aw/outside-issue.json", &source_paths)
+            .unwrap();
 
         let status = std::process::Command::new("git")
             .args(["status", "--porcelain"])

@@ -1,6 +1,6 @@
 ---
 id: aw-self-hosting-runner-policy
-summary: Admit Agentic Workflow to its Python-first lifecycle roots and reserve direct repair for the exact broken worker verb.
+summary: Keep Agentic Workflow out of its own lifecycle roots and use bounded, traceable direct commits for self-repair.
 fill_sections: [schema, logic, unit-test, e2e-test, changes]
 capability_refs:
   - id: workflow-root-runner
@@ -8,26 +8,22 @@ capability_refs:
     gap: self-hosting-root-runner-policy
     claim: self-hosting-root-runner-policy
     coverage: full
-    rationale: "Hand-authored EC and TD remove the old recursive-generation premise, so AW should dogfood its normal root loop and fall back only when the selected worker verb is broken."
+    rationale: "A broken lifecycle cannot be required to repair itself, so AW self-changes use a bounded direct-commit policy while health keeps the capability and verification contract visible."
 ---
 <!-- HANDWRITE-BEGIN gap="missing-generator:logic:self-hosting-runner-policy" tracker="#1501" reason="Admission policy couples tracker ownership, runner envelopes, and self-health gate classification." -->
 
-# Python-first Self-hosting Root-runner Policy
+# Sanctioned Direct-commit Self-hosting Policy
 
 ## Schema
 <!-- type: schema lang: yaml -->
 
 ```yaml
 self_hosting:
-  policy_mode: python_first_lifecycle
-  admitted_roots: [wi, capability, backlog]
-  authored_artifacts: [EC, TD]
-  generated_artifact: CB
-  fallback:
-    mode: bounded_direct_repair
-    trigger: selected_worker_verb_is_broken
-    scope: current_change_only
-    required_trailer: "Refs #<issue>"
+  policy_mode: sanctioned_direct_commit
+  root_runner_allowed: false
+  rejected_roots: [wi, capability, backlog]
+  direct_repair_default: true
+  required_trailer: "Refs #<issue>"
   hard_gates:
     - capability_work_root_alignment
     - closing_work_item_and_td_refs
@@ -40,7 +36,7 @@ self_hosting:
     - aw health verification
 health_output:
   when: project in [agentic-workflow, aw]
-  fields: [policy_mode, fallback_mode, hard_gates, advisory_axes]
+  fields: [policy_mode, required_trailer, root_runner_allowed, direct_repair_default, hard_gates, advisory_axes]
 ```
 
 ## Logic
@@ -53,23 +49,21 @@ id: aw-self-hosting-runner-policy-flow
 flowchart TD
     start([Root command]) --> identity{Owns agentic-workflow?}
     identity -->|no| generic[Run normal root workflow]
-    identity -->|yes| lifecycle[Run normal EC-first Python lifecycle]
-    lifecycle --> worker{Selected worker verb works?}
-    worker -->|yes| continue[Follow next.command to root terminal]
-    worker -->|no| direct[Repair only that bounded worker change]
-    direct --> verify[Run focused regression and resume root]
-    verify --> lifecycle
+    identity -->|yes| reject[Reject before loop state or dispatch]
+    reject --> direct[Repair the bounded self change directly]
+    direct --> trailer[Commit with Refs issue trailer]
+    trailer --> verify[Run focused regression and health]
 ```
 
 `aw goal capability --project agentic-workflow`, its capability-scoped form,
 `aw goal wi <id>` for a WI owned by `agentic-workflow`, and `aw goal backlog
---project agentic-workflow` enter the same root engine as other projects.
-EC and TD are hand-authored, executable project artifacts; they do not require
-the broken implementation to generate its own repair contract. TD then drives
-CB generation and verification. If the exact worker verb selected by the root
-is broken, the agent may repair only that bounded change directly, prove the
-focused regression, and resume the root. Direct commits are a recovery
-mechanism, not the default self-hosting mode.
+--project agentic-workflow` are rejected before loop state, tracker mutation,
+graph loading, or worker dispatch. Identity-resolution errors fail closed
+instead of entering the normal root runner. `aw health` reports the complete
+policy field set and may name focused remediation, but it never routes
+self-repair back into any `aw goal` root. Repository authoring rules separately
+require bounded direct commits, `Refs #<issue>` trailers, capability work-root
+alignment, and focused verification.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -82,8 +76,8 @@ evidence:
   command: cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_ -- --nocapture
 ---
 requirementDiagram
-  requirement admitted_roots { id: UT1 text: "Self WI, capability, and backlog roots use normal lifecycle envelopes" risk: high verifymethod: test }
-  requirement bounded_fallback { id: UT2 text: "Health identifies Python-first mode and bounded direct fallback" risk: high verifymethod: test }
+  requirement rejected_roots { id: UT1 text: "Self WI, capability, and backlog roots reject before mutation or dispatch" risk: high verifymethod: test }
+  requirement direct_policy { id: UT2 text: "Health identifies sanctioned direct commit mode and never routes to a self root" risk: high verifymethod: test }
 ```
 
 ## E2E Test
@@ -91,28 +85,48 @@ requirementDiagram
 
 ```yaml
 e2e_tests:
+  # Contract ids retain their published names for lock compatibility; the
+  # assertions below are the authoritative rejection semantics.
   - id: self-hosting-capability-admission
     capability_id: workflow-root-runner
-    claim_id: python-first-self-hosting-admission
-    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_capability_and_backlog_enter_normal_verifiers -- --nocapture
+    claim_id: self-hosting-root-runner-policy
+    category: behavior
+    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_capability_and_backlog_roots_are_rejected_before_mutation -- --nocapture
     assertions:
-      - "the capability root emits status blocked, action blocked, root kind capability, workflow_complete false, next kind blocked with no command, and reason capability root is not runnable: failed to parse capability map"
-      - "the backlog root emits status blocked, action blocked, root backlog:agentic-workflow, workflow_complete false, next kind run_command, and exact command aw wi plan --project agentic-workflow --json because the reviewed_graph_missing blocker is the only admitted fixture outcome"
-      - "neither envelope contains action self_hosting_policy or policy_mode sanctioned_direct_commit"
+      - "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit"
+      - "the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
   - id: self-hosting-wi-admission
     capability_id: workflow-root-runner
-    claim_id: python-first-self-hosting-admission
-    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_wi_enters_ec_first_lifecycle -- --nocapture
+    claim_id: self-hosting-root-runner-policy
+    category: behavior
+    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture
     assertions:
-      - "the Agentic Workflow WI emits status continue, action dispatch, root wi:2446, current change:#2446, workflow_complete false, next kind run_command, and exact command aw ec check --project agentic-workflow --wi 2446"
-      - "the envelope contains neither action self_hosting_policy nor a non-EC transition"
+      - "the WI root emits action self_hosting_policy before loop state or dispatch"
+      - "the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
+  - id: self-hosting-bounded-admission
+    capability_id: workflow-root-runner
+    claim_id: self-hosting-root-runner-policy
+    category: efficiency
+    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_backlog_rejects_before_reviewed_graph_or_state_io -- --nocapture
+    assertions:
+      - "backlog admission succeeds without a reviewed graph and never creates backlog state"
+      - "repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical"
+  - id: self-hosting-identity-stability
+    capability_id: workflow-root-runner
+    claim_id: self-hosting-root-runner-policy
+    category: stability
+    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_wi_identity_resolution_errors_fail_closed_without_mutation -- --nocapture
+    assertions:
+      - "a malformed self-hosting WI identity returns a process error instead of entering the root runner"
+      - "the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical"
   - id: self-hosting-health-policy
     capability_id: workflow-root-runner
-    claim_id: python-first-self-hosting-admission
-    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_health_reports_bounded_fallback -- --nocapture
+    claim_id: self-hosting-root-runner-policy
+    category: behavior
+    command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture
     assertions:
-      - "health emits policy_mode python_first_lifecycle and fallback_mode bounded_direct_repair"
-      - "health pins fallback_trigger selected_worker_verb_is_broken, fallback_scope current_change_only, fallback_required_trailer Refs #<issue>, and direct_repair_default false"
+      - "health pins policy_mode, required_trailer, root_runner_allowed, direct_repair_default, and exact complete ordered hard_gates and advisory_axes arrays"
+      - "health never emits any aw goal command as remediation"
 ```
 
 ## Changes

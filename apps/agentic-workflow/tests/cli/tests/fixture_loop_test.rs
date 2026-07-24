@@ -228,6 +228,11 @@ fn current_required_ec_digest(aw_bin: &str, root: &Path, project: &str) -> Strin
     let lock = Command::new(aw_bin)
         .current_dir(root)
         .env(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["ec", "lock", "--project", project])
         .output()
         .expect("run EC lock");
@@ -241,6 +246,11 @@ fn current_required_ec_digest(aw_bin: &str, root: &Path, project: &str) -> Strin
     let dry_run = Command::new(aw_bin)
         .current_dir(root)
         .env(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["ec", "gen", "--project", project, "--dry-run", "--json"])
         .output()
         .expect("run EC gen dry-run");
@@ -695,13 +705,30 @@ fn follow_envelopes(
         // unlike the single-envelope-per-invocation `aw cb fill`/`aw td
         // code-check` commands this follower originally targeted. The final
         // envelope is always the last non-empty line; parse that one.
-        let parsed: Option<serde_json::Value> =
-            serde_json::from_str(stdout.trim()).ok().or_else(|| {
+        let parsed: Option<serde_json::Value> = serde_json::from_str(stdout.trim())
+            .ok()
+            .or_else(|| {
                 stdout
                     .lines()
                     .rev()
                     .find(|line| !line.trim().is_empty())
                     .and_then(|line| serde_json::from_str(line.trim()).ok())
+            })
+            .or_else(|| {
+                // Agent-facing human output follows the same stdout contract:
+                // a terminal `next: aw ...` line is directly runnable even
+                // when the command does not emit a JSON envelope.
+                stdout.lines().rev().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("next: ")
+                        .filter(|command| command.starts_with("aw "))
+                        .map(|command| {
+                            serde_json::json!({
+                                "action": "dispatch",
+                                "next": { "command": command },
+                            })
+                        })
+                })
             });
 
         if !output.status.success() {
@@ -857,7 +884,13 @@ async fn fixture_loop_drives_cb_genned_wi_to_terminal_done() {
     seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let extra_envs: &[(&str, &str)] = &[
+        (issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1"),
+        (
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        ),
+    ];
     let hops = follow_envelopes(&aw_bin, root, &["cb", "fill", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
 
@@ -944,7 +977,13 @@ async fn fixture_loop_required_ec_refuses_red_then_records_green_terminal_comple
     seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let extra_envs: &[(&str, &str)] = &[
+        (issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1"),
+        (
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        ),
+    ];
     let red = follow_envelopes(&aw_bin, root, &["cb", "check", slug], extra_envs)
         .expect_err("a red required EC case must refuse terminal completion");
     let red_envelope = red
@@ -1024,7 +1063,13 @@ async fn fixture_loop_goal_converges_through_cb_to_required_ec_red_green_termina
     seed_open_issue_at_phase_with_project(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let extra_envs: &[(&str, &str)] = &[
+        (issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1"),
+        (
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        ),
+    ];
     let red = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
         .expect_err("the goal must stop when terminal required EC is red");
     let red_envelope = red
@@ -1124,7 +1169,13 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
     )
     .await;
 
-    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let extra_envs: &[(&str, &str)] = &[
+        (issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1"),
+        (
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        ),
+    ];
 
     // Hop 1: open WI -> internal fill/code-check chain -> terminal closed WI.
     let first = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
@@ -1188,7 +1239,13 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
     seed_open_issue_at_phase_with_project(root, slug, td_phase::TD_CREATED, DEMO_SPEC_REL, "demo")
         .await;
 
-    let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
+    let extra_envs: &[(&str, &str)] = &[
+        (issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1"),
+        (
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        ),
+    ];
     let err = follow_envelopes(&aw_bin, root, &["cb", "check", slug], extra_envs)
         .expect_err("an unresolvable start phase must break the very first hop, not succeed");
 
@@ -1198,7 +1255,7 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
     );
     assert_eq!(
         err.command,
-        vec!["td".to_string(), "code-check".to_string(), slug.to_string()],
+        vec!["cb".to_string(), "check".to_string(), slug.to_string()],
         "the failure must name the exact command executed, got: {err}"
     );
     let envelope = err
@@ -1225,7 +1282,7 @@ async fn fixture_loop_reports_first_broken_hop_on_induced_phase_breakage() {
         "Display impl must name the hop index, got:\n{rendered}"
     );
     assert!(
-        rendered.contains("td code-check"),
+        rendered.contains("cb check"),
         "Display impl must name the command, got:\n{rendered}"
     );
     assert!(

@@ -98,7 +98,7 @@ fn wi_create_emits_cli_owned_skeleton_and_bounded_markdown_slot() {
             "--title",
             "Artifact producer WI fixture",
             "--type",
-            "bug",
+            "change",
             "--project",
             "demo",
             "--priority",
@@ -204,7 +204,7 @@ fn td_create_emits_cli_owned_skeleton_structured_slots_and_ownership() {
     std::fs::write(
         issue_path,
         format!(
-            "---\nslug: {slug}\ntitle: Artifact producer TD fixture\nstate: open\ntype: bug\nlabels: [\"app:demo\"]\n---\n\n## Problem\n\nProve the TD producer contract.\n\n## Capability Alignment\n\nCapability: Artifact producer\nCapability Gap: TD fixture\nProgress Evidence: emitted contract\n\n## Requirements\n\n- R1: Emit the common contract.\n\n## Scope\n\n### In Scope\n- TD skeleton.\n\n### Out of Scope\n- Product code.\n\n## Acceptance Criteria\n\n- AC1: Contract is observable.\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| aw-artifact-skeleton-fill-protocol.md | primary |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| artifact-producer-fixture | create | tech-design/specs/{slug}.md |\n"
+            "---\nslug: {slug}\ntitle: Artifact producer TD fixture\nstate: open\ntype: change\nlabels: [\"app:demo\"]\n---\n\n## Problem\n\nProve the TD producer contract.\n\n## Capability Alignment\n\nCapability: Artifact producer\nCapability Gap: TD fixture\nProgress Evidence: emitted contract\n\n## Requirements\n\n- R1: Emit the common contract.\n\n## Scope\n\n### In Scope\n- TD skeleton.\n\n### Out of Scope\n- Product code.\n\n## Acceptance Criteria\n\n- AC1: Contract is observable.\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| aw-artifact-skeleton-fill-protocol.md | primary |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| artifact-producer-fixture | create | tech-design/specs/{slug}.md |\n"
         ),
     )
     .unwrap();

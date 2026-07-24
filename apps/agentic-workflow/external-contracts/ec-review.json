@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:98469f0f32a6e3a7247ab8006066b9938350454c7f3ebf553bb618c6d91f8e2d",
+  "source_digest": "sha256:7e868c2271a712e2d426c19cc4fbf3bfd983bfd571f7798d4901a6b3633dfd0b",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/agentic_workflow_ec_review",
-  "reviewed_at": "2026-07-23T08:45:42.679226+00:00",
-  "summary": "The three restored EC IDs are unique in the current Markdown source and match their historical ec.lock and generated-inventory identities one-for-one. Their registered Python-first claim bindings, required behavior coverage, exact CLI-envelope assertions, independent oracle, bounded-fallback protections, and zero-test false-green guard are semantically unchanged from the accepted prior revision. Stable identity restoration therefore introduces neither a collision nor a coverage gap.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
+  "reviewed_at": "2026-07-24T18:54:12.353398+00:00",
+  "summary": "The self-hosting EC exercises project, capability, backlog, and WI rejection before lifecycle mutation or dispatch; verifies fail-closed identity errors; covers the DeveloperTool behavior, efficiency, and stability dimensions; observes both repository and resolved runtime-workspace state; and pins the complete health-policy schema with independent black-box assertions. The named gates cannot remain green with an empty implementation or zero exercised policy paths.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

@@ -206,6 +206,11 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
     // Retry: re-run `aw cb check <slug>` exactly as a caller unsticking
     // issue #846 would.
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -268,6 +273,11 @@ async fn test_code_check_retry_completes_partial_terminal_failure() {
     // fully-completed td_merged phase must be a clean no-op done, not a
     // duplicate commit.
     let output2 = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -332,6 +342,11 @@ async fn test_code_check_refuses_dirty_touched_scope_untracked() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -423,6 +438,11 @@ async fn test_code_check_refuses_dirty_touched_scope_modified_tracked() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -637,6 +657,11 @@ async fn test_code_check_refuses_configured_red_ec_gate() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -762,6 +787,11 @@ while :; do :; done
 
     let started = std::time::Instant::now();
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "1")
@@ -863,6 +893,11 @@ exit 1
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let first = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
@@ -881,6 +916,11 @@ exit 1
 
     let second_started = std::time::Instant::now();
     let second = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env("AW_EC_COMMAND_TIMEOUT_SECS", "10")
@@ -982,6 +1022,11 @@ exit 0
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let stale_reader = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env(
@@ -1002,6 +1047,11 @@ exit 0
     );
 
     let first = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .current_dir(root)
@@ -1092,6 +1142,11 @@ exit 0
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let first = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .env(
@@ -1113,6 +1168,11 @@ exit 0
 
     let retry_started = std::time::Instant::now();
     let retry = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .env("AW_DISABLE_CAP", "1")
         .current_dir(root)
@@ -1185,6 +1245,11 @@ async fn test_code_check_passes_configured_green_ec_gate_and_records_gates() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -1273,6 +1338,11 @@ async fn test_code_check_no_ec_inventory_closes_with_advisory_marker() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -1353,6 +1423,11 @@ async fn test_code_check_ec_gate_skips_advisory_case_and_records_it() {
     seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -1568,6 +1643,11 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
     // implementation commit becomes reachable from `main`, the trailer
     // commit ends up on `main`, and the branch is deleted.
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -1669,6 +1749,11 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
     // be a clean landing no-op (`"status":"skipped"`), not a second merge
     // attempt or a duplicate trailer commit.
     let output2 = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -1958,6 +2043,11 @@ async fn test_code_check_refuses_when_all_changes_paths_missing() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2044,6 +2134,11 @@ async fn test_code_check_refuses_unchanged_hand_written_modify_paths() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -2117,6 +2212,11 @@ async fn test_code_check_refuses_partial_hand_written_lifecycle_diff() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -2194,6 +2294,11 @@ async fn test_code_check_accepts_complete_hand_written_lifecycle_diff() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -2239,6 +2344,11 @@ async fn test_code_check_allow_empty_impl_skips_refusal() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2311,6 +2421,11 @@ async fn test_code_check_partial_implementation_completes() {
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2438,6 +2553,11 @@ async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2511,6 +2631,11 @@ async fn test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec
     seed_847_open_issue(root, slug, td_phase::CB_FILLED, tape_spec).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -2621,6 +2746,11 @@ async fn test_code_check_prefers_project_td_when_implements_cache_is_absent() {
     backend.create(&issue).await.expect("seed cache-loss issue");
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -2682,6 +2812,11 @@ async fn test_code_check_blocks_on_marker_inside_wi_scope() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2752,6 +2887,11 @@ async fn test_code_check_docs_only_wi_passes_vacuously() {
     seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -2939,6 +3079,11 @@ async fn test_code_check_folds_lock_release_into_single_write() {
     backend.create(&issue).await.expect("seed locked issue");
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3015,6 +3160,11 @@ async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
 
     let slug = "never-seeded-wi";
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3130,6 +3280,11 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
     // Real production code (issue #939's fix): `aw td create --spec-path`
     // must record `custom_spec_rel` in `Issue.implements`.
     let create_out = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -3187,6 +3342,11 @@ async fn test_code_check_consumes_implements_populated_by_real_td_create() {
     commit_all(&git, root);
 
     let check_out = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3381,6 +3541,11 @@ async fn test_code_check_blocks_touched_unmarked_file_post_bootstrap() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3459,6 +3624,11 @@ async fn test_code_check_warns_touched_unmarked_file_pre_bootstrap() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3530,6 +3700,11 @@ async fn test_code_check_blocks_touched_handwrite_missing_tracker_post_bootstrap
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3612,6 +3787,11 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
     seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
 
     let output = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("code-check")
         .arg(slug)
@@ -3629,8 +3809,9 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
     assert!(
         stdout.contains("\"action\":\"done\""),
         "a WI whose own touched file is fully marked must complete cleanly regardless of \
-         unrelated untouched debt, got:\n{}",
-        stdout
+         unrelated untouched debt, got:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
     );
     assert!(
         !stderr.contains("src/unrelated_untouched.rs"),
@@ -3738,6 +3919,11 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     let unrelated_before = std::fs::read(root.join(unrelated_target)).unwrap();
 
     let red = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -3805,6 +3991,11 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
         .success());
     std::fs::remove_file(root.join(staged_sentinel)).unwrap();
     let repair = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug])
         .current_dir(root)
         .output()
@@ -3839,6 +4030,11 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
         .any(|report| matches!(report.kind, ReportKind::Drift { .. })));
 
     let green = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()
@@ -3857,6 +4053,11 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     assert_eq!(closed.state, IssueState::Closed);
 
     let retry = Command::new(&aw_bin)
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "code-check", slug])
         .current_dir(root)
         .output()

@@ -2162,9 +2162,9 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in project.rs is hand-written pending codegen support">
-/// Self-AW health remains a read-only policy report, but self-hosting uses the
-/// ordinary Python-first lifecycle. Direct repair is only a bounded recovery
-/// path when the selected worker verb itself is broken.
+/// Self-AW health remains a read-only policy report. Agentic Workflow repairs
+/// use the sanctioned direct-commit path because requiring a potentially
+/// broken lifecycle to repair itself would deadlock self-hosting.
 fn add_self_hosting_policy_fields(
     report: &ProjectHealthReport,
     mut summary: serde_json::Value,
@@ -2177,27 +2177,19 @@ fn add_self_hosting_policy_fields(
         .expect("health summary must serialize as an object");
     object.insert(
         "policy_mode".to_string(),
-        serde_json::Value::String("python_first_lifecycle".to_string()),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_POLICY_MODE.to_string()),
     );
     object.insert(
-        "fallback_mode".to_string(),
-        serde_json::Value::String("bounded_direct_repair".to_string()),
-    );
-    object.insert(
-        "fallback_trigger".to_string(),
-        serde_json::Value::String("selected_worker_verb_is_broken".to_string()),
-    );
-    object.insert(
-        "fallback_scope".to_string(),
-        serde_json::Value::String("current_change_only".to_string()),
-    );
-    object.insert(
-        "fallback_required_trailer".to_string(),
+        "required_trailer".to_string(),
         serde_json::Value::String("Refs #<issue>".to_string()),
     );
     object.insert(
-        "direct_repair_default".to_string(),
+        "root_runner_allowed".to_string(),
         serde_json::Value::Bool(false),
+    );
+    object.insert(
+        "direct_repair_default".to_string(),
+        serde_json::Value::Bool(true),
     );
     object.insert(
         "hard_gates".to_string(),
@@ -3279,7 +3271,40 @@ fn sanitize_tmp_path_segment(value: &str) -> String {
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Result<()> {
-    let status = crate::cli::td_lock::check_project_td_lock(&report.project)?;
+    let status = match crate::cli::td_lock::check_project_td_lock(&report.project) {
+        Ok(status) => status,
+        Err(error) => {
+            let project_root = crate::find_project_root()?;
+            let td_path = crate::services::project_registry::resolve_td_root_from_config(
+                &project_root,
+                &report.project,
+            )
+            .map(|resolved| resolved.root)
+            .unwrap_or_else(|_| format!("projects/{}/tech-design", report.project));
+            crate::cli::td_lock::TdLockStatus {
+                project: report.project.clone(),
+                ir_kind: "td".to_string(),
+                lock_path: format!("{td_path}/td.lock"),
+                td_path,
+                status: crate::cli::td_lock::TdLockState::Missing,
+                clean: false,
+                source_digest: String::new(),
+                locked_source_digest: None,
+                ir_digest: String::new(),
+                locked_ir_digest: None,
+                current_digest: String::new(),
+                locked_digest: None,
+                file_count: 0,
+                td_ir_count: 0,
+                td_ir_error_count: 1,
+                changed: Vec::new(),
+                added: Vec::new(),
+                removed: Vec::new(),
+                ir_changed: Vec::new(),
+                message: format!("TD lock unavailable: {error}"),
+            }
+        }
+    };
     if !status.clean && !project_health_caps_ec_only(&report.project) {
         report.status = ProjectHealthStatus::Blocked;
         report
@@ -3298,9 +3323,35 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
     let caps_ec_only = project_health_caps_ec_only(&report.project);
-    let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
+    let summary = match crate::cli::ec::project_ec_check_summary(&report.project) {
+        Ok(summary) => summary,
+        Err(error) => {
+            let finding = format!("EC inventory unavailable: {error}");
+            let mut ec_report = ProjectEcGateReport::not_evaluated(&report.project);
+            ec_report.evaluated = true;
+            ec_report.status = ProjectEcGateStatus::CheckFailed;
+            ec_report.note = Some(finding.clone());
+            ec_report.findings.push(finding.clone());
+            block_health_report(report, finding);
+            report.ec = ec_report;
+            report.refresh_takeover_readiness();
+            return Ok(());
+        }
+    };
     let mut ec_report = ProjectEcGateReport::from_check(summary);
-    let lock_status = crate::cli::ec::project_ec_lock_status(&report.project)?;
+    let lock_status = match crate::cli::ec::project_ec_lock_status(&report.project) {
+        Ok(status) => status,
+        Err(error) => {
+            let finding = format!("EC lock unavailable: {error}");
+            ec_report.status = ProjectEcGateStatus::CheckFailed;
+            ec_report.note = Some(finding.clone());
+            ec_report.findings.push(finding.clone());
+            block_health_report(report, finding);
+            report.ec = ec_report;
+            report.refresh_takeover_readiness();
+            return Ok(());
+        }
+    };
     ec_report.lock_status = Some(lock_status.status);
     ec_report.lock_clean = lock_status.clean;
     ec_report.lock_path = lock_status.lock_path.clone();
@@ -3516,6 +3567,17 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
             .iter()
             .map(|blocker| format!("python spec: {blocker}"))
             .collect::<Vec<_>>();
+        if report.regenerability_authority.required_for_production {
+            spec_blockers.extend(
+                report
+                    .production_blockers
+                    .iter()
+                    .filter(|blocker| {
+                        blocker.starts_with("regenerability required for production:")
+                    })
+                    .cloned(),
+            );
+        }
         if !report.ec.lock_clean {
             spec_blockers.push(format!("EC lock is not clean: {}", report.ec.lock_path));
         }

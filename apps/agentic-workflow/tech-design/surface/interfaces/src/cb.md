@@ -612,6 +612,14 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         .output_dir
         .as_deref()
         .context("--target requires --output-dir <target>")?;
+    let lifecycle_project_root = if args.wi.is_some() {
+        args.project
+            .as_deref()
+            .context("--target --wi requires --project <project>")?;
+        Some(crate::find_project_root()?)
+    } else {
+        None
+    };
     let ir =
         crate::services::python_td::compile_python_td_project(std::path::Path::new(source_root))?;
     let output_root = std::path::Path::new(output_dir);
@@ -622,12 +630,10 @@ fn run_target_native_gen(target: &str, args: &CbGenArgs) -> Result<()> {
         _ => unreachable!("validated target"),
     };
     if let Some(wi) = args.wi.as_deref() {
-        args.project
-            .as_deref()
-            .context("--target --wi requires --project <project>")?;
-        let project_root = crate::find_project_root()?;
         crate::cli::ec::persist_ec_first_next_action(
-            &project_root,
+            lifecycle_project_root
+                .as_deref()
+                .expect("WI lifecycle project root resolved before materialization"),
             wi,
             format!("aw cb fill {wi}"),
         )?;
@@ -5319,6 +5325,65 @@ async fn run_check_lifecycle_terminal(
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
     };
+    if let Some(project) = project_label_for_wi(&issue) {
+        let is_python = crate::services::project_registry::resolve_project_config_row(
+            project_root,
+            project,
+        )
+        .map(|row| {
+            row.effective_artifact_model()
+                == crate::models::project::ProjectArtifactModel::PythonV1
+        })
+        .unwrap_or(false);
+        if is_python {
+            let report =
+                crate::services::python_artifact_code_check::verify_python_artifact_code_check(
+                    project_root,
+                    project,
+                )?
+                .expect("python-v1 project must return a Python artifact code-check report");
+            if !report.clean {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "python_artifact_code_check_failed",
+                    "slug": slug,
+                    "project": report.project,
+                    "findings": report.findings,
+                    "next": { "command": report.next_command },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+            let next = format!(
+                "aw ec verify --project {} --required-only --stage cb --wi {slug}",
+                report.project
+            );
+            crate::cli::ec::persist_ec_first_next_action(
+                project_root,
+                slug,
+                next.clone(),
+            )?;
+            let env = serde_json::json!({
+                "action": "dispatch",
+                "slug": slug,
+                "project": report.project,
+                "next": {
+                    "kind": "run_command",
+                    "command": next,
+                    "reason": "Python target-native unit and cold artifact checks are green; run terminal CB-stage EC verification",
+                },
+                "completion": {
+                    "root_complete": false,
+                    "workflow_complete": false,
+                    "requires_hitl": false,
+                    "criteria": ["Python TD/EC locks, cold target, DDD identity, and native unit inventory are green"],
+                    "missing": ["CB-stage behavior, security, stability, and efficiency EC evidence"],
+                },
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+    }
     let initial_phase = issue.phase.as_deref().unwrap_or("");
     let initial_is_retry = td_phase::is_terminal_code_check_retry(initial_phase);
     if !td_phase::is_terminal_code_checkable(initial_phase) && !initial_is_retry {
@@ -6104,7 +6169,8 @@ fn normalize_touched_rel_path(path: &str) -> String {
 fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
     issue.labels.iter().find_map(|label| {
         let project = label
-            .strip_prefix("app:")
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
             .or_else(|| label.strip_prefix("lib:"))?
             .trim();
         (!project.is_empty()).then_some(project)

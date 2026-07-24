@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:98469f0f32a6e3a7247ab8006066b9938350454c7f3ebf553bb618c6d91f8e2d"
+generated_from_td_digest = "sha256:7e868c2271a712e2d426c19cc4fbf3bfd983bfd571f7798d4901a6b3633dfd0b"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -747,19 +747,33 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "self-hosting-bounded-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-bounded-admission"
+category = "efficiency"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-bounded-admission"
+test_path = "apps/agentic-workflow/tests/efficiency_self_hosting_bounded_admission.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_backlog_rejects_before_reviewed_graph_or_state_io -- --nocapture"
+required_for_production = true
+assertions = [
+    "backlog admission succeeds without a reviewed graph and never creates backlog state",
+    "repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical",
+]
+
+[[aw.ec.generated.cases]]
 id = "self-hosting-capability-admission"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-capability-admission"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-capability-admission"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_capability_and_backlog_enter_normal_verifiers -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_capability_and_backlog_roots_are_rejected_before_mutation -- --nocapture"
 required_for_production = true
 assertions = [
-    "the capability root emits status blocked, action blocked, root kind capability, workflow_complete false, next kind blocked with no command, and reason capability root is not runnable: failed to parse capability map",
-    "the backlog root emits status blocked, action blocked, root backlog:agentic-workflow, workflow_complete false, next kind run_command, and exact command aw wi plan --project agentic-workflow --json because the reviewed_graph_missing blocker is the only admitted fixture outcome",
-    "neither envelope contains action self_hosting_policy or policy_mode sanctioned_direct_commit",
+    "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit",
+    "the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
 ]
 
 [[aw.ec.generated.cases]]
@@ -777,31 +791,46 @@ assertions = ["self-AW WI identity resolution and rollup routing reject before l
 [[aw.ec.generated.cases]]
 id = "self-hosting-health-policy"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-health-policy"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-health-policy"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_health_reports_bounded_fallback -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
 required_for_production = true
 assertions = [
-    "health emits policy_mode python_first_lifecycle and fallback_mode bounded_direct_repair",
-    "health pins fallback_trigger selected_worker_verb_is_broken, fallback_scope current_change_only, fallback_required_trailer Refs #<issue>, and direct_repair_default false",
+    "health pins policy_mode, required_trailer, root_runner_allowed, direct_repair_default, and exact complete ordered hard_gates and advisory_axes arrays",
+    "health never emits any aw goal command as remediation",
+]
+
+[[aw.ec.generated.cases]]
+id = "self-hosting-identity-stability"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-identity-stability"
+category = "stability"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-identity-stability"
+test_path = "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_wi_identity_resolution_errors_fail_closed_without_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "a malformed self-hosting WI identity returns a process error instead of entering the root runner",
+    "the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical",
 ]
 
 [[aw.ec.generated.cases]]
 id = "self-hosting-wi-admission"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-wi-admission"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-wi-admission"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_wi_enters_ec_first_lifecycle -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture"
 required_for_production = true
 assertions = [
-    "the Agentic Workflow WI emits status continue, action dispatch, root wi:2446, current change:#2446, workflow_complete false, next kind run_command, and exact command aw ec check --project agentic-workflow --wi 2446",
-    "the envelope contains neither action self_hosting_policy nor a non-EC transition",
+    "the WI root emits action self_hosting_policy before loop state or dispatch",
+    "the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
 ]
 
 [[aw.ec.generated.cases]]

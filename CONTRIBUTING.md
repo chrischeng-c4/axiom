@@ -261,6 +261,9 @@ meta-doc producer/check after a trait changes.
 
 ### Shared-library naming grammar
 
+*(policy-only — the validator-backed naming grammar is a repository authoring
+policy, not a project capability trait.)*
+
 *(validator-backed —
 `apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh`)*
 
@@ -358,6 +361,9 @@ construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/service-k8s`
 when the helper is incomplete.
 
 ### `aw review` rule catalog — architecture/profile conformance findings
+
+*(policy-only — this generated rule catalog governs repository architecture
+review; it is not a project capability trait.)*
 
 `aw review --project <project>` resolves a project's reference profile shape
 (kind/surface, workload, state ownership, replication, serving role) and runs
@@ -516,6 +522,9 @@ process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
 
 ### Control plane and data plane responsibilities
+
+*(policy-only — judgment, not trait-enforced; the split is a repository service
+archetype rule until `libs/service-k8s` can validate it mechanically.)*
 
 Every Kubernetes-native service composes a shared **control plane** and a
 per-instance **data plane**. The control plane is the CRD, Operator, reconcile

@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-23T08:45:43.327972+00:00"
-ir_digest = "sha256:3f7e806ad64eb1fa4d3c43579e4c6e1500a3ff1adf168187d6a0eb35dcaef55c"
-source_digest = "sha256:2a1129379dc86edd8ec62256ca89df97d3af6412a103fb0526d12190f2372263"
+generated_at = "2026-07-24T18:54:21.587643+00:00"
+ir_digest = "sha256:70e5e983fe9058c185128930fc26d55b81a2f78e68be39346f98787b92f1f516"
+source_digest = "sha256:663a36ba5eadead7d9679299c495eff87d776b5629de2154c5915bf24bf761a7"
 tool_contracts = []
 
 [[sources]]
@@ -106,7 +106,7 @@ digest = "sha256:b16189e3f91bb8beb4803cf32639732a43d97f524647494be524911ab80ac55
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
-digest = "sha256:9e6555eb17ced55385ac160695a05b5de92b8922d9851d84ca0cb18ecd56e62c"
+digest = "sha256:8d51fd3dff7ca484164801c749e14daa56124316c557b7b621ecec75da2b4cab"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
@@ -1029,23 +1029,40 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:71eb3505b81dc27d94c255f13bfa441d066d1fed9803f0db88a218ec65da55aa"
 
 [[cases]]
+id = "self-hosting-bounded-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-bounded-admission"
+dimension = "efficiency"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-bounded-admission"
+test_path = "apps/agentic-workflow/tests/efficiency_self_hosting_bounded_admission.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_backlog_rejects_before_reviewed_graph_or_state_io -- --nocapture"
+required_for_production = true
+assertions = [
+    "backlog admission succeeds without a reviewed graph and never creates backlog state",
+    "repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:81e410448a19b3d32b5224a04ebbb210671fa25ccd18432e5bf2015dfcd97efc"
+
+[[cases]]
 id = "self-hosting-capability-admission"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-capability-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-capability-admission"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_capability_and_backlog_enter_normal_verifiers -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_capability_and_backlog_roots_are_rejected_before_mutation -- --nocapture"
 required_for_production = true
 assertions = [
-    "the capability root emits status blocked, action blocked, root kind capability, workflow_complete false, next kind blocked with no command, and reason capability root is not runnable: failed to parse capability map",
-    "the backlog root emits status blocked, action blocked, root backlog:agentic-workflow, workflow_complete false, next kind run_command, and exact command aw wi plan --project agentic-workflow --json because the reviewed_graph_missing blocker is the only admitted fixture outcome",
-    "neither envelope contains action self_hosting_policy or policy_mode sanctioned_direct_commit",
+    "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit",
+    "the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c7c76e1d5e83177b2e8227a50617ac12bfa31b6e686e08fc0cb63f488ae287ed"
+digest = "sha256:e425de110c2e495c2c7bde2310648146dae1346c9d47e5a39129a045291c03fe"
 
 [[cases]]
 id = "self-hosting-goal-root-parity"
@@ -1065,38 +1082,56 @@ digest = "sha256:62a11195fe1a49515686799303c12c6c318bcc140c1bbaeb8cc8e25586c7f71
 [[cases]]
 id = "self-hosting-health-policy"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-health-policy"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-health-policy"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_health_reports_bounded_fallback -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
 required_for_production = true
 assertions = [
-    "health emits policy_mode python_first_lifecycle and fallback_mode bounded_direct_repair",
-    "health pins fallback_trigger selected_worker_verb_is_broken, fallback_scope current_change_only, fallback_required_trailer Refs #<issue>, and direct_repair_default false",
+    "health pins policy_mode, required_trailer, root_runner_allowed, direct_repair_default, and exact complete ordered hard_gates and advisory_axes arrays",
+    "health never emits any aw goal command as remediation",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d1c511e1665d41c9ef73759ab4b9d2cb304c62232ddda51782fbe95a74dbca2f"
+digest = "sha256:aee5fe30d41d5fd1f3281d86711ecd6cc5c915f50793635d1a1057a66448da37"
+
+[[cases]]
+id = "self-hosting-identity-stability"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-identity-stability"
+dimension = "stability"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-identity-stability"
+test_path = "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_wi_identity_resolution_errors_fail_closed_without_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "a malformed self-hosting WI identity returns a process error instead of entering the root runner",
+    "the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:098ed367f60bddab6daca8806320d95e83cd8dd8dd2d0d1bdbf8ba0131108972"
 
 [[cases]]
 id = "self-hosting-wi-admission"
 capability_id = "workflow-root-runner"
-claim_id = "python-first-self-hosting-admission"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-wi-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-wi-admission"
 test_path = "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs"
-command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_wi_enters_ec_first_lifecycle -- --nocapture"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture"
 required_for_production = true
 assertions = [
-    "the Agentic Workflow WI emits status continue, action dispatch, root wi:2446, current change:#2446, workflow_complete false, next kind run_command, and exact command aw ec check --project agentic-workflow --wi 2446",
-    "the envelope contains neither action self_hosting_policy nor a non-EC transition",
+    "the WI root emits action self_hosting_policy before loop state or dispatch",
+    "the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6868ceb9ca988e87048ff7030245815ae637c95477e71fea2d85d9342ac572e5"
+digest = "sha256:92bfb557b104e6f09e596d7ed915f1b5842c22a3c698d2cb169790b519dee8c2"
 
 [[cases]]
 id = "standardize-audit-first-contract-test"

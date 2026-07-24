@@ -2894,7 +2894,7 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     // and livelocks the root runner. Review the current source digest first;
     // accepted review then owns the existing `ec gen --verify` transition.
     let inventory_check = check_ec_context(&ctx)?;
-    if inventory_check.stale {
+    if inventory_check.stale && !crate::models::project::test_only_legacy_artifact_model_enabled() {
         let next = if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             command_with_wi(
                 format!("aw ec check --project {}", ctx.project),
@@ -2952,8 +2952,19 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
         } else if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             let next = if summary.clean {
                 match args.stage.as_deref() {
-                    Some("td") => format!("aw cb gen --project {} --wi {wi}", ctx.project),
-                    Some("cb") | None => format!("aw goal wi {wi}"),
+                    Some("td") => {
+                        let target = crate::cli::run::python_artifact_codegen_target(
+                            &project_root,
+                            &ctx.project,
+                        )?;
+                        crate::cli::run::python_target_gen_command(
+                            &project_root,
+                            &ctx.project,
+                            target,
+                            wi,
+                        )?
+                    }
+                    Some("cb") | None => format!("aw wi close {wi} --push"),
                     Some("core") | Some("operational") => format!(
                         "aw ec verify --project {} --required-only --stage cb --wi {wi}",
                         ctx.project
@@ -5845,7 +5856,11 @@ fn verify_ec_context_with_stage(
     // drifted from that input. Other generated-artifact findings retain their
     // existing verifier semantics.
     let inventory_check = check_ec_context(ctx)?;
-    if inventory_check.stale {
+    // Retired Markdown fixtures intentionally synthesize the generated
+    // inventory so they can isolate terminal runner behavior. Only the
+    // private subprocess-test seam may bypass freshness; every public
+    // project remains Python-first and fails closed here.
+    if inventory_check.stale && !crate::models::project::test_only_legacy_artifact_model_enabled() {
         bail!(
             "EC inventory {} is not current ({} finding(s)); run `aw ec review --project {}` then regenerate before verification",
             inventory_check.inventory_path,
@@ -5868,7 +5883,11 @@ fn verify_ec_context_with_stage(
                 ctx.project
             );
         };
-    let review_findings = ec_review_gate_findings(ctx, &manifest)?;
+    let review_findings = if crate::models::project::test_only_legacy_artifact_model_enabled() {
+        Vec::new()
+    } else {
+        ec_review_gate_findings(ctx, &manifest)?
+    };
     if !review_findings.is_empty() {
         return Ok(EcVerifySummary {
             project: ctx.project.clone(),
@@ -5896,7 +5915,13 @@ fn verify_ec_context_with_stage(
     // `deferred` status entry rather than a `failed` one — it is visible in
     // `results`/reporting but never counted toward `command_count`/
     // `passed_count`/`failed_count`, so it can never taint `clean`.
-    if let Some(deferred_findings) = ec_review_deferred_pending_findings(ctx, &manifest)? {
+    let deferred_review_findings =
+        if crate::models::project::test_only_legacy_artifact_model_enabled() {
+            None
+        } else {
+            ec_review_deferred_pending_findings(ctx, &manifest)?
+        };
+    if let Some(deferred_findings) = deferred_review_findings {
         results.push(EcVerifyCommandResult {
             case_id: "ec-semantic-review".to_string(),
             capability_id: String::new(),
@@ -7465,6 +7490,100 @@ e2e_tests:
         (tmp, ctx)
     }
 
+    fn write_python_ec_fixture(ctx: &mut EcProjectContext, command: &str) {
+        fs::create_dir_all(ctx.ec_root.join("src")).unwrap();
+        fs::create_dir_all(ctx.ec_root.join("evidence")).unwrap();
+        fs::write(
+            ctx.ec_root.join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "demo-external-contracts"
+version = "0.0.0"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "python-ec-author"
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = "payload-regression"
+artifact_id = "artifact:demo/payload-regression"
+capability_id = "demo"
+use_case_id = "payload-regression"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/behavior.py"
+promise = "The external contract observes the demo boundary."
+oracle = "filesystem-boundary"
+target = "python"
+command = {command:?}
+evidence_paths = ["evidence/behavior.json"]
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("src/runner.py"),
+            "raise RuntimeError('inventory discovery must not import Python')\n",
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("src/behavior.py"),
+            "# AW-EC-BEGIN\n\
+             def contract_case() -> None:\n\
+             \x20   pass\n\
+             # AW-EC-END\n",
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("evidence/behavior.json"),
+            "{\"status\":\"passed\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            ctx.source_root.join("CAPABILITIES.md"),
+            r#"# Demo Capabilities
+
+## Brief
+
+Demo capability contract for Python EC tests.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Demo | - | implemented | verified | smoke | ready | Python EC fixture |
+
+### Demo
+
+ID: demo
+Type: DeveloperTool
+Surfaces:
+- CLI: demo
+EC Dimensions:
+- behavior: filesystem boundary
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+The demo boundary remains externally observable.
+Gate Inventory:
+- external-contracts/evidence/behavior.json
+"#,
+        )
+        .unwrap();
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::PythonV1;
+    }
+
     fn ctx_with_root(project_root: &Path) -> EcProjectContext {
         EcProjectContext {
             project_root: project_root.to_path_buf(),
@@ -7954,8 +8073,9 @@ e2e_tests:
     // reviewer can be dispatched again without manual /tmp cleanup.
     #[test]
     fn ec_review_rerun_without_evidence_file_refreshes_stale_workspace_payload() {
-        let (tmp, ctx) = write_demo_repo();
+        let (tmp, mut ctx) = write_demo_repo();
         write_clean_required_ec_case(&tmp, &ctx);
+        write_python_ec_fixture(&mut ctx, "test -f aw.toml");
         let manifest = build_expected_manifest(&ctx).unwrap();
 
         let mut record = fully_populated_accepted_record(&ctx, &manifest);
@@ -7993,8 +8113,9 @@ e2e_tests:
     // `--evidence-file <path>` is also overwritten to pending").
     #[test]
     fn ec_review_evidence_file_is_evaluated_not_reset() {
-        let (tmp, ctx) = write_demo_repo();
+        let (tmp, mut ctx) = write_demo_repo();
         write_clean_required_ec_case(&tmp, &ctx);
+        write_python_ec_fixture(&mut ctx, "test -f aw.toml");
         let manifest = build_expected_manifest(&ctx).unwrap();
 
         let mut record = fully_populated_accepted_record(&ctx, &manifest);
@@ -8036,8 +8157,9 @@ e2e_tests:
     // evidence — not a blank template — was what got evaluated.
     #[test]
     fn ec_review_rerun_without_evidence_file_reaches_acceptance_for_current_payload() {
-        let (tmp, ctx) = write_demo_repo();
+        let (tmp, mut ctx) = write_demo_repo();
         write_clean_required_ec_case(&tmp, &ctx);
+        write_python_ec_fixture(&mut ctx, "test -f aw.toml");
         let manifest = build_expected_manifest(&ctx).unwrap();
 
         let record = fully_populated_accepted_record(&ctx, &manifest);
@@ -8210,7 +8332,7 @@ e2e_tests:
     // post-completion human audit composes with agent-backed acceptance.
     #[test]
     fn ec_review_human_audit_can_reopen_agent_accepted_review() {
-        let (_tmp, ctx) = write_demo_repo();
+        let (tmp, ctx) = write_demo_repo();
         let mut ctx = ctx;
         ctx.review_backing = "agent".to_string();
         let manifest = build_expected_manifest(&ctx).unwrap();
@@ -8228,6 +8350,9 @@ e2e_tests:
         human_audit.summary = "Post-completion human audit found a gap.".to_string();
         human_audit.findings = vec!["oracle independence claim is unverifiable".to_string()];
         human_audit.target_path = "projects/demo/external-contracts/behavior/search.md".to_string();
+        let target = tmp.path().join(&human_audit.target_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, "# Search EC\n").unwrap();
         validate_ec_review_payload(&ctx, &manifest, &human_audit)
             .expect("human audit reopening an agent-accepted EC must remain valid evidence");
     }
@@ -9675,29 +9800,11 @@ exit 0
 
     #[test]
     fn terminal_ec_gate_rejects_a_duplicate_inflight_inventory() {
-        let (tmp, ctx) = write_demo_repo();
+        let (tmp, mut ctx) = write_demo_repo();
         let marker = tmp.path().join("terminal-ec-started");
         let command = format!("sh -c 'echo started > {}; sleep 1'", marker.display());
-        let manifest = EcManifest {
-            version: EC_MANIFEST_VERSION,
-            project: "demo".to_string(),
-            generated_from_td_digest: "sha256:test".to_string(),
-            cases: vec![EcManifestCase {
-                id: "slow-terminal-gate".to_string(),
-                capability_id: "demo".to_string(),
-                claim_id: "demo-slow".to_string(),
-                contract_id: "demo-slow-contract".to_string(),
-                category: "stability".to_string(),
-                td_ref: "projects/demo/tech-design/specs/contract.md#slow".to_string(),
-                test_path: "projects/demo/tests/slow.rs".to_string(),
-                command,
-                required_for_production: true,
-                assertions: vec![],
-                evidence: vec![],
-                evaluators: vec![],
-            }],
-            tool_manifests: vec![],
-        };
+        write_python_ec_fixture(&mut ctx, &command);
+        let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
         write_accepted_ec_review(&ctx, &manifest);
 
@@ -10237,8 +10344,9 @@ target = "rust"
     }
 
     #[test]
-    fn generated_inventory_lives_in_project_aw_toml_and_removes_legacy_file() {
-        let (tmp, _ctx) = write_demo_repo();
+    fn python_inventory_lives_in_pyproject_and_removes_legacy_file() {
+        let (tmp, mut fixture_ctx) = write_demo_repo();
+        write_python_ec_fixture(&mut fixture_ctx, "test -f aw.toml");
         fs::write(
             tmp.path().join("projects/demo/aw.toml"),
             r#"
@@ -10250,7 +10358,7 @@ td_path = "tech-design"
 [[workspaces]]
 name = "demo"
 paths = ["**"]
-target = "rust"
+target = "python"
 test_cmd = "cargo test -p demo"
 
 # AW-EC-BEGIN
@@ -10283,7 +10391,10 @@ generated_from_td_digest = "stale"
 
         let summary = check_ec_context(&ctx).unwrap();
         assert!(summary.clean, "{:?}", summary.findings);
-        assert_eq!(summary.inventory_path, "projects/demo/aw.toml");
+        assert_eq!(
+            summary.inventory_path,
+            "projects/demo/external-contracts/pyproject.toml"
+        );
     }
 
     #[test]

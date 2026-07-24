@@ -1,6 +1,6 @@
 ---
 id: '2446'
-summary: (fill)
+summary: Keep Agentic Workflow self-repair outside its own lifecycle roots.
 fill_sections: [logic, changes, unit-test]
 ---
 
@@ -9,35 +9,25 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: python-first-self-hosting-admission
+id: self-hosting-sanctioned-direct-commit
 entry: root
 nodes:
   root: { kind: start, label: "aw goal wi, capability, or backlog" }
-  generic: { kind: process, label: "run the generic root engine" }
-  artifact: { kind: decision, label: "current artifact phase" }
-  authored: { kind: process, label: "hand-author and validate EC or TD" }
-  generated: { kind: process, label: "generate, fill, and check CB" }
-  worker: { kind: decision, label: "selected worker verb succeeds?" }
-  fallback: { kind: process, label: "repair only the bounded current change" }
+  reject: { kind: process, label: "reject before loop state or dispatch" }
+  repair: { kind: process, label: "repair only the bounded current change" }
   proof: { kind: process, label: "run focused regression and add Refs issue trailer" }
-  resume: { kind: process, label: "re-enter root and follow next.command" }
-  terminal: { kind: terminal, label: "completion.workflow_complete is true" }
+  health: { kind: process, label: "run self health without self takeover" }
+  terminal: { kind: terminal, label: "report direct repair checkpoint" }
 edges:
-  - { from: root, to: generic }
-  - { from: generic, to: artifact }
-  - { from: artifact, to: authored, label: "EC or TD" }
-  - { from: artifact, to: generated, label: "CB" }
-  - { from: authored, to: worker }
-  - { from: generated, to: worker }
-  - { from: worker, to: resume, label: "yes" }
-  - { from: worker, to: fallback, label: "no" }
-  - { from: fallback, to: proof }
-  - { from: proof, to: resume }
-  - { from: resume, to: terminal }
+  - { from: root, to: reject }
+  - { from: reject, to: repair }
+  - { from: repair, to: proof }
+  - { from: proof, to: health }
+  - { from: health, to: terminal }
 ---
 ```
 
-Agentic Workflow is admitted through the same root dispatcher as every other project. EC and TD are hand-authored Python-first specification projects; CB is the generated implementation stage. The existing self-health gate partition remains observable without blocking root admission. Health reports `policy_mode=python_first_lifecycle`, `fallback_mode=bounded_direct_repair`, `fallback_trigger=selected_worker_verb_is_broken`, `fallback_scope=current_change_only`, `fallback_required_trailer=Refs #<issue>`, and `direct_repair_default=false`. Direct repair is an operator recovery contract used only after the selected worker verb fails, never a root-runner response.
+Agentic Workflow is excluded from its own WI, capability, and backlog root dispatchers because a broken lifecycle cannot be required to repair itself. Health reports `policy_mode=sanctioned_direct_commit`, `required_trailer=Refs #<issue>`, `root_runner_allowed=false`, and `direct_repair_default=true`. The direct change remains bounded by its issue and capability work root, then proves focused regressions without turning advisory self-health axes into a recursive takeover gate.
 ## Changes
 <!-- type: changes lang: yaml -->
 
@@ -95,29 +85,29 @@ changes:
 
 ```mermaid
 ---
-id: python-first-self-hosting-admission-verification
+id: self-hosting-sanctioned-direct-commit-verification
 requirements:
-  admitted_capability_backlog:
+  rejected_capability_backlog:
     id: R2
-    text: "Agentic Workflow capability and backlog roots enter their ordinary verifiers and preserve their normal blocked or dispatch envelopes."
+    text: "Agentic Workflow capability and backlog roots reject before mutation or dispatch."
     kind: regression
     risk: high
-    verify: python_first_self_hosting_capability_and_backlog_enter_normal_verifiers
-  admitted_wi:
+    verify: self_hosting_project_and_capability_roots_are_rejected_before_mutation
+  rejected_wi:
     id: R1
-    text: "An Agentic Workflow change root enters the ordinary EC-first lifecycle instead of being rejected only because the project is Agentic Workflow."
+    text: "An Agentic Workflow change root rejects before loop state or worker dispatch."
     kind: functional
     risk: high
-    verify: python_first_self_hosting_wi_enters_ec_first_lifecycle
-  bounded_fallback:
+    verify: self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch
+  health_policy:
     id: R3
-    text: "Health reports direct repair as a non-default fallback restricted to the current change when the selected worker verb is broken."
+    text: "Health reports sanctioned direct commit policy and never routes back to a self root."
     kind: regression
     risk: high
-    verify: python_first_self_hosting_health_reports_bounded_fallback
+    verify: self_hosting_health_reports_policy_and_never_points_back_to_root_runner
 ---
 flowchart TD
-    r1[R1 admitted wi] --> python_first_self_hosting_wi_enters_ec_first_lifecycle[python_first_self_hosting_wi_enters_ec_first_lifecycle]
-    r2[R2 admitted capability backlog] --> python_first_self_hosting_capability_and_backlog_enter_normal_verifiers[python_first_self_hosting_capability_and_backlog_enter_normal_verifiers]
-    r3[R3 bounded fallback] --> python_first_self_hosting_health_reports_bounded_fallback[python_first_self_hosting_health_reports_bounded_fallback]
+    r1[R1 rejected wi] --> self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch[self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch]
+    r2[R2 rejected capability backlog] --> self_hosting_project_and_capability_roots_are_rejected_before_mutation[self_hosting_project_and_capability_roots_are_rejected_before_mutation]
+    r3[R3 health policy] --> self_hosting_health_reports_policy_and_never_points_back_to_root_runner[self_hosting_health_reports_policy_and_never_points_back_to_root_runner]
 ```

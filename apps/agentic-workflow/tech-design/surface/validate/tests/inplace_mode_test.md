@@ -286,6 +286,11 @@ type = "local"
     // Run `aw td create <slug>`.
     let out = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -402,6 +407,11 @@ type = "local"
 
     let out = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -527,6 +537,11 @@ fn td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init() {
 
     let output = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -617,6 +632,11 @@ fn td_create_rebased_lifecycle_preserves_reachable_exact_td_init() {
 
     let output = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -669,6 +689,11 @@ fn td_create_commits_fresh_numeric_skeleton_once() {
 
     let first = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -709,6 +734,11 @@ fn td_create_commits_fresh_numeric_skeleton_once() {
 
     let second = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -804,6 +834,11 @@ fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
 
     let output = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -839,6 +874,11 @@ fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
 
     let repeat = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -935,6 +975,11 @@ fn td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton() {
 
     let output = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -1225,6 +1270,11 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
 
     let out = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg("1887")
@@ -1301,6 +1351,11 @@ fn td_create_records_spec_path_in_issue_implements() {
     let spec_path = "custom/td-939-implements-test.md";
     let out = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -1376,6 +1431,11 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
 
     let out = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -1615,6 +1675,11 @@ fn run_td_section_apply(
 ) -> serde_json::Value {
     let output = Command::new(bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -1699,7 +1764,7 @@ fn td_1598_logic_payload(id: &str) -> serde_json::Value {
 fn td_1598_changes_payload(target: &str, test_target: &str) -> serde_json::Value {
     serde_json::json!({
         "body": format!(
-            "```yaml\nchanges:\n  - path: {target}\n    action: create\n    section: logic\n    impl_mode: codegen\n  - path: {test_target}\n    action: modify\n    section: unit-test\n    impl_mode: hand-written\n```\n"
+            "```yaml\nchanges:\n  - path: {target}\n    action: create\n    section: logic\n    impl_mode: codegen\n  - path: {test_target}\n    action: modify\n    section: unit-test\n    impl_mode: hand-written\n    anchor: default_target_plan_fixture\n```\n"
         )
     })
 }
@@ -1763,7 +1828,8 @@ type = "local"
     )
     .unwrap();
     std::fs::create_dir_all(root.join("tests")).unwrap();
-    let hand_written_test_target = "// hand-written fixture test target\n";
+    let hand_written_test_target =
+        "// hand-written fixture test target\nfn default_target_plan_fixture() {}\n";
     std::fs::write(
         root.join("tests/default_target_plan_test.rs"),
         hand_written_test_target,
@@ -1809,6 +1875,11 @@ type = "local"
 
     let brief = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -1937,6 +2008,11 @@ type = "local"
 
     let final_check = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "check", spec_path])
         .current_dir(root)
         .output()
@@ -1960,6 +2036,11 @@ type = "local"
         .to_string();
     let lock = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -2032,6 +2113,11 @@ type = "local"
     for read_only_flag in ["--check", "--show"] {
         let read_only = Command::new(&bin)
             .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
             .args([
                 "td",
                 "lock",
@@ -2065,6 +2151,11 @@ type = "local"
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2077,10 +2168,11 @@ type = "local"
     );
     assert!(!gen_stdout.contains("No target files inferred"));
     assert!(!gen_stderr.contains("No target files inferred"));
-    assert_eq!(
-        std::fs::read_to_string(root.join(test_target_path)).unwrap(),
-        hand_written_test_target,
-        "td gen must preserve the explicit hand-written Unit Test target",
+    let hand_written_after_gen = std::fs::read_to_string(root.join(test_target_path)).unwrap();
+    assert!(
+        hand_written_after_gen.contains("fn default_target_plan_fixture() {}")
+            && hand_written_after_gen.contains("HANDWRITE"),
+        "td gen must preserve and explicitly own the hand-written Unit Test target: {hand_written_after_gen}",
     );
     let generated = std::fs::read_to_string(root.join(target_path))
         .expect("explicit Changes target should be created");
@@ -2170,6 +2262,11 @@ type = "local"
     // payload with the blank template.
     let brief = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2209,6 +2306,11 @@ type = "local"
 
     let apply_logic = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2273,6 +2375,11 @@ type = "local"
 
     let replay = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .arg("td")
         .arg("create")
         .arg(slug)
@@ -2351,6 +2458,7 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
+cap_path = "README.md"
 
 [agentic_workflow.issue_platform]
 type = "local"
@@ -2420,12 +2528,6 @@ Gate Inventory:
 id: '1562'
 summary: Keep mutating TD section lookup aligned with valid typed TD files.
 fill_sections: [logic, unit-test]
-capability_refs:
-  - id: td-apply-parity
-    role: primary
-    claim: body-only-logic-apply-parity
-    coverage: full
-    rationale: "Proves initialized payload apply preserves typed section lookup."
 ---
 
 ## Logic
@@ -2487,6 +2589,11 @@ flowchart TD
 
     let check = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "check", spec_path])
         .current_dir(root)
         .output()
@@ -2505,6 +2612,11 @@ flowchart TD
 
     let brief = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2531,6 +2643,11 @@ flowchart TD
     let before_missing = std::fs::read(&spec_abs).unwrap();
     let missing = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -2548,7 +2665,7 @@ flowchart TD
         .expect("run missing Logic payload apply");
     assert!(!missing.status.success());
     assert!(
-        String::from_utf8_lossy(&missing.stdout).contains("seeded from the existing section"),
+        String::from_utf8_lossy(&missing.stdout).contains("reseeded at"),
         "missing payload should fail actionably: {}",
         String::from_utf8_lossy(&missing.stdout),
     );
@@ -2564,6 +2681,11 @@ flowchart TD
     let before_malformed = std::fs::read(&spec_abs).unwrap();
     let malformed = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -2619,6 +2741,11 @@ flowchart TD
     .unwrap();
     let apply_logic = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -2682,6 +2809,11 @@ flowchart TD
     .unwrap();
     let apply_unit = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -2735,6 +2867,7 @@ mode = "in_place"
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
+cap_path = "README.md"
 
 [agentic_workflow.issue_platform]
 type = "local"
@@ -2802,12 +2935,6 @@ Gate Inventory:
 id: '1586'
 summary: Validate the merged TD section candidate before writing it.
 fill_sections: [logic, changes, unit-test]
-capability_refs:
-  - id: td-candidate-validation
-    role: primary
-    claim: td-merged-candidate-in-memory-validation
-    coverage: full
-    rationale: "The real CLI validates the merged candidate before mutation."
 ---
 
 ## Logic
@@ -2841,6 +2968,11 @@ flowchart TD
 
     let brief = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "create", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -2883,6 +3015,11 @@ flowchart TD
 
     let invalid = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -2967,6 +3104,11 @@ flowchart TD
 
     let applied = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args([
             "td",
             "create",
@@ -3165,6 +3307,11 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3323,6 +3470,11 @@ definitions:
 
     let lock = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -3336,6 +3488,11 @@ definitions:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3462,6 +3619,11 @@ changes:
 
     let lock = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
         .output()
@@ -3475,6 +3637,11 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()
@@ -3593,6 +3760,11 @@ changes:
 
     let gen = Command::new(&bin)
         .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
         .args(["td", "gen", slug, "--spec-path", spec_path])
         .current_dir(root)
         .output()

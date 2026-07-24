@@ -5708,16 +5708,19 @@ fn capability_families_for_baselines(
     doc_mirror::CAPABILITY_FAMILIES
         .iter()
         .filter_map(|family| {
-            let baseline_capabilities = family
+            let mut family_baselines = family
                 .baseline_caps
                 .iter()
                 .filter(|capability| baseline_capabilities.iter().any(|id| id == **capability))
                 .map(|capability| (*capability).to_string())
                 .collect::<Vec<_>>();
-            (!baseline_capabilities.is_empty()).then(|| CapabilityFamilyProjection {
+            if baseline_capabilities.iter().any(|id| id == family.id) {
+                family_baselines.insert(0, family.id.to_string());
+            }
+            (!family_baselines.is_empty()).then(|| CapabilityFamilyProjection {
                 id: family.id.to_string(),
                 title: family.title.to_string(),
-                baseline_capabilities,
+                baseline_capabilities: family_baselines,
             })
         })
         .collect()
@@ -13726,7 +13729,7 @@ traits = ["service", "long_running", "cli_facing", "competitive_replacement", "n
         assert!(profile.traits.contains(&"agent_facing".to_string()));
         assert!(profile
             .required_baseline_caps
-            .contains(&"agent-task-navigation".to_string()));
+            .contains(&"developer-agent-experience".to_string()));
         for unchanged_service_baseline in [
             "http2-api-list",
             "kubernetes-native-deployment",
@@ -13747,7 +13750,7 @@ traits = ["service", "long_running", "cli_facing", "competitive_replacement", "n
             family.id == "developer-agent-experience"
                 && family
                     .baseline_capabilities
-                    .contains(&"agent-task-navigation".to_string())
+                    .contains(&"developer-agent-experience".to_string())
         }));
     }
 
@@ -19151,7 +19154,10 @@ capability_refs:
             command,
             "aw cb gen 57 --spec-path 'apps/agentic-workflow/tech-design/logic/manual.md'"
         );
-        assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+        assert_eq!(
+            reason,
+            "active WI has reviewed TD; continue TD code generation"
+        );
     }
 
     // issue #850: cb_reviewed/cb_revised/cb_arbitrated are retired CRRR
@@ -19340,7 +19346,7 @@ capability_refs:
 
         assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
         assert_eq!(command, "aw wi plan --project jet");
-        assert!(reason.contains("before TD/CB lifecycle"));
+        assert!(reason.contains("before the EC-first TD/codegen lifecycle"));
     }
 
     #[test]

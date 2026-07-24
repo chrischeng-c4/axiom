@@ -3,20 +3,20 @@
 // AW-EC-BEGIN
 // @ec self-hosting-wi-admission
 // @capability workflow-root-runner
-// @claim python-first-self-hosting-admission
+// @claim self-hosting-root-runner-policy
 // @contract self-hosting-wi-admission
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_wi_enters_ec_first_lifecycle -- --nocapture
+// @command cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture
 // AW-EC-END
 
-// Contract: the Agentic Workflow WI emits status continue, action dispatch, root wi:2446, current change:#2446, workflow_complete false, next kind run_command, and exact command aw ec check --project agentic-workflow --wi 2446
-// Contract: the envelope contains neither action self_hosting_policy nor a non-EC transition
+// Contract: the WI root emits action self_hosting_policy before loop state or dispatch
+// Contract: the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn self_hosting_wi_admission() {
     let command =
-        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test python_first_self_hosting_wi_enters_ec_first_lifecycle -- --nocapture";
+        "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture";
     let id = "self-hosting-wi-admission";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join("aw.toml").is_file() {
