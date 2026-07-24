@@ -38,3 +38,19 @@ flowchart TD
     validate -->|yes| pass([Print counts and artifact paths])
     screenshot[Named keepAlways screenshot] -->|xcresult attachment| execute
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/macos/Scripts/run-native-e2e.sh
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: apps/workbench/macos/UITests/WorkbenchMacUITests.swift
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: WorkbenchMacUITests
+```
