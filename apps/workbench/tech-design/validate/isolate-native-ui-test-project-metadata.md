@@ -9,26 +9,32 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-ui-test-state-isolation
-entry: launch
+id: workbench-native-ui-test-state-root-contract
+entry: resolve
 nodes:
-  launch: { kind: start, label: "native app launch" }
-  test: { kind: process, label: "XCUI fixture environment" }
-  local: { kind: terminal, label: "repo-local ignored test state" }
-  profile: { kind: terminal, label: "stable or beta profile state" }
+  resolve: { kind: start, label: "resolve launch state root" }
+  fixture: { kind: decision, label: "fixture and absolute override?" }
+  test: { kind: terminal, label: "repo-local UI-test root" }
+  profile: { kind: terminal, label: "profile state root" }
+  services: { kind: process, label: "projects + runtime + log" }
 edges:
-  - { from: launch, to: test, label: "fixture present" }
-  - { from: test, to: local }
-  - { from: launch, to: profile, label: "normal launch" }
+  - { from: resolve, to: fixture }
+  - { from: fixture, to: test, label: "yes" }
+  - { from: fixture, to: profile, label: "no" }
+  - { from: test, to: services }
+  - { from: profile, to: services }
 ---
 flowchart LR
-  launch([Native app launch]) -->|XCUI fixture| test[UI-test environment]
-  test --> local[.axiom-workbench/test-artifacts/ui-tests]
-  launch -->|normal| profile[Stable / Beta state root]
+  resolve([Resolve state root]) --> fixture{Fixture and absolute override?}
+  fixture -->|yes| test[Repo-local UI-test root]
+  fixture -->|no| profile[Stable / Beta root]
+  test --> services[ProjectStore + runtime + log]
+  profile --> services
 ```
 
-This design applies only to native app bootstrap when `WORKBENCH_UI_TEST_FOLDER` is present. The XCUI launcher supplies an explicit `WORKBENCH_UI_TEST_STATE_ROOT` below the repository-local ignored test-artifact directory. ProjectStore, LocalRuntimeServer, and diagnostic logging use that root for the test process. Normal stable and beta launches continue using their existing profile roots.
+`WorkbenchRuntimeProfile.resolvedStateRoot(environment:fileManager:)` returns `WORKBENCH_UI_TEST_STATE_ROOT` only when `WORKBENCH_UI_TEST_FOLDER` is also nonempty and the override is an absolute file URL. Otherwise it returns the existing profile state root. This prevents a stray environment variable or relative path from redirecting a human launch.
 
+`WorkbenchMacApp` resolves the root once, then derives ProjectStore storage, `runtime/`, and `logs/workbench.log` from that same value. `WorkbenchDiagnosticLog` accepts the resolved log URL directly so test launches do not write into either real profile. The XCUI launcher computes the repository root from `#filePath`, assigns `.axiom-workbench/test-artifacts/ui-tests/<run-id>`, and removes only that run directory during teardown. The root remains ignored and inspectable if a test aborts before teardown.
 ## Changes
 <!-- type: changes lang: yaml -->
 
