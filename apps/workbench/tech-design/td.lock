@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T04:48:15.118007+00:00"
-digest = "sha256:bd07f6e3706c6fbd843e92001b8ebe42610660335c5d4f2945962f327860cade"
-source_digest = "sha256:bd07f6e3706c6fbd843e92001b8ebe42610660335c5d4f2945962f327860cade"
-ir_digest = "sha256:aedcedf03e0b506a3031c1a5c8c96d283477b5fd1979c089698dd42e319b11f8"
+generated_at = "2026-07-24T04:58:07.176702+00:00"
+digest = "sha256:e7a7c5f26841c79cfd4fdb9bc36c6c7f57a8874f741f1ad09bf258989e54b5ad"
+source_digest = "sha256:e7a7c5f26841c79cfd4fdb9bc36c6c7f57a8874f741f1ad09bf258989e54b5ad"
+ir_digest = "sha256:2f0965596d077fb2eba373e7fef9f589c5c0d79b31e408f10ad497ba95cd9b61"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -185,4 +185,10 @@ section_count = 3
 path = "logic/synchronize-authoritative-pty-cwd-into-workbench-active-context.md"
 digest = "sha256:8b8c04cb8ae22de1eb098b2933dbc2abe85d127c2cfc5e443c4403e083bc088c"
 ir_digest = "sha256:3ece1e1b7ec3e5720b5ff64c370df77a976f38467e9d01f13983b8ebc51ad166"
+section_count = 3
+
+[[files]]
+path = "validate/isolate-native-ui-test-project-metadata.md"
+digest = "sha256:01c07f1b7d3e66850609ce64419ca4d6e38b1359e4feca35c1f012795fdc9554"
+ir_digest = "sha256:dab0f6b655fae9e92867fc9930c5340038fe99e1d9a47a93e918f1552bbce603"
 section_count = 3
