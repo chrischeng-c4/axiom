@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T06:27:16.431771+00:00"
-digest = "sha256:12a03071f7d259907932b460c9747ed4efea6ad7e83918a91d0502e054c01975"
-source_digest = "sha256:12a03071f7d259907932b460c9747ed4efea6ad7e83918a91d0502e054c01975"
-ir_digest = "sha256:c281974497d271fd2e68af4ab6f7f1877fd2b894dc17cd8b44b0e3c19bab97ea"
+generated_at = "2026-07-24T06:35:57.760584+00:00"
+digest = "sha256:0280c6ac3179f2e03e65480344f4b1f90baf2d42a839745d46c78e44ea51da42"
+source_digest = "sha256:0280c6ac3179f2e03e65480344f4b1f90baf2d42a839745d46c78e44ea51da42"
+ir_digest = "sha256:8440a92e401f69b071f118b680fd3a4dc2aa84de4541757542ce0fd2159e7599"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -137,6 +137,12 @@ section_count = 3
 path = "logic/place-auxiliary-column-to-the-right-of-terminal.md"
 digest = "sha256:e636ee2c52765f9ab62f813e95dba9ee58d11e80bd7204d81503aaec8b9bcf28"
 ir_digest = "sha256:f105815c53941c2c7690f0649018e85b51da746cc67cbe39ac399d83c70c14b5"
+section_count = 3
+
+[[files]]
+path = "logic/preserve-bounded-native-control-accessibility-identities.md"
+digest = "sha256:dbcff5aed18e979a5c7360d259d08fe46f61d7c16a7857411d7c96910710425f"
+ir_digest = "sha256:2f9dba71d16d9a866244a29fb781952eca6a6200538e9dc8400c42697e4842e9"
 section_count = 3
 
 [[files]]
