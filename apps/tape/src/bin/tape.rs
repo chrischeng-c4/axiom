@@ -630,7 +630,9 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
             HA is auto-mode raft: scale the StatefulSet and set `REPLICAS_PER_SHARD` > 1 \
             (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from the downward API) and the \
             same `tape` bin runs a raft group; `--peer-service` (`TAPE_PEER_SERVICE`) names \
-            the headless Service for peer DNS. No cluster env = plain single-node.\n",
+            the headless Service for peer DNS. No cluster env = plain single-node.\n\n\
+            Backup destinations: `tape llm --topic backup` — rendered at call time \
+            from the shared `service-backup` scheme table, never hand-copied (#2483).\n",
     },
 ];
 
@@ -1183,6 +1185,24 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
 }
 
 fn llm(args: LlmArgs) -> Result<()> {
+    // #2483/#2494: the backup-destination contract is a SectionedTopic whose
+    // scheme facts render at call time from service-backup's
+    // SUPPORTED_SCHEMES — route it through render_sectioned so the list can
+    // never rot; every other topic stays on the static path.
+    if tape::spec::LLM_BACKUP_TOPICS
+        .iter()
+        .any(|t| t.id == args.topic)
+    {
+        let out = cli_std::llm::render_sectioned(
+            TOOL.project,
+            TOOL.version,
+            tape::spec::LLM_BACKUP_TOPICS,
+            &args.topic,
+            cli_std::llm::Format::parse(&args.format),
+        )?;
+        println!("{out}");
+        return Ok(());
+    }
     let out = cli_std::llm::render(
         TOOL.project,
         TOOL.version,

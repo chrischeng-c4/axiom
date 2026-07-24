@@ -106,4 +106,9 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Add bounded pull and explicit ack subcommands over the existing file-backed cursor (#1255)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Route the sectioned backup llm topic through cli_std render_sectioned so scheme facts render at call time from SUPPORTED_SCHEMES; operations topic gains the discoverability pointer (#2483)."
 ```
