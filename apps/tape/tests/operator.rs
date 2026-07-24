@@ -35,6 +35,7 @@ fn spec(replicas: u32) -> TapeSpec {
         tokens_secret_provider_class: None,
         tokens_secret_csi_driver: None,
         bootstrap_seed_uri: None,
+        body_limit_bytes: None,
     }
 }
 

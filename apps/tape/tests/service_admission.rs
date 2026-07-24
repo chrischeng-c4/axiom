@@ -30,7 +30,7 @@ fn append_request() -> Request<Body> {
 #[tokio::test]
 async fn tape_selects_append_as_write_admission() {
     let app = router_with_admission(
-        AppState::new(TapeJournal::default(), None),
+        AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024),
         Some(write_controller()),
     );
     assert_eq!(
@@ -59,7 +59,7 @@ async fn tape_selects_append_as_write_admission() {
 
 #[tokio::test]
 async fn tape_default_router_keeps_admission_disabled() {
-    let app = router(AppState::new(TapeJournal::default(), None));
+    let app = router(AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024));
     assert_eq!(
         app.clone()
             .oneshot(append_request())
