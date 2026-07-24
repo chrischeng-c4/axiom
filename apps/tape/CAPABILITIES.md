@@ -21,6 +21,27 @@ contract currently lives in `apps/tape/README.md` (`cap_path`); this section
 records real-cloud proof runs until the #1848 cap_path relocation lands.
 Harness: `benchmarks/gcp-operator-acceptance` (`ACCEPTANCE_APPS=tape`).
 
+### Release tape@0.4.11 (2026-07-25, published — binaries + digest-pinned multi-arch GHCR image)
+
+The GKE-proven 0.4.11 candidate shipped. Release run `30114475151`: all five
+targets built (`aarch64-apple-darwin`, `x86_64`/`aarch64-unknown-linux-gnu`,
+`x86_64`/`aarch64-unknown-linux-musl`), 10 assets attached, and the
+`publish ghcr image` job pushed
+
+```
+ghcr.io/chrischeng-c4/tape:0.4.11@sha256:5af09a72a9e89edc30090183f7d4ce59f5a146b9229d567a55815253ec8b543a
+```
+
+verified by `docker manifest inspect` on the digest with no credentials — an
+OCI image index carrying `linux/amd64` + `linux/arm64` (the #2462 tape leg).
+
+The first attempt at this tag failed the image job with `curl: (22) 404` on the
+musl tarball: the release matrix had been reverted to gnu-only by the rebase
+onto main while `Dockerfile.release` still fetched musl for its glibc-free
+`distroless/static-debian12` runtime. Producer and consumer of the release
+assets must move together; restored in `c04fe67cdb`, drift gate tracked by
+#2563.
+
 ### GKE acceptance run 0724164220 (2026-07-24, PASSED — final 0.4.11 candidate, #2557 declarative provisioning proven)
 
 Tape-only run from HEAD `c06504d6e1` (the full 0.4.11 candidate). All 13
