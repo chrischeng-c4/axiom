@@ -198,3 +198,56 @@ changes:
     impl_mode: hand-written
     description: "Refresh the generated project registry and renamed package test command."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: openapi-codegen-git-version-boundary-verification
+requirements:
+  artifact_identity:
+    id: R3
+    text: "Explicit target output materializes .openapi-codegen.json with generator identity openapi-codegen."
+    kind: functional
+    risk: high
+    verify: target_profile_matrix all_target_requirements_and_artifacts_are_deterministic
+  aw_projection_integrity:
+    id: R6
+    text: "TD source mirrors, EC cases, project registry commands, and lock projections resolve through the renamed identity."
+    kind: integration
+    risk: medium
+    verify: AW TD EC and project configuration checks
+  consumer_version_contract:
+    id: R2
+    text: "Every in-repository production consumer uses the renamed local path dependency with a compatible 0.5 version requirement."
+    kind: integration
+    risk: high
+    verify: reverse consumer cargo check matrix
+  cross_toolchain_behavior:
+    id: R5
+    text: "The Python 3.11-3.14, TypeScript 5.0, Rust 2021/2024, legacy golden, and deterministic artifact matrix remains green after the rename."
+    kind: regression
+    risk: high
+    verify: cargo test -p openapi-codegen
+  legacy_identity_residue:
+    id: R4
+    text: "No active package, crate, sidecar, generator, command, or consumer reference retains the legacy cclab openapi-codegen identity."
+    kind: regression
+    risk: medium
+    verify: repository legacy identity residue scan
+  package_identity:
+    id: R1
+    text: "The Cargo package is openapi-codegen 0.5.0, the Rust crate is openapi_codegen, and registry publication is disabled."
+    kind: functional
+    risk: high
+    verify: cargo metadata --no-deps --format-version 1 package identity assertion
+---
+flowchart TD
+    r1[R1 package identity] --> cargo_metadata_no_deps_format_version_1_package_identity_assertion[cargo metadata --no-deps --format-version 1 package identity assertion]
+    r2[R2 consumer version contract] --> reverse_consumer_cargo_check_matrix[reverse consumer cargo check matrix]
+    r3[R3 artifact identity] --> target_profile_matrix_all_target_requirements_and_artifacts_are_deterministic[target_profile_matrix all_target_requirements_and_artifacts_are_deterministic]
+    r4[R4 legacy identity residue] --> repository_legacy_identity_residue_scan[repository legacy identity residue scan]
+    r5[R5 cross toolchain behavior] --> cargo_test_p_openapi_codegen[cargo test -p openapi-codegen]
+    r6[R6 aw projection integrity] --> aw_td_ec_and_project_configuration_checks[AW TD EC and project configuration checks]
+```
