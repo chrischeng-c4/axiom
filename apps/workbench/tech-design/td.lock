@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T03:31:09.984332+00:00"
-digest = "sha256:e3645ed332a8866dacb5c6b13ddf5461bdbad164ace69c119501d7316a65c5df"
-source_digest = "sha256:e3645ed332a8866dacb5c6b13ddf5461bdbad164ace69c119501d7316a65c5df"
-ir_digest = "sha256:6bdf47c368963057d23930b996115beb929cf0e99e9b669220e718103f682145"
+generated_at = "2026-07-24T04:24:52.617232+00:00"
+digest = "sha256:a8f4b91f3edb185ae401bbd3749c3edc363904e3fbdef6bcb95e5d5e9cedf1d7"
+source_digest = "sha256:a8f4b91f3edb185ae401bbd3749c3edc363904e3fbdef6bcb95e5d5e9cedf1d7"
+ir_digest = "sha256:158e4cd62fdbc59f781efd9101f85db0dc38b27b0b8c9d5bb08198feab6d3a04"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -113,6 +113,12 @@ section_count = 3
 path = "logic/make-native-titlebar-terminal-tabs-full-width.md"
 digest = "sha256:6f7344a0a734fe91e3d3b3b8fc213e44670701fcf37c3512438951d1bb36c6c4"
 ir_digest = "sha256:065850fce795bfbaf06e9a57e0ccfa3e8c2bc63698a890014001905ac68035ed"
+section_count = 3
+
+[[files]]
+path = "logic/model-project-scoped-recursive-terminal-pane-tree.md"
+digest = "sha256:aae4b885c5a2c920e0ad3a326fdb05e1225edeedf661f0d8793657b48bb8ae1e"
+ir_digest = "sha256:1fe1e0bb0feebefbf6bc51932e63286ebe5f28a6b2ebb8f47638076bf6092511"
 section_count = 3
 
 [[files]]
