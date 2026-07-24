@@ -506,6 +506,85 @@ restart also clears it (the flag is process-local, not persisted).
 |---|---|---:|---|---|---|---|
 | ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | apps/lumen/tests/disk_scale_proof.rs<br>apps/lumen/src/storage.rs |
 
+Capacity guidance (#2517): docs-per-shard sizing and the per-shard
+indexing/search throughput envelope below is benchmark-backed, not modeled —
+derived from `lumen-bench` plus the existing `write_qps`/`perf_gate_vs_db`
+scale-bench surfaces on a **named reference profile**: Apple M1 Max (10-core,
+64 GiB RAM), macOS 26.5.2, `cargo build --release`, quiet/idle machine, single
+`shardCount:1` node. **Validate on your target instance class before treating
+these as SLOs.** Corpus: 3 fields/doc (`bio` Text, `city` Keyword, `age`
+Number) — the same shape `docs/benchmarks-scale.md` uses.
+
+| metric | measured | detail |
+|---|---:|---|
+| indexing throughput, 100 workers (saturation) | 768.1k-769.8k docs/s | HTTP `POST /index`, embedded local WAL (no fsync/raft durability), 100-doc/300-item batches; p50 12.0ms, p99 21.1-25.5ms |
+| indexing throughput, 10 workers | 742.8k-772.4k docs/s | p50 1.19-1.23ms, p99 2.19-2.35ms |
+| search QPS sustained, per shard, 1k-1M docs | >=1000 req/s, p50 0.13-0.44ms | `text_bm25`/`kw_term`/`bool_filter`, real HTTP path over disk-backed segments; harness-bound (HARN) at every N tested, see boundary below |
+| on-disk footprint | converges to ~28.8-29.4 bytes/doc by 100k-1M docs | 0.07 MiB@1k (75.6 B/doc, fixed overhead) -> 2.80 MiB@100k (29.4 B/doc) -> 27.50 MiB@1M (28.8 B/doc) |
+| peak build/reshard RSS | ~1.4-1.5 KiB/doc marginal by 100k-1M docs | 184.2 MiB@100k -> 1,424.8 MiB@1M; spans index+`flush_to_segments`+serve, so it is a conservative upper bound — a reopened read-only shard's steady resident RSS is only ~30-49% of full in-RAM per `tests/disk_scale_proof.rs` (separate proof, not re-verified this round) |
+
+Docs-per-shard ceiling: `spec.serving.memory` defaults to `4Gi`, applied as
+request==limit (Guaranteed QoS, no burst headroom below the cgroup limit).
+Budgeting ~60% of that limit (2.4Gi) for peak build/reshard RSS against the
+measured ~1.4-1.5 KiB/doc marginal cost lands around **1.5-2M docs/shard** as
+a starting planning ceiling for this corpus shape — wider schemas or larger
+text fields raise bytes/doc and lower this number proportionally; re-run the
+reproduction commands below against your own schema to recompute it.
+
+Memory/disk rules of thumb: budget disk generously (~29 bytes/doc for this
+corpus is rarely the binding constraint, and PVC expansion is cheap relative
+to a pod OOM); budget RAM against `spec.serving.memory` using the
+peak-RSS-per-doc curve above, not the on-disk figure.
+
+Pre-shard vs auto-split: `spec.reshardPolicy.maxShardBytes` is unset by
+default, so the operator only reports recommendations and never auto-splits
+(`recommendationOnly: true` until set). It gates against each pod's
+`lumen_storage_bytes` metric — an *approximate in-memory index byte estimate*
+scraped from `/metrics`, not raw on-disk `.lseg` bytes or process RSS — so
+size it relative to `spec.serving.memory`, not PVC size.
+`prepareAtPercent`/`urgentAtPercent` default to 50%/85% of that budget. Prefer
+pre-sharding (`spec.shardCount` > 1 at deploy time) when the expected corpus
+is likely to clear the single-shard ceiling above during initial rollout,
+since the reshard workflow is a rare, checkpointed background migration
+(`PrepareSplit -> Splitting -> CatchingUp -> Complete`), not instant. Rely on
+`maxShardBytes` auto-split for organic/unpredictable growth once already
+running — it is autonomous and zero-human-step end to end, but only grows
+shard count (`spec.reshardPolicy.maxShards` bounds how far; no
+merge/contraction path exists yet, see Dynamic Shard Topology below).
+
+Boundaries this bench round did not establish — do not extrapolate past
+these: the true per-shard search QPS ceiling (every qps1000 row above was
+harness-bound on this box, i.e. the load generator saturated first, not
+lumen — the actual ceiling is higher and unmeasured here); indexing
+throughput under the production raft-durable write path (`--wal raft`) —
+`write_qps.rs`'s `LUMEN_WRITE_MODES` covers
+`embedded`/`sharded`/`nats`/`natssharded`/`pg`/`os` but has no raft mode, so
+raft-durable docs/s is an open gap, not a number in this table; and
+steady-state (post-reopen, serving-only) RSS in isolation from build-time
+peak — this round's peak RSS spans build+flush+serve together, not a
+reopen-only measurement.
+
+Reproduce:
+
+```sh
+# search-latency curve at increasing corpus size (raw Engine query path, no HTTP/disk)
+./target/release/lumen-bench run --types sorted_page_deep,bool_filter --documents 100000
+
+# indexing throughput (embedded local WAL, HTTP POST /index; workers=1,10,100)
+LUMEN_WRITE_MODES=embedded LUMEN_WRITE_WARMUP_S=1.0 LUMEN_WRITE_WINDOW_S=3.0 \
+    cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
+
+# footprint + search-QPS ladder across 1k/10k/100k docs (disk-backed segments)
+LUMEN_SCALE_ROWS=1000,10000,100000 LUMEN_SCALE_CELLS=text_bm25,kw_term,bool_filter \
+    LUMEN_SCALE_QPS_TARGETS=100,1000 LUMEN_GATE_WINDOW_S=2 \
+    cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture lumen_scale_bench
+
+# 1M footprint-only point (skips the qps ladder for speed)
+LUMEN_SCALE_ROWS=1000000 LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_SCALE_QPS=0 \
+    LUMEN_SCALE_CELLS=text_bm25,kw_term,bool_filter \
+    cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture lumen_scale_bench
+```
+
 ### Dynamic Shard Topology
 
 ID: dynamic-shard-topology
@@ -876,7 +955,9 @@ Full row-count x qps scaling, footprint tables, and retained vs-pg / vs-OS
 breakdowns live in **[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)**.
 Routine checks use the Lumen-only vat runner; peer comparisons are refreshed
 only through explicit calibration/soak runners when a benchmark cell or peer
-configuration changes.
+configuration changes. Docs-per-shard sizing and the per-shard
+indexing/search throughput envelope derived from these same bench surfaces
+live under "Capacity guidance" in the Elastic Scale capability above.
 
 ## Data model
 
