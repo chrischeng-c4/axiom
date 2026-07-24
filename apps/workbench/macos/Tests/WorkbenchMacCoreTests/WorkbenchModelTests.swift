@@ -99,6 +99,38 @@ final class WorkbenchModelTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty, "layout/profile preparation must not launch a PTY")
     }
 
+    func testSplitRatioUpdatesClampAndPreserveLeafIdentity() async {
+        let client = MockCoreClient()
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let model = WorkbenchModel(client: client, projectStore: ProjectStore(storageDirectory: tempDir))
+        model.registerProject(tempDir)
+        model.addTerminal(profile: .claude)
+        model.splitActivePane(axis: .horizontal, profile: .shell)
+
+        guard case let .split(splitId, axis, first, second, initialRatio) = model.paneTree else {
+            return XCTFail("explicit split must produce a split node")
+        }
+        let leafIds = first.panes.map(\.id) + second.panes.map(\.id)
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(initialRatio, 0.5)
+
+        model.setSplitRatio(splitId: splitId, ratio: 1.4)
+        guard case let .split(_, _, clampedFirst, clampedSecond, upperRatio) = model.paneTree else {
+            return XCTFail("ratio update must preserve the split")
+        }
+        XCTAssertEqual(upperRatio, 0.85)
+        XCTAssertEqual(clampedFirst.panes.map(\.id) + clampedSecond.panes.map(\.id), leafIds)
+
+        model.setSplitRatio(splitId: splitId, ratio: 0.01)
+        guard case let .split(_, _, _, _, lowerRatio) = model.paneTree else {
+            return XCTFail("ratio update must preserve the split")
+        }
+        XCTAssertEqual(lowerRatio, 0.15)
+        let requests = await client.requests()
+        XCTAssertTrue(requests.isEmpty, "resizing the presentation tree must not contact the PTY")
+    }
+
     func testClosingPaneCollapsesTreeToEmptyRoot() async {
         let client = MockCoreClient()
         let tempDir = temporaryDirectory()
@@ -212,8 +244,29 @@ final class WorkbenchModelTests: XCTestCase {
         XCTAssertFalse(terminal.contains("WKWebView"))
         XCTAssertFalse(view.contains("WebKit"))
         XCTAssertTrue(view.contains("Add terminal profile"))
-        XCTAssertTrue(view.contains("Split right"))
+        XCTAssertTrue(view.contains("Split Right"))
         XCTAssertFalse(view.contains("terminal.titlebar-tabs"))
+    }
+
+    func testNativeClientUsesRecursivePaneRendererAndExplicitSplitMenus() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let view = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/WorkbenchMac/WorkbenchView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(view.contains("paneTreeContent(model.paneTree)"))
+        XCTAssertTrue(view.contains("case let .split(id, axis, first, second, ratio)"))
+        XCTAssertTrue(view.contains("Split Right"))
+        XCTAssertTrue(view.contains("Split Down"))
+        XCTAssertTrue(view.contains("model.setSplitRatio("))
+        XCTAssertTrue(
+            view.contains(#"surfaceId: "\(model.selectedProjectId ?? "")::\(pane.id)::\(tab.id)""#),
+            "terminal identity must remain project-pane-session scoped"
+        )
     }
 
     private func temporaryDirectory() -> URL {

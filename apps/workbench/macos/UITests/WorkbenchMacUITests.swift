@@ -49,6 +49,30 @@ final class WorkbenchMacUITests: XCTestCase {
     }
 
     @MainActor
+    func testPaneToolbarOffersAddAndExplicitSplitActions() throws {
+        let fixtureFolder = try makeFixtureFolder()
+        defer { try? FileManager.default.removeItem(at: fixtureFolder) }
+        let app = launch(fixtureFolder)
+        defer { app.terminate() }
+
+        let addProfile = app.buttons["terminal.add-profile"]
+        XCTAssertTrue(addProfile.waitForExistence(timeout: 5))
+        addProfile.click()
+        let claude = app.menuItems["Claude Code"]
+        XCTAssertTrue(claude.waitForExistence(timeout: 3))
+        claude.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["terminal.idle.claude"]
+                .waitForExistence(timeout: 5)
+        )
+
+        addProfile.click()
+        XCTAssertTrue(app.menuItems["Split Right"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.menuItems["Split Down"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    @MainActor
     private func launch(_ fixtureFolder: URL) -> XCUIApplication {
         let app = XCUIApplication()
         app.terminate()

@@ -314,6 +314,15 @@ public final class WorkbenchModel: ObservableObject {
         statusMessage = "\(title) is ready. Press Start when you are ready."
     }
 
+    public func setSplitRatio(splitId: String, ratio: Double) {
+        paneTree = replacingSplitRatio(
+            splitId,
+            ratio: min(0.85, max(0.15, ratio)),
+            in: paneTree
+        )
+        refreshPanes()
+    }
+
     public func closeTab(_ id: String) async {
         guard let index = tabIndex(id) else { return }
         let tab = tabs[index]
@@ -525,6 +534,34 @@ public final class WorkbenchModel: ObservableObject {
                 first: replacingPane(paneId, with: replacement, in: first),
                 second: replacingPane(paneId, with: replacement, in: second),
                 ratio: min(0.85, max(0.15, ratio))
+            )
+        }
+    }
+
+    private func replacingSplitRatio(
+        _ splitId: String,
+        ratio: Double,
+        in tree: TerminalPaneTree
+    ) -> TerminalPaneTree {
+        switch tree {
+        case .leaf:
+            return tree
+        case let .split(id, axis, first, second, currentRatio):
+            if id == splitId {
+                return .split(
+                    id: id,
+                    axis: axis,
+                    first: first,
+                    second: second,
+                    ratio: ratio
+                )
+            }
+            return .split(
+                id: id,
+                axis: axis,
+                first: replacingSplitRatio(splitId, ratio: ratio, in: first),
+                second: replacingSplitRatio(splitId, ratio: ratio, in: second),
+                ratio: currentRatio
             )
         }
     }

@@ -250,8 +250,15 @@ struct WorkbenchView: View {
         HStack {
             Spacer()
             Menu {
-                ForEach(TerminalProfile.allCases, id: \.self) { profile in
-                    Button(profile.label) { model.addTerminal(profile: profile) }
+                if activePaneIsEmpty {
+                    ForEach(TerminalProfile.allCases, id: \.self) { profile in
+                        Button(profile.label) {
+                            model.addTerminal(profile: profile)
+                        }
+                        .accessibilityIdentifier("terminal.add.\(profile.rawValue)")
+                    }
+                } else {
+                    splitProfileMenus()
                 }
             } label: {
                 Image(systemName: "plus")
@@ -266,15 +273,142 @@ struct WorkbenchView: View {
         .accessibilityIdentifier("terminal.pane-toolbar")
     }
 
+    private var activePaneIsEmpty: Bool {
+        model.panes.first(where: { $0.id == model.activePaneId })?.tabId == nil
+    }
+
     @ViewBuilder
-    private var terminalBody: some View {
-        HStack(spacing: 1) {
-            ForEach(model.panes) { pane in
-                paneContent(pane)
-                if pane.id != model.panes.last?.id { Divider() }
+    private func splitProfileMenus(selecting paneId: String? = nil) -> some View {
+        Menu("Split Right", systemImage: "rectangle.split.2x1") {
+            ForEach(TerminalProfile.allCases, id: \.self) { profile in
+                Button(profile.label) {
+                    if let paneId {
+                        model.selectPane(paneId)
+                    }
+                    model.splitActivePane(axis: .horizontal, profile: profile)
+                }
+                .accessibilityIdentifier("terminal.split-right.\(profile.rawValue)")
             }
         }
+        Menu("Split Down", systemImage: "rectangle.split.1x2") {
+            ForEach(TerminalProfile.allCases, id: \.self) { profile in
+                Button(profile.label) {
+                    if let paneId {
+                        model.selectPane(paneId)
+                    }
+                    model.splitActivePane(axis: .vertical, profile: profile)
+                }
+                .accessibilityIdentifier("terminal.split-down.\(profile.rawValue)")
+            }
+        }
+    }
+
+    private var terminalBody: some View {
+        paneTreeContent(model.paneTree)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("terminal.pane-tree")
+    }
+
+    private func paneTreeContent(_ tree: TerminalPaneTree) -> AnyView {
+        switch tree {
+        case let .leaf(pane):
+            return AnyView(paneContent(pane))
+        case let .split(id, axis, first, second, ratio):
+            return AnyView(
+                splitContent(
+                    id: id,
+                    axis: axis,
+                    first: first,
+                    second: second,
+                    ratio: ratio
+                )
+            )
+        }
+    }
+
+    private func splitContent(
+        id: String,
+        axis: TerminalPaneAxis,
+        first: TerminalPaneTree,
+        second: TerminalPaneTree,
+        ratio: Double
+    ) -> some View {
+        GeometryReader { geometry in
+            let dividerThickness: CGFloat = 6
+            let totalLength = axis == .horizontal
+                ? geometry.size.width
+                : geometry.size.height
+            let availableLength = max(0, totalLength - dividerThickness)
+            let desiredMinimum: CGFloat = axis == .horizontal ? 240 : 160
+            let effectiveMinimum = min(desiredMinimum, availableLength / 2)
+            let firstLength = min(
+                availableLength - effectiveMinimum,
+                max(effectiveMinimum, availableLength * ratio)
+            )
+
+            if axis == .horizontal {
+                HStack(spacing: 0) {
+                    paneTreeContent(first)
+                        .frame(width: firstLength)
+                    splitDivider(id: id, axis: axis, totalLength: totalLength)
+                    paneTreeContent(second)
+                        .frame(width: availableLength - firstLength)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    paneTreeContent(first)
+                        .frame(height: firstLength)
+                    splitDivider(id: id, axis: axis, totalLength: totalLength)
+                    paneTreeContent(second)
+                        .frame(height: availableLength - firstLength)
+                }
+            }
+        }
+        .coordinateSpace(name: splitCoordinateSpace(id))
+        .accessibilityIdentifier("terminal.split.\(id)")
+    }
+
+    private func splitDivider(
+        id: String,
+        axis: TerminalPaneAxis,
+        totalLength: CGFloat
+    ) -> some View {
+        ZStack {
+            Color.clear
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(
+                    width: axis == .horizontal ? 1 : nil,
+                    height: axis == .vertical ? 1 : nil
+                )
+        }
+        .frame(
+            width: axis == .horizontal ? 6 : nil,
+            height: axis == .vertical ? 6 : nil
+        )
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(
+                minimumDistance: 0,
+                coordinateSpace: .named(splitCoordinateSpace(id))
+            )
+            .onChanged { value in
+                let location = axis == .horizontal
+                    ? value.location.x
+                    : value.location.y
+                let availableLength = max(1, totalLength - 6)
+                model.setSplitRatio(
+                    splitId: id,
+                    ratio: Double(location / availableLength)
+                )
+            }
+        )
+        .accessibilityIdentifier("terminal.split-divider.\(id)")
+        .accessibilityLabel(axis == .horizontal ? "Resize columns" : "Resize rows")
+    }
+
+    private func splitCoordinateSpace(_ id: String) -> String {
+        "terminal-split-\(id)"
     }
 
     @ViewBuilder
@@ -285,11 +419,14 @@ struct WorkbenchView: View {
                     Circle().fill(stateColor(tab.lifecycle)).frame(width: 6, height: 6)
                     Text(tab.title).font(.caption.weight(.semibold))
                     Spacer()
-                    Button {
-                        model.selectTab(tab.id)
-                        model.splitActivePane()
-                    } label: { Image(systemName: "rectangle.split.2x1") }
-                        .buttonStyle(.plain).accessibilityLabel("Split right")
+                    Menu {
+                        splitProfileMenus(selecting: pane.id)
+                    } label: {
+                        Image(systemName: "rectangle.split.2x1")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityIdentifier("terminal.pane-split.\(pane.id)")
+                    .accessibilityLabel("Split \(tab.title)")
                     Button { Task { await model.closeTab(tab.id) } } label: { Image(systemName: "xmark") }
                         .buttonStyle(.plain).accessibilityLabel("Close \(tab.title)")
                 } else {
@@ -308,25 +445,9 @@ struct WorkbenchView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.selectTab(pane.tabId ?? "") }
+        .onTapGesture { model.selectPane(pane.id) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var terminalLayers: some View {
-        ZStack {
-            ForEach(model.mountedTerminalTabs) { scopedTab in
-                let tab = scopedTab.tab
-                let isActive = scopedTab.projectId == model.selectedProjectId
-                    && model.activeTabId == tab.id
-                if tab.lifecycle != .idle, !tab.lifecycle.isFailed {
-                    terminalSurface(tab, surfaceId: scopedTab.id, isActive: isActive)
-                        .opacity(isActive ? 1 : 0)
-                        .allowsHitTesting(isActive)
-                        .accessibilityHidden(!isActive)
-                        .zIndex(isActive ? 1 : 0)
-                }
-            }
-        }
+        .accessibilityIdentifier("terminal.pane.\(pane.id)")
     }
 
     private func terminalSurface(
