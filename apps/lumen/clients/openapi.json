@@ -23,6 +23,83 @@
     }
   ],
   "paths": {
+    "/admin/backup": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Dump the entire engine state as a single JSON document.",
+        "operationId": "backup",
+        "responses": {
+          "200": {
+            "description": "Full engine snapshot as JSON",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Missing admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/backup/local": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Snapshot the engine and persist it via a `LocalFsSink`. Returns the",
+        "description": "final key the sink chose. The path is created if missing.",
+        "operationId": "backup_to_local",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Snapshot written; sink identity and object key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid local sink path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/backup:scoped": {
       "post": {
         "tags": [
@@ -232,6 +309,49 @@
           },
           "400": {
             "description": "Malformed chunk",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/restore": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Restore the engine from a snapshot dump produced by `/admin/backup`.",
+        "description": "Replaces all existing state.",
+        "operationId": "restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Engine state replaced from the snapshot"
+          },
+          "403": {
+            "description": "Missing admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed or incompatible snapshot",
             "content": {
               "application/json": {
                 "schema": {
@@ -754,6 +874,53 @@
         "responses": {
           "204": {
             "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/reindex/stream": {
+      "post": {
+        "tags": [
+          "Index"
+        ],
+        "summary": "Streaming bulk-reindex endpoint.",
+        "description": "Body is NDJSON of `IndexItem` records (one per line). Response is\nan NDJSON stream of progress events:\n\n```text\n{\"event\":\"progress\",\"indexed_total\":1000,\"batch_indexed\":1000,\"elapsed_ms\":42}\n{\"event\":\"progress\",\"indexed_total\":2000,\"batch_indexed\":1000,\"elapsed_ms\":85}\n...\n{\"event\":\"done\",\"indexed_total\":2473,\"elapsed_ms\":210}\n```\n\nErrors are surfaced as `{\"event\":\"error\",\"line\":N,\"message\":\"...\"}`\ninline; the stream continues so partial progress is observable.\n\nRejected outright in routed multi-shard mode (#1442 R6): the spawned\nbatch loop below writes through `state.write_backend` directly, bypassing\nboth `state.routed`'s per-item shard ownership and `enforce_write_fence`\n(the same per-item reshard-cutover pause every other write path\nobserves). Routing each streamed item by ownership and fencing it\nindividually, inside a detached `tokio::spawn` task that already streams\nits own NDJSON response back, is a materially bigger change than this\nbounded hardening pass — an accepted, documented fallback per R6's own\nscope rather than a half-routed implementation that could silently\nmis-shard or skip the write fence.",
+        "operationId": "reindex_stream",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "NDJSON of IndexItem records, one per line",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "NDJSON stream of progress events, terminated by a done event"
+          },
+          "501": {
+            "description": "Not supported in routed multi-shard mode (#1442 R6)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }

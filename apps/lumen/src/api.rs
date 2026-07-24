@@ -545,11 +545,15 @@ impl AppState {
         delete_external_id,
         replace_docs,
         replace_doc,
+        reindex_stream,
         search,
         search_all,
         batch_search,
         duplicates,
         stats,
+        backup,
+        backup_to_local,
+        restore,
         backup_scoped,
         reshard_apply,
         reshard_prune,
@@ -1761,6 +1765,17 @@ async fn stats(
 /// bounded hardening pass — an accepted, documented fallback per R6's own
 /// scope rather than a half-routed implementation that could silently
 /// mis-shard or skip the write fence.
+#[utoipa::path(
+    post,
+    path = "/collections/{collection_id}/reindex/stream",
+    tag = "Index",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    request_body(content = String, description = "NDJSON of IndexItem records, one per line"),
+    responses(
+        (status = 200, description = "NDJSON stream of progress events, terminated by a done event"),
+        (status = 501, description = "Not supported in routed multi-shard mode (#1442 R6)", body = ApiError)
+    )
+)]
 async fn reindex_stream(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1965,6 +1980,15 @@ async fn drop_field(
 // ---------------------------------------------------------------------------
 
 /// Dump the entire engine state as a single JSON document.
+#[utoipa::path(
+    get,
+    path = "/admin/backup",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Full engine snapshot as JSON", body = serde_json::Value),
+        (status = 403, description = "Missing admin role", body = ApiError)
+    )
+)]
 async fn backup(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -1994,6 +2018,17 @@ fn default_backup_prefix() -> String {
 
 /// Snapshot the engine and persist it via a `LocalFsSink`. Returns the
 /// final key the sink chose. The path is created if missing.
+#[utoipa::path(
+    post,
+    path = "/admin/backup/local",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Snapshot written; sink identity and object key", body = serde_json::Value),
+        (status = 400, description = "Invalid local sink path", body = ApiError),
+        (status = 403, description = "Missing admin role", body = ApiError)
+    )
+)]
 async fn backup_to_local(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -2025,6 +2060,17 @@ async fn backup_to_local(
 
 /// Restore the engine from a snapshot dump produced by `/admin/backup`.
 /// Replaces all existing state.
+#[utoipa::path(
+    post,
+    path = "/admin/restore",
+    tag = "Admin",
+    request_body = serde_json::Value,
+    responses(
+        (status = 204, description = "Engine state replaced from the snapshot"),
+        (status = 403, description = "Missing admin role", body = ApiError),
+        (status = 422, description = "Malformed or incompatible snapshot", body = ApiError)
+    )
+)]
 async fn restore(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
