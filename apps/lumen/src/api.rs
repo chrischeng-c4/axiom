@@ -277,6 +277,34 @@ pub trait WriteBackend: Send + Sync {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[async_trait]
 pub trait RoutedBackend: Send + Sync {
+    /// #2496: collection lifecycle has no single owning shard — every
+    /// physical shard must register the schema, or a write that later
+    /// routes to a shard that never heard `create_collection` 404s with
+    /// `CollectionNotFound` even though the collection genuinely exists.
+    /// The sole implementation ([`crate::routing_remote::RoutedRouter`])
+    /// fans this out to every physical shard (local direct call plus one
+    /// forward per remote shard), mirroring
+    /// [`crate::routing::EngineShardWrite::create_collection`]'s in-process
+    /// fan-out/merge semantics over cross-pod HTTP instead of an in-process
+    /// writer submit.
+    async fn create_collection(
+        &self,
+        collection_id: String,
+        req: CreateCollectionRequest,
+        headers: &HeaderMap,
+    ) -> Result<CreateCollectionResponse>;
+
+    /// #2496: same fan-out-to-every-shard requirement as
+    /// [`Self::create_collection`], merged with
+    /// [`crate::routing::EngineShardWrite::drop_collection`]'s
+    /// `Physical > Marked > AlreadyMarked > NotFound` precedence.
+    async fn drop_collection(
+        &self,
+        collection_id: String,
+        force: bool,
+        headers: &HeaderMap,
+    ) -> Result<DropOutcome>;
+
     async fn search(
         &self,
         collection_id: &str,
@@ -1057,15 +1085,27 @@ async fn list_collections(
 async fn create_collection(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<Json<CreateCollectionResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let resp = state
-        .write_backend
-        .create_collection(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    // #2496: fan create_collection out across every physical shard when
+    // routed — a collection created against only one shard left every other
+    // shard unable to serve a write that hashed there, matching the
+    // `index`/`delete_external_id`/`replace_docs` routed-or-local pattern.
+    let resp = if let Some(router) = &state.routed {
+        router
+            .create_collection(collection_id.clone(), req, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .create_collection(collection_id.clone(), req)
+            .await
+            .map_err(ApiErr::from)?
+    };
     tracing::info!(
         target: "lumen.audit",
         event = "collection_create_or_extend",
@@ -1100,15 +1140,24 @@ struct DropQuery {
 async fn drop_collection(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Query(q): Query<DropQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let outcome = state
-        .write_backend
-        .drop_collection(collection_id.clone(), q.force)
-        .await
-        .map_err(ApiErr::from)?;
+    // #2496: same routed-or-local fan-out as `create_collection` above.
+    let outcome = if let Some(router) = &state.routed {
+        router
+            .drop_collection(collection_id.clone(), q.force, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .drop_collection(collection_id.clone(), q.force)
+            .await
+            .map_err(ApiErr::from)?
+    };
     let phase = match outcome {
         DropOutcome::NotFound => {
             return Err(ApiErr::not_found(format!(

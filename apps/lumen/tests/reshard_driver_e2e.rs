@@ -679,6 +679,79 @@ async fn full_split_resumes_after_restart_and_reaches_complete() {
     assert!(matches!(outcome, DriveOutcome::NoOp(_)));
 }
 
+/// #2496 AC2: a collection created on shard0 *before* the split — with zero
+/// documents, the exact "schema exists, zero docs here" gap the issue calls
+/// out — must still be usable on shard1 once the split completes. Without
+/// `snapshot_reshard_batches`'s schema-only registration batches (only
+/// doc-carrying batches existed before), shard1 never hears about
+/// collection "u" at all: a post-split write whose bucket now routes to
+/// shard1 would fail with `CollectionNotFound` even though the split
+/// otherwise completed cleanly.
+#[tokio::test]
+async fn full_split_registers_pre_split_empty_collection_schema_on_new_shard() {
+    let shard0 = spin_up_shard();
+    let shard1 = spin_up_shard();
+    create_users_collection(&shard0.server).await;
+    assert_eq!(total_docs(&shard0.server).await, 0);
+
+    let cluster = Arc::new(Mutex::new(initial_lumen(
+        Some(1_000_000_000),
+        Some("urgentThresholdCrossed"),
+    )));
+    let shard_urls = vec![shard0.base_url.clone(), shard1.base_url.clone()];
+    let http = reqwest::Client::new();
+
+    let control = FakeControl::new(cluster.clone(), shard_urls.clone());
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await; // Complete -> PrepareSplit
+    assert_eq!(
+        outcome,
+        DriveOutcome::StartedSplit {
+            target_shard_count: 2
+        }
+    );
+
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await; // PrepareSplit -> Splitting
+    assert_eq!(outcome, DriveOutcome::AdvancedToSplitting);
+
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await; // Splitting -> CatchingUp
+    match &outcome {
+        DriveOutcome::MigratedBatches { batches } => assert!(
+            *batches > 0,
+            "expected at least the schema-only registration batch"
+        ),
+        other => panic!("expected MigratedBatches, got {other:?}"),
+    }
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::CatchingUp
+    );
+
+    let lumen = control.snapshot();
+    let outcome = drive_tick(&control, &http, &lumen).await; // CatchingUp -> Complete
+    assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
+    assert_eq!(
+        control.snapshot().spec.reshard_policy.workflow.phase,
+        ReshardPhase::Complete
+    );
+
+    // The collection now exists on shard1 too: a write whose bucket now
+    // routes to shard1, followed by a read directly against shard1's own
+    // local engine, succeeds instead of hitting CollectionNotFound.
+    let moved_id = (0..)
+        .map(|i| format!("post-split-{i:03}"))
+        .find(|id| bucket_of(id) < 4)
+        .expect("some id routes to a moved bucket");
+    index_user(&shard1.server, &moved_id).await;
+    assert!(has_doc(&shard1.server, &moved_id).await);
+
+    // shard0 was never written to directly for this id — confirms the read
+    // above is really shard1's own registered collection, not a fluke.
+    assert!(!has_doc(&shard0.server, &moved_id).await);
+}
+
 /// AC4: `maxShardBytes` unset means the driver never starts a split, no
 /// matter how many ticks run or what `status.reshard.blockingConditions`
 /// says — R3's core safety rail, proven at the `drive_tick` entry point

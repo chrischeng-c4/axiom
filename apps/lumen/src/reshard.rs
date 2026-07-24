@@ -183,11 +183,36 @@ pub fn bucket_moves(
 /// pass, run under the write fence — uses this purely-additive form. The
 /// final pass's authoritative prune scope is now a separate, independently
 /// byte-capped message: see [`snapshot_reshard_prune_chunks`].
+///
+/// #2496: `buckets` (the caller's current `from_shard` group — same
+/// restriction [`snapshot_reshard_prune_chunks`] already takes, and the same
+/// set `snapshot` was fetched with via `snapshot_bucket_subset`) scopes a
+/// second, schema-only class of batch: for every `(from_shard, to_shard)`
+/// pair a bucket in `buckets` actually moves under, any collection present
+/// in `snapshot.collections` (schema-complete since #2496's
+/// `snapshot_bucket_subset` fix — every collection appears there, doc-driven
+/// or not) that produced *no* doc-carrying batch for that pair still gets
+/// one small batch carrying just its schema (empty `external_ids`, a
+/// single-collection schema-only `snapshot`), anchored at that pair's
+/// lowest bucket. Without this, a collection with zero documents in these
+/// buckets — most commonly a brand new, still-empty collection — never
+/// produces a wire message at all, so a shard gaining buckets never learns
+/// the collection exists (the sibling gap `routing_remote::RoutedRouter`'s
+/// `create_collection`/`drop_collection` fan-out closes for the live write
+/// path). Restricting to `buckets` (rather than every move `bucket_moves`
+/// reflects cluster-wide) matters: `from`/`to` are the *whole cluster's*
+/// maps, reused unchanged across every `from_shard` group the driver loops
+/// over, so an unscoped scan would misattribute a schema-only batch to a
+/// `from_shard`/`to_shard` pair this call's `snapshot` (itself scoped to one
+/// source shard) has no authority to speak for. Applying such a batch is
+/// harmless idempotent no-op on a repeat pass (`Engine::apply_reshard_batch`
+/// already documents this).
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_reshard_batches(
     snapshot: &SnapshotV1,
     from: &VirtualBucketShardMap,
     to: &VirtualBucketShardMap,
+    buckets: &BTreeSet<u32>,
     max_external_ids_per_batch: usize,
 ) -> Result<Vec<ReshardBatch>> {
     if max_external_ids_per_batch == 0 {
@@ -226,6 +251,18 @@ pub fn snapshot_reshard_batches(
         }
     }
 
+    // #2496: which `(from_shard, to_shard)` pairs already have at least one
+    // doc-carrying batch for a given collection, so the schema-only pass
+    // below only fills in collections that would otherwise never be
+    // mentioned in this call's output.
+    let mut collections_with_docs: BTreeMap<(u32, u32), BTreeSet<String>> = BTreeMap::new();
+    for (&(_, from_shard, to_shard), by_collection) in &ids_by_move {
+        collections_with_docs
+            .entry((from_shard, to_shard))
+            .or_default()
+            .extend(by_collection.keys().cloned());
+    }
+
     let mut batches = Vec::new();
     for ((bucket, from_shard, to_shard), by_collection) in ids_by_move {
         let mut pending: Vec<(String, String)> = by_collection
@@ -252,6 +289,40 @@ pub fn snapshot_reshard_batches(
                     snapshot: partial,
                 });
             }
+        }
+    }
+
+    // #2496: schema-only registration, restricted to `buckets` (this call's
+    // actual scope) so a schema-registration batch is never attributed to a
+    // `from_shard`/`to_shard` pair this `snapshot` has no authority over.
+    let mut anchor_bucket_by_pair: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for bucket in buckets {
+        if let Some(mv) = moves_by_bucket.get(bucket) {
+            anchor_bucket_by_pair
+                .entry((mv.from_shard, mv.to_shard))
+                .and_modify(|anchor| *anchor = (*anchor).min(mv.bucket))
+                .or_insert(mv.bucket);
+        }
+    }
+    for (&(from_shard, to_shard), &bucket) in &anchor_bucket_by_pair {
+        let already = collections_with_docs.get(&(from_shard, to_shard));
+        for (collection_id, collection) in &snapshot.collections {
+            if already.is_some_and(|set| set.contains(collection_id)) {
+                continue;
+            }
+            let schema_only = collection_subset(collection, &BTreeSet::new());
+            batches.push(ReshardBatch {
+                from_map_version: from.version(),
+                to_map_version: to.version(),
+                bucket,
+                from_shard,
+                to_shard,
+                external_ids: BTreeMap::new(),
+                snapshot: SnapshotV1 {
+                    version: snapshot.version,
+                    collections: BTreeMap::from([(collection_id.clone(), schema_only)]),
+                },
+            });
         }
     }
 
@@ -424,6 +495,17 @@ pub fn merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<S
 /// computed against the same map can never disagree about bucket
 /// membership. `physical_shard_count` is irrelevant to bucket selection, so
 /// callers only need to agree on `virtual_bucket_count`.
+///
+/// #2496: every collection's *schema* is retained even when it contributes
+/// no in-scope external_ids — a collection with zero documents anywhere (or
+/// whose documents all route elsewhere) never appears in the doc-driven
+/// subset above, but the reshard pipeline still needs its schema to reach a
+/// shard gaining buckets, or a later write to that collection 404s on the
+/// new shard with `CollectionNotFound` even though the collection genuinely
+/// exists. `collection_subset(collection, &BTreeSet::new())` reproduces
+/// exactly the "freshly created, zero documents" shape (schema + per-field
+/// index structure, no postings) that a real empty collection's own
+/// snapshot already has.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#source
 pub fn snapshot_bucket_subset(
     snapshot: &SnapshotV1,
@@ -443,7 +525,14 @@ pub fn snapshot_bucket_subset(
             }
         }
     }
-    snapshot_subset(snapshot, &external_ids)
+    let mut scoped = snapshot_subset(snapshot, &external_ids)?;
+    for (collection_id, collection) in &snapshot.collections {
+        scoped
+            .collections
+            .entry(collection_id.clone())
+            .or_insert_with(|| collection_subset(collection, &BTreeSet::new()));
+    }
+    Ok(scoped)
 }
 
 fn ids_map_from_pairs(
@@ -839,7 +928,8 @@ mod tests {
         let snapshot = source.snapshot().unwrap();
         let from = VirtualBucketShardMap::new(1, vec![0, 0, 0, 0], 1).unwrap();
         let to = VirtualBucketShardMap::new(2, vec![0, 1, 0, 1], 2).unwrap();
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 3).unwrap();
+        let all_buckets: BTreeSet<u32> = (0..4).collect();
+        let batches = snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 3).unwrap();
 
         assert!(!batches.is_empty());
         assert!(batches
@@ -1000,7 +1090,9 @@ mod tests {
         let to = VirtualBucketShardMap::new(2, vec![1], 2).unwrap();
         // A generous id-count cap so byte size, not id count, is what
         // forces the split.
-        let batches = snapshot_reshard_batches(&snapshot, &from, &to, 10_000).unwrap();
+        let all_buckets: BTreeSet<u32> = BTreeSet::from([0]);
+        let batches =
+            snapshot_reshard_batches(&snapshot, &from, &to, &all_buckets, 10_000).unwrap();
 
         assert!(
             batches.len() > 1,

@@ -21,8 +21,8 @@ Public API manifest for `apps/lumen/src/routing_remote.rs` generated from AST du
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `RoutedRouter` | apps/lumen/src/routing_remote.rs | struct | pub | 121 |  |
-| `new` | apps/lumen/src/routing_remote.rs | function | pub | 137 | new(         engine: Arc<Engine>,         local_write: Arc<dyn WriteBackend>,         shard_map: VirtualBucketShardMap,         local_shard: u32,         shard_urls: Vec<String>,     ) -> Result<Self> |
+| `RoutedRouter` | apps/lumen/src/routing_remote.rs | struct | pub | 120 |  |
+| `new` | apps/lumen/src/routing_remote.rs | function | pub | 136 | new(         engine: Arc<Engine>,         local_write: Arc<dyn WriteBackend>,         shard_map: VirtualBucketShardMap,         local_shard: u32,         shard_urls: Vec<String>,     ) -> Result<Self> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -107,10 +107,10 @@ use crate::api::{
 use crate::routing::{
     merge_shard_search_responses, search_request_offset, SearchShardTarget, VirtualBucketShardMap,
 };
-use crate::storage::{Engine, StorageError};
+use crate::storage::{DropOutcome, Engine, StorageError};
 use crate::types::{
-    IndexItem, IndexRequest, IndexResponse, ReplaceDocItem, ReplaceDocsRequest,
-    ReplaceDocsResponse, SearchRequest, SearchResponse,
+    CreateCollectionRequest, CreateCollectionResponse, IndexItem, IndexRequest, IndexResponse,
+    ReplaceDocItem, ReplaceDocsRequest, ReplaceDocsResponse, SearchRequest, SearchResponse,
 };
 
 /// Internal one-hop guard header: present on every forwarded request. No
@@ -366,6 +366,29 @@ impl RoutedRouter {
         }
     }
 
+    /// #2496: like [`Self::forward_empty`], but a remote `404` is a
+    /// legitimate [`DropOutcome::NotFound`] rather than a hard error — the
+    /// `DELETE /collections/{id}` route conveys its outcome purely through
+    /// status code (202/204/404), so this is the one forward primitive that
+    /// must return the raw status instead of collapsing it to success/error.
+    async fn forward_drop_status(
+        &self,
+        shard: u32,
+        path: &str,
+        headers: &HeaderMap,
+    ) -> Result<reqwest::StatusCode> {
+        let resp = self
+            .send::<()>(shard, reqwest::Method::DELETE, path, None, headers)
+            .await?;
+        let status = resp.status();
+        if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+            Ok(status)
+        } else {
+            let body_text = resp.text().await.unwrap_or_default();
+            Err(Self::remote_error(status, body_text))
+        }
+    }
+
     /// Routing-key-less search: local engine direct + one forward per remote
     /// shard, merged through [`merge_shard_search_responses`] exactly like
     /// [`crate::routing::EngineShardSearch`]. Known gap vs. that in-process
@@ -550,9 +573,120 @@ fn is_forwarded_collection_not_found(err: &anyhow::Error) -> bool {
     )
 }
 
+/// #2496: recover a forwarded shard's [`DropOutcome`] from
+/// `DELETE /collections/{id}`'s status-only response. `force` disambiguates
+/// the one code the wire collapses: `204` means `Physical` under
+/// `force=true` and `AlreadyMarked` under `force=false` — the two can never
+/// both occur for the *same* fan-out call (`Physical` only exists on the
+/// `force=true` branch, `AlreadyMarked` only on `force=false`), so `force`
+/// alone is enough to recover the exact variant without widening the wire
+/// contract.
+fn drop_outcome_from_status(status: reqwest::StatusCode, force: bool) -> Result<DropOutcome> {
+    match status {
+        reqwest::StatusCode::ACCEPTED => Ok(DropOutcome::Marked),
+        reqwest::StatusCode::NO_CONTENT => Ok(if force {
+            DropOutcome::Physical
+        } else {
+            DropOutcome::AlreadyMarked
+        }),
+        reqwest::StatusCode::NOT_FOUND => Ok(DropOutcome::NotFound),
+        other => anyhow::bail!("unexpected drop_collection status from shard: {other}"),
+    }
+}
+
+/// #2496: merge two shards' [`DropOutcome`]s with the same
+/// `Physical > Marked > AlreadyMarked > NotFound` precedence
+/// [`crate::routing::EngineShardWrite::drop_collection`] uses in-process —
+/// "the strongest thing any shard actually did" wins, so a caller never
+/// sees a weaker outcome than what happened.
+fn merge_drop_outcomes(a: DropOutcome, b: DropOutcome) -> DropOutcome {
+    match (a, b) {
+        (DropOutcome::Physical, _) | (_, DropOutcome::Physical) => DropOutcome::Physical,
+        (DropOutcome::Marked, _) | (_, DropOutcome::Marked) => DropOutcome::Marked,
+        (DropOutcome::AlreadyMarked, _) | (_, DropOutcome::AlreadyMarked) => {
+            DropOutcome::AlreadyMarked
+        }
+        (DropOutcome::NotFound, DropOutcome::NotFound) => DropOutcome::NotFound,
+    }
+}
+
 #[async_trait]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 impl RoutedBackend for RoutedRouter {
+    async fn create_collection(
+        &self,
+        collection_id: String,
+        req: CreateCollectionRequest,
+        headers: &HeaderMap,
+    ) -> Result<CreateCollectionResponse> {
+        if Self::already_forwarded(headers) {
+            // #2496: no single bucket owns a collection, so — like
+            // `scatter_search`'s keyless arm — a forwarded sub-request just
+            // applies locally and never re-fans-out, keeping forwarding one
+            // hop deep.
+            return self.local_write.create_collection(collection_id, req).await;
+        }
+        let path = format!("/collections/{}", percent_encode_component(&collection_id));
+        let mut remote_futures = Vec::new();
+        for shard in 0..self.shard_map.physical_shard_count() {
+            if shard == self.local_shard {
+                continue;
+            }
+            remote_futures.push(
+                self.forward_json::<CreateCollectionRequest, CreateCollectionResponse>(
+                    shard,
+                    reqwest::Method::PUT,
+                    &path,
+                    Some(req.clone()),
+                    headers,
+                ),
+            );
+        }
+        let local_resp = self
+            .local_write
+            .create_collection(collection_id, req)
+            .await?;
+        let remote_resps = try_join_all(remote_futures).await?;
+        for resp in &remote_resps {
+            if resp.version != local_resp.version || resp.fields_count != local_resp.fields_count {
+                anyhow::bail!("shard collection-create responses diverged");
+            }
+        }
+        Ok(local_resp)
+    }
+
+    async fn drop_collection(
+        &self,
+        collection_id: String,
+        force: bool,
+        headers: &HeaderMap,
+    ) -> Result<DropOutcome> {
+        if Self::already_forwarded(headers) {
+            return self.local_write.drop_collection(collection_id, force).await;
+        }
+        let mut path = format!("/collections/{}", percent_encode_component(&collection_id));
+        if force {
+            path.push_str("?force=true");
+        }
+        let mut remote_futures = Vec::new();
+        for shard in 0..self.shard_map.physical_shard_count() {
+            if shard == self.local_shard {
+                continue;
+            }
+            remote_futures.push(self.forward_drop_status(shard, &path, headers));
+        }
+        let local_outcome = self
+            .local_write
+            .drop_collection(collection_id, force)
+            .await?;
+        let remote_statuses = try_join_all(remote_futures).await?;
+        let mut merged = local_outcome;
+        for status in remote_statuses {
+            merged = merge_drop_outcomes(merged, drop_outcome_from_status(status, force)?);
+        }
+        Ok(merged)
+    }
+
     async fn search(
         &self,
         collection_id: &str,
@@ -868,8 +1002,6 @@ impl RoutedBackend for RoutedRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::DropOutcome;
-    use crate::types::{CreateCollectionRequest, CreateCollectionResponse};
     use async_trait::async_trait;
 
     struct DummyWrite;
@@ -998,6 +1130,58 @@ mod tests {
         assert_eq!(RoutedRouter::forwarded_map_version(&headers), None);
         headers.insert(MAP_VERSION_HEADER, "7".parse().unwrap());
         assert_eq!(RoutedRouter::forwarded_map_version(&headers), Some(7));
+    }
+
+    /// #2496: `Physical > Marked > AlreadyMarked > NotFound`, symmetric
+    /// regardless of argument order — the precedence [`merge_drop_outcomes`]
+    /// must honor when reducing every shard's [`DropOutcome`] into one
+    /// caller-facing answer.
+    #[test]
+    fn merge_drop_outcomes_precedence() {
+        use DropOutcome::*;
+        for (a, b, want) in [
+            (Physical, NotFound, Physical),
+            (NotFound, Physical, Physical),
+            (Physical, Marked, Physical),
+            (Physical, AlreadyMarked, Physical),
+            (Marked, AlreadyMarked, Marked),
+            (AlreadyMarked, Marked, Marked),
+            (Marked, NotFound, Marked),
+            (AlreadyMarked, NotFound, AlreadyMarked),
+            (NotFound, NotFound, NotFound),
+        ] {
+            assert_eq!(
+                merge_drop_outcomes(a, b),
+                want,
+                "merge_drop_outcomes({a:?}, {b:?})"
+            );
+        }
+    }
+
+    /// #2496: the wire only distinguishes `202`/`204`/`404` — `204`
+    /// disambiguates to `Physical` vs. `AlreadyMarked` purely from the
+    /// caller-known `force` flag, since within one fan-out call `force` is
+    /// uniform across every shard and the two outcomes are mutually
+    /// exclusive given a single `force` value.
+    #[test]
+    fn drop_outcome_from_status_disambiguates_204_by_force() {
+        assert_eq!(
+            drop_outcome_from_status(reqwest::StatusCode::ACCEPTED, false).unwrap(),
+            DropOutcome::Marked
+        );
+        assert_eq!(
+            drop_outcome_from_status(reqwest::StatusCode::NO_CONTENT, false).unwrap(),
+            DropOutcome::AlreadyMarked
+        );
+        assert_eq!(
+            drop_outcome_from_status(reqwest::StatusCode::NO_CONTENT, true).unwrap(),
+            DropOutcome::Physical
+        );
+        assert_eq!(
+            drop_outcome_from_status(reqwest::StatusCode::NOT_FOUND, true).unwrap(),
+            DropOutcome::NotFound
+        );
+        assert!(drop_outcome_from_status(reqwest::StatusCode::BAD_REQUEST, true).is_err());
     }
 
     fn test_router(local_shard: u32) -> RoutedRouter {
