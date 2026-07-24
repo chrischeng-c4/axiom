@@ -49,3 +49,42 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchModelTests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-recursive-pane-model-verification
+requirements:
+  explicit_split:
+    id: R2
+    text: "A new profile cannot silently alter an occupied pane layout."
+    kind: regression
+    risk: high
+    verify: WorkbenchModelTests.testProfileLaunchRequiresExplicitSplitForOccupiedLeaf
+  isolation:
+    id: R3
+    text: "Project and pane selection preserve existing session identity without sidecar lifecycle calls."
+    kind: regression
+    risk: high
+    verify: WorkbenchModelTests.testProjectsRetainIndependentRecursivePaneWorkspaces
+  native_suite:
+    id: R4
+    text: "The native package compiles and runs its model regression suite."
+    kind: regression
+    risk: medium
+    verify: swift test --package-path apps/workbench/macos
+  tree:
+    id: R1
+    text: "A project workspace supports nested horizontal and vertical session leaves without a fixed pane count."
+    kind: functional
+    risk: high
+    verify: WorkbenchModelTests.testRecursivePaneTreeSupportsNestedSplits
+---
+flowchart TD
+    r1[R1 tree] --> workbenchmodeltests_testrecursivepanetreesupportsnestedsplits[WorkbenchModelTests.testRecursivePaneTreeSupportsNestedSplits]
+    r2[R2 explicit split] --> workbenchmodeltests_testprofilelaunchrequiresexplicitsplitforoccupiedleaf[WorkbenchModelTests.testProfileLaunchRequiresExplicitSplitForOccupiedLeaf]
+    r3[R3 isolation] --> workbenchmodeltests_testprojectsretainindependentrecursivepaneworkspaces[WorkbenchModelTests.testProjectsRetainIndependentRecursivePaneWorkspaces]
+    r4[R4 native suite] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+```
