@@ -245,12 +245,17 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #766
 Status: confirmed
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, queue/task/admin routes.
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, queue/task/admin routes.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer (`service_http::trace_layer()`) accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency), wiring pending (#2490 adoption batch).
 EC Dimensions: behavior: `cargo test -p defer --test http_api --test cli_contract` - live HTTP/1.1+h2c probes/metrics/OpenAPI, domain routes, offline spec twin, and client generation
 Required Verification: smoke, conformance
 Promise:
 Defer exposes a compact h2c/OpenAPI API list for queue/task lifecycle and
-operator workflows.
+operator workflows. Every HTTP request is correlatable end to end: W3C
+`traceparent` is honored when present and a local root trace is created when
+absent, with the ids flowing into every request span and structured log line.
+Server-Timing per-response latency attribution (the shared
+`service-http::server_timing` contract) is not yet wired into defer's HTTP
+stack — that lands in a separate #2490 adoption batch.
 Gate Inventory:
 - apps/defer/tests/http_api.rs; apps/defer/tests/cli_contract.rs
 
