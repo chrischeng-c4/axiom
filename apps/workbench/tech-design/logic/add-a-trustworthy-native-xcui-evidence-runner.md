@@ -54,3 +54,35 @@ changes:
     impl_mode: hand-written
     anchor: WorkbenchMacUITests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-native-xcui-evidence-runner-verification
+requirements:
+  named_screenshot_evidence:
+    id: R3
+    text: "XCUI journeys attach stable keepAlways screenshots that remain inspectable in the verified result bundle."
+    kind: regression
+    risk: medium
+    verify: WorkbenchMacUITests.testPaneToolbarRemainsInContentChrome
+  runner_executes_native_suite:
+    id: R1
+    text: "One native runner builds the bundled sidecar and executes the Workbench macOS XCUI target with an explicit unique result bundle."
+    kind: functional
+    risk: high
+    verify: apps/workbench/macos/Scripts/run-native-e2e.sh
+  runner_rejects_false_green:
+    id: R2
+    text: "The runner returns success only when xcresult reports at least one executed test and zero failed tests."
+    kind: regression
+    risk: high
+    verify: apps/workbench/macos/Scripts/run-native-e2e.sh
+---
+flowchart TD
+    r1[R1 runner executes native suite] --> apps_workbench_macos_scripts_run_native_e2e_sh[apps/workbench/macos/Scripts/run-native-e2e.sh]
+    r2[R2 runner rejects false green] --> apps_workbench_macos_scripts_run_native_e2e_sh
+    r3[R3 named screenshot evidence] --> workbenchmacuitests_testpanetoolbarremainsincontentchrome[WorkbenchMacUITests.testPaneToolbarRemainsInContentChrome]
+```
