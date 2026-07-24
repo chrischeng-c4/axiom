@@ -693,6 +693,42 @@ async fn reshard_fence_explicit_clear_unblocks_writes() {
     assert!(has_doc(&s, &fenced_id).await);
 }
 
+/// #2475: arming/clearing the write fence must publish
+/// `lumen_reshard_fence_active` on `/metrics` — the signal
+/// `render::prometheus_rule`'s `LumenReshardWorkflowStalled` alert reads.
+#[tokio::test]
+async fn reshard_fence_arm_and_clear_publish_metrics_gauge() {
+    let s = server();
+    create_users_collection(&s).await;
+
+    assert_eq!(reshard_fence_active_gauge(&s).await, 0);
+
+    s.post("/admin/reshard:fence")
+        .json(&json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [0], "ttl_secs": 30 }))
+        .await
+        .assert_status_ok();
+    assert_eq!(reshard_fence_active_gauge(&s).await, 1);
+
+    s.post("/admin/reshard:fence")
+        .json(
+            &json!({ "virtual_bucket_count": VIRTUAL_BUCKET_COUNT, "buckets": [], "ttl_secs": 30 }),
+        )
+        .await
+        .assert_status_ok();
+    assert_eq!(reshard_fence_active_gauge(&s).await, 0);
+}
+
+async fn reshard_fence_active_gauge(s: &TestServer) -> u64 {
+    let resp = s.get("/metrics").await;
+    resp.assert_status_ok();
+    let body = resp.text();
+    body.lines()
+        .find(|l| l.starts_with("lumen_reshard_fence_active "))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .expect("lumen_reshard_fence_active gauge line present")
+}
+
 /// A crashed driver that never explicitly clears the fence cannot wedge
 /// writes forever: the fence self-expires once its TTL deadline passes,
 /// enforced by the serving pod itself, independent of the driver process's
