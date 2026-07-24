@@ -19,7 +19,40 @@ Standard GKE operator acceptance evidence for Lumen (epic #2434 ordered
 service 1, before Tape run `0723135853`). The machine-readable capability
 contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
-lands. Harness: `benchmarks/gcp-operator-acceptance` (Lumen-only mode).
+lands. Harness: `benchmarks/gcp-operator-acceptance` (mode noted per run).
+
+### GKE acceptance run 0724061548 (2026-07-24, PASSED — #2489 fix + cold-restore #2492 proven)
+
+- Full two-service mode (Lumen and Sift both passed; the Sift rows live in
+  the shared `acceptance.json`). Cluster: persistent Standard GKE
+  `axiom-operator-acceptance` (`asia-east1-a`, project `axiom-502607`),
+  run-scoped bucket/GSA/Workload-Identity bindings plus the restore-reader
+  grant created and destroyed by the run.
+- Image: Cloud Build from commit `70fd48ca5c44` (the `lumen@0.4.25`
+  candidate — carries the #2489 scatter fix `9ffdb30513`, #2497
+  `spec.serviceAccountName`, and the #2487 alert fix), tag
+  `70fd48ca5c44-0724061548`, dirty-tree gate clean.
+- Terminal artifacts: `lumen-acceptance.json`
+  (`axiom.gcp.lumen.acceptance.v1`, every claimed proof `passed`) and
+  `cleanup.json` (`status: clean`, verified `2026-07-24T06:56:11Z`).
+  Evidence root: `axiom-gcp-run-backup/evidence/0724061548/`.
+
+| Proof | Result | Artifact |
+|---|---|---|
+| Post-split read visibility (#2489): after the CONVERGED 1→2 auto-split, the pre-split collection is searchable through the client Service immediately — readability lag 0 s (vs `collection not found` for 180 s+ on both 0.4.24 retest runs). Restores the Dynamic Shard Topology GKE claim. | passed | `kubernetes/lumen-search-after-split.json`; `kubernetes/lumen-split-readable-after-seconds.txt` (`0`) |
+| Cold-restore onto a fresh PVC (#2492): a second `lumen-restore` CR with `spec.serving.bootstrap.seedUri` pointed at the run's backup object (271 B, carries the `acceptance` collection) boots a genuinely fresh PVC and the seeded document is queryable (`total: 1`) | passed | `kubernetes/lumen-restore-search.json`; `gcs/lumen-first-object.json` |
+| Seed-set restart retention: the restored instance keeps the seeded document across a serving-pod replacement | passed | `kubernetes/lumen-restore-after-restart-search.json` |
+| Admission CR exposure (#2477): patching `spec.admission` renders the five `LUMEN_ADMISSION_*` env vars onto the StatefulSet pod spec (operator-propagation-aware poll), and removing the block rolls them back off | passed | `kubernetes/lumen-admission-env.txt` |
+| Re-proven from `0723041614`: 1x1 reconcile, domain lifecycle (create/index/search), pod-restart data retention, Workload-Identity GCS backup (271-byte object) | passed | `kubernetes/…` per the matching rows in the `0723041614` table below |
+| Verified cleanup: 6 run-scoped resources destroyed; "no run-tagged Lumen/Sift operator acceptance resources remain"; persistent cluster and Artifact Registry preserved | passed | `cleanup.json`; `run.log` |
+
+Exclusions unchanged from `0723041614` (`cpu_memory_actuator`,
+`live_replica_membership`: `not_claimed`). Deployer note for cold-restore:
+the SERVING ServiceAccount of a `seedUri` instance reads GCS itself — it
+needs `roles/storage.objectViewer` on the seed bucket (the backup GSA's
+write grant does not cover it). The harness provisions this via
+`storage.tf`'s `lumen_restore_reader` principal binding; real deployments
+carry the same responsibility.
 
 ### GKE retest runs 0723160506 / 0723163748 (2026-07-23, FAILED — post-split read visibility, #2489)
 
@@ -36,7 +69,9 @@ shardMap.version` — tracked as #2489. The prior run `0723041614`'s
 post-split pass asserted a single probe and cannot stand as disproof;
 treat the Dynamic Shard Topology GKE claim as NOT proven until #2489
 closes. Default 1-shard deployments (no reshardPolicy) are unaffected.
-Evidence: `axiom-gcp-run-backup/evidence/<run>/`.
+Evidence: `axiom-gcp-run-backup/evidence/<run>/`. Resolution: the #2489
+scatter fix (`9ffdb30513`) is proven by run `0724061548` above — the claim
+is restored there.
 
 ### GKE acceptance run 0723041614 (2026-07-23, PASSED)
 
