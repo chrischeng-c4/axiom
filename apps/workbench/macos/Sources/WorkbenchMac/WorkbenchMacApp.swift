@@ -60,8 +60,10 @@ struct WorkbenchMacApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("Terminal") {
-                Button("New Shell Tab") { model.addShellTab() }
+                Button("New Shell Pane") { model.addShellTab() }
                     .keyboardShortcut("t", modifiers: [.command])
+                Button("Split Active Pane") { model.splitActivePane() }
+                    .keyboardShortcut("d", modifiers: [.command])
                 Divider()
                 Button("Start Active Terminal") {
                     Task { await model.startActiveTab() }
@@ -73,14 +75,6 @@ struct WorkbenchMacApp: App {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 Button("Stop Active Terminal") {
                     Task { await model.stopActiveTab() }
-                }
-                Divider()
-                ForEach(Array(model.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
-                    Button("Select \(tab.title)") { model.selectDefaultTab(at: index) }
-                        .keyboardShortcut(
-                            KeyEquivalent(Character(String(index + 1))),
-                            modifiers: [.command]
-                        )
                 }
             }
         }

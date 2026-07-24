@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:fa1274c4" tracker="pending-tracker" reason="Own four idle default tabs, added Shell tabs, selected folder, explicit launch, per-tab output and lifecycle, polling, and command routing."
+// HANDWRITE-BEGIN gap="missing-generator:logic:fa1274c4" tracker="pending-tracker" reason="Own project-scoped terminal panes, explicit profile launch, per-session output and lifecycle, polling, and command routing."
 import Combine
 import Foundation
 
@@ -73,8 +73,8 @@ public struct SelectedProjectWorkspace: Equatable, Sendable {
     }
 }
 
-/// Tab presentation belongs to one registered project. `id` is qualified for
-/// SwiftUI so two projects' default `claude` tabs never share a renderer.
+/// A terminal session belongs to one registered project. `id` is qualified for
+/// SwiftUI so same-named sessions from separate projects never share a renderer.
 public struct ProjectTerminalTab: Identifiable, Equatable, Sendable {
     public let projectId: String
     public let tab: TerminalTab
@@ -82,13 +82,27 @@ public struct ProjectTerminalTab: Identifiable, Equatable, Sendable {
     public var id: String { "\(projectId)::\(tab.id)" }
 }
 
+public struct TerminalPane: Identifiable, Equatable, Sendable {
+    public let id: String
+    public var tabId: String?
+
+    public init(id: String = UUID().uuidString, tabId: String? = nil) {
+        self.id = id
+        self.tabId = tabId
+    }
+}
+
 private struct ProjectTerminalWorkspace: Equatable, Sendable {
     var tabs: [TerminalTab]
     var activeTabId: String
+    var panes: [TerminalPane]
+    var activePaneId: String
 
-    init(tabs: [TerminalTab], activeTabId: String) {
+    init(tabs: [TerminalTab], activeTabId: String, panes: [TerminalPane], activePaneId: String) {
         self.tabs = tabs
         self.activeTabId = activeTabId
+        self.panes = panes
+        self.activePaneId = activePaneId
     }
 }
 
@@ -97,15 +111,12 @@ private struct ProjectTerminalWorkspace: Equatable, Sendable {
 /// @spec apps/workbench/tech-design/interfaces/cli/replace-workbench-tauri-host-with-a-macos-native-swiftui-client.md#logic
 @MainActor
 public final class WorkbenchModel: ObservableObject {
-    public static let defaultTabs = [
-        TerminalTab(id: "claude", profile: .claude, title: "Claude Code"),
-        TerminalTab(id: "codex", profile: .codex, title: "Codex"),
-        TerminalTab(id: "agy", profile: .agy, title: "AGY"),
-        TerminalTab(id: "shell", profile: .shell, title: "Shell"),
-    ]
+    public static let defaultTabs: [TerminalTab] = []
 
     @Published public private(set) var tabs: [TerminalTab]
     @Published public private(set) var activeTabId: String
+    @Published public private(set) var panes: [TerminalPane]
+    @Published public private(set) var activePaneId: String
     @Published public private(set) var projects: [RegisteredProject]
     @Published public private(set) var selectedWorkspace: SelectedProjectWorkspace?
     @Published public private(set) var statusMessage = "Add a project, then explicitly start a terminal."
@@ -125,7 +136,10 @@ public final class WorkbenchModel: ObservableObject {
         self.projectStore = projectStore
         self.fileListing = fileListing
         tabs = Self.defaultTabs
-        activeTabId = Self.defaultTabs[0].id
+        activeTabId = ""
+        let firstPane = TerminalPane()
+        panes = [firstPane]
+        activePaneId = firstPane.id
         selectedWorkspace = nil
         let loaded = projectStore.load()
         projects = loaded
@@ -136,7 +150,7 @@ public final class WorkbenchModel: ObservableObject {
     }
 
     public var activeTab: TerminalTab? {
-        tabs.first { $0.id == activeTabId }
+        tabs.first { $0.id == panes.first(where: { $0.id == activePaneId })?.tabId }
     }
 
     public var selectedProjectId: String? {
@@ -168,7 +182,7 @@ public final class WorkbenchModel: ObservableObject {
         if !hadSelectedProject {
             projectTerminalWorkspaces[project.id] = ProjectTerminalWorkspace(
                 tabs: tabs,
-                activeTabId: activeTabId
+                activeTabId: activeTabId, panes: panes, activePaneId: activePaneId
             )
         }
         selectProject(project.id)
@@ -179,13 +193,15 @@ public final class WorkbenchModel: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }) else { return }
         if selectedProjectId == id { return }
         saveSelectedProjectTerminalWorkspace()
+        let firstPane = TerminalPane()
         let terminalWorkspace = projectTerminalWorkspaces[id] ?? ProjectTerminalWorkspace(
-            tabs: Self.defaultTabs,
-            activeTabId: Self.defaultTabs[0].id
+            tabs: [], activeTabId: "", panes: [firstPane], activePaneId: firstPane.id
         )
         projectTerminalWorkspaces[id] = terminalWorkspace
         tabs = terminalWorkspace.tabs
         activeTabId = terminalWorkspace.activeTabId
+        panes = terminalWorkspace.panes
+        activePaneId = terminalWorkspace.activePaneId
         let launchFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
         selectedWorkspace = SelectedProjectWorkspace(
             project: project,
@@ -208,21 +224,51 @@ public final class WorkbenchModel: ObservableObject {
     }
 
     public func selectTab(_ id: String) {
-        guard tabs.contains(where: { $0.id == id }) else { return }
-        activeTabId = id
+        guard let pane = panes.first(where: { $0.tabId == id }) else { return }
+        selectPane(pane.id)
+    }
+
+    public func selectPane(_ id: String) {
+        guard let pane = panes.first(where: { $0.id == id }) else { return }
+        activePaneId = pane.id
+        activeTabId = pane.tabId ?? ""
     }
 
     public func selectDefaultTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
-        activeTabId = tabs[index].id
+        selectTab(tabs[index].id)
     }
 
     public func addShellTab() {
-        let number = tabs.filter { $0.profile == .shell }.count + 1
-        let id = "shell-\(number)"
-        tabs.append(TerminalTab(id: id, profile: .shell, title: "Shell \(number)"))
+        addTerminal(profile: .shell)
+    }
+
+    public func addTerminal(profile: TerminalProfile) {
+        guard let paneIndex = panes.firstIndex(where: { $0.id == activePaneId }) else { return }
+        if panes[paneIndex].tabId != nil, panes.count < 2 {
+            let pane = TerminalPane()
+            panes.append(pane)
+            activePaneId = pane.id
+        }
+        guard let targetIndex = panes.firstIndex(where: { $0.id == activePaneId }), panes[targetIndex].tabId == nil else {
+            statusMessage = "Close a pane before adding another terminal."
+            return
+        }
+        let number = tabs.filter { $0.profile == profile }.count + 1
+        let id = number == 1 ? profile.rawValue : "\(profile.rawValue)-\(number)"
+        let title = number == 1 ? profile.label : "\(profile.label) \(number)"
+        tabs.append(TerminalTab(id: id, profile: profile, title: title))
+        panes[targetIndex].tabId = id
         activeTabId = id
-        statusMessage = "Shell \(number) is idle. Press Start when you are ready."
+        statusMessage = "\(title) is ready. Press Start when you are ready."
+    }
+
+    public func splitActivePane() {
+        guard panes.count < 2 else { return }
+        let pane = TerminalPane()
+        panes.append(pane)
+        activePaneId = pane.id
+        activeTabId = ""
     }
 
     public func closeTab(_ id: String) async {
@@ -239,13 +285,16 @@ public final class WorkbenchModel: ObservableObject {
             }
         }
         tabs.remove(at: index)
-        if activeTabId == id {
-            if !tabs.isEmpty {
-                let nextIndex = min(index, tabs.count - 1)
-                activeTabId = tabs[nextIndex].id
+        if let paneIndex = panes.firstIndex(where: { $0.tabId == id }) {
+            if panes.count > 1 {
+                panes.remove(at: paneIndex)
+                let replacementIndex = min(paneIndex, panes.count - 1)
+                activePaneId = panes[replacementIndex].id
+                activeTabId = panes[replacementIndex].tabId ?? ""
             } else {
-                tabs = Self.defaultTabs
-                activeTabId = Self.defaultTabs[0].id
+                panes[paneIndex].tabId = nil
+                activePaneId = panes[paneIndex].id
+                activeTabId = ""
             }
         }
         statusMessage = "Closed \(tab.title)."
@@ -412,7 +461,9 @@ public final class WorkbenchModel: ObservableObject {
         guard let selectedProjectId else { return }
         projectTerminalWorkspaces[selectedProjectId] = ProjectTerminalWorkspace(
             tabs: tabs,
-            activeTabId: activeTabId
+            activeTabId: activeTabId,
+            panes: panes,
+            activePaneId: activePaneId
         )
     }
 

@@ -247,111 +247,68 @@ struct WorkbenchView: View {
     }
 
     private var terminalTabStrip: some View {
-        HStack(spacing: 4) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 3) {
-                    ForEach(model.tabs) { tab in
-                        HStack(spacing: 0) {
-                            Button {
-                                model.selectTab(tab.id)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Circle()
-                                        .fill(stateColor(tab.lifecycle))
-                                        .frame(width: 5, height: 5)
-                                        .accessibilityHidden(true)
-                                    Text(tab.title)
-                                        .font(.caption.weight(.semibold))
-                                        .lineLimit(1)
-                                    Text(tab.lifecycle.label)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                .padding(.leading, 9)
-                                .padding(.trailing, 5)
-                                .frame(minHeight: 34)
-                                .contentShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain)
-                            .contentShape(RoundedRectangle(cornerRadius: 6))
-                            .accessibilityIdentifier("terminal.tab.\(tab.id)")
-                            .accessibilityLabel(tab.accessibilityLabel)
-                            .accessibilityAddTraits(model.activeTabId == tab.id ? .isSelected : [])
-
-                            if model.tabs.count > 1 {
-                                Button {
-                                    Task {
-                                        await model.closeTab(tab.id)
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 24, height: 34)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("terminal.close-tab.\(tab.id)")
-                                .accessibilityLabel("Close \(tab.title)")
-                            }
-                        }
-                        .frame(minHeight: 34)
-                        .background(
-                            model.activeTabId == tab.id
-                                ? Color.accentColor.opacity(0.16)
-                                : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6)
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(
-                                    model.activeTabId == tab.id
-                                        ? Color.accentColor.opacity(0.7)
-                                        : Color.secondary.opacity(0.12)
-                                )
-                        }
-                    }
+        HStack {
+            Spacer()
+            Menu {
+                ForEach(TerminalProfile.allCases, id: \.self) { profile in
+                    Button(profile.label) { model.addTerminal(profile: profile) }
                 }
-                .padding(.vertical, 2)
-            }
-
-            Button {
-                model.addShellTab()
             } label: {
                 Image(systemName: "plus")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 32, height: 34)
+                    .frame(width: 30, height: 30)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityIdentifier("terminal.add-shell")
-            .accessibilityLabel("Add shell terminal tab")
-            .accessibilityHint("Adds and selects an idle tab without starting a shell")
+            .menuStyle(.borderlessButton)
+            .accessibilityIdentifier("terminal.add-profile")
+            .accessibilityLabel("Add terminal profile")
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
-        .accessibilityIdentifier("terminal.titlebar-tabs")
+        .accessibilityIdentifier("terminal.pane-toolbar")
     }
 
     @ViewBuilder
     private var terminalBody: some View {
-        Group {
-            if let tab = model.activeTab {
-                if tab.lifecycle == .idle {
-                    terminalStartState(tab)
-                        .background(terminalLayers)
-                } else if case let .failed(message) = tab.lifecycle {
-                    terminalFailureState(tab, message: message)
-                        .background(terminalLayers)
-                } else {
-                    terminalLayers
-                }
-            } else {
-                ContentUnavailableView("No terminal tab", systemImage: "terminal")
+        HStack(spacing: 1) {
+            ForEach(model.panes) { pane in
+                paneContent(pane)
+                if pane.id != model.panes.last?.id { Divider() }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func paneContent(_ pane: TerminalPane) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                if let tab = model.tabs.first(where: { $0.id == pane.tabId }) {
+                    Circle().fill(stateColor(tab.lifecycle)).frame(width: 6, height: 6)
+                    Text(tab.title).font(.caption.weight(.semibold))
+                    Spacer()
+                    Button {
+                        model.selectTab(tab.id)
+                        model.splitActivePane()
+                    } label: { Image(systemName: "rectangle.split.2x1") }
+                        .buttonStyle(.plain).accessibilityLabel("Split right")
+                    Button { Task { await model.closeTab(tab.id) } } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).accessibilityLabel("Close \(tab.title)")
+                } else {
+                    Text("New terminal").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 8).frame(height: 30)
+            Divider()
+            if let tab = model.tabs.first(where: { $0.id == pane.tabId }) {
+                if tab.lifecycle == .idle { terminalStartState(tab, paneId: pane.id) }
+                else if case let .failed(message) = tab.lifecycle { terminalFailureState(tab, message: message, paneId: pane.id) }
+                else { terminalSurface(tab, surfaceId: "\(model.selectedProjectId ?? "")::\(pane.id)::\(tab.id)", isActive: model.activePaneId == pane.id) }
+            } else {
+                ContentUnavailableView("Choose a terminal", systemImage: "terminal")
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectTab(pane.tabId ?? "") }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -397,7 +354,7 @@ struct WorkbenchView: View {
         .accessibilityLabel("\(tab.title) terminal, \(tab.lifecycle.label)")
     }
 
-    private func terminalStartState(_ tab: TerminalTab) -> some View {
+    private func terminalStartState(_ tab: TerminalTab, paneId: String) -> some View {
         VStack(spacing: 14) {
             Image(systemName: tab.profile == .shell ? "terminal" : "sparkles")
                 .font(.system(size: 32, weight: .medium))
@@ -423,6 +380,7 @@ struct WorkbenchView: View {
                     .foregroundStyle(.secondary)
             }
             Button("Start \(tab.title)") {
+                model.selectPane(paneId)
                 Task { await model.startActiveTab() }
             }
             .buttonStyle(.borderedProminent)
@@ -446,7 +404,7 @@ struct WorkbenchView: View {
         }
     }
 
-    private func terminalFailureState(_ tab: TerminalTab, message: String) -> some View {
+    private func terminalFailureState(_ tab: TerminalTab, message: String, paneId: String) -> some View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 32, weight: .medium))
@@ -473,6 +431,7 @@ struct WorkbenchView: View {
             .accessibilityLabel("Copy \(tab.title) failure details")
             .accessibilityHint("Copies the error message and diagnostic log path")
             Button("Try Again") {
+                model.selectPane(paneId)
                 Task { await model.startActiveTab() }
             }
             .buttonStyle(.borderedProminent)
