@@ -72,6 +72,7 @@ agent integration remain first-class domain roots.
 | Dynamic Shard Topology | 1319 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, checkpointed autonomous reshard phase driver (threshold -> topology -> migration -> durable checkpoint -> cutover), and multi-shard kind proof |
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
+| Primary Replicas | - | implemented | verified | conformance, dogfood | ready | trait baseline: per-shard raft group — leader-applied writes, `replicasPerShard`/`voterCount` follower/voter selection, replica-loss and failover survival |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator; current GKE Lumen-only operator acceptance is recorded below |
 | Stateful Service Workload | #2144 | implemented | verified | smoke | ready | mandatory stateful profile: active TD verification linkage #2144 composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots; original projection #1553 remains closed historical provenance |
@@ -583,6 +584,30 @@ grant, instead of the operator-created per-CR default.
 | raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | apps/lumen/src/raft.rs<br>apps/lumen/src/raft_sm.rs<br>libs/raft-runtime |
 | external-backup-disaster-recovery-seed | epic | - | implemented | passing | conformance | apps/lumen/tests/backup_restore_e2e.rs |
 | empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>libs/service-backup/src/source.rs |
+
+### Primary Replicas
+
+ID: primary-replicas
+Type: Runtime
+Root WI: -
+Status: verified
+Surfaces: Raft: per-shard consensus group over `libs/raft-core` (feature `raft-wal`), with `raft_runtime::cluster` deriving the StatefulSet peer topology consumed unconditionally by `src/config.rs`/`src/raft.rs`.; CRD: `spec.replicasPerShard` (gates raft consensus only, never persistence) and `spec.voterCount` select follower replicas and voter quorum per shard.; Writes: commit through the shard leader and replicate to followers; replacement replicas rejoin via snapshot/log catch-up (see replica-sync-bootstrap).
+EC Dimensions: stability: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync` - existing-PVC replica raft sync; behavior: `cargo test -p lumen --test behavior_lumen_claim_http2_read_consistency_raft_bootstrap` - read consistency across raft bootstrap; stability: `apps/lumen/scripts/kind-e2e.sh` - live kind dogfood at shardCount=2 with replicasPerShard=3
+Required Verification: conformance, dogfood
+Promise:
+Baseline primary/replica topology contract derived from the `primary_replicas`
+trait: each shard is a raft group — one leader, follower replicas selected by
+`replicasPerShard`, voter quorum by `voterCount` — so committed writes survive
+replica loss and leader failover without a separate replication subsystem.
+Deep contracts live in replica-sync-bootstrap (seed and catch-up mechanics)
+and dynamic-shard-topology (shard-count changes); this row pins the per-shard
+HA baseline itself.
+Gate Inventory:
+- apps/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs; apps/lumen/tests/behavior_lumen_claim_http2_read_consistency_raft_bootstrap.rs; apps/lumen/tests/stability_lumen_claim_dynamic_multi_shard_replica_kind.rs; apps/lumen/scripts/kind-e2e.sh; apps/lumen/src/raft.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| per-shard-raft-leader-follower-baseline | epic | - | implemented | passing | dogfood | apps/lumen/src/raft.rs<br>apps/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs<br>apps/lumen/scripts/kind-e2e.sh |
 
 ### Observability
 

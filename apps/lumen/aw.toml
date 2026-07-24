@@ -14,7 +14,7 @@ dir = "apps/lumen/tests/rig/cases/resilience"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 
 [capability.profile]
-traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "stateful_storage", "agent_facing"]
+traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "stateful_storage", "agent_facing", "http2_api", "kubernetes_native", "primary_replicas"]
 
 [[workspaces]]
 name = "lumen"
