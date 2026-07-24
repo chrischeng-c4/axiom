@@ -339,6 +339,10 @@ struct GenArgs {
     /// Target language for the generated client.
     #[arg(long, value_enum)]
     lang: GenLang,
+    /// Pinned generated-client contract, e.g. `python-3.14`. Defaults to
+    /// `clients/codegen.toml`; an explicit value overrides that policy once.
+    #[arg(long, value_name = "TARGET")]
+    target: Option<String>,
     /// Output directory for the generated files.
     #[arg(long)]
     out: PathBuf,
@@ -598,7 +602,12 @@ fn spec(args: SpecArgs) -> Result<()> {
 ///
 /// @spec .aw/tech-design/projects/keep/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use cclab_openapi_codegen::{
+        generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+    };
+
+    const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
+
     let lang = match args.lang {
         GenLang::Ts => Lang::Ts,
         GenLang::Py => Lang::Py,
@@ -618,13 +627,26 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let output = generate(&keep::spec::openapi_json(), &opts)?;
-    std::fs::create_dir_all(&args.out)?;
+    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
+    let output = generate_for_target(&keep::spec::openapi_json(), &opts, target)?;
+    output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);
-        std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    println!("generated {}", args.out.join(MANIFEST_FILE).display());
+    println!(
+        "target: {} (minimum {} {})",
+        output.requirements.target,
+        output.requirements.language.id(),
+        output.requirements.minimum_version
+    );
+    let entry_file = match lang {
+        Lang::Ts => "index.ts",
+        Lang::Py => "__init__.py",
+        Lang::Rust => "mod.rs",
+    };
+    println!("next: {}", args.out.join(entry_file).display());
     Ok(())
 }
 
@@ -1329,14 +1351,25 @@ mod tests {
         Cli::try_parse_from(["keep", "spec", "--fields"]).expect("spec fields");
 
         // spec gen.
-        let cli = Cli::try_parse_from(["keep", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
-            .expect("spec gen should parse");
+        let cli = Cli::try_parse_from([
+            "keep",
+            "spec",
+            "gen",
+            "--lang",
+            "ts",
+            "--target",
+            "typescript-5.0",
+            "--out",
+            "/tmp/x",
+        ])
+        .expect("spec gen should parse");
         match cli.cmd {
             Some(Command::Spec(SpecArgs {
                 gen: Some(SpecSub::Gen(a)),
                 ..
             })) => {
                 assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.target.as_deref(), Some("typescript-5.0"));
                 assert_eq!(a.out, PathBuf::from("/tmp/x"));
             }
             other => panic!("expected spec gen, got {other:?}"),

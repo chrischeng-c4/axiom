@@ -28,7 +28,7 @@ nodes:
   has_gen:  { kind: decision, label: "gen subcommand?" }
   print:    { kind: terminal, label: "print spec (unchanged)" }
   spec:     { kind: process,  label: "openapi_json() (lumen's own spec)" }
-  gen:      { kind: process,  label: "cclab_openapi_codegen::generate(spec, GenOptions{lang})" }
+  gen:      { kind: process,  label: "TargetPolicy::resolve + cclab_openapi_codegen::generate_for_target(spec, opts, target)" }
   write:    { kind: process,  label: "create --out; write each GeneratedFile" }
   done:     { kind: terminal, label: "client written to --out" }
 edges:

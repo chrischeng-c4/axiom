@@ -282,6 +282,10 @@ struct GenArgs {
     /// Target language for the generated client.
     #[arg(long, value_enum)]
     lang: GenLang,
+    /// Pinned generated-client contract, e.g. `python-3.14`. Defaults to
+    /// `clients/codegen.toml`; an explicit value overrides that policy once.
+    #[arg(long, value_name = "TARGET")]
+    target: Option<String>,
     /// Output directory for the generated files.
     #[arg(long)]
     out: PathBuf,
@@ -1078,7 +1082,12 @@ fn spec(args: SpecArgs) -> Result<()> {
 /// written into `--out`. One codegen path, no external tool (relay #1209
 /// pattern).
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use cclab_openapi_codegen::{
+        generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+    };
+
+    const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
+
     let lang = match args.lang {
         GenLang::Ts => Lang::Ts,
         GenLang::Py => Lang::Py,
@@ -1098,13 +1107,26 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let output = generate(&spec::openapi_json(), &opts)?;
-    std::fs::create_dir_all(&args.out)?;
+    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
+    let output = generate_for_target(&spec::openapi_json(), &opts, target)?;
+    output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);
-        std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    println!("generated {}", args.out.join(MANIFEST_FILE).display());
+    println!(
+        "target: {} (minimum {} {})",
+        output.requirements.target,
+        output.requirements.language.id(),
+        output.requirements.minimum_version
+    );
+    let entry_file = match lang {
+        Lang::Ts => "index.ts",
+        Lang::Py => "__init__.py",
+        Lang::Rust => "mod.rs",
+    };
+    println!("next: {}", args.out.join(entry_file).display());
     Ok(())
 }
 
@@ -1572,14 +1594,25 @@ mod tests {
     /// output for each supported language from tape's own OpenAPI document.
     #[test]
     fn spec_gen_verbs_parse_and_generate() {
-        let cli = Cli::try_parse_from(["tape", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
-            .expect("spec gen should parse");
+        let cli = Cli::try_parse_from([
+            "tape",
+            "spec",
+            "gen",
+            "--lang",
+            "ts",
+            "--target",
+            "typescript-5.0",
+            "--out",
+            "/tmp/x",
+        ])
+        .expect("spec gen should parse");
         match cli.command {
             Command::Spec(SpecArgs {
                 gen: Some(SpecSub::Gen(a)),
                 ..
             }) => {
                 assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.target.as_deref(), Some("typescript-5.0"));
                 assert_eq!(a.out, PathBuf::from("/tmp/x"));
             }
             _ => panic!("expected spec gen"),
@@ -1607,6 +1640,22 @@ mod tests {
                 "{lang:?} should emit at least one file"
             );
         }
+
+        let out_dir = tempfile::tempdir().expect("create generated-client directory");
+        spec_gen(GenArgs {
+            lang: GenLang::Py,
+            target: None,
+            out: out_dir.path().to_path_buf(),
+            http: GenHttp::Fetch,
+        })
+        .expect("tape default target policy should generate");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out_dir.path().join(".cclab-openapi-codegen.json"))
+                .expect("read generated manifest"),
+        )
+        .expect("parse generated manifest");
+        assert_eq!(manifest["target"], "python-3.14");
+        assert_eq!(manifest["minimum_version"], "3.14");
     }
 
     /// #1328: `tape dockerfile render` parses with variant/version/out flags,

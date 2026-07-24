@@ -1458,11 +1458,16 @@ auth-exempt.
 | `lumen spec`          | Offline OpenAPI JSON from the installed binary               |
 | `lumen spec --format openapi-yaml` | Offline OpenAPI YAML for agent review         |
 | `lumen spec --format json-schema` | Component schemas plus operational schemas such as `TokenRegistry` |
-| `lumen spec gen --lang ts\|py\|rust --out <dir>` | In-tree typed client generation |
+| `lumen spec gen --lang ts\|py\|rust [--target <profile>] --out <dir>` | In-tree typed client generation with a pinned target contract |
 
 `lumen spec` and the live endpoint generate from the same Rust code
 (`#[derive(utoipa::OpenApi)]` on `api::ApiDoc`). There is no committed OpenAPI
 snapshot; the binary and live endpoint are the source of truth.
+
+`projects/lumen/clients/codegen.toml` pins the default TypeScript, Python, and
+Rust targets. `spec gen` writes `.cclab-openapi-codegen.json` beside every
+generated client; use `--target python-3.11` (or another supported profile)
+only for a deliberate one-off compatibility override.
 
 Generated Python clients include pydantic models plus a stdlib HTTP/2 runtime.
 For auth-enabled deployments:

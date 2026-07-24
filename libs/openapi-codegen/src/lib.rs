@@ -27,13 +27,17 @@
 //! is the filesystem-writing CLI entry.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub mod emit;
 pub mod ir;
 pub mod llm;
+pub mod target;
 
 pub use ir::{build_type_map, TypeMap};
+pub use target::{
+    PythonTarget, RustTarget, TargetPolicy, TargetProfile, TargetRequirements, TypeScriptTarget,
+};
 
 /// Target language for the generated client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,6 +50,17 @@ pub enum Lang {
     Py,
     /// Rust: serde models + a reqwest client.
     Rust,
+}
+
+impl Lang {
+    /// Stable language identifier used in generation manifests.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Ts => "typescript",
+            Self::Py => "python",
+            Self::Rust => "rust",
+        }
+    }
 }
 
 /// HTTP runtime backend for the generated TypeScript client.
@@ -83,20 +98,124 @@ pub struct GeneratedFile {
 }
 
 /// The full in-memory generation result (so tests can assert without I/O).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub struct GeneratedOutput {
     pub files: Vec<GeneratedFile>,
+    /// The profile used to render `files`.
+    pub target: TargetProfile,
+    /// The minimum requirements for consuming `files`.
+    pub requirements: TargetRequirements,
+}
+
+/// Sidecar filename emitted with every materialized generated client.
+pub const MANIFEST_FILE: &str = ".cclab-openapi-codegen.json";
+
+/// Stable, user-visible record of the exact generated-client contract.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GenerationManifest {
+    pub schema_version: u8,
+    pub generator: String,
+    pub target: String,
+    pub language: String,
+    pub minimum_version: String,
+    pub runtime_dependencies: Vec<String>,
+}
+
+impl GeneratedOutput {
+    pub(crate) fn for_target(files: Vec<GeneratedFile>, target: TargetProfile) -> Self {
+        Self {
+            files,
+            target,
+            requirements: target.requirements(),
+        }
+    }
+
+    /// Build the sidecar manifest which makes the target contract inspectable
+    /// after the in-memory result has been written to disk.
+    pub fn manifest(&self) -> GenerationManifest {
+        GenerationManifest {
+            schema_version: 1,
+            generator: "cclab-openapi-codegen".to_string(),
+            target: self.requirements.target.to_string(),
+            language: self.requirements.language.id().to_string(),
+            minimum_version: self.requirements.minimum_version.to_string(),
+            runtime_dependencies: self
+                .requirements
+                .runtime_dependencies
+                .iter()
+                .map(|dependency| (*dependency).to_string())
+                .collect(),
+        }
+    }
+
+    /// Materialize generated files and their target-contract manifest.
+    ///
+    /// The output is intentionally written through this one method so every
+    /// embedding CLI records the same contract rather than duplicating file
+    /// loops and silently dropping target metadata.
+    pub fn write_to_dir(&self, out_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(out_dir)?;
+        for file in &self.files {
+            let path = safe_output_path(out_dir, &file.rel_path)?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &file.contents)?;
+        }
+        let manifest = serde_json::to_string_pretty(&self.manifest())?;
+        std::fs::write(out_dir.join(MANIFEST_FILE), format!("{manifest}\n"))?;
+        Ok(())
+    }
+}
+
+fn safe_output_path(out_dir: &Path, rel_path: &str) -> Result<PathBuf> {
+    use std::path::Component;
+
+    let rel = Path::new(rel_path);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
+    {
+        anyhow::bail!("generated file path must stay under output directory: {rel_path:?}");
+    }
+    Ok(out_dir.join(rel))
+}
+
+impl Default for GeneratedOutput {
+    fn default() -> Self {
+        Self::for_target(Vec::new(), TargetProfile::default_for(Lang::default()))
+    }
 }
 
 /// Pure core: spec JSON text → generated files. No filesystem access. Dispatches
 /// to the per-language emitter selected by [`GenOptions::lang`].
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-lib-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
-    match opts.lang {
-        Lang::Ts => emit::ts::generate(spec_json, opts),
-        Lang::Py => emit::py::generate(spec_json, opts),
-        Lang::Rust => emit::rust::generate(spec_json, opts),
+    generate_for_target(spec_json, opts, TargetProfile::default_for(opts.lang))
+}
+
+/// Pure core with an explicit versioned target profile. The profile must match
+/// [`GenOptions::lang`], so an invalid cross-language request fails before any
+/// language-specific parsing or generation occurs.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: TargetProfile,
+) -> Result<GeneratedOutput> {
+    if opts.lang != target.lang() {
+        anyhow::bail!(
+            "target profile {} is for {:?}, not requested language {:?}",
+            target.id(),
+            target.lang(),
+            opts.lang
+        );
+    }
+    match target {
+        TargetProfile::TypeScript(target) => emit::ts::generate_for_target(spec_json, opts, target),
+        TargetProfile::Python(target) => emit::py::generate_for_target(spec_json, opts, target),
+        TargetProfile::Rust(target) => emit::rust::generate_for_target(spec_json, opts, target),
     }
 }
 
@@ -121,27 +240,26 @@ pub fn run(opts: &GenOptions) -> i32 {
             return 1;
         }
     };
-    if let Err(e) = std::fs::create_dir_all(&opts.out_dir) {
+    if let Err(e) = output.write_to_dir(&opts.out_dir) {
         eprintln!(
-            "openapi-codegen: cannot create {}: {e}",
+            "openapi-codegen: cannot write generated output to {}: {e}",
             opts.out_dir.display()
         );
         return 1;
     }
     for file in &output.files {
-        let path = opts.out_dir.join(&file.rel_path);
-        if let Err(e) = std::fs::write(&path, &file.contents) {
-            eprintln!("openapi-codegen: cannot write {}: {e}", path.display());
-            return 1;
-        }
-        println!("generated {}", path.display());
+        println!("generated {}", opts.out_dir.join(&file.rel_path).display());
     }
+    println!("generated {}", opts.out_dir.join(MANIFEST_FILE).display());
     0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn full_opts() -> GenOptions {
         GenOptions {
@@ -170,6 +288,16 @@ mod tests {
       },
       "components": { "schemas": {
         "Pet": { "type": "object", "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }, "required": ["id", "name"] }
+      } }
+    }"##;
+
+    const TARGET_PROFILE_SPEC: &str = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Profiles", "version": "1.0.0" },
+      "paths": {},
+      "components": { "schemas": {
+        "Label": { "type": "string" },
+        "Pet": { "type": "object", "properties": { "gen": { "type": "string" } }, "required": ["gen"] }
       } }
     }"##;
 
@@ -222,6 +350,148 @@ mod tests {
             let out = generate(MINIMAL, &opts).expect("emitter runs");
             assert!(!out.files.is_empty(), "{lang:?} produced no files");
         }
+    }
+
+    #[test]
+    fn python_profiles_record_requirements_and_use_their_supported_typing_syntax() {
+        let mut opts = full_opts();
+        opts.lang = Lang::Py;
+        opts.emit_hooks = false;
+        for (target, version, alias) in [
+            (PythonTarget::Py311, "3.11", "Label = str"),
+            (PythonTarget::Py312, "3.12", "type Label = str"),
+            (PythonTarget::Py313, "3.13", "type Label = str"),
+            (PythonTarget::Py314, "3.14", "type Label = str"),
+        ] {
+            let out =
+                generate_for_target(TARGET_PROFILE_SPEC, &opts, TargetProfile::Python(target))
+                    .unwrap();
+
+            assert_eq!(out.target, TargetProfile::Python(target));
+            assert_eq!(out.requirements.minimum_version, version);
+            assert_eq!(out.requirements.runtime_dependencies, &["pydantic>=2"]);
+            assert!(content(&out, "models.py").contains(alias));
+            assert!(!content(&out, "models.py").contains("Optional["));
+        }
+    }
+
+    #[test]
+    fn materialized_output_writes_a_versioned_contract_manifest() {
+        let mut opts = full_opts();
+        opts.lang = Lang::Py;
+        opts.emit_hooks = false;
+        let output = generate_for_target(
+            TARGET_PROFILE_SPEC,
+            &opts,
+            TargetProfile::Python(PythonTarget::Py314),
+        )
+        .unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "openapi-codegen-manifest-{}-{nonce}",
+            std::process::id()
+        ));
+
+        output.write_to_dir(&dir).unwrap();
+        let manifest: GenerationManifest =
+            serde_json::from_str(&fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap()).unwrap();
+        assert_eq!(manifest.schema_version, 1);
+        assert_eq!(manifest.target, "python-3.14");
+        assert_eq!(manifest.language, "python");
+        assert_eq!(manifest.minimum_version, "3.14");
+        assert!(dir.join("models.py").is_file());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn python_profiles_compile_with_each_available_target_interpreter() {
+        let mut opts = full_opts();
+        opts.lang = Lang::Py;
+        opts.emit_hooks = false;
+
+        for (interpreter, target) in [
+            ("python3.11", PythonTarget::Py311),
+            ("python3.12", PythonTarget::Py312),
+            ("python3.13", PythonTarget::Py313),
+            ("python3.14", PythonTarget::Py314),
+        ] {
+            let available = Command::new(interpreter)
+                .arg("--version")
+                .output()
+                .is_ok_and(|status| status.status.success());
+            if !available {
+                continue;
+            }
+            let output =
+                generate_for_target(TARGET_PROFILE_SPEC, &opts, TargetProfile::Python(target))
+                    .unwrap();
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "openapi-codegen-profile-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let mut paths = Vec::new();
+            for file in &output.files {
+                let path = dir.join(&file.rel_path);
+                fs::write(&path, &file.contents).unwrap();
+                paths.push(path);
+            }
+            let result = Command::new(interpreter)
+                .arg("-m")
+                .arg("py_compile")
+                .args(&paths)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{interpreter} cannot compile {} output\n{}",
+                output.target.id(),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn rust_2024_profile_escapes_gen_field_without_changing_rust_2021() {
+        let mut opts = full_opts();
+        opts.lang = Lang::Rust;
+        opts.emit_hooks = false;
+        let rust_2021 = generate_for_target(
+            TARGET_PROFILE_SPEC,
+            &opts,
+            TargetProfile::Rust(RustTarget::Rust2021),
+        )
+        .unwrap();
+        let rust_2024 = generate_for_target(
+            TARGET_PROFILE_SPEC,
+            &opts,
+            TargetProfile::Rust(RustTarget::Rust2024),
+        )
+        .unwrap();
+
+        assert!(content(&rust_2021, "models.rs").contains("pub gen: String,"));
+        assert!(content(&rust_2024, "models.rs").contains("pub gen_: String,"));
+        assert!(content(&rust_2024, "models.rs").contains("#[serde(rename = \"gen\")]"));
+        assert_eq!(rust_2024.requirements.minimum_version, "1.85");
+    }
+
+    #[test]
+    fn target_profile_must_match_the_requested_language() {
+        let error = generate_for_target(
+            MINIMAL,
+            &full_opts(),
+            TargetProfile::Python(PythonTarget::Py311),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("python-3.11"));
     }
 
     #[test]

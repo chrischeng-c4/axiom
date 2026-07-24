@@ -85,8 +85,8 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             - `relay dockerfile render --variant source|release [--version]` — the \
               from-source and published-release images.\n\
             - `relay spec [--format openapi|openapi-yaml|json-schema]` — the offline \
-              twin of `GET /openapi.json`; `relay spec gen --lang ts|py|rust --out \
-              <dir>` generates a typed client from it (shared openapi-codegen; \
+              twin of `GET /openapi.json`; `relay spec gen --lang ts|py|rust [--target \
+              <profile>] --out <dir>` generates a typed client from it (shared openapi-codegen; \
               relay has no keep-style `--shapes`/`--fields` catalogs).\n\n\
             Backup/restore (`--features backup`): `relay backup --url \
             http://<node>:7000 --dest file:///path|s3://bucket/prefix \

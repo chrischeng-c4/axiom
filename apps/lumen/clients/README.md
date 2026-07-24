@@ -1,7 +1,7 @@
 # lumen — generated clients
 
-This directory holds the **OpenAPI contract** for lumen and the tooling to
-regenerate Go / TypeScript / Python clients from it.
+This directory holds lumen's committed **OpenAPI contract** and pinned client
+target policy.
 
 ## Contract
 
@@ -9,7 +9,7 @@ regenerate Go / TypeScript / Python clients from it.
 truth that downstream client consumers integrate against. It is produced by:
 
 ```bash
-cargo run -q -p lumen --bin lumen-openapi-dump > clients/openapi.json
+cargo run -q -p lumen --bin lumen -- spec > projects/lumen/clients/openapi.json
 ```
 
 …which serializes the `utoipa` schema attached to the live `lumen::api`
@@ -25,25 +25,25 @@ CI (`.github/workflows/lumen.yml`, job `clients-drift`) runs
 difference fails the job.** When you make a public-API change you must:
 
 1. Update the relevant `utoipa::ToSchema` / `utoipa::path` annotations.
-2. Run `make spec` from this directory.
+2. Run the direct `lumen spec` command above.
 3. Commit the updated `openapi.json` in the same PR as the API change.
 
 ## Generating language clients
 
 Language clients are **not checked in** — they are regenerated on demand
-(see `.gitignore`). To produce them locally:
+(see `.gitignore`) through the service CLI:
 
-| Command       | Output                | Generator             |
-|---------------|-----------------------|-----------------------|
-| `make go`     | `clients/go/`         | `go`                  |
-| `make ts`     | `clients/ts/`         | `typescript-fetch`    |
-| `make python` | `clients/python/`     | `python`              |
-| `make all`    | spec + all three      | —                     |
-| `make clean`  | wipes the three above | —                     |
+| Command | Output |
+|---|---|
+| `cargo run -q -p lumen --bin lumen -- spec gen --lang ts --out projects/lumen/clients/ts` | TypeScript client |
+| `cargo run -q -p lumen --bin lumen -- spec gen --lang py --out projects/lumen/clients/python` | Python client |
+| `cargo run -q -p lumen --bin lumen -- spec gen --lang rust --out projects/lumen/clients/rust` | Rust client |
 
-All three use the npm-packaged `@openapitools/openapi-generator-cli` invoked
-through `npx`, so the only host requirement beyond the Rust toolchain is
-`node` (any recent LTS version).
+The generator is in-tree (`libs/openapi-codegen`), so the only requirement is
+a cargo/rustup toolchain. `codegen.toml` pins the default TypeScript, Python,
+and Rust contracts; every generated client contains
+`.cclab-openapi-codegen.json`. Use `--target <profile>` only for a deliberate
+one-off compatibility override.
 
 ## Why not commit the language clients?
 

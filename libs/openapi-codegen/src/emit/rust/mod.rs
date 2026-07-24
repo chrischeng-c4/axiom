@@ -20,12 +20,21 @@ pub mod rsmap;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, RustTarget};
 use anyhow::{Context, Result};
 
 /// Pure Rust generation: spec JSON text → in-memory files. No filesystem access.
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_for_target(spec_json, opts, RustTarget::Rust2021)
+}
+
+/// Profile-aware Rust generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: RustTarget,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let ops = operations::build(&spec);
@@ -34,7 +43,7 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "models.rs".to_string(),
-            contents: models_emit::emit(&spec, &tm),
+            contents: models_emit::emit(&spec, &tm, target),
         });
     }
     if opts.emit_client {
@@ -47,7 +56,10 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
         rel_path: "mod.rs".to_string(),
         contents: emit_mod(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(GeneratedOutput::for_target(
+        files,
+        crate::TargetProfile::Rust(target),
+    ))
 }
 
 fn emit_mod(opts: &GenOptions) -> String {

@@ -1,8 +1,8 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:a48eafff" tracker="pending-tracker" reason="Usage doc for the clients/ scaffold: what openapi.json is, how to regenerate it and the per-language clients via the Makefile, mirroring lumen's clients/README.md." -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:a48eafff" tracker="pending-tracker" reason="Usage doc for the clients/ scaffold: direct CLI generation of the OpenAPI snapshot and language clients without a Makefile wrapper." -->
 # tape — generated clients
 
-This directory holds the **OpenAPI contract** for tape and the tooling to
-regenerate TypeScript / Python / Rust clients from it (WI #1329).
+This directory holds tape's committed **OpenAPI contract** and pinned client
+target policy (WI #1329).
 
 ## Contract
 
@@ -11,25 +11,26 @@ the same document `GET /openapi.json` serves — so client generation works
 fully offline, without a running server:
 
 ```bash
-make refresh-openapi
+cargo run -q -p tape --bin tape -- spec --format openapi > apps/tape/clients/openapi.json
 ```
 
 ## Generating language clients
 
-Unlike lumen's `clients/` (which shells out to the npm-packaged
-`@openapitools/openapi-generator-cli`), tape's clients are generated
-**in-binary** via `tape spec gen` and the shared `libs/openapi-codegen`
-crate — no external tool, no `node`/`npx` requirement.
+Clients are generated **in-binary** via `tape spec gen` and the shared
+`libs/openapi-codegen` crate — no Makefile, external tool, `node`, or `npx`
+requirement.
 
-| Command         | Output           | Backing verb                          |
-|------------------|------------------|----------------------------------------|
-| `make gen-ts`    | `clients/ts/`    | `tape spec gen --lang ts --out ...`   |
-| `make gen-py`    | `clients/py/`    | `tape spec gen --lang py --out ...`   |
-| `make gen-rust`  | `clients/rust/`  | `tape spec gen --lang rust --out ...` |
-| `make gen-all`   | all three        | —                                       |
-| `make clean`     | wipes the three above | —                                  |
+| Command | Output |
+|---|---|
+| `cargo run -q -p tape --bin tape -- spec gen --lang ts --out apps/tape/clients/ts` | TypeScript client |
+| `cargo run -q -p tape --bin tape -- spec gen --lang py --out apps/tape/clients/py` | Python client |
+| `cargo run -q -p tape --bin tape -- spec gen --lang rust --out apps/tape/clients/rust` | Rust client |
 
 Requirements: a `cargo`/rustup toolchain only.
+
+`codegen.toml` pins the default target for each language. Every generated
+client includes `.cclab-openapi-codegen.json` with the exact target contract;
+pass `--target <profile>` to `tape spec gen` only for an explicit override.
 
 ## Why not commit the language clients?
 
@@ -40,7 +41,7 @@ their own repo, gated against this `openapi.json`.
 
 ## Keeping `openapi.json` current
 
-When tape's public HTTP contract changes (new route, new schema field), run
-`make refresh-openapi` from this directory and commit the updated
+When tape's public HTTP contract changes (new route, new schema field), rerun
+the direct `tape spec --format openapi` command above and commit the updated
 `openapi.json` in the same change.
 <!-- HANDWRITE-END -->

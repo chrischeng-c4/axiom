@@ -32,6 +32,39 @@ Gate Inventory: `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/
 |---|---|---:|---|---|---|---|
 | multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/lib.rs |
 
+## Versioned target profiles
+
+`generate` keeps the ergonomic language-only API and chooses a conservative
+default profile: Python 3.11, TypeScript 5.0, or Rust 2021. Consumers that need
+an exact generated-artifact contract call `generate_for_target` with a profile;
+the returned `GeneratedOutput` carries the selected `target` and deterministic
+`requirements` (minimum version and generated-runtime dependencies).
+
+Projects pin their defaults in a `codegen.toml` `[targets]` table and may offer
+an explicit target override. When an output is materialized through
+`GeneratedOutput::write_to_dir`, it always includes
+`.cclab-openapi-codegen.json`, recording the exact target, minimum version,
+and runtime dependencies for downstream verification.
+
+| Language | Profiles | Artifact effect |
+|---|---|---|
+| Python | 3.11, 3.12, 3.13, 3.14 | All use native `T \| None` and `Self`; 3.12+ also uses PEP 695 `type` aliases. |
+| TypeScript | 5.0 | Records the compiler floor. The current emitter has no safe version-specific syntax improvement, so the generated API stays identical. |
+| Rust | 2021, 2024 | Rust 2024 treats schema fields named `gen` as reserved and emits `gen_` plus `#[serde(rename = "gen")]`. |
+
+```rust
+use cclab_openapi_codegen::{
+    generate_for_target, GenOptions, PythonTarget, TargetProfile,
+};
+
+let output = generate_for_target(
+    spec_json,
+    &options,
+    TargetProfile::Python(PythonTarget::Py312),
+)?;
+assert_eq!(output.requirements.minimum_version, "3.12");
+```
+
 ## OpenAPI 3.2 and HTTP QUERY
 
 There is no hard version gate: `Spec.openapi` is parsed as an opaque string,

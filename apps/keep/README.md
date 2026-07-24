@@ -7,6 +7,10 @@ plane and a Redis / Dragonfly replacement. Promoted from `cclab-kv`: the sharded
 engine and tiered RAM+disk persistence are unchanged; the transport is now
 **HTTP/2 + OpenAPI** (no raw TCP).
 
+`keep spec gen --lang ts|py|rust [--target <profile>] --out <dir>` uses the
+shared in-tree generator. `clients/codegen.toml` pins each language's default;
+every output includes `.cclab-openapi-codegen.json` with the selected contract.
+
 ## Capabilities
 
 The RuntimeTool baseline capabilities selected by `aw.toml` are mandatory for

@@ -22,12 +22,21 @@ pub mod runtime_emit;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
 use anyhow::{Context, Result};
 
 /// Pure Python generation: spec JSON text → in-memory files. No filesystem access.
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_for_target(spec_json, opts, PythonTarget::Py311)
+}
+
+/// Profile-aware Python generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: PythonTarget,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let ops = operations::build(&spec);
@@ -36,24 +45,27 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "models.py".to_string(),
-            contents: models_emit::emit(&spec, &tm),
+            contents: models_emit::emit(&spec, &tm, target),
         });
     }
     if opts.emit_client {
         files.push(GeneratedFile {
             rel_path: "h2c_runtime.py".to_string(),
-            contents: runtime_emit::emit(),
+            contents: runtime_emit::emit(target),
         });
         files.push(GeneratedFile {
             rel_path: "client.py".to_string(),
-            contents: client_emit::emit(&ops, &tm),
+            contents: client_emit::emit(&ops, &tm, target),
         });
     }
     files.push(GeneratedFile {
         rel_path: "__init__.py".to_string(),
         contents: emit_init(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(GeneratedOutput::for_target(
+        files,
+        crate::TargetProfile::Python(target),
+    ))
 }
 
 fn emit_init(opts: &GenOptions) -> String {
@@ -236,7 +248,7 @@ mod tests {
         assert!(models.contains("class Pet(BaseModel):"));
         assert!(models.contains("    id: int\n"));
         assert!(models.contains("    name: str\n"));
-        assert!(models.contains("    tag: Optional[str] = None\n"));
+        assert!(models.contains("    tag: str | None = None\n"));
     }
 
     #[test]
@@ -254,7 +266,7 @@ mod tests {
 
         let out = generate(RECURSIVE_UNION_SPEC, &opts()).unwrap();
         let models = file(&out, "models.py");
-        assert!(models.contains("from typing import Any, Literal, Optional, Union"));
+        assert!(models.contains("from typing import Any, Literal"));
         assert!(models.contains("from pydantic import BaseModel, Field, RootModel"));
         assert!(models.contains("class QueryNodeMatch(BaseModel):"));
         assert!(models.contains("class QueryNodeTerm(BaseModel):"));
@@ -263,7 +275,7 @@ mod tests {
         assert!(models.contains("class QueryNodeNot(BaseModel):"));
         assert!(models.contains("    not_: QueryNode = Field(alias=\"not\")"));
         assert!(models.contains(
-            "class QueryNode(RootModel[Union[QueryNodeMatch, QueryNodeTerm, QueryNodeAnd, QueryNodeNot]]):"
+            "class QueryNode(RootModel[QueryNodeMatch | QueryNodeTerm | QueryNodeAnd | QueryNodeNot]):"
         ));
 
         let dir = write_generated_python_package(&out);
@@ -306,9 +318,9 @@ QueryNode.model_json_schema()
         assert!(client.contains("class SupportsRequest(Protocol):"));
         assert!(client.contains("from .h2c_runtime import AsyncH2CClient, H2CClient"));
         assert!(client.contains("class Client:"));
-        assert!(client.contains("client: Optional[SupportsRequest] = None"));
-        assert!(client.contains("default_headers: Optional[Mapping[str, Any]] = None"));
-        assert!(client.contains("auth_token: Optional[str] = None"));
+        assert!(client.contains("client: SupportsRequest | None = None"));
+        assert!(client.contains("default_headers: Mapping[str, Any] | None = None"));
+        assert!(client.contains("auth_token: str | None = None"));
         assert!(client.contains("self._client = client or H2CClient()"));
         assert!(
             client.contains("self._default_headers: dict[str, Any] = dict(default_headers or {})")
@@ -316,7 +328,7 @@ QueryNode.model_json_schema()
         assert!(
             client.contains("self._default_headers[\"Authorization\"] = f\"Bearer {auth_token}\"")
         );
-        assert!(client.contains("def __enter__(self) -> \"Client\":"));
+        assert!(client.contains("def __enter__(self) -> Self:"));
         assert!(client.contains("def close(self) -> None:"));
         assert!(client.contains("def get_pet_by_id(self, *, pet_id: int) -> Pet:"));
         assert!(client.contains("_path = f\"/pets/{pet_id}\""));
@@ -326,7 +338,7 @@ QueryNode.model_json_schema()
         assert!(client.contains("class AsyncSupportsRequest(Protocol):"));
         assert!(client.contains("class AsyncClient:"));
         assert!(client.contains("self._client = client or AsyncH2CClient()"));
-        assert!(client.contains("async def __aenter__(self) -> \"AsyncClient\":"));
+        assert!(client.contains("async def __aenter__(self) -> Self:"));
         assert!(client.contains("async def aclose(self) -> None:"));
         assert!(client.contains("async def get_pet_by_id(self, *, pet_id: int) -> Pet:"));
         assert!(client.contains("_resp = await self._client.request(\"GET\""));
@@ -424,7 +436,7 @@ asyncio.run(main())
         assert!(runtime.contains("_DEFAULT_MAX_CONNECTIONS = 128"));
         assert!(runtime.contains("_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16"));
         assert!(runtime.contains("def recommended_h2c_connections("));
-        assert!(runtime.contains("target_concurrency: Optional[int] = None"));
+        assert!(runtime.contains("target_concurrency: int | None = None"));
         assert!(runtime.contains("max_in_flight_per_origin"));
         assert!(runtime.contains("pool_timeout"));
         assert!(runtime.contains("threading.BoundedSemaphore"));
