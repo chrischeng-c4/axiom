@@ -57,26 +57,26 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 631 |  |
-| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2535 |  |
+| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 659 |  |
+| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2584 |  |
 | `AppState` | apps/lumen/src/api.rs | struct | pub | 64 |  |
-| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2626 |  |
-| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2574 |  |
-| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2556 |  |
-| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2598 |  |
+| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2675 |  |
+| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2623 |  |
+| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2605 |  |
+| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2647 |  |
 | `WriteFence` | apps/lumen/src/api.rs | struct | pub | 174 |  |
-| `new` | apps/lumen/src/api.rs | function | pub | 463 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | apps/lumen/src/api.rs | function | pub | 508 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | apps/lumen/src/api.rs | function | pub | 2463 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | apps/lumen/src/api.rs | function | pub | 670 | router(state: AppState) -> Router |
-| `router_with_admission` | apps/lumen/src/api.rs | function | pub | 679 | router_with_admission(     state: AppState,     admission: Option<service_http::AdmissionController>, ) -> Router |
-| `with_checkpoint` | apps/lumen/src/api.rs | function | pub | 485 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
-| `with_cluster` | apps/lumen/src/api.rs | function | pub | 467 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | apps/lumen/src/api.rs | function | pub | 438 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
-| `with_routed` | apps/lumen/src/api.rs | function | pub | 494 | with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self |
-| `with_search_backend` | apps/lumen/src/api.rs | function | pub | 472 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | apps/lumen/src/api.rs | function | pub | 430 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | apps/lumen/src/api.rs | function | pub | 477 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `new` | apps/lumen/src/api.rs | function | pub | 491 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | apps/lumen/src/api.rs | function | pub | 536 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | apps/lumen/src/api.rs | function | pub | 2512 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | apps/lumen/src/api.rs | function | pub | 698 | router(state: AppState) -> Router |
+| `router_with_admission` | apps/lumen/src/api.rs | function | pub | 707 | router_with_admission(     state: AppState,     admission: Option<service_http::AdmissionController>, ) -> Router |
+| `with_checkpoint` | apps/lumen/src/api.rs | function | pub | 513 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
+| `with_cluster` | apps/lumen/src/api.rs | function | pub | 495 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | apps/lumen/src/api.rs | function | pub | 466 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_routed` | apps/lumen/src/api.rs | function | pub | 522 | with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self |
+| `with_search_backend` | apps/lumen/src/api.rs | function | pub | 500 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | apps/lumen/src/api.rs | function | pub | 458 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | apps/lumen/src/api.rs | function | pub | 505 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -360,6 +360,34 @@ pub trait WriteBackend: Send + Sync {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 #[async_trait]
 pub trait RoutedBackend: Send + Sync {
+    /// #2496: collection lifecycle has no single owning shard — every
+    /// physical shard must register the schema, or a write that later
+    /// routes to a shard that never heard `create_collection` 404s with
+    /// `CollectionNotFound` even though the collection genuinely exists.
+    /// The sole implementation ([`crate::routing_remote::RoutedRouter`])
+    /// fans this out to every physical shard (local direct call plus one
+    /// forward per remote shard), mirroring
+    /// [`crate::routing::EngineShardWrite::create_collection`]'s in-process
+    /// fan-out/merge semantics over cross-pod HTTP instead of an in-process
+    /// writer submit.
+    async fn create_collection(
+        &self,
+        collection_id: String,
+        req: CreateCollectionRequest,
+        headers: &HeaderMap,
+    ) -> Result<CreateCollectionResponse>;
+
+    /// #2496: same fan-out-to-every-shard requirement as
+    /// [`Self::create_collection`], merged with
+    /// [`crate::routing::EngineShardWrite::drop_collection`]'s
+    /// `Physical > Marked > AlreadyMarked > NotFound` precedence.
+    async fn drop_collection(
+        &self,
+        collection_id: String,
+        force: bool,
+        headers: &HeaderMap,
+    ) -> Result<DropOutcome>;
+
     async fn search(
         &self,
         collection_id: &str,
@@ -1140,15 +1168,27 @@ async fn list_collections(
 async fn create_collection(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<Json<CreateCollectionResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let resp = state
-        .write_backend
-        .create_collection(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
+    // #2496: fan create_collection out across every physical shard when
+    // routed — a collection created against only one shard left every other
+    // shard unable to serve a write that hashed there, matching the
+    // `index`/`delete_external_id`/`replace_docs` routed-or-local pattern.
+    let resp = if let Some(router) = &state.routed {
+        router
+            .create_collection(collection_id.clone(), req, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .create_collection(collection_id.clone(), req)
+            .await
+            .map_err(ApiErr::from)?
+    };
     tracing::info!(
         target: "lumen.audit",
         event = "collection_create_or_extend",
@@ -1183,15 +1223,24 @@ struct DropQuery {
 async fn drop_collection(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
     Path(collection_id): Path<String>,
     Query(q): Query<DropQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let outcome = state
-        .write_backend
-        .drop_collection(collection_id.clone(), q.force)
-        .await
-        .map_err(ApiErr::from)?;
+    // #2496: same routed-or-local fan-out as `create_collection` above.
+    let outcome = if let Some(router) = &state.routed {
+        router
+            .drop_collection(collection_id.clone(), q.force, &headers)
+            .await
+            .map_err(ApiErr::from)?
+    } else {
+        state
+            .write_backend
+            .drop_collection(collection_id.clone(), q.force)
+            .await
+            .map_err(ApiErr::from)?
+    };
     let phase = match outcome {
         DropOutcome::NotFound => {
             return Err(ApiErr::not_found(format!(

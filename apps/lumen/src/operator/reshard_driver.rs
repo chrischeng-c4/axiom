@@ -1498,8 +1498,13 @@ async fn run_migration_pass_impl(
             &buckets,
         )
         .await?;
-        let batches =
-            snapshot_reshard_batches(&snapshot, &current, &target, MAX_EXTERNAL_IDS_PER_BATCH)?;
+        let batches = snapshot_reshard_batches(
+            &snapshot,
+            &current,
+            &target,
+            &buckets,
+            MAX_EXTERNAL_IDS_PER_BATCH,
+        )?;
         for batch in &batches {
             let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
             if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {

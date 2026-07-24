@@ -25,6 +25,7 @@ use lumen::api::{router, AppState};
 use lumen::routing::VirtualBucketShardMap;
 use lumen::routing_remote::RoutedRouter;
 use lumen::storage::Engine;
+use lumen::types::{CreateCollectionRequest, FieldSpec, FieldType};
 
 const VIRTUAL_BUCKET_COUNT: u32 = 8;
 
@@ -187,6 +188,70 @@ async fn forward_write_and_forward_read_land_on_owning_shard() {
         .await;
     owner_resp.assert_status_ok();
     assert_eq!(owner_resp.json::<Value>()["total"], 1);
+}
+
+// #2496 AC1: `create_collection` fans out through `RoutedBackend` — creating
+// a collection via ONE pod must register it on every physical shard, not
+// just the pod that answered the request. Without the fix, a write hashing
+// to a different shard than the one the create request happened to land on
+// fails with `CollectionNotFound` (the same class #2489 fixed for the read
+// path, but on the write-registration side).
+#[tokio::test]
+async fn create_collection_through_one_shard_fans_out_to_all_shards() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    // Only shard0 ever sees the create request.
+    create_users_collection(&shard0.server).await;
+
+    // Owned by shard1, not shard0 — proves the collection is genuinely
+    // registered on shard1's own local engine, not merely forward-reachable.
+    let remote_id = external_id_for_shard("users", 1);
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": remote_id, "field": "email", "value": "fanned@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let owner_resp = shard1
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "fanned@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    owner_resp.assert_status_ok();
+    assert_eq!(owner_resp.json::<Value>()["total"], 1);
+}
+
+// #2496: `drop_collection` fans out the same way — dropping through one pod
+// must remove the collection everywhere, not leave stale registrations on
+// the shards that never saw the delete request.
+#[tokio::test]
+async fn drop_collection_through_one_shard_fans_out_to_all_shards() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    create_users_collection(&shard0.server).await;
+    create_users_collection(&shard1.server).await;
+
+    shard0
+        .server
+        .delete("/collections/users?force=true")
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let resp = shard1
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "anything@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
 
 // #1398 AC1: docs:replace + delete also route by ownership, not just index.
@@ -743,6 +808,31 @@ async fn forward_to_unreachable_shard_surfaces_retryable_error() {
         format!("http://127.0.0.1:{dead_port}"),
     ];
     let engine0 = Arc::new(Engine::new());
+    // #2496: `create_collection` now fans out through the router to every
+    // physical shard, so it can't be used here once the router is wired
+    // (shard1 is deliberately unreachable) — this test is about *search*
+    // forwarding to a dead shard, not collection-creation fan-out (that has
+    // its own coverage in `create_collection_through_one_shard_fans_out_to_all_shards`),
+    // so seed shard0's collection directly against the engine first.
+    engine0
+        .create_collection(
+            "users",
+            CreateCollectionRequest {
+                fields: std::collections::BTreeMap::from([(
+                    "email".to_string(),
+                    FieldSpec {
+                        field_type: FieldType::Keyword,
+                        analyzer: None,
+                        multi: None,
+                        dim: None,
+                        metric: None,
+                        backend: None,
+                        quantize: None,
+                    },
+                )]),
+            },
+        )
+        .expect("seed collection directly on shard0's engine");
     let state0 = AppState::open(engine0.clone());
     let router0 = RoutedRouter::new(
         engine0,
@@ -763,7 +853,6 @@ async fn forward_to_unreachable_shard_surfaces_retryable_error() {
         },
     )
     .expect("bind shard 0");
-    create_users_collection(&server0).await;
 
     let remote_id = external_id_for_shard("users", 1);
     let resp = server0
