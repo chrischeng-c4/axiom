@@ -96,7 +96,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -105,10 +105,9 @@ use crate::api::{
     ShardMapVersionMismatch, WriteBackend,
 };
 use crate::routing::{
-    merge_shard_search_responses, search_request_offset, SearchShardTarget,
-    VirtualBucketShardMap,
+    merge_shard_search_responses, search_request_offset, SearchShardTarget, VirtualBucketShardMap,
 };
-use crate::storage::Engine;
+use crate::storage::{Engine, StorageError};
 use crate::types::{
     IndexItem, IndexRequest, IndexResponse, ReplaceDocItem, ReplaceDocsRequest,
     ReplaceDocsResponse, SearchRequest, SearchResponse,
@@ -376,6 +375,25 @@ impl RoutedRouter {
     /// a cross-shard sort-by-field page may rank remote-shard hits by a
     /// missing (`None`) sort value. Score-ranked search (the default) is
     /// unaffected.
+    ///
+    /// #2489: a physical shard that has never locally registered
+    /// `collection_id` answers `CollectionNotFound` — every shard holds
+    /// every collection under steady-state operation, but a just-completed
+    /// reshard split can strand a receiving shard that migrated zero of a
+    /// collection's documents (none of its buckets moved there) without the
+    /// collection ever being created on it: the migration pipeline
+    /// (`operator::reshard_driver` -> `reshard::snapshot_reshard_batches` /
+    /// `snapshot_reshard_prune_chunks` -> `Engine::apply_reshard_batch`) is
+    /// purely doc-driven and has no way to propagate a collection's
+    /// existence/schema on its own. One shard out of N having nothing to
+    /// contribute must not fail the *whole* scatter merge when at least one
+    /// other shard actually answers — that shard's real hits would
+    /// otherwise be discarded for nothing, exactly the GKE field symptom
+    /// (search via the new shard's Service-pinned endpoint returned
+    /// `collection not found` even though the collection's sole document
+    /// lived, correctly migrated, on the other shard). Only when *every*
+    /// participant reports `CollectionNotFound` does this propagate that
+    /// error, so a genuinely nonexistent collection still answers 404.
     async fn scatter_search(
         &self,
         collection_id: &str,
@@ -413,14 +431,50 @@ impl RoutedRouter {
                 headers,
             ));
         }
-        let local = self.engine.search(collection_id, shard_req)?;
-        let remote = try_join_all(remote_futures).await?;
+        // #2489: `join_all`, not `try_join_all` — a single participant's
+        // error (in particular a benign per-shard `CollectionNotFound`,
+        // classified below) must not short-circuit before the other
+        // shards' real answers are collected.
+        let local_result = self.engine.search(collection_id, shard_req);
+        let remote_results = join_all(remote_futures).await;
+
+        let mut responses = Vec::with_capacity(1 + remote_results.len());
+        let mut not_found_err = None;
+        match local_result {
+            Ok(resp) => responses.push(resp),
+            Err(err) if is_local_collection_not_found(&err) => not_found_err = Some(err),
+            Err(err) => return Err(err),
+        }
+        for result in remote_results {
+            match result {
+                Ok(resp) => responses.push(resp),
+                Err(err) if is_forwarded_collection_not_found(&err) => not_found_err = Some(err),
+                Err(err) => return Err(err),
+            }
+        }
+        if responses.is_empty() {
+            // Every shard reported `CollectionNotFound` — surface it
+            // faithfully instead of manufacturing an empty 200 response for
+            // a collection that genuinely does not exist anywhere.
+            return Err(not_found_err
+                .expect("responses empty implies at least one CollectionNotFound was recorded"));
+        }
+        if not_found_err.is_some() {
+            tracing::warn!(
+                collection_id,
+                "routed scatter search: at least one shard has no local record of this \
+                 collection (likely a just-migrated shard that received zero of its \
+                 documents, or a collection created before this pod joined the cluster); \
+                 merging the remaining shards' results instead of failing the whole query \
+                 (#2489)"
+            );
+        }
 
         let engine = self.engine.clone();
         let collection = collection_id.to_string();
         Ok(merge_shard_search_responses(
             &req,
-            std::iter::once(local).chain(remote),
+            responses,
             start.elapsed().as_micros() as u64,
             move |hit, field| {
                 engine
@@ -472,6 +526,28 @@ fn percent_encode_component(s: &str) -> String {
         }
     }
     out
+}
+
+/// True when `err` is a local [`StorageError::CollectionNotFound`] — the
+/// local half of `scatter_search`'s per-shard not-found tolerance (#2489).
+fn is_local_collection_not_found(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<StorageError>(),
+        Some(StorageError::CollectionNotFound(_))
+    )
+}
+
+/// True when `err` is a forwarded shard's 404 — the remote half of
+/// `scatter_search`'s per-shard not-found tolerance (#2489). `404` is used
+/// exclusively for `StorageError::CollectionNotFound` in `ApiErr`'s mapping
+/// (`api.rs`'s `impl From<anyhow::Error> for ApiErr`), so the forwarded
+/// status code alone is an unambiguous signal without re-parsing the
+/// remote's error message.
+fn is_forwarded_collection_not_found(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<ShardForwardRemoteError>(),
+        Some(remote) if remote.status == reqwest::StatusCode::NOT_FOUND.as_u16()
+    )
 }
 
 #[async_trait]

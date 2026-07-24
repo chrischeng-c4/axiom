@@ -636,6 +636,99 @@ async fn duplicates_is_rejected_in_routed_mode() {
     assert_eq!(body["error"], "duplicates_not_routed", "body = {body}");
 }
 
+// #2489: reproduces the GKE post-split read-visibility defect. The
+// collection is created (and indexed) only through shard0 — shard1 never
+// locally registers it, standing in for a just-completed reshard split that
+// migrated zero of a collection's documents to the new shard (the driver's
+// migration pipeline is purely doc-driven and has no way to propagate a
+// collection's existence on its own). A routing-key-less search reaching the
+// Service-pinned pod with no local record of the collection (shard1) must
+// still merge in the other shard's real results instead of failing the
+// whole query with `collection not found`.
+#[tokio::test]
+async fn routing_key_less_search_tolerates_collection_missing_on_one_shard() {
+    let (shard0, shard1) = spin_up_routed_pair();
+    // Deliberately shard1-only omission: create the collection on shard0
+    // alone, and only index a document whose bucket routes to shard0 — the
+    // exact shape a reshard split leaves behind when a collection's sole
+    // document never moves to the new shard.
+    create_users_collection(&shard0.server).await;
+
+    let id_shard0 = external_id_for_shard("users", 0);
+    shard0
+        .server
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": id_shard0, "field": "email", "value": "onlyshard0@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    // Keyless search through shard1 — the pod that never created the
+    // collection locally — must still find the document via shard0's
+    // participation in the scatter, not fail with `collection not found`.
+    let resp = shard1
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "onlyshard0@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 1, "body = {body}");
+    assert_eq!(body["hits"][0]["external_id"], id_shard0);
+
+    // Keyless search through shard0 (the shard that does hold the
+    // collection) must be unaffected by shard1's missing local registration
+    // — same total either direction.
+    let resp0 = shard0
+        .server
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "onlyshard0@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    resp0.assert_status_ok();
+    assert_eq!(resp0.json::<Value>()["total"], 1);
+}
+
+// #2489: when EVERY shard reports `CollectionNotFound` (a collection that
+// genuinely does not exist anywhere), a keyless search must still 404 —
+// the per-shard not-found tolerance above must not manufacture an empty
+// 200 for a truly nonexistent collection.
+#[tokio::test]
+async fn routing_key_less_search_404s_when_no_shard_has_the_collection() {
+    let (shard0, _shard1) = spin_up_routed_pair();
+    // Neither shard ever creates "ghost" — no collection exists anywhere.
+    let resp = shard0
+        .server
+        .post("/collections/ghost/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "x" } },
+            "limit": 10
+        }))
+        .await;
+    // The surfaced error tag depends on which participant's not-found was
+    // the last one recorded (local `not_found` vs. a forwarded shard's
+    // `shard_forwarded_error` wrapping the same underlying 404) — an
+    // implementation detail, not part of the contract. The contract is the
+    // status code: every participant reporting not-found must still 404,
+    // never a manufactured empty 200.
+    resp.assert_status(axum::http::StatusCode::NOT_FOUND);
+    let body: Value = resp.json();
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("ghost")),
+        "body = {body}"
+    );
+}
+
 // #1398 R2: a forward failure (owning pod unreachable) must surface as a
 // clear, retryable error — never a silent local answer.
 #[tokio::test]
