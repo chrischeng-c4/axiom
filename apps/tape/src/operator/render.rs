@@ -162,6 +162,9 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));
     }
+    if let Some(limit) = s.body_limit_bytes {
+        extra_env.push(json!({ "name": "TAPE_BODY_LIMIT_BYTES", "value": limit.to_string() }));
+    }
     if token_registry_source(tape).is_some() {
         extra_env.push(json!({ "name": "TAPE_AUTH", "value": "required" }));
         extra_env.push(json!({ "name": "TAPE_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
