@@ -85,7 +85,7 @@ final class WorkbenchModelTests: XCTestCase {
 
         model.selectProject(first.id)
         model.addTerminal(profile: .claude)
-        await client.enqueue(response(tabId: "\(first.id)::claude", profile: .claude, running: true, cwd: firstProject.path, sequence: 1))
+        await client.enqueue(response(tabId: "\(first.id).claude", profile: .claude, running: true, cwd: firstProject.path, sequence: 1))
         await model.startActiveTab()
         model.addTerminal(profile: .shell)
 
@@ -115,12 +115,12 @@ final class WorkbenchModelTests: XCTestCase {
         model.registerProject(tempDir)
         let projectId = try! XCTUnwrap(model.selectedProjectId)
         model.addTerminal(profile: .claude)
-        await client.enqueue(response(tabId: "\(projectId)::claude", profile: .claude, running: true, cwd: tempDir.path, sequence: 1, output: Data("CLAUDE".utf8)))
+        await client.enqueue(response(tabId: "\(projectId).claude", profile: .claude, running: true, cwd: tempDir.path, sequence: 1, output: Data("CLAUDE".utf8)))
         await model.startActiveTab()
         XCTAssertEqual(model.activeTab?.lifecycle.label, "Running")
         XCTAssertEqual(String(data: model.activeTab?.output ?? Data(), encoding: .utf8), "CLAUDE")
 
-        await client.enqueue(response(tabId: "\(projectId)::codex", profile: .codex, running: false, cwd: tempDir.path, sequence: 2))
+        await client.enqueue(response(tabId: "\(projectId).codex", profile: .codex, running: false, cwd: tempDir.path, sequence: 2))
         await model.pollRunningTabs()
 
         guard case let .failed(message) = model.activeTab?.lifecycle else { return XCTFail("mismatched response must fail only the addressed session") }

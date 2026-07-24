@@ -469,7 +469,11 @@ public final class WorkbenchModel: ObservableObject {
 
     private func coreTabId(_ tabId: String) -> String {
         guard let selectedProjectId else { return tabId }
-        return "\(selectedProjectId)::\(tabId)"
+        // The Rust protocol deliberately accepts only ASCII word-like ids.
+        // Both UUID project ids and profile session ids meet that contract;
+        // a dot keeps the project namespace unambiguous without introducing
+        // the formerly-used, invalid `::` separator.
+        return "\(selectedProjectId).\(tabId)"
     }
 }
 // HANDWRITE-END
