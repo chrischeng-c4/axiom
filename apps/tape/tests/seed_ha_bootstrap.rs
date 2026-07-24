@@ -13,10 +13,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use raft_runtime::Membership;
-use tape::raft::{prepare_bootstrap_seed, snapshot_bytes, TapeRaft};
+use tape::raft::{data_dir_has_existing_state, prepare_bootstrap_seed, snapshot_bytes, TapeRaft};
 use tape::TapeJournal;
 
-async fn seeded_group_surfaces_data(up_to: u64) {
+/// Boots a fresh 3-voter group from an identical seed and waits for the seed
+/// to surface on every member, returning each member's durable data dir
+/// (kept alive by the caller) so tests can inspect on-disk state afterward.
+async fn seeded_group_surfaces_data(up_to: u64) -> Vec<tempfile::TempDir> {
     let source = Arc::new(Mutex::new(TapeJournal::default()));
     for n in 1..=3 {
         source.lock().unwrap().append(
@@ -82,7 +85,7 @@ async fn seeded_group_surfaces_data(up_to: u64) {
             .map(|j| j.lock().unwrap().replay("acceptance", None, None, None).len())
             .collect();
         if applied.iter().all(|&a| a >= want_applied) && replayed.iter().all(|&n| n == 3) {
-            return;
+            return dirs;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(
@@ -105,4 +108,21 @@ async fn replica_origin_seed_bootstraps_a_fresh_three_voter_group() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn single_node_origin_seed_bootstraps_a_fresh_three_voter_group() {
     seeded_group_surfaces_data(0).await;
+}
+
+/// #2468: once a 3-voter group has elected and applied the seed, EVERY
+/// member's data dir must read as "existing state" — this is what makes
+/// leaving `bootstrapSeedUri` set on the CR safe: a replacement pod's
+/// restart-time probe sees existing state on its own PVC and skips the
+/// reseed instead of crash-looping on `prepare_bootstrap_seed`'s refusal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn seeded_group_members_read_as_existing_state_after_convergence() {
+    let dirs = seeded_group_surfaces_data(3).await;
+    for dir in &dirs {
+        assert!(
+            data_dir_has_existing_state(dir.path()).unwrap(),
+            "member dir {} must read as existing state once the group converged",
+            dir.path().display()
+        );
+    }
 }

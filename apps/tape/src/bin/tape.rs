@@ -239,10 +239,14 @@ struct ServeArgs {
     /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    /// Exact `file://`, `s3://`, or `gs://` journal snapshot used only to
-    /// seed a fresh replica PVC before Raft starts (`gs://` authenticates via
-    /// workload-identity ADC in-cluster). Refuses non-empty `TAPE_DATA_DIR`;
-    /// this is cold recovery, not a live restore endpoint.
+    /// Exact `file://`, `s3://`, or `gs://` journal snapshot consulted to
+    /// seed an EMPTY replica PVC before Raft starts (`gs://` authenticates
+    /// via workload-identity ADC in-cluster). Bootstrap-if-empty (#2468): a
+    /// non-empty `TAPE_DATA_DIR` means this pod already has durable state
+    /// (including a routine restart onto its own PVC), so the seed fetch is
+    /// skipped rather than refused — the field may harmlessly stay set on
+    /// the CR after a successful bootstrap. This is cold recovery, not a
+    /// live restore endpoint.
     #[arg(long, env = "TAPE_BOOTSTRAP_SEED_URI")]
     bootstrap_seed_uri: Option<String>,
     /// Headless service name peers are resolved against in replica/HA mode
@@ -942,14 +946,31 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             "replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)"
         );
         if let Some(seed_uri) = args.bootstrap_seed_uri.as_deref() {
-            let bytes = service_backup::fetch_backup_object(seed_uri)
-                .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
-            tape::raft::prepare_bootstrap_seed(&data_dir, topo.node_id, &bytes)?;
-            tracing::info!(
-                seed_uri,
-                bytes = bytes.len(),
-                "bootstrap seed prepared before raft catch-up"
-            );
+            // #2468: bootstrapSeedUri lives on the CR and is injected into
+            // every pod's env, so a routine restart onto this pod's own
+            // (now-populated) PVC must NOT re-attempt the seed — that would
+            // crash-loop on `prepare_bootstrap_seed`'s non-empty-dir refusal.
+            // Probe with the exact same emptiness check the seed path itself
+            // uses, before paying for the fetch at all, and skip loudly when
+            // this pod already has durable state to boot from.
+            if tape::raft::data_dir_has_existing_state(&data_dir)? {
+                tracing::info!(
+                    seed_uri,
+                    decision = "skipped_existing_state",
+                    "bootstrap seed uri set but data dir already has durable raft state; \
+                     skipping seed fetch and booting from existing state"
+                );
+            } else {
+                let bytes = service_backup::fetch_backup_object(seed_uri)
+                    .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
+                tape::raft::prepare_bootstrap_seed(&data_dir, topo.node_id, &bytes)?;
+                tracing::info!(
+                    seed_uri,
+                    bytes = bytes.len(),
+                    decision = "seeded",
+                    "bootstrap seed prepared before raft catch-up"
+                );
+            }
         }
         let raft = std::sync::Arc::new(match transport.clone() {
             Some(transport) => tape::raft::TapeRaft::from_topology_with_peer_transport(
