@@ -48,3 +48,28 @@ changes:
     impl_mode: hand-written
     anchor: evidenceDir
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-runtime-artifact-isolation-verification
+requirements:
+  retained:
+    id: R2
+    text: "Tracked retained evidence is not changed by routine verification."
+    kind: regression
+    risk: high
+    verify: git diff --exit-code -- apps/workbench/evidence/production-journey/v1
+  runtime:
+    id: R1
+    text: "Routine production journeys write run-specific artifacts below ignored repository runtime state."
+    kind: regression
+    risk: high
+    verify: cargo test -p workbench --test production_journey -- --nocapture
+---
+flowchart TD
+    r1[R1 runtime] --> cargo_test_p_workbench_test_production_journey_nocapture[cargo test -p workbench --test production_journey -- --nocapture]
+    r2[R2 retained] --> git_diff_exit_code_apps_workbench_evidence_production_journey_v1[git diff --exit-code -- apps/workbench/evidence/production-journey/v1]
+```
