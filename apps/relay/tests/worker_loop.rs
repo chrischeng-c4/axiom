@@ -15,7 +15,10 @@ use relay::server_config::RelayServerConfig;
 use relay::wire::{AckResponse, HeartbeatResponse, LeaseResponse};
 
 async fn start_server() -> SocketAddr {
-    let app = router(AppState::new(RelayServerConfig::ephemeral()));
+    let app = router(AppState::new(
+        RelayServerConfig::ephemeral(),
+        8 * 1024 * 1024,
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

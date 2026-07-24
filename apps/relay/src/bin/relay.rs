@@ -348,6 +348,11 @@ struct ServeArgs {
     /// Dedicated authenticated Raft listener when RELAY_PEER_MTLS=on.
     #[arg(long, env = "RELAY_RAFT_PORT", default_value_t = 7001)]
     raft_port: u16,
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB (`RELAY_BODY_LIMIT_BYTES`).
+    #[arg(long, env = "RELAY_BODY_LIMIT_BYTES", default_value_t = 8 * 1024 * 1024)]
+    body_limit_bytes: usize,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -877,7 +882,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     let bind = config.bind.clone();
     let reconcile_interval = Duration::from_millis(config.reconcile_interval_ms);
 
-    let mut state = AppState::with_auth(config, auth);
+    let mut state = AppState::with_auth(config, auth, args.body_limit_bytes);
     if let Some(path) = args.token_registry_file.as_deref() {
         std::mem::drop(service_auth::spawn_registry_file_watcher(
             state.verifier(),
@@ -1256,6 +1261,21 @@ mod tests {
         assert!(!TOOL.target.is_empty());
         assert!(!TOOL.git_sha.is_empty());
         assert!(!TOOL.built_at.is_empty());
+    }
+
+    /// #2556: the body-limit-bytes flag defaults to 8 MiB and respects the
+    /// RELAY_BODY_LIMIT_BYTES env var override.
+    #[test]
+    fn body_limit_bytes_defaults_and_respects_env() {
+        use clap::Parser;
+
+        // Default: 8 MiB.
+        let cli = Cli::parse_from(&["relay"]);
+        assert_eq!(cli.serve.body_limit_bytes, 8 * 1024 * 1024);
+
+        // Explicit flag overrides the default.
+        let cli = Cli::parse_from(&["relay", "--body-limit-bytes", "16777216"]);
+        assert_eq!(cli.serve.body_limit_bytes, 16777216);
     }
 }
 // HANDWRITE-END

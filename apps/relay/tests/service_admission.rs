@@ -30,7 +30,7 @@ fn publish() -> Request<Body> {
 #[tokio::test]
 async fn publish_uses_shared_write_admission() {
     let app = router_with_admission(
-        AppState::new(RelayServerConfig::ephemeral()),
+        AppState::new(RelayServerConfig::ephemeral(), 8 * 1024 * 1024),
         Some(controller()),
     );
     assert_eq!(
@@ -56,7 +56,10 @@ async fn publish_uses_shared_write_admission() {
 
 #[tokio::test]
 async fn default_router_keeps_admission_disabled() {
-    let app = router(AppState::new(RelayServerConfig::ephemeral()));
+    let app = router(AppState::new(
+        RelayServerConfig::ephemeral(),
+        8 * 1024 * 1024,
+    ));
     assert_eq!(
         app.clone().oneshot(publish()).await.unwrap().status(),
         StatusCode::OK

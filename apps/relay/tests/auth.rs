@@ -61,8 +61,8 @@ fn relay_auth_adapter_rotates_the_shared_registry_without_restart() {
 async fn start_server(auth: Option<AuthConfig>) -> SocketAddr {
     let config = RelayServerConfig::ephemeral();
     let state = match auth {
-        Some(a) => AppState::with_auth(config, a),
-        None => AppState::new(config),
+        Some(a) => AppState::with_auth(config, a, 8 * 1024 * 1024),
+        None => AppState::new(config, 8 * 1024 * 1024),
     };
     let app = router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

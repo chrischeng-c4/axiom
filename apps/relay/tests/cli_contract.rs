@@ -19,7 +19,13 @@ fn help_exposes_standard_domain_and_observability_surfaces() {
             "missing {command} in relay --help"
         );
     }
-    for flag in ["--bind", "--data-dir", "--log-format", "--otlp-endpoint"] {
+    for flag in [
+        "--bind",
+        "--data-dir",
+        "--log-format",
+        "--otlp-endpoint",
+        "--body-limit-bytes",
+    ] {
         assert!(stdout.contains(flag), "missing {flag} in relay --help");
     }
     assert!(stdout.contains("pretty"));

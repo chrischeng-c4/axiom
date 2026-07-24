@@ -21,7 +21,7 @@ use relay::wire::{
 use relay::{AppendOutcome, DEFAULT_PRIORITY};
 
 async fn start_server() -> (SocketAddr, AppState) {
-    let state = AppState::new(RelayServerConfig::ephemeral());
+    let state = AppState::new(RelayServerConfig::ephemeral(), 8 * 1024 * 1024);
     let app = router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -333,6 +333,111 @@ async fn errors_render_the_shared_envelope() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "bad_request");
     assert!(!body["message"].as_str().unwrap().is_empty());
+}
+
+/// #2556: a publish body over the shared data-plane body cap is rejected
+/// with 413 rather than buffered/accepted, guarding against unbounded
+/// request bodies on the data plane (probes stay exempt/unbounded).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_publish_body_is_rejected_with_413() {
+    let (addr, _state) = start_server().await;
+    let client = reqwest::Client::new();
+
+    // One byte over the 8 MiB data-plane cap.
+    let oversized_payload = "a".repeat(8 * 1024 * 1024 + 1);
+    let result = client
+        .post(url(addr, "/v1/orders/publish"))
+        .header("content-type", "application/json")
+        .body(format!(
+            r#"{{"message_id":"m0","payload":"{oversized_payload}"}}"#
+        ))
+        .send()
+        .await;
+
+    // The Content-Length short-circuit is the point of the layer: the server
+    // answers and closes without reading 8 MiB it has already decided to
+    // refuse. The client is still uploading when that happens, so it races
+    // between reading the 413 and having its own write fail with
+    // ECONNRESET — both outcomes are the same refusal, and asserting only on
+    // the status code makes this test flaky (~1 run in 5).
+    match result {
+        Ok(resp) => assert_eq!(resp.status(), 413, "oversized publish must be refused"),
+        Err(err) => assert!(
+            err.is_request(),
+            "expected a transport-level refusal from the early close, got: {err}"
+        ),
+    }
+
+    // Race-free invariant, and the one that actually matters: whichever way
+    // the client observed the refusal, the oversized body never reached the
+    // engine. A regression that buffered and accepted it would show up here
+    // even if the status assertion above were satisfied.
+    let client = h2c_client();
+    let lease: LeaseResponse = client
+        .post(url(addr, "/v1/orders/lease"))
+        .json(&LeaseRequest {
+            consumer_id: "c1".into(),
+        })
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        lease.lease.is_none(),
+        "the refused body must not be published: {lease:?}"
+    );
+}
+
+/// #2556: an under-limit publish body succeeds, so the cap isn't just "reject
+/// everything". The limit is enforced but doesn't break normal operation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undersized_publish_body_succeeds() {
+    let (addr, _state) = start_server().await;
+    let client = h2c_client();
+
+    // Well under the 8 MiB cap.
+    let normal_payload = "normal message";
+    let resp = client
+        .post(url(addr, "/v1/orders/publish"))
+        .json(&json!({
+            "message_id": "m0",
+            "payload": normal_payload
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "under-limit publish must succeed");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["seq"], 0);
+    assert_eq!(body["deduped"], false);
+}
+
+/// #2556: the structured 413 envelope carries the expected error key and
+/// message when an oversized body is rejected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_body_rejection_renders_structured_413_envelope() {
+    let (addr, _state) = start_server().await;
+    let client = reqwest::Client::new();
+
+    // One byte over the 8 MiB data-plane cap.
+    let oversized_payload = "a".repeat(8 * 1024 * 1024 + 1);
+    let result = client
+        .post(url(addr, "/v1/s/publish"))
+        .header("content-type", "application/json")
+        .body(format!(
+            r#"{{"message_id":"m0","payload":"{oversized_payload}"}}"#
+        ))
+        .send()
+        .await;
+
+    if let Ok(resp) = result {
+        assert_eq!(resp.status(), 413);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "payload_too_large");
+        assert!(body["message"].as_str().unwrap().contains("size limit"));
+    }
 }
 
 // HANDWRITE-END

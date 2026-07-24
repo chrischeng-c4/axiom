@@ -33,7 +33,7 @@ async fn start_server_with_state(state: AppState) -> SocketAddr {
 }
 
 async fn start_server() -> (SocketAddr, AppState) {
-    let state = AppState::new(RelayServerConfig::ephemeral());
+    let state = AppState::new(RelayServerConfig::ephemeral(), 8 * 1024 * 1024);
     let addr = start_server_with_state(state.clone()).await;
     (addr, state)
 }
@@ -187,7 +187,7 @@ async fn admin_backup_requires_admin_when_auth_required() {
     })
     .to_string();
     let auth = relay::auth::AuthConfig::resolve("required", None, Some(&tokens)).unwrap();
-    let state = AppState::with_auth(RelayServerConfig::ephemeral(), auth);
+    let state = AppState::with_auth(RelayServerConfig::ephemeral(), auth, 8 * 1024 * 1024);
     let addr = start_server_with_state(state).await;
 
     let client = reqwest::Client::new();

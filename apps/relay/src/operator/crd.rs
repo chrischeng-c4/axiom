@@ -83,6 +83,12 @@ pub struct RelaySpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_tls_secret: Option<String>,
 
+    /// Data-plane request body size limit (bytes). Requests with `Content-Length`
+    /// exceeding this are rejected with 413; streamed bodies are bounded
+    /// mid-read. Defaults to 8 MiB (`RELAY_BODY_LIMIT_BYTES`, #2556).
+    #[serde(default = "default_body_limit_bytes")]
+    pub body_limit_bytes: u64,
+
     /// Optional scheduled backup (#1209). When set, the operator renders a
     /// `<name>-backup` CronJob (see [`super::render`]) invoking `relay
     /// backup` on this schedule against the deployment's own
@@ -146,6 +152,9 @@ fn default_storage() -> String {
 }
 fn default_grace_secs() -> u64 {
     10
+}
+fn default_body_limit_bytes() -> u64 {
+    8 * 1024 * 1024
 }
 fn default_auth() -> String {
     "off".into()

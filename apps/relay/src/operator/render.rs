@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:67ddc87b" tracker="pending-tracker" reason="Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app relay, manager relay-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [relay], port http 7000, shard_count pinned 1, headless_env_key RELAY_PEER_SERVICE = {name}-headless, /data PVC with storage/storageClass, extra_env RELAY_BIND 0.0.0.0:7000 + RELAY_DATA_DIR /data + RELAY_GRACE_SECS + optional RUST_LOG + opt-in RELAY_AUTH/RELAY_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/relay — lumen's pattern, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7000; PDB maxUnavailable 1."
+// HANDWRITE-BEGIN gap="missing-generator:logic:67ddc87b" tracker="pending-tracker" reason="Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app relay, manager relay-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [relay], port http 7000, shard_count pinned 1, headless_env_key RELAY_PEER_SERVICE = {name}-headless, /data PVC with storage/storageClass, extra_env RELAY_BIND 0.0.0.0:7000 + RELAY_DATA_DIR /data + RELAY_GRACE_SECS + RELAY_BODY_LIMIT_BYTES + optional RUST_LOG + opt-in RELAY_AUTH/RELAY_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/relay — lumen's pattern, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7000; PDB maxUnavailable 1."
 //! Pure rendering: a [`Relay`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
@@ -203,12 +203,14 @@ fn statefulset(relay: &Relay, cx: &RenderCtx, headless: &str) -> Value {
 
     // relay runtime env layered on top of the downward-API quartet +
     // RELAY_PEER_SERVICE the helper injects: bind-all on the serve port, the
-    // /data disk tier, and the drain window. RELAY_AUTH wiring is opt-in.
+    // /data disk tier, the drain window, and the body-limit cap. RELAY_AUTH
+    // wiring is opt-in.
     let mut extra_env = vec![
         json!({ "name": "RELAY_BIND", "value": format!("0.0.0.0:{CLIENT_PORT}") }),
         json!({ "name": "RELAY_RAFT_PORT", "value": RAFT_PORT.to_string() }),
         json!({ "name": "RELAY_DATA_DIR", "value": "/data" }),
         json!({ "name": "RELAY_GRACE_SECS", "value": s.grace_secs.to_string() }),
+        json!({ "name": "RELAY_BODY_LIMIT_BYTES", "value": s.body_limit_bytes.to_string() }),
         json!({ "name": "RELAY_LOG_FORMAT", "value": "json" }),
     ];
     if let Some(level) = &s.log_level {

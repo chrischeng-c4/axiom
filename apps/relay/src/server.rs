@@ -48,7 +48,8 @@ use crate::wire::{
 
 /// Shared application state: the relay core plus this shard's config, the
 /// per-op request metrics, the drain flag `/readyz` reports, the bearer
-/// verifier the data-plane auth layer runs (#1206), and — in replica/HA mode
+/// verifier the data-plane auth layer runs (#1206), the configured
+/// data-plane request body size limit (#2556), and — in replica/HA mode
 /// (#544) — the raft group the publish path proposes through.
 #[derive(Clone)]
 pub struct AppState {
@@ -58,13 +59,15 @@ pub struct AppState {
     draining: Arc<AtomicBool>,
     verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<crate::raft::RelayRaft>>,
+    body_limit_bytes: usize,
 }
 
 impl AppState {
     /// Build state with a fresh relay core from `config`. Auth is open
     /// (tokenless — the `RELAY_AUTH=off` default); production serving builds
-    /// through [`AppState::with_auth`].
-    pub fn new(config: RelayServerConfig) -> Self {
+    /// through [`AppState::with_auth`]. The `body_limit_bytes` parameter
+    /// configures the data-plane request body size limit (#2556).
+    pub fn new(config: RelayServerConfig, body_limit_bytes: usize) -> Self {
         let relay = Relay::new(config.core.clone());
         AppState {
             relay: Arc::new(relay),
@@ -73,14 +76,19 @@ impl AppState {
             draining: Arc::new(AtomicBool::new(false)),
             verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
+            body_limit_bytes,
         }
     }
 
     /// Build state with a resolved auth config (`--auth` /
     /// `--token-registry-file`): the data-plane auth layer runs the registry
     /// verifier when auth is required, the open verifier when off.
-    pub fn with_auth(config: RelayServerConfig, auth: crate::auth::AuthConfig) -> Self {
-        let mut state = AppState::new(config);
+    pub fn with_auth(
+        config: RelayServerConfig,
+        auth: crate::auth::AuthConfig,
+        body_limit_bytes: usize,
+    ) -> Self {
+        let mut state = AppState::new(config, body_limit_bytes);
         state.verifier = Arc::new(auth.verifier());
         state
     }
@@ -115,6 +123,11 @@ impl AppState {
     /// The per-op request metrics `/metrics` renders.
     pub fn metrics(&self) -> Arc<RelayMetrics> {
         Arc::clone(&self.metrics)
+    }
+
+    /// The configured data-plane request body size limit (bytes).
+    pub fn body_limit_bytes(&self) -> usize {
+        self.body_limit_bytes
     }
 
     /// Flip readiness to draining so `/readyz` returns 503. Called on SIGTERM
@@ -160,6 +173,7 @@ pub fn router_with_admission(
 ) -> Router {
     let req_metrics = state.metrics();
     let verifier = state.verifier();
+    let body_limit = state.body_limit_bytes();
     let data_plane = Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
@@ -199,7 +213,11 @@ pub fn router_with_admission(
         // after (= outside) the auth layer so rejected requests are still
         // counted.
         .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // Data-plane-only request body cap (#2556); probes below stay
+        // unbounded, matching `service_http`'s documented probe behavior.
+        // Enforces the configured body_limit_bytes with a structured 413 envelope.
+        .layer(service_http::body_limit_layer(body_limit));
     let data_plane = match admission {
         Some(controller) => data_plane.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {

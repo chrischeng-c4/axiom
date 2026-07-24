@@ -58,6 +58,11 @@ spec:
                 - destination
                 - schedule
                 type: object
+              bodyLimitBytes:
+                default: 8388608
+                description: 'Data-plane request body size limit (bytes). Requests with `Content-Length` exceeding this are rejected with 413; streamed bodies are bounded mid-read. Defaults to 8 MiB (`RELAY_BODY_LIMIT_BYTES`, #2556).'
+                type: integer
+                minimum: 0.0
               graceSecs:
                 default: 10
                 description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`. Defaults to 10 (`RELAY_GRACE_SECS`).
