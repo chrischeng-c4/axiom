@@ -132,7 +132,11 @@ fn source_extractor_sees_the_data_plane() {
 #[test]
 fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
-    let live = tape::spec::openapi_json();
+    // The snapshot is the CLI's stdout, so it carries the `println!` trailing
+    // newline; `openapi_json()` returns the document alone. Compare the
+    // emitted form so the gate matches exactly what the regenerate command
+    // below writes — no trimming, which would hide real whitespace drift.
+    let live = format!("{}\n", tape::spec::openapi_json());
     assert_eq!(
         committed, live,
         "clients/openapi.json is stale: regenerate via `cargo run -q -p tape --bin tape -- spec --format openapi > apps/tape/clients/openapi.json`"
