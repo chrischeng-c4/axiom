@@ -28,10 +28,11 @@ Public API manifest for `apps/lumen/src/raft_sm.rs` generated from AST during Sc
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `EngineSm` | apps/lumen/src/raft_sm.rs | struct | pub | 34 |  |
-| `RaftWriteSink` | apps/lumen/src/raft_sm.rs | struct | pub | 105 |  |
+| `RaftWriteSink` | apps/lumen/src/raft_sm.rs | struct | pub | 112 |  |
+| `engine` | apps/lumen/src/raft_sm.rs | function | pub | 55 | engine(&self) -> &Arc<Engine> |
 | `new` | apps/lumen/src/raft_sm.rs | function | pub | 44 | new(engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
-| `new` | apps/lumen/src/raft_sm.rs | function | pub | 112 | new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self |
-| `take_outcome` | apps/lumen/src/raft_sm.rs | function | pub | 54 | take_outcome(&self, index: u64) -> Result<ApplyOutcome> |
+| `new` | apps/lumen/src/raft_sm.rs | function | pub | 119 | new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self |
+| `take_outcome` | apps/lumen/src/raft_sm.rs | function | pub | 61 | take_outcome(&self, index: u64) -> Result<ApplyOutcome> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -85,6 +86,13 @@ impl EngineSm {
             applied: AtomicU64::new(from_seq),
             outcomes: Mutex::new(OutcomeWindow::new(OUTCOME_WINDOW)),
         })
+    }
+
+    /// #2516: the wrapped engine, so [`RaftWriteSink::submit`] can flip the
+    /// sticky degraded-storage gauge when the raft log append itself hits
+    /// ENOSPC (before there is any committed entry to apply).
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
     }
 
     /// Claim the outcome for `index` (the host's `propose` returns the index;
@@ -156,7 +164,29 @@ impl RaftWriteSink {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#source
 impl WriteSink for RaftWriteSink {
     async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
-        let index = self.host.propose(WalRecord::new(entry).encode()?).await?;
+        let index = match self.host.propose(WalRecord::new(entry).encode()?).await {
+            Ok(index) => index,
+            Err(e) => {
+                // #2516: the raft log append is itself a durable write path
+                // (named explicitly alongside AOF/segment/snapshot writes) —
+                // an ENOSPC here (surfaced through `propose`'s error chain the
+                // same way an AOF ENOSPC is) must enter the same sticky
+                // degraded read-only mode, not just propagate a generic error.
+                if crate::coordinator::is_storage_full(&e) {
+                    tracing::error!(
+                        error = %e,
+                        "raft log append hit ENOSPC — entering degraded read-only mode"
+                    );
+                    self.sm.engine().metrics().mark_storage_degraded();
+                    return Err(anyhow::Error::new(crate::coordinator::StorageFullError(
+                        "local storage is full (ENOSPC) appending to the raft log; node \
+                         entered degraded read-only mode"
+                            .to_string(),
+                    )));
+                }
+                return Err(e);
+            }
+        };
         self.sm.take_outcome(index)
     }
     fn applied_seq(&self) -> u64 {

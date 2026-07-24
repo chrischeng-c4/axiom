@@ -2350,6 +2350,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     #[cfg(feature = "raft-wal")]
     if let Some(host) = raft_host.clone() {
         let period = Duration::from_secs(args.snapshot_secs.max(1));
+        let snap_engine = engine.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(period);
             ticker.tick().await; // skip immediate fire
@@ -2360,7 +2361,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
                         tracing::info!(snapshot_index = idx, "raft snapshot taken + log compacted")
                     }
                     Ok(_) => {}
-                    Err(e) => tracing::warn!(error = %e, "raft snapshot/compact failed"),
+                    Err(e) => {
+                        // #2516: the raft snapshot is itself a durable
+                        // checkpoint write — same ENOSPC treatment as the
+                        // non-raft RDB/segment snapshotters below.
+                        if lumen::coordinator::is_storage_full(&e) {
+                            tracing::error!(error = %e, "raft snapshot/compact hit ENOSPC — entering degraded read-only mode");
+                            snap_engine.metrics().mark_storage_degraded();
+                        } else {
+                            tracing::warn!(error = %e, "raft snapshot/compact failed");
+                        }
+                    }
                 }
             }
         });
@@ -2378,7 +2389,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 match RdbSnapshot::capture(&snap_engine, seq) {
                     Ok(rdb) => {
                         if let Err(e) = store.save(&rdb).await {
-                            tracing::warn!(error = %e, "RDB snapshot save failed");
+                            // #2516: a checkpoint write is a durable write
+                            // path too — ENOSPC here must enter the same
+                            // sticky degraded read-only mode as an AOF
+                            // ENOSPC, not just a one-off warn.
+                            if lumen::coordinator::is_storage_full(&e) {
+                                tracing::error!(error = %e, "RDB snapshot save hit ENOSPC — entering degraded read-only mode");
+                                snap_engine.metrics().mark_storage_degraded();
+                            } else {
+                                tracing::warn!(error = %e, "RDB snapshot save failed");
+                            }
                         } else {
                             tracing::info!(up_to_seq = seq, "RDB snapshot written");
                             let _ = store.prune(3).await;
@@ -2438,8 +2458,57 @@ async fn serve(args: ServeArgs) -> Result<()> {
                             }
                         }
                     }
-                    Ok(Err(e)) => tracing::warn!(error = %e, "segment checkpoint save failed"),
+                    Ok(Err(e)) => {
+                        // #2516: same treatment as the RDB path above — a
+                        // segment checkpoint ENOSPC is a durable write path
+                        // failure and must flip the sticky degraded flag.
+                        if lumen::coordinator::is_storage_full(&e) {
+                            tracing::error!(error = %e, "segment checkpoint save hit ENOSPC — entering degraded read-only mode");
+                            snap_engine.metrics().mark_storage_degraded();
+                        } else {
+                            tracing::warn!(error = %e, "segment checkpoint save failed");
+                        }
+                    }
                     Err(e) => tracing::warn!(error = %e, "segment checkpoint task panicked"),
+                }
+            }
+        });
+    }
+
+    // #2516: periodic ENOSPC re-probe. While this node is in degraded
+    // read-only mode (`Metrics::storage_degraded`), attempt a small write
+    // into `--data-dir` every `LUMEN_STORAGE_FULL_REPROBE_SECS` (default 30s)
+    // and clear the sticky flag once one succeeds — the automatic recovery
+    // path for a PVC that was resized or freed up without a pod restart.
+    // (Operators can also just restart the pod: the flag is process-local
+    // and starts clear on a fresh process.) Only probes while degraded, so a
+    // healthy node pays nothing extra.
+    if let Some(dir) = args.data_dir.clone() {
+        let probe_engine = engine.clone();
+        let reprobe_secs: u64 = std::env::var("LUMEN_STORAGE_FULL_REPROBE_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(30);
+        let probe_path = std::path::Path::new(&dir).join(".storage_full_probe");
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(reprobe_secs));
+            ticker.tick().await; // skip immediate fire
+            loop {
+                ticker.tick().await;
+                if !probe_engine.metrics().is_storage_degraded() {
+                    continue;
+                }
+                match tokio::fs::write(&probe_path, b"ok").await {
+                    Ok(()) => {
+                        probe_engine.metrics().clear_storage_degraded();
+                        tracing::info!(
+                            "storage re-probe write succeeded; leaving degraded read-only mode"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "storage re-probe still failing");
+                    }
                 }
             }
         });

@@ -20,14 +20,16 @@ Public API manifest for `apps/lumen/src/coordinator.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `SharedAof` | apps/lumen/src/coordinator.rs | type | pub | 94 |  |
+| `SharedAof` | apps/lumen/src/coordinator.rs | type | pub | 133 |  |
+| `StorageFullError` | apps/lumen/src/coordinator.rs | struct | pub | 92 |  |
 | `SubmitStalled` | apps/lumen/src/coordinator.rs | struct | pub | 69 |  |
-| `WriteCoordinator` | apps/lumen/src/coordinator.rs | struct | pub | 97 |  |
-| `applied_seq` | apps/lumen/src/coordinator.rs | function | pub | 376 | applied_seq(&self) -> u64 |
-| `start` | apps/lumen/src/coordinator.rs | function | pub | 107 | start(wal: SharedWal, engine: Arc<Engine>) -> Arc<Self> |
-| `start_from` | apps/lumen/src/coordinator.rs | function | pub | 114 | start_from(wal: SharedWal, engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
-| `start_from_with_aof` | apps/lumen/src/coordinator.rs | function | pub | 124 | start_from_with_aof(         wal: SharedWal,         engine: Arc<Engine>,         from_seq: u64,         aof: SharedAof,     ) -> Arc<Self> |
-| `submit` | apps/lumen/src/coordinator.rs | function | pub | 355 | submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> |
+| `WriteCoordinator` | apps/lumen/src/coordinator.rs | struct | pub | 136 |  |
+| `applied_seq` | apps/lumen/src/coordinator.rs | function | pub | 455 | applied_seq(&self) -> u64 |
+| `is_storage_full` | apps/lumen/src/coordinator.rs | function | pub | 111 | is_storage_full(e: &anyhow::Error) -> bool |
+| `start` | apps/lumen/src/coordinator.rs | function | pub | 146 | start(wal: SharedWal, engine: Arc<Engine>) -> Arc<Self> |
+| `start_from` | apps/lumen/src/coordinator.rs | function | pub | 153 | start_from(wal: SharedWal, engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
+| `start_from_with_aof` | apps/lumen/src/coordinator.rs | function | pub | 163 | start_from_with_aof(         wal: SharedWal,         engine: Arc<Engine>,         from_seq: u64,         aof: SharedAof,     ) -> Arc<Self> |
+| `submit` | apps/lumen/src/coordinator.rs | function | pub | 434 | submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -111,6 +113,44 @@ impl std::fmt::Display for SubmitStalled {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
 impl std::error::Error for SubmitStalled {}
+
+/// A durable write path (local AOF append/flush/sync, a segment/RDB
+/// checkpoint save, or — under the `raft-wal` feature — a raft log append)
+/// hit `io::ErrorKind::StorageFull` (ENOSPC) or a wrapped equivalent (#2516).
+/// Reported as a distinct, stable error so `src/api.rs`'s
+/// `From<anyhow::Error> for ApiErr` maps it to `507 Insufficient Storage`
+/// with the machine-readable `storage_full` code instead of falling through
+/// to the generic `400` default. Every origin that produces one MUST first
+/// call `Metrics::mark_storage_degraded` — this type only carries the
+/// message, it does not itself flip the sticky degraded flag.
+#[derive(Debug, Clone)]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
+pub struct StorageFullError(pub String);
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
+impl std::fmt::Display for StorageFullError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
+impl std::error::Error for StorageFullError {}
+
+/// #2516: true when `e`'s error chain contains an `io::Error` whose kind is
+/// `StorageFull` (ENOSPC) — the seam every durable-write call site (AOF
+/// persist, segment/RDB checkpoint save, raft log append) probes to decide
+/// whether to flip the node into degraded read-only mode. Walks the full
+/// `anyhow` context chain (not just the outer error) because every durable
+/// write path wraps the root `std::io::Error` with `.context(...)`.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-coordinator-rs.md#source
+pub fn is_storage_full(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_e| io_e.kind() == std::io::ErrorKind::StorageFull)
+    })
+}
 
 struct CompletionState {
     outcomes: OutcomeWindow<Result<ApplyOutcome>>,
@@ -307,10 +347,39 @@ impl WriteCoordinator {
                                                 .and_then(|()| writer.maybe_sync())
                                         };
                                         if let Err(e) = persisted {
-                                            tracing::warn!(seq, error = %e, "AOF persist failed");
-                                            outcome = Err(
-                                                e.context("persist applied record to local AOF")
-                                            );
+                                            if is_storage_full(&e) {
+                                                // #2516: local disk is out of
+                                                // space. Flip the sticky
+                                                // degraded flag so every
+                                                // subsequent mutating request
+                                                // fast-fails before touching
+                                                // this path again, and report
+                                                // a distinct, stable error so
+                                                // the caller sees 507
+                                                // Insufficient Storage rather
+                                                // than a generic 400.
+                                                tracing::error!(
+                                                    seq,
+                                                    error = %e,
+                                                    "AOF persist failed: ENOSPC — entering degraded read-only mode"
+                                                );
+                                                engine.metrics().mark_storage_degraded();
+                                                outcome = Err(anyhow::Error::new(
+                                                    StorageFullError(format!(
+                                                        "local storage is full (ENOSPC) persisting sequence {seq}; \
+                                                         node entered degraded read-only mode"
+                                                    )),
+                                                ));
+                                            } else {
+                                                tracing::warn!(
+                                                    seq,
+                                                    error = %e,
+                                                    "AOF persist failed"
+                                                );
+                                                outcome = Err(e.context(
+                                                    "persist applied record to local AOF",
+                                                ));
+                                            }
                                         }
                                     }
                                 }
@@ -566,6 +635,86 @@ mod tests {
             2
         );
         assert_eq!(restarted.stats("u").unwrap().documents_indexed, 1);
+    }
+
+    /// #2516: prove the REAL ENOSPC detection/classification/metrics path
+    /// end to end, through the actual production write path — not a
+    /// parallel fake. Uses `AofWriter::set_inject_storage_full` (the
+    /// `#[cfg(test)]` fault-injection seam on the real `AofWriter::append`,
+    /// scoped to this test's own writer instance so parallel test threads
+    /// never cross-contaminate) so the apply loop's genuine
+    /// AOF-persist-failure branch runs.
+    #[tokio::test]
+    async fn aof_enospc_returns_storage_full_error_and_marks_degraded() {
+        let dir = tempfile::tempdir().unwrap();
+        let aof_path = dir.path().join("aof.log");
+        let aof = Arc::new(Mutex::new(crate::aof::AofWriter::open(&aof_path).unwrap()));
+        let engine = Arc::new(Engine::new());
+        let wal = Arc::new(MemWal::new());
+        let coord = WriteCoordinator::start_from_with_aof(wal, engine.clone(), 0, aof.clone());
+
+        // A normal write before the disk fills must succeed and must not
+        // touch the degraded flag.
+        coord
+            .submit(RaftLogEntry::CreateCollection {
+                collection_id: "u".into(),
+                req: keyword_schema(),
+            })
+            .await
+            .unwrap();
+        assert!(!engine.metrics().is_storage_degraded());
+
+        // Arm the fault injection: the next AofWriter::append hits a
+        // synthetic ENOSPC, exercising the real coordinator apply-loop
+        // branch that classifies it and flips the sticky flag.
+        aof.lock().unwrap().set_inject_storage_full(true);
+        let err = coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "u1".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("a@x.com".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap_err();
+        aof.lock().unwrap().set_inject_storage_full(false);
+
+        assert!(
+            err.downcast_ref::<StorageFullError>().is_some(),
+            "expected StorageFullError, got: {err}"
+        );
+        assert!(
+            engine.metrics().is_storage_degraded(),
+            "ENOSPC on the AOF write path must flip the sticky degraded gauge"
+        );
+        assert_eq!(engine.metrics().storage_full_errors_total.get(), 1);
+
+        // Probe/clear (what the periodic re-probe does once space returns):
+        // writes must resume once the flag is cleared.
+        engine.metrics().clear_storage_degraded();
+        let indexed = coord
+            .submit(RaftLogEntry::Index {
+                collection_id: "u".into(),
+                req: IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "u2".into(),
+                        field: "email".into(),
+                        value: FieldValue::String("b@x.com".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            })
+            .await
+            .unwrap();
+        assert!(matches!(indexed, ApplyOutcome::Indexed(r) if r.indexed == 1));
+        assert!(!engine.metrics().is_storage_degraded());
     }
 
     #[tokio::test]
