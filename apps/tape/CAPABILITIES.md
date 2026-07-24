@@ -21,6 +21,16 @@ contract currently lives in `apps/tape/README.md` (`cap_path`); this section
 records real-cloud proof runs until the #1848 cap_path relocation lands.
 Harness: `benchmarks/gcp-operator-acceptance` (`ACCEPTANCE_APPS=tape`).
 
+### GKE acceptance run 0724164220 (2026-07-24, PASSED — final 0.4.11 candidate, #2557 declarative provisioning proven)
+
+Tape-only run from HEAD `c06504d6e1` (the full 0.4.11 candidate). All 13
+proofs `passed` again, and the run's pull/ack legs now execute against a
+subscription **pre-provisioned via CR `spec.topics`** with zero imperative
+setup (`kubernetes/tape-subscription-cr-provisioned.txt`) — the #2557
+dual-path provisioning contract (declarative additive-only ensure alongside
+the untouched client API) proven end to end on Standard GKE. Cleanup clean.
+Evidence root: `axiom-gcp-run-backup/evidence/0724164220/`.
+
 ### GKE acceptance run 0724161853 (2026-07-24, PASSED — 0.4.11 candidate, #2468 restart + #2485 lag gauges proven)
 
 Tape-only run on the unified harness (restored `ACCEPTANCE_APPS=tape` mode
