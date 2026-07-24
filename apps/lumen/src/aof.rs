@@ -83,6 +83,13 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofWriter {
     inner: FramedLogWriter,
+    /// #2516: test-only ENOSPC fault injection, armed via
+    /// [`AofWriter::set_inject_storage_full`]. Scoped to THIS writer instance
+    /// (not a process-global flag) so parallel `cargo test` threads sharing
+    /// the same test binary never cross-contaminate each other's AOF writes —
+    /// each test opens its own `AofWriter` over its own tempdir.
+    #[cfg(test)]
+    inject_storage_full: std::sync::atomic::AtomicBool,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
@@ -100,12 +107,36 @@ impl AofWriter {
         let path = path.into();
         Ok(Self {
             inner: FramedLogWriter::open(&path, policy)?,
+            #[cfg(test)]
+            inject_storage_full: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// #2516: arm/disarm the next [`AofWriter::append`] call on THIS writer to
+    /// fail with a synthetic `io::ErrorKind::StorageFull` error instead of
+    /// touching the real file — the fault-injection seam that exercises the
+    /// REAL production error-handling path (`crate::coordinator::is_storage_full`
+    /// -> `Metrics::mark_storage_degraded` -> `crate::coordinator::StorageFullError`
+    /// -> `ApiErr`'s 507 mapping) end to end without needing a genuinely full
+    /// disk.
+    #[cfg(test)]
+    pub fn set_inject_storage_full(&self, on: bool) {
+        self.inject_storage_full
+            .store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append one applied `(seq, record)` frame. Buffered; durability follows the
     /// fsync policy (`Always` fsyncs now, `EverySec` defers to `maybe_sync`).
     pub fn append(&mut self, seq: u64, record: &WalRecord) -> Result<()> {
+        #[cfg(test)]
+        if self
+            .inject_storage_full
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(anyhow::Error::new(std::io::Error::from(
+                std::io::ErrorKind::StorageFull,
+            )));
+        }
         let payload = encode_payload(record)?;
         self.inner.append(seq, &payload)
     }

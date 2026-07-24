@@ -41,7 +41,7 @@ use axum::http::HeaderMap;
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{SubmitStalled, WriteCoordinator, WriteSink};
+use crate::coordinator::{StorageFullError, SubmitStalled, WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
 use crate::reshard::ReshardBatch;
@@ -998,6 +998,32 @@ fn enforce_write_fence(
     Ok(())
 }
 
+/// #2516: sticky ENOSPC degraded read-only mode. Called first (before any
+/// other check) by every mutating admin/data-plane handler — `index`,
+/// `docs:replace` (both `replace_docs` and `replace_doc`), delete,
+/// create/drop collection, and admin restore — so a node that has already
+/// taken a genuine ENOSPC hit on its durable write path (see
+/// `crate::coordinator::is_storage_full` /
+/// `Metrics::mark_storage_degraded`) fast-fails every subsequent mutating
+/// request with `507 Insufficient Storage` instead of re-attempting (and
+/// re-failing) the same durable write. Deliberately a pure gauge read: no
+/// I/O, so this never itself contributes to a full disk. Reads/search/health
+/// are exempt — they keep serving while degraded (see the `readyz`
+/// discussion in this issue's report: a degraded node still answers reads).
+fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
+    if state.engine.metrics().is_storage_degraded() {
+        return Err(ApiErr::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            "node is in degraded read-only mode: local storage reported ENOSPC on a durable \
+             write path; retry once the periodic re-probe clears it, or restart the pod once \
+             space has been freed"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
@@ -1083,7 +1109,8 @@ async fn list_collections(
     request_body = CreateCollectionRequest,
     responses(
         (status = 200, description = "Collection created", body = CreateCollectionResponse),
-        (status = 400, description = "Invalid schema",     body = ApiError)
+        (status = 400, description = "Invalid schema",     body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn create_collection(
@@ -1094,6 +1121,7 @@ async fn create_collection(
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<Json<CreateCollectionResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
+    enforce_storage_writable(&state)?;
     // #2496: fan create_collection out across every physical shard when
     // routed — a collection created against only one shard left every other
     // shard unable to serve a write that hashed there, matching the
@@ -1138,7 +1166,8 @@ struct DropQuery {
     responses(
         (status = 202, description = "Soft-deleted (grace window)"),
         (status = 204, description = "Physically dropped"),
-        (status = 404, description = "Unknown collection")
+        (status = 404, description = "Unknown collection"),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn drop_collection(
@@ -1149,6 +1178,7 @@ async fn drop_collection(
     Query(q): Query<DropQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
+    enforce_storage_writable(&state)?;
     // #2496: same routed-or-local fan-out as `create_collection` above.
     let outcome = if let Some(router) = &state.routed {
         router
@@ -1203,7 +1233,8 @@ async fn drop_collection(
         (status = 200, description = "Items indexed",     body = IndexResponse),
         (status = 400, description = "Batch size over the limit", body = ApiError),
         (status = 404, description = "Unknown collection", body = ApiError),
-        (status = 422, description = "Type mismatch",      body = ApiError)
+        (status = 422, description = "Type mismatch",      body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn index(
@@ -1214,6 +1245,7 @@ async fn index(
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_storage_writable(&state)?;
     if req.items.len() > MAX_INDEX_BATCH_SIZE {
         return Err(ApiErr::new(
             StatusCode::BAD_REQUEST,
@@ -1256,7 +1288,10 @@ struct DeleteQuery {
         ("external_id"   = String, Path, description = "Caller-owned identifier"),
         ("field"         = Option<String>, Query, description = "Restrict deletion to one field")
     ),
-    responses((status = 204, description = "Deleted"))
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
+    )
 )]
 async fn delete_external_id(
     State(state): State<AppState>,
@@ -1266,6 +1301,7 @@ async fn delete_external_id(
     Query(q): Query<DeleteQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_storage_writable(&state)?;
     enforce_write_fence(&state, &collection_id, &external_id)?;
     if let Some(router) = &state.routed {
         router
@@ -1308,7 +1344,8 @@ async fn delete_external_id(
     request_body = ReplaceDocsRequest,
     responses(
         (status = 200, description = "Per-item results, same order and length as `docs`", body = ReplaceDocsResponse),
-        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
+        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn replace_docs(
@@ -1319,6 +1356,7 @@ async fn replace_docs(
     Json(req): Json<ReplaceDocsRequest>,
 ) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_storage_writable(&state)?;
     if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
         return Err(ApiErr::new(
             StatusCode::BAD_REQUEST,
@@ -1375,7 +1413,8 @@ async fn replace_docs_routed_or_local(
     request_body = ReplaceDocBody,
     responses(
         (status = 200, description = "Replacement result for this doc", body = ReplaceDocResult),
-        (status = 400, description = "Malformed body", body = ApiError)
+        (status = 400, description = "Malformed body", body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn replace_doc(
@@ -1386,6 +1425,7 @@ async fn replace_doc(
     Json(body): Json<ReplaceDocBody>,
 ) -> Result<Json<ReplaceDocResult>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
+    enforce_storage_writable(&state)?;
     enforce_write_fence(&state, &collection_id, &external_id)?;
     let req = ReplaceDocsRequest {
         docs: vec![ReplaceDocItem {
@@ -2121,7 +2161,8 @@ async fn backup_to_local(
     responses(
         (status = 204, description = "Engine state replaced from the snapshot"),
         (status = 403, description = "Missing admin role", body = ApiError),
-        (status = 422, description = "Malformed or incompatible snapshot", body = ApiError)
+        (status = 422, description = "Malformed or incompatible snapshot", body = ApiError),
+        (status = 507, description = "Node in ENOSPC degraded read-only mode (#2516)", body = ApiError)
     )
 )]
 async fn restore(
@@ -2130,6 +2171,7 @@ async fn restore(
     Json(snap): Json<SnapshotV1>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure("*", Role::Admin)?;
+    enforce_storage_writable(&state)?;
     state.engine.restore(snap).map_err(ApiErr::from)?;
     tracing::info!(
         target: "lumen.audit",
@@ -2717,6 +2759,18 @@ impl From<anyhow::Error> for ApiErr {
             return Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "write_stalled",
+                e.to_string(),
+            );
+        }
+        // #2516: a durable write path genuinely hit ENOSPC — the write
+        // coordinator already flipped the sticky degraded gauge before
+        // producing this error. Report 507 Insufficient Storage with the
+        // stable `storage_full` code rather than falling through to the
+        // generic 400 default.
+        if e.downcast_ref::<StorageFullError>().is_some() {
+            return Self::new(
+                StatusCode::INSUFFICIENT_STORAGE,
+                "storage_full",
                 e.to_string(),
             );
         }

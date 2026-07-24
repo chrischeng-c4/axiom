@@ -2240,4 +2240,117 @@ async fn first_write_after_checkpoint_restore_completes_and_is_searchable() {
         "lumen_index_writes_total must have advanced past 0: {metrics_body}"
     );
 }
+
+/// #2516: ENOSPC degraded read-only mode, proven at the HTTP layer.
+///
+/// `coordinator::tests::aof_enospc_returns_storage_full_error_and_marks_degraded`
+/// (src/coordinator.rs) already proves a REAL `AofWriter::append` ENOSPC is
+/// classified into `StorageFullError` and flips `Metrics::storage_degraded`
+/// through the actual apply loop — that fault-injection seam lives behind
+/// `#[cfg(test)]` on the lib crate and isn't visible to this separate
+/// integration-test binary. This test instead drives the degraded state the
+/// same way the real apply loop leaves it (`Metrics::mark_storage_degraded`,
+/// a public method) and proves the HTTP-facing contract on top of it:
+/// (a) a mutating request while degraded gets the 507 `storage_full`
+/// envelope, (b) it fast-fails WITHOUT touching the durable path (no
+/// documents land), (c) reads/search/health/metrics keep serving normally,
+/// and (d) clearing the flag (what the periodic re-probe does once space
+/// returns) restores writability.
+#[tokio::test]
+async fn storage_full_degrades_writes_507_but_keeps_reads_serving() {
+    let (s, engine) = server_with_engine();
+
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "email", "value": "a@x.com" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    // Not degraded yet: health/readyz report normally.
+    s.get("/healthz").await.assert_status_ok();
+    s.get("/readyz").await.assert_status_ok();
+
+    // Simulate what the real apply loop does on a genuine ENOSPC hit
+    // (coordinator::start_from_inner's AOF-persist-failure branch).
+    engine.metrics().mark_storage_degraded();
+
+    // (a) + (b): the write gets a 507 storage_full envelope and never
+    // touches the durable path — the document is not indexed.
+    let resp = s
+        .post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u2", "field": "email", "value": "b@x.com" }
+        ]}))
+        .await;
+    resp.assert_status(axum::http::StatusCode::INSUFFICIENT_STORAGE);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "storage_full", "{body}");
+    assert!(
+        body["message"].as_str().unwrap_or("").contains("ENOSPC")
+            || body["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("degraded read-only"),
+        "507 envelope should explain the degraded state: {body}"
+    );
+
+    // Every mutating endpoint named in #2516's scope fast-fails the same way,
+    // without a retry storm against the durable path.
+    s.delete("/collections/users/index/u1")
+        .await
+        .assert_status(axum::http::StatusCode::INSUFFICIENT_STORAGE);
+    s.put("/collections/users/docs:replace")
+        .json(&json!({ "docs": [] }))
+        .await
+        .assert_status(axum::http::StatusCode::INSUFFICIENT_STORAGE);
+    s.put("/collections/other")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status(axum::http::StatusCode::INSUFFICIENT_STORAGE);
+    s.delete("/collections/users")
+        .await
+        .assert_status(axum::http::StatusCode::INSUFFICIENT_STORAGE);
+
+    // (c): reads/search/health/metrics keep serving while degraded.
+    s.get("/healthz").await.assert_status_ok();
+    s.get("/readyz").await.assert_status_ok();
+    let search = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    search.assert_status_ok();
+    let search_body: Value = search.json();
+    assert_eq!(
+        search_body["total"], 1,
+        "only u1 (indexed before degraded mode) is present; the degraded \
+         write for u2 must never have landed: {search_body}"
+    );
+    let metrics_text = s.get("/metrics").await.text();
+    assert!(
+        metrics_text.contains("lumen_storage_degraded 1"),
+        "the degraded gauge must be visible on /metrics while degraded: {metrics_text}"
+    );
+
+    // (d): once the periodic re-probe clears the flag, writes resume.
+    engine.metrics().clear_storage_degraded();
+    s.post("/collections/users/index")
+        .json(&json!({ "items": [
+            { "external_id": "u2", "field": "email", "value": "b@x.com" }
+        ]}))
+        .await
+        .assert_status_ok();
+    let metrics_text = s.get("/metrics").await.text();
+    assert!(
+        metrics_text.contains("lumen_storage_degraded 0"),
+        "the degraded gauge must clear once recovered: {metrics_text}"
+    );
+}
 // CODEGEN-END

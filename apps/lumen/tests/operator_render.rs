@@ -575,6 +575,7 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
             "LumenRaftLeaderAbsent",
             "LumenReshardWorkflowStalled",
             "LumenPvcNearFull",
+            "LumenStorageDegraded",
             "LumenAuthRegistryReloadFailing",
             "LumenSlowQueries",
         ]
@@ -700,6 +701,38 @@ fn prometheus_rule_covers_slow_queries() {
     assert_eq!(slow_queries["labels"]["severity"], "warning");
     assert!(slow_queries["annotations"]["summary"].is_string());
     assert!(slow_queries["annotations"]["runbook"].is_string());
+}
+
+/// #2516: the storage-degraded alert binds to `lumen_storage_degraded`
+/// (`src/metrics.rs`'s `Metrics::mark_storage_degraded`, flipped by
+/// `src/coordinator.rs`/`src/bin/lumen.rs`/`src/raft_sm.rs` on a real
+/// ENOSPC), pages at `critical` (writes are actively failing, not just
+/// nearing capacity like `LumenPvcNearFull`), and its runbook cross-references
+/// both `LumenPvcNearFull` (the early warning this alert follows) and
+/// `LumenReshardWorkflowStalled` (the disk-pressure story).
+#[test]
+fn prometheus_rule_covers_storage_degraded() {
+    let l = lumen("lumen", prod_spec());
+    let objs = render(&l);
+    let rule = find(&objs, "PrometheusRule", "lumen");
+    let rules = rule["spec"]["groups"][0]["rules"].as_array().unwrap();
+
+    let storage_degraded = rules
+        .iter()
+        .find(|r| r["alert"] == "LumenStorageDegraded")
+        .unwrap();
+    let expr = storage_degraded["expr"].as_str().unwrap();
+    assert!(expr.contains("lumen_storage_degraded"));
+    assert!(expr.contains("namespace=\"acme\""));
+    assert!(expr.contains("by (pod)"));
+    assert_eq!(storage_degraded["for"], "1m");
+    assert_eq!(storage_degraded["labels"]["severity"], "critical");
+    let summary = storage_degraded["annotations"]["summary"].as_str().unwrap();
+    assert!(summary.contains("507"));
+    let runbook = storage_degraded["annotations"]["runbook"].as_str().unwrap();
+    assert!(runbook.contains("LumenPvcNearFull"));
+    assert!(runbook.contains("LumenReshardWorkflowStalled"));
+    assert!(runbook.contains("LUMEN_STORAGE_FULL_REPROBE_SECS"));
 }
 
 #[test]

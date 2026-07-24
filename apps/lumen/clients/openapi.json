@@ -359,6 +359,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -474,6 +484,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       },
@@ -512,6 +532,16 @@
           },
           "404": {
             "description": "Unknown collection"
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       },
@@ -614,6 +644,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -660,6 +700,16 @@
           },
           "400": {
             "description": "Malformed body or batch size over the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
             "content": {
               "application/json": {
                 "schema": {
@@ -831,6 +881,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -874,6 +934,16 @@
         "responses": {
           "204": {
             "description": "Deleted"
+          },
+          "507": {
+            "description": "Node in ENOSPC degraded read-only mode (#2516)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }

@@ -556,7 +556,14 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
 // `src/auth.rs`). `LumenPvcNearFull` reads the kubelet's
 // `kubelet_volume_stats_*` series against the `raft-<name>-<ordinal>`
 // StatefulSet PVC name pattern (`volumeClaimTemplates` name is `raft`, see
-// `serving_statefulset`). `LumenReshardWorkflowStalled` is a PARTIAL proxy:
+// `serving_statefulset`). `LumenStorageDegraded` (#2516) reads
+// `lumen_storage_degraded`, the self-scraped gauge a pod sets to `1` the
+// moment a durable write path (AOF append, segment/RDB checkpoint save, or
+// raft log append) actually hits ENOSPC and the pod enters sticky degraded
+// read-only mode (`Metrics::mark_storage_degraded`, `src/coordinator.rs` /
+// `src/bin/lumen.rs` / `src/raft_sm.rs`) — it is the "disk is now actually
+// full and writes are failing" companion to `LumenPvcNearFull`'s "disk is
+// nearly full" early warning. `LumenReshardWorkflowStalled` is a PARTIAL proxy:
 // the reshard driver's phase machine (`LumenStatus.reshard`, CR status) is
 // not published to Prometheus by any customresourcestate config this
 // operator ships, so this alert reads the driver's write-fence instead
@@ -654,6 +661,19 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                         "annotations": {
                             "summary": "lumen raft PVC {{ $labels.persistentvolumeclaim }} has less than 10% free space in {{ $labels.namespace }}",
                             "runbook": "kubectl get pvc -n {{ $labels.namespace }} {{ $labels.persistentvolumeclaim }} -o wide; the owning pod is {{ $labels.persistentvolumeclaim }} with its `raft-` prefix stripped -- exec in and run `df -h`, then expand volumeClaimTemplates (if the StorageClass supports online resize) or prune old snapshots/segments.",
+                        },
+                    },
+                    {
+                        "alert": "LumenStorageDegraded",
+                        "expr": format!(
+                            "max(lumen_storage_degraded{{namespace=\"{}\"}}) by (pod) == 1",
+                            cx.ns
+                        ),
+                        "for": "1m",
+                        "labels": { "severity": "critical" },
+                        "annotations": {
+                            "summary": "lumen pod {{ $labels.pod }} is in ENOSPC degraded read-only mode in {{ $labels.namespace }} -- mutating writes are being fast-failed with 507 storage_full",
+                            "runbook": "kubectl exec -n {{ $labels.namespace }} {{ $labels.pod }} -- df -h; a durable write (AOF append, segment/RDB checkpoint, or raft log append) hit ENOSPC on the raft-<ordinal> PVC -- LumenPvcNearFull should have fired earlier as the early warning, so also check why it didn't. Free space (prune old snapshots/segments, or expand volumeClaimTemplates if the StorageClass supports online resize); the pod's periodic re-probe (LUMEN_STORAGE_FULL_REPROBE_SECS, default 30s) clears this automatically once a probe write succeeds, or restart the pod. If disk pressure traces back to an unfinished reshard leaving stale buckets, see LumenReshardWorkflowStalled too.",
                         },
                     },
                     {

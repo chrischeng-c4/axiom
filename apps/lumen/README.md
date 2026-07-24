@@ -484,6 +484,24 @@ columnar mmap segments, with deterministic reopen from local log/checkpoints.
 Gate Inventory:
 - apps/lumen/tests/disk_scale_proof.rs; apps/lumen/src/storage.rs
 
+Disk-full behavior (#2516): when a durable write path (local AOF append, a
+segment/RDB checkpoint save, or — under `--wal raft` — a raft log append)
+hits ENOSPC, the pod enters a sticky, process-local degraded read-only mode:
+the failing write and every subsequent mutating request (`index`,
+`docs:replace`, delete, create/drop collection, `admin/restore`) get a
+structured `507 Insufficient Storage` response (`{"error":"storage_full",...}`)
+without retrying the durable path, while reads/search/`/healthz`/`/readyz`
+keep serving normally (`/readyz` intentionally stays `200` — the node is
+still useful for reads). Visibility is via the `lumen_storage_degraded` gauge
+and `lumen_storage_full_errors_total` counter (`/metrics`) plus the
+`LumenStorageDegraded` alert, paired with the existing `LumenPvcNearFull`
+alert (fires at <10% free on the `raft-<ordinal>` PVC) as its early-warning
+companion — `LumenPvcNearFull` should page first, well before disk
+actually fills. Recovery is automatic: every `LUMEN_STORAGE_FULL_REPROBE_SECS` (default `30`) the pod
+retries a small write into `--data-dir` and clears the flag once one
+succeeds — freeing space or expanding the PVC online is enough; a pod
+restart also clears it (the flag is process-local, not persisted).
+
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | apps/lumen/tests/disk_scale_proof.rs<br>apps/lumen/src/storage.rs |

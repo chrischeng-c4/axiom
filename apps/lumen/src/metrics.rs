@@ -172,6 +172,21 @@ pub struct Metrics {
     /// registry hot-reload, pairing with the failure counter above as a
     /// cheap staleness signal.
     pub auth_registry_reload_success_unixtime: Gauge,
+    /// #2516: `1` while this node is in ENOSPC degraded read-only mode
+    /// (a durable write path — local AOF/WAL append, segment/RDB
+    /// checkpoint save, or raft log append — hit
+    /// `io::ErrorKind::StorageFull`), `0` otherwise. Sticky: stays `1`
+    /// until the periodic re-probe (`LUMEN_STORAGE_FULL_REPROBE_SECS`, see
+    /// `src/bin/lumen.rs`) confirms the data dir accepts a write again, or
+    /// the process restarts. `crate::api::enforce_storage_writable` reads
+    /// this to fast-fail mutating endpoints without touching the durable
+    /// path; `render::prometheus_rule`'s `LumenStorageDegraded` alert reads
+    /// the published `lumen_storage_degraded` series.
+    pub storage_degraded: Gauge,
+    /// #2516: total genuine ENOSPC hits observed on a durable write path,
+    /// monotonic across the process lifetime (never reset when
+    /// `storage_degraded` clears) — see [`Metrics::mark_storage_degraded`].
+    pub storage_full_errors_total: Counter,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
@@ -282,6 +297,30 @@ impl Metrics {
     pub fn touch_auth_registry_reload_success(&self) {
         self.auth_registry_reload_success_unixtime
             .set(unix_now_secs());
+    }
+
+    /// #2516: flip into ENOSPC degraded read-only mode and count the hit.
+    /// Called from every durable-write-path origin that classifies its
+    /// failure as `io::ErrorKind::StorageFull` (see
+    /// `crate::coordinator::is_storage_full`) — the coordinator apply
+    /// loop's local AOF persist, the periodic RDB/segment checkpoint
+    /// snapshotters, and (when the `raft-wal` feature is active) raft log
+    /// append. Idempotent: calling it while already degraded still counts
+    /// the new hit but leaves the gauge at `1`.
+    pub fn mark_storage_degraded(&self) {
+        self.storage_full_errors_total.incr();
+        self.storage_degraded.set(1);
+    }
+
+    /// #2516: `true` while this node is in ENOSPC degraded read-only mode.
+    pub fn is_storage_degraded(&self) -> bool {
+        self.storage_degraded.get() != 0
+    }
+
+    /// #2516: clear degraded mode once the periodic re-probe confirms the
+    /// data dir accepts a write again.
+    pub fn clear_storage_degraded(&self) {
+        self.storage_degraded.set(0);
     }
 
     /// Prometheus text format (0.0.4 compatible). Always emits the same
@@ -410,6 +449,19 @@ impl Metrics {
                 "Unix time of the last successful bearer-token registry hot-reload.",
                 self.auth_registry_reload_success_unixtime.get(),
             ),
+            Sample::new(
+                "lumen_storage_degraded",
+                "gauge",
+                "1 while this node is in ENOSPC degraded read-only mode (a durable write \
+                 path hit disk-full).",
+                self.storage_degraded.get(),
+            ),
+            Sample::new(
+                "lumen_storage_full_errors_total",
+                "counter",
+                "Total genuine ENOSPC hits observed on a durable write path.",
+                self.storage_full_errors_total.get(),
+            ),
         ];
         let mut out = metrics_prometheus::render(&samples);
         // #2519: real Prometheus histogram for search latency — hand-rolled
@@ -527,6 +579,8 @@ mod tests {
             "lumen_auth_registry_reload_failures_total",
             "lumen_auth_registry_reload_success_unixtime",
             "lumen_raft_leader_known",
+            "lumen_storage_degraded",
+            "lumen_storage_full_errors_total",
         ] {
             assert!(out.contains(name), "expected {name} in:\n{out}");
         }
@@ -642,6 +696,35 @@ mod tests {
         );
     }
 
+    /// #2516: `mark_storage_degraded` flips the gauge to `1` and counts the
+    /// hit; `clear_storage_degraded` (the periodic re-probe) flips it back
+    /// without touching the counter — the counter is a lifetime total, not
+    /// a "currently degraded" signal.
+    #[test]
+    fn storage_degraded_marks_and_clears() {
+        let m = Metrics::new();
+        assert!(!m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 0);
+
+        m.mark_storage_degraded();
+        assert!(m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 1);
+
+        // A second hit while already degraded still counts, but the gauge
+        // stays at 1 (sticky, not a counter).
+        m.mark_storage_degraded();
+        assert!(m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 2);
+
+        m.clear_storage_degraded();
+        assert!(!m.is_storage_degraded());
+        assert_eq!(
+            m.storage_full_errors_total.get(),
+            2,
+            "clearing degraded mode must not reset the lifetime error counter"
+        );
+    }
+
     /// Byte-identical golden-render check (#974): fixed inputs must
     /// reproduce the exact pre-refactor `render()` capture, byte for
     /// byte — this is the AC2 contract the observability EC claim
@@ -668,6 +751,7 @@ mod tests {
         m.incr_auth_registry_reload_failure();
         m.auth_registry_reload_success_unixtime.set(1_700_000_001);
         m.set_raft_leader_known(2, true);
+        m.mark_storage_degraded();
         let out = m.render();
         let golden = "# HELP lumen_index_writes_total Total index items applied.\n\
 # TYPE lumen_index_writes_total counter\n\
@@ -726,6 +810,12 @@ lumen_auth_registry_reload_failures_total 2\n\
 # HELP lumen_auth_registry_reload_success_unixtime Unix time of the last successful bearer-token registry hot-reload.\n\
 # TYPE lumen_auth_registry_reload_success_unixtime gauge\n\
 lumen_auth_registry_reload_success_unixtime 1700000001\n\
+# HELP lumen_storage_degraded 1 while this node is in ENOSPC degraded read-only mode (a durable write path hit disk-full).\n\
+# TYPE lumen_storage_degraded gauge\n\
+lumen_storage_degraded 1\n\
+# HELP lumen_storage_full_errors_total Total genuine ENOSPC hits observed on a durable write path.\n\
+# TYPE lumen_storage_full_errors_total counter\n\
+lumen_storage_full_errors_total 1\n\
 # HELP lumen_search_latency_seconds Search latency histogram in seconds, bucketed for search SLOs.\n\
 # TYPE lumen_search_latency_seconds histogram\n\
 lumen_search_latency_seconds_bucket{le=\"0.001\"} 0\n\
@@ -754,7 +844,8 @@ lumen_raft_leader_known{shard=\"2\"} 1\n";
              lumen_auth_registry_reload_success_unixtime + lumen_raft_leader_known; \
              #2519 added lumen_slow_queries_total + the \
              lumen_search_latency_seconds histogram, and marked \
-             lumen_search_latency_ms_sum/_count deprecated in HELP text)"
+             lumen_search_latency_ms_sum/_count deprecated in HELP text; \
+             #2516 added lumen_storage_degraded + lumen_storage_full_errors_total)"
         );
     }
 }

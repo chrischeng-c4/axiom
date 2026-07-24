@@ -20,17 +20,18 @@ Public API manifest for `apps/lumen/src/aof.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 149 |  |
+| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 180 |  |
 | `AofWriter` | apps/lumen/src/aof.rs | struct | pub | 84 |  |
-| `append` | apps/lumen/src/aof.rs | function | pub | 108 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
-| `flush` | apps/lumen/src/aof.rs | function | pub | 115 | flush(&mut self) -> Result<()> |
-| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 128 | maybe_sync(&mut self) -> Result<()> |
-| `open` | apps/lumen/src/aof.rs | function | pub | 92 | open(path: impl Into<PathBuf>) -> Result<Self> |
-| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 99 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
-| `replay` | apps/lumen/src/aof.rs | function | pub | 161 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
-| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 184 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
-| `sync` | apps/lumen/src/aof.rs | function | pub | 120 | sync(&mut self) -> Result<()> |
-| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 141 | truncate_through(&mut self, through: u64) -> Result<()> |
+| `append` | apps/lumen/src/aof.rs | function | pub | 130 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
+| `flush` | apps/lumen/src/aof.rs | function | pub | 146 | flush(&mut self) -> Result<()> |
+| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 159 | maybe_sync(&mut self) -> Result<()> |
+| `open` | apps/lumen/src/aof.rs | function | pub | 99 | open(path: impl Into<PathBuf>) -> Result<Self> |
+| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 106 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
+| `set_inject_storage_full` | apps/lumen/src/aof.rs | function | pub (cfg(test)) | 123 | set_inject_storage_full(&self, on: bool) |
+| `replay` | apps/lumen/src/aof.rs | function | pub | 192 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
+| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 215 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
+| `sync` | apps/lumen/src/aof.rs | function | pub | 151 | sync(&mut self) -> Result<()> |
+| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 172 | truncate_through(&mut self, through: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -120,6 +121,13 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofWriter {
     inner: FramedLogWriter,
+    /// #2516: test-only ENOSPC fault injection, armed via
+    /// [`AofWriter::set_inject_storage_full`]. Scoped to THIS writer instance
+    /// (not a process-global flag) so parallel `cargo test` threads sharing
+    /// the same test binary never cross-contaminate each other's AOF writes —
+    /// each test opens its own `AofWriter` over its own tempdir.
+    #[cfg(test)]
+    inject_storage_full: std::sync::atomic::AtomicBool,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
@@ -137,12 +145,36 @@ impl AofWriter {
         let path = path.into();
         Ok(Self {
             inner: FramedLogWriter::open(&path, policy)?,
+            #[cfg(test)]
+            inject_storage_full: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// #2516: arm/disarm the next [`AofWriter::append`] call on THIS writer to
+    /// fail with a synthetic `io::ErrorKind::StorageFull` error instead of
+    /// touching the real file — the fault-injection seam that exercises the
+    /// REAL production error-handling path (`crate::coordinator::is_storage_full`
+    /// -> `Metrics::mark_storage_degraded` -> `crate::coordinator::StorageFullError`
+    /// -> `ApiErr`'s 507 mapping) end to end without needing a genuinely full
+    /// disk.
+    #[cfg(test)]
+    pub fn set_inject_storage_full(&self, on: bool) {
+        self.inject_storage_full
+            .store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append one applied `(seq, record)` frame. Buffered; durability follows the
     /// fsync policy (`Always` fsyncs now, `EverySec` defers to `maybe_sync`).
     pub fn append(&mut self, seq: u64, record: &WalRecord) -> Result<()> {
+        #[cfg(test)]
+        if self
+            .inject_storage_full
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(anyhow::Error::new(std::io::Error::from(
+                std::io::ErrorKind::StorageFull,
+            )));
+        }
         let payload = encode_payload(record)?;
         self.inner.append(seq, &payload)
     }
