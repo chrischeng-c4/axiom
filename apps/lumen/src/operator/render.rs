@@ -565,7 +565,10 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
 // fenced final `CatchingUp` pass's expected duration, not an early stall in
 // `PrepareSplit`/`Splitting` (which never arms a fence at all). A full fix
 // needs either a customresourcestate config or a driver-side liveness gauge
-// and is out of this WI's scope.
+// and is out of this WI's scope. `LumenSlowQueries` (#2519) reads
+// `lumen_slow_queries_total` (`src/metrics.rs`'s `Metrics::observe_search`),
+// incremented once per search whose latency meets or exceeds the
+// `LUMEN_SLOW_QUERY_MS` threshold (default 500ms).
 fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     json!({
         "apiVersion": "monitoring.coreos.com/v1",
@@ -664,6 +667,19 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                         "annotations": {
                             "summary": "lumen bearer-token registry hot-reload is failing in {{ $labels.namespace }} -- serving the last known-good registry, not the latest rotation",
                             "runbook": "kubectl logs -n {{ $labels.namespace }} <serving-pod> | grep credential_registry_reload; validate the mounted LUMEN_TOKEN_REGISTRY_FILE Secret/CSI projection is well-formed JSON.",
+                        },
+                    },
+                    {
+                        "alert": "LumenSlowQueries",
+                        "expr": format!(
+                            "rate(lumen_slow_queries_total{{namespace=\"{}\"}}[5m]) > 0.1",
+                            cx.ns
+                        ),
+                        "for": "10m",
+                        "labels": { "severity": "warning" },
+                        "annotations": {
+                            "summary": "lumen is serving slow queries (>0.1/s at/above the LUMEN_SLOW_QUERY_MS threshold) for over 10m in {{ $labels.namespace }}",
+                            "runbook": "kubectl top pods -n {{ $labels.namespace }}; check lumen_search_latency_seconds_bucket for the shifted percentile, look for a hot shard/collection, undersized HNSW ef, or resource pressure, and consider raising LUMEN_SLOW_QUERY_MS if the new baseline is expected.",
                         },
                     },
                 ],

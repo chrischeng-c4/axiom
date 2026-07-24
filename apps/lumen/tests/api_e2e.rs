@@ -1502,6 +1502,15 @@ async fn metrics_exposes_prometheus_text() {
         ]}))
         .await
         .assert_status_ok();
+    // #2519: drive one real search so the latency histogram + deprecated
+    // sum/count series both have a non-zero observation to assert on.
+    s.post("/collections/u/search")
+        .json(&json!({
+            "query": { "term": { "field": "e", "value": "a@x.com" } },
+            "limit": 10
+        }))
+        .await
+        .assert_status_ok();
     let resp = s.get("/metrics").await;
     resp.assert_status_ok();
     let body = resp.text();
@@ -1510,11 +1519,26 @@ async fn metrics_exposes_prometheus_text() {
         "lumen_collections_created_total",
         "lumen_search_requests_total",
         "lumen_storage_bytes",
+        // #2519: deprecated back-compat sum/count series stay exposed...
+        "lumen_search_latency_ms_sum",
+        "lumen_search_latency_ms_count",
+        // ...alongside the real histogram...
+        "lumen_search_latency_seconds_bucket{le=\"0.001\"}",
+        "lumen_search_latency_seconds_bucket{le=\"+Inf\"}",
+        "lumen_search_latency_seconds_sum",
+        "lumen_search_latency_seconds_count",
+        // ...and the slow-query threshold counter.
+        "lumen_slow_queries_total",
     ] {
         assert!(body.contains(name), "missing {name} in:\n{body}");
     }
     // Verify the indexed count actually moved.
     assert!(body.contains("lumen_index_writes_total 1"));
+    // The one search above must show up as one histogram observation.
+    assert!(
+        body.contains("lumen_search_latency_seconds_count 1"),
+        "expected 1 histogram observation in:\n{body}"
+    );
 }
 
 #[tokio::test]
