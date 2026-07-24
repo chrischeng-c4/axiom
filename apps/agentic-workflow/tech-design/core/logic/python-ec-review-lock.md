@@ -71,7 +71,12 @@ machinery.
 alongside the derived EC IR. Lock metadata names `pyproject.toml` as the Python
 inventory, rather than a non-existent project `aw.toml`, so lock diagnostics
 show the exact source or dependency entry that changed. Legacy projects retain
-their existing Markdown/manifest review and lock path unchanged.
+their existing Markdown/manifest review and lock path unchanged. When a
+root-owned Python WI encounters an existing lock from that project's legacy
+`aw.toml`/Markdown inventory, `aw ec lock --wi` may replace it only if the
+complete current Python bundle has a digest-current accepted independent
+review. Project-global locking, unreviewed bundles, and every other
+removed-contract transition retain the fail-closed migration guard.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -98,12 +103,20 @@ requirements:
     kind: regression
     risk: high
     verify: "cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture"
+  reviewed_legacy_replacement:
+    id: R4
+    text: "A root-owned Python WI can replace a legacy inventory lock only after digest-current independent review; the project-global removed-contract guard remains closed."
+    kind: security
+    risk: high
+    verify: "cargo test -p agentic-workflow --lib reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard -- --nocapture"
 elements:
   ec_python_review_and_lock_bind_complete_bundle_and_reject_self_review: { kind: test, type: "rs/#[test]" }
+  reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard: { kind: test, type: "rs/#[test]" }
 relations:
   - { from: ec_python_review_and_lock_bind_complete_bundle_and_reject_self_review, verifies: complete_bundle_lock }
   - { from: ec_python_review_and_lock_bind_complete_bundle_and_reject_self_review, verifies: independent_review }
   - { from: ec_python_review_and_lock_bind_complete_bundle_and_reject_self_review, verifies: stale_evidence }
+  - { from: reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard, verifies: reviewed_legacy_replacement }
 ---
 requirementDiagram
   requirement R1 {
@@ -124,7 +137,16 @@ requirementDiagram
     risk: high
     verifymethod: test
   }
+  requirement R4 {
+    id: R4
+    text: "reviewed legacy-to-Python lock replacement"
+    risk: high
+    verifymethod: test
+  }
   element ec_python_review_and_lock_bind_complete_bundle_and_reject_self_review {
+    type: "rs/#[test]"
+  }
+  element reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard {
     type: "rs/#[test]"
   }
 ```

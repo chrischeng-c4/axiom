@@ -1943,7 +1943,12 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
         return Ok(());
     }
 
-    let (status, wrote) = write_ec_lock_context(&ctx)?;
+    let lifecycle_wi = args
+        .wi
+        .as_deref()
+        .map(str::trim)
+        .filter(|wi| !wi.is_empty());
+    let (status, wrote) = write_ec_lock_context_for_wi(&ctx, lifecycle_wi)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
@@ -1959,12 +1964,7 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
         );
     }
     if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
-        if let Some(wi) = args
-            .wi
-            .as_deref()
-            .map(str::trim)
-            .filter(|wi| !wi.is_empty())
-        {
+        if let Some(wi) = lifecycle_wi {
             persist_ec_first_next_action(
                 &project_root,
                 wi,
@@ -3323,7 +3323,15 @@ fn check_ec_lock_context(ctx: &EcProjectContext) -> Result<EcLockStatus> {
     ))
 }
 
+#[cfg(test)]
 fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)> {
+    write_ec_lock_context_for_wi(ctx, None)
+}
+
+fn write_ec_lock_context_for_wi(
+    ctx: &EcProjectContext,
+    wi: Option<&str>,
+) -> Result<(EcLockStatus, bool)> {
     let lock_path = ec_lock_path(ctx);
     if lock_path.is_file() {
         let status = check_ec_lock_context(ctx)?;
@@ -3331,11 +3339,41 @@ fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)>
             return Ok((status, false));
         }
         if status.status == EcLockState::MigrationRequired {
+            if wi.is_some() && reviewed_python_inventory_replacement_allowed(ctx)? {
+                let snapshot = snapshot_ec_ir(ctx)?;
+                return Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true));
+            }
             bail!("{}", status.message);
         }
     }
     let snapshot = snapshot_ec_ir(ctx)?;
     Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true))
+}
+
+/// A root-owned Python WI may replace a legacy `aw.toml`/Markdown lock only
+/// after independent semantic review accepted the complete current Python
+/// bundle. Project-global locking and every other removed-contract transition
+/// keep the default fail-closed migration guard.
+fn reviewed_python_inventory_replacement_allowed(ctx: &EcProjectContext) -> Result<bool> {
+    if ctx.artifact_model != crate::models::project::ProjectArtifactModel::PythonV1 {
+        return Ok(false);
+    }
+    let lock_path = ec_lock_path(ctx);
+    let content =
+        fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
+    let lock: EcLockFile =
+        toml::from_str(&content).with_context(|| format!("parse {}", lock_path.display()))?;
+    let locked_inventory_is_legacy_aw = Path::new(&lock.inventory_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("aw.toml")
+        || lock.inventory_path == relative_to(&ctx.project_root, &ctx.legacy_manifest_path);
+    let python_inventory = relative_to(&ctx.project_root, &ctx.ec_root.join("pyproject.toml"));
+    if !locked_inventory_is_legacy_aw || ec_effective_inventory_path(ctx)? != python_inventory {
+        return Ok(false);
+    }
+    let manifest = build_expected_manifest(ctx)?;
+    Ok(ec_review_outstanding_findings(ctx, &manifest)?.is_empty())
 }
 
 fn write_ec_lock_snapshot(ctx: &EcProjectContext, snapshot: &EcIrSnapshot) -> Result<EcLockStatus> {
@@ -7252,7 +7290,20 @@ fn render_evaluator_marker_lines(prefix: &str, case: &EcManifestCase) -> String 
 }
 
 fn relative_to(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
+    let relative = path
+        .strip_prefix(root)
+        .ok()
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            let canonical_root = fs::canonicalize(root).ok()?;
+            let canonical_path = fs::canonicalize(path).ok()?;
+            canonical_path
+                .strip_prefix(canonical_root)
+                .ok()
+                .map(Path::to_path_buf)
+        });
+    relative
+        .as_deref()
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
@@ -7407,7 +7458,10 @@ e2e_tests:
 "#,
         )
         .unwrap();
-        let ctx = resolve_ec_project_context(tmp.path(), "d").unwrap();
+        let mut ctx = resolve_ec_project_context(tmp.path(), "d").unwrap();
+        // Legacy EC mechanics remain covered as an internal compatibility
+        // fixture even though project registry resolution is Python-first.
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::Legacy;
         (tmp, ctx)
     }
 
@@ -9952,6 +10006,94 @@ tool_contracts:
     }
 
     #[test]
+    fn reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard() {
+        let (tmp, mut ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::PythonV1;
+        fs::create_dir_all(ctx.ec_root.join("src")).unwrap();
+        fs::create_dir_all(ctx.ec_root.join("evidence")).unwrap();
+        fs::write(
+            ctx.ec_root.join("pyproject.toml"),
+            r#"
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "fixture-author"
+efficiency_policy = "not-applicable"
+
+[[tool.aw.python-ec.cases]]
+id = "demo-python-boundary"
+artifact_id = "artifact:demo/python-boundary"
+capability_id = "demo"
+use_case_id = "python-boundary"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/contract.py"
+promise = "The independently reviewed Python contract preserves the demo behavior boundary."
+oracle = "An external fixture command validates a non-empty evidence artifact."
+target = "python"
+command = "test -s projects/demo/external-contracts/evidence/behavior.json"
+evidence_paths = ["evidence/behavior.json"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("src/runner.py"),
+            "raise RuntimeError('lock must not import Python')\n",
+        )
+        .unwrap();
+        fs::write(
+            ctx.ec_root.join("src/contract.py"),
+            "def contract() -> None:\n    assert True\n",
+        )
+        .unwrap();
+
+        let migration = check_ec_lock_context(&ctx).unwrap();
+        assert_eq!(migration.status, EcLockState::MigrationRequired);
+        assert!(
+            write_ec_lock_context_for_wi(&ctx, Some("2537")).is_err(),
+            "a WI id alone must not bypass independent review"
+        );
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
+        let review_findings = ec_review_outstanding_findings(&ctx, &manifest).unwrap();
+        assert!(
+            review_findings.is_empty(),
+            "accepted fixture review must be current: {review_findings:?}"
+        );
+        assert!(
+            reviewed_python_inventory_replacement_allowed(&ctx).unwrap(),
+            "accepted legacy-to-Python fixture must satisfy the bounded replacement policy"
+        );
+        assert!(
+            write_ec_lock_context(&ctx).is_err(),
+            "project-global locking must retain the removed-contract guard"
+        );
+
+        let (status, wrote) = write_ec_lock_context_for_wi(&ctx, Some("2537")).unwrap();
+        assert!(wrote);
+        assert!(status.clean, "{status:?}");
+        assert_eq!(
+            status.inventory_path,
+            "projects/demo/external-contracts/pyproject.toml"
+        );
+        assert!(check_ec_lock_context(&ctx).unwrap().clean);
+        let rewritten =
+            fs::read_to_string(tmp.path().join("projects/demo/external-contracts/ec.lock"))
+                .unwrap();
+        assert!(rewritten.contains("demo-python-boundary"));
+        assert!(!rewritten.contains("demo-happy-path"));
+    }
+
+    #[test]
     fn ec_lock_migrate_paths_preserves_contracts_after_project_root_move() {
         let (tmp, old_ctx) = write_demo_repo();
         write_ec_lock_context(&old_ctx).unwrap();
@@ -9966,7 +10108,8 @@ tool_contracts:
             .unwrap()
             .replace("projects/demo", "apps/demo");
         fs::write(tmp.path().join("aw.toml"), config).unwrap();
-        let ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+        let mut ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::Legacy;
 
         let before = check_ec_lock_context(&ctx).unwrap();
         assert_eq!(before.status, EcLockState::MigrationRequired);
@@ -9999,7 +10142,8 @@ tool_contracts:
             .unwrap()
             .replace("projects/demo", "apps/demo");
         fs::write(tmp.path().join("aw.toml"), config).unwrap();
-        let ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+        let mut ctx = resolve_ec_project_context(tmp.path(), "demo").unwrap();
+        ctx.artifact_model = crate::models::project::ProjectArtifactModel::Legacy;
         let lock_path = ctx.ec_root.join(EC_LOCK_FILE);
         let before = fs::read_to_string(&lock_path).unwrap();
         let source = tmp.path().join("apps/demo/tech-design/specs/contract.md");
