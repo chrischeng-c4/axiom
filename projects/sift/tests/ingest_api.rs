@@ -110,4 +110,48 @@ async fn http_ingest_and_standard_operational_routes_share_the_journal_contract(
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
 }
+
+/// #2490: every response carries a `Server-Timing: app;dur=<ms>` baseline
+/// from the shared `service_http::server_timing_middleware` layer, composed
+/// at the same outermost position as `trace_layer()` — mirrors the `serve()`
+/// composition in `projects/sift/src/bin/sift.rs`.
+#[tokio::test]
+async fn responses_carry_server_timing_header() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = Arc::new(ServiceState::open(temp.path()).unwrap());
+    let app = service_http::standard_probe_routes(state.clone(), Some(state.clone()), openapi)
+        .merge(router(state))
+        .layer(service_http::trace_layer())
+        .layer(axum::middleware::from_fn(
+            service_http::server_timing_middleware,
+        ));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let header = response
+        .headers()
+        .get("server-timing")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.starts_with("app;dur="),
+        "Server-Timing header must start with app;dur=, got {header:?}"
+    );
+    let digit = header
+        .strip_prefix("app;dur=")
+        .and_then(|rest| rest.chars().next());
+    assert!(
+        digit.is_some_and(|c| c.is_ascii_digit()),
+        "app;dur= must be followed by a digit, got {header:?}"
+    );
+}
 // HANDWRITE-END

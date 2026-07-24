@@ -29,7 +29,7 @@ nodes:
     label: "AppState::new: load TapeJournal from --store (or empty) behind std::sync::Mutex + Arc<TapeMetrics> + draining AtomicBool; AppState implements service_http::ReadinessHook and MetricsProvider"
   build:
     kind: process
-    label: "router(): topic data plane (append/replay/checkpoint) with route_layer(metrics::track) merged onto service_http::standard_probe_routes(state, Some(metrics), crate::openapi::openapi); outer service_http::trace_layer()"
+    label: "router(): topic data plane (append/replay/checkpoint) with route_layer(metrics::track) merged onto service_http::standard_probe_routes(state, Some(metrics), crate::openapi::openapi); outer service_http::trace_layer() then service_http::server_timing_middleware (#2490)"
   serve:
     kind: process
     label: "service_http::serve(listener, app, shutdown_with_drain(start_drain, grace)) -- HTTP/1.1 + h2c on the one serve port"
@@ -66,7 +66,7 @@ edges:
 ---
 flowchart TD
     boot([serve_main: flags + tracing init]) --> state[AppState: journal + TapeMetrics + draining bool]
-    state --> build[router: standard probes merged with topics data plane + trace_layer]
+    state --> build[router: standard probes merged with topics data plane + trace_layer + server_timing]
     build --> serve[service_http serve: h2c + HTTP/1.1 one port]
     serve --> req{Probe or data plane?}
     req -->|probe| probes[healthz readyz metrics openapi.json docs]

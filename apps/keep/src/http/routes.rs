@@ -127,4 +127,9 @@ pub fn router(state: AppState) -> Router {
         .merge(data_plane.with_state(state))
         // One INFO-level tracing span per request — spans probes + data plane.
         .layer(service_http::trace_layer())
+        // Per-request Server-Timing response attribution, composed at the
+        // same outermost position as trace_layer() above (#2490).
+        .layer(axum::middleware::from_fn(
+            service_http::server_timing_middleware,
+        ))
 }

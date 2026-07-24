@@ -710,7 +710,7 @@ Gate Inventory:
 
 ID: observability
 Type: Devops
-Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint, including the `lumen_search_latency_seconds` histogram (`_bucket{le=...}`/`_sum`/`_count`, SLO-sized buckets from 1ms to 5s) and the `lumen_slow_queries_total` counter; the legacy `lumen_search_latency_ms_sum`/`_count` pair stays published (deprecated) for dashboard back-compat.; K8s: ServiceMonitor + PrometheusRule manifests, including the `LumenSlowQueries` alert (#2519).; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.; Config: `LUMEN_SLOW_QUERY_MS` (default `500`) - search-latency threshold in milliseconds at/above which a query increments `lumen_slow_queries_total`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency), wiring pending (#2490 adoption batch).
+Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint, including the `lumen_search_latency_seconds` histogram (`_bucket{le=...}`/`_sum`/`_count`, SLO-sized buckets from 1ms to 5s) and the `lumen_slow_queries_total` counter; the legacy `lumen_search_latency_ms_sum`/`_count` pair stays published (deprecated) for dashboard back-compat.; K8s: ServiceMonitor + PrometheusRule manifests, including the `LumenSlowQueries` alert (#2519).; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.; Config: `LUMEN_SLOW_QUERY_MS` (default `500`) - search-latency threshold in milliseconds at/above which a query increments `lumen_slow_queries_total`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
 Root WI: -
 Status: verified
@@ -724,8 +724,8 @@ absent, with the ids flowing into every request span and structured log line.
 The `otlp` feature upgrades this from local correlation to full OpenTelemetry
 export via the shared observability/service HTTP libraries. Server-Timing
 per-response latency attribution (the shared `service-http::server_timing`
-contract) is not yet wired into lumen's HTTP stack — that lands in a separate
-#2490 adoption batch.
+contract) is wired into lumen's HTTP stack: every response carries a
+`Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - apps/lumen/tests/api_e2e.rs; apps/lumen/k8s/components/observability; apps/lumen/compose.yaml
 

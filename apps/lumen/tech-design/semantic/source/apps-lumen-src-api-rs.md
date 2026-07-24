@@ -918,6 +918,11 @@ pub fn router_with_admission(
         // the source spans the OTLP layer exports as traces when LUMEN_OTLP_ENDPOINT
         // is set. INFO level so the default `info` EnvFilter keeps it.
         .layer(service_http::trace_layer())
+        // Per-request Server-Timing response attribution, composed at the
+        // same outermost position as trace_layer() above (#2490).
+        .layer(axum::middleware::from_fn(
+            service_http::server_timing_middleware,
+        ))
 }
 
 #[utoipa::path(

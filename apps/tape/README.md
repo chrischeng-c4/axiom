@@ -385,8 +385,7 @@ ServiceMonitor and PrometheusRule component; Logs: structured
 otherwise, so every request span and log line carries
 `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing
 response attribution — shared `service-http::server_timing` contract
-(`Server-Timing: app;dur=` per-response latency), wiring pending (#2490
-adoption batch).
+(`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
 offline manifest and metric-name conformance.
 Required Verification: conformance
@@ -399,8 +398,8 @@ created when absent, with the ids flowing into the structured stdout the sift
 collector ingests. OTLP export and service identity are provided by the
 shared observability/service HTTP libraries. Server-Timing per-response
 latency attribution (the shared `service-http::server_timing` contract) is
-not yet wired into tape's HTTP stack — that lands in a separate #2490
-adoption batch.
+wired into tape's HTTP stack: every response carries a
+`Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - apps/tape/src/metrics.rs
 - apps/tape/k8s/components/observability

@@ -393,6 +393,36 @@ async fn probes_and_drain() {
     assert_eq!(body, b"draining");
 }
 
+/// #2490: every response carries a `Server-Timing: app;dur=<ms>` baseline
+/// from the shared `service_http::server_timing_middleware` layer.
+#[tokio::test]
+async fn responses_carry_server_timing_header() {
+    let (app, _state) = app();
+    let req = Request::builder()
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let header = resp
+        .headers()
+        .get("server-timing")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.starts_with("app;dur="),
+        "Server-Timing header must start with app;dur=, got {header:?}"
+    );
+    let digit = header
+        .strip_prefix("app;dur=")
+        .and_then(|rest| rest.chars().next());
+    assert!(
+        digit.is_some_and(|c| c.is_ascii_digit()),
+        "app;dur= must be followed by a digit, got {header:?}"
+    );
+}
+
 #[tokio::test]
 async fn metrics_records_per_route_requests() {
     let (app, _) = app();
