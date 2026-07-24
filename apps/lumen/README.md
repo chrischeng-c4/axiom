@@ -568,6 +568,16 @@ confusing backup with live replica synchronization.
 Gate Inventory:
 - #1181 empty-PVC replica bootstrap seed path; apps/lumen/src/bin/lumen.rs; apps/lumen/src/raft.rs; apps/lumen/src/raft_sm.rs; libs/raft-runtime; libs/service-backup
 
+Deployer note (seed-bucket IAM, #2514): a `spec.serving.bootstrap.seedUri`
+instance reads the seed object through the SERVING pod's own auto-created
+Workload Identity KSA, not the backup GSA — the backup GSA's grant only
+covers the backup Job's write path. Grant that KSA's federated principal
+`roles/storage.objectViewer` on the seed bucket:
+`principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<project-id>.svc.id.goog/subject/ns/<namespace>/sa/<ksa-name>`.
+Without it the pod crash-loops on a GCS 403 at boot. `spec.serviceAccountName`
+(0.4.25+) can point the pod at a pre-existing KSA that already carries the
+grant, instead of the operator-created per-CR default.
+
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | apps/lumen/src/raft.rs<br>apps/lumen/src/raft_sm.rs<br>libs/raft-runtime |
