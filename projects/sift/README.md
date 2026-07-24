@@ -669,8 +669,7 @@ valid W3C version-00 `traceparent` (invalid input is treated as absent) and
 generates a fresh local root context otherwise, so every request span and log
 line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP:
 Server-Timing response attribution — shared `service-http::server_timing`
-contract (`Server-Timing: app;dur=` per-response latency), wiring pending
-(#2490 adoption batch).
+contract (`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p sift --test ingest_api http_ingest_and_standard_operational_routes_share_the_journal_contract -- --exact` - liveness, readiness, Prometheus, OpenAPI, and docs are available on the shared data-plane port.
 Required Verification: conformance
 Promise:
@@ -682,8 +681,8 @@ present and a local root trace is created when absent, with the ids flowing
 into every request span and structured log line (independent of Sift's
 ingested OTLP trace signals, which are product data, not this self-observability
 contract). Server-Timing per-response latency attribution (the shared
-`service-http::server_timing` contract) is not yet wired into Sift's own HTTP
-stack — that lands in a separate #2490 adoption batch.
+`service-http::server_timing` contract) is wired into Sift's own HTTP stack:
+every response carries a `Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - projects/sift/tests/ingest_api.rs (http_ingest_and_standard_operational_routes_share_the_journal_contract); projects/sift/external-contracts/behavior/standard-operational-endpoints-contract.md
 

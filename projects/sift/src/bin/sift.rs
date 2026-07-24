@@ -723,7 +723,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let app =
         service_http::standard_probe_routes(state.clone(), Some(state.clone()), sift::openapi)
             .merge(data_plane)
-            .layer(service_http::trace_layer());
+            .layer(service_http::trace_layer())
+            // Per-request Server-Timing response attribution, composed at
+            // the same outermost position as trace_layer() above (#2490).
+            .layer(axum::middleware::from_fn(
+                service_http::server_timing_middleware,
+            ));
     let listener = tokio::net::TcpListener::bind(config.bind_addr())
         .await
         .context("bind Sift service listener")?;

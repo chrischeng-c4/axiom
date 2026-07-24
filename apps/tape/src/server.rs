@@ -283,7 +283,10 @@ pub fn router_with_admission(
     let app = probes
         .merge(data_plane)
         // One INFO-level tracing span per request — spans probes + data plane.
-        .layer(service_http::trace_layer());
+        .layer(service_http::trace_layer())
+        // Per-request Server-Timing response attribution, composed at the
+        // same outermost position as trace_layer() above (#2490).
+        .layer(from_fn(service_http::server_timing_middleware));
 
     // Peer raft RPCs + leader forward + `/raftz` (#1327) — merged OUTSIDE the
     // bearer-auth data plane, like the probes, since this is cluster traffic

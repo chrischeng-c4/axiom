@@ -146,7 +146,7 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: RuntimeTool
-Surfaces: HTTP: `/kv/*`, `/hashes`, `/sets`, `/zsets`, `/lists`, `/locks`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - concise HTTP/2 API list for operators and client authors.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer (`service_http::trace_layer()`) accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency), wiring pending (#2490 adoption batch).
+Surfaces: HTTP: `/kv/*`, `/hashes`, `/sets`, `/zsets`, `/lists`, `/locks`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - concise HTTP/2 API list for operators and client authors.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer (`service_http::trace_layer()`) accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p keep --test http_api --test collections_api` - public route list and data-plane conformance
 Root WI: -
 Status: auditing
@@ -158,8 +158,8 @@ capability definition. Every HTTP request is correlatable end to end: W3C
 `traceparent` is honored when present and a local root trace is created when
 absent, with the ids flowing into every request span and structured log line.
 Server-Timing per-response latency attribution (the shared
-`service-http::server_timing` contract) is not yet wired into keep's HTTP
-stack — that lands in a separate #2490 adoption batch.
+`service-http::server_timing` contract) is wired into keep's HTTP stack:
+every response carries a `Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - apps/keep/README.md#http-surface-v1; apps/keep/tests/http_api.rs; apps/keep/tests/collections_api.rs
 

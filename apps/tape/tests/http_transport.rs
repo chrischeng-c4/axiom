@@ -71,6 +71,32 @@ async fn probe_surface_answers_on_serve_port() {
     }
 }
 
+/// #2490: every response carries a `Server-Timing: app;dur=<ms>` baseline
+/// from the shared `service_http::server_timing_middleware` layer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_carry_server_timing_header() {
+    let (addr, _state) = start_server().await;
+    let client = reqwest::Client::new();
+    let resp = client.get(url(addr, "/healthz")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let header = resp
+        .headers()
+        .get("server-timing")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        header.starts_with("app;dur="),
+        "Server-Timing header must start with app;dur=, got {header:?}"
+    );
+    let digit = header
+        .strip_prefix("app;dur=")
+        .and_then(|rest| rest.chars().next());
+    assert!(
+        digit.is_some_and(|c| c.is_ascii_digit()),
+        "app;dur= must be followed by a digit, got {header:?}"
+    );
+}
+
 /// R3: `/readyz` flips to 503 once drain begins (SIGTERM reaches
 /// `start_drain` through `service_http::shutdown_with_drain`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
