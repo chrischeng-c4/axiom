@@ -21,6 +21,26 @@ contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
 lands. Harness: `benchmarks/gcp-operator-acceptance` (mode noted per run).
 
+### GKE acceptance run 0724105144 (2026-07-24, PASSED — auth+CSI Secret Manager stack proven, #2457/#2456)
+
+Full two-service digest-mode run (GHCR `sha-54742a8d6e40` images — zero
+Cloud Build) adding the first live validation of the auth+CSI regression
+leg: a `lumen-authcsi` CR with `auth: required`,
+`tokensSecretProviderClass`, and `tokensSecretCsiDriver:
+secrets-store-gke.csi.k8s.io` against a run-scoped Secret Manager secret
+(SecretProviderClass `provider: gke`, `principal://` secretAccessor grant,
+no GSA). Proven: CSI volume mounted with the GKE driver name, pod Ready
+with **zero FailedMount events** (the exact #2456 failure signature),
+tokens genuinely loaded from the CSI mount — authenticated search returns
+the seeded document (`total: 1`) while unauthenticated returns exactly 401
+`{"error":"unauthenticated"}`. All prior legs re-passed on the 0.4.26
+candidate HEAD (cold-restore, admission, backup, auto-split 1→2), and
+verified cleanup covers the new Secret Manager resources. Cluster
+prerequisite recorded: the GKE Secret Manager add-on
+(`--enable-secret-manager`) registers the CSIDriver; the leg self-skips
+with evidence when absent. Evidence root:
+`axiom-gcp-run-backup/evidence/0724105144/` (`kubernetes/lumen-authcsi-*`).
+
 ### GKE acceptance run 0724061548 (2026-07-24, PASSED — #2489 fix + cold-restore #2492 proven)
 
 - Full two-service mode (Lumen and Sift both passed; the Sift rows live in
