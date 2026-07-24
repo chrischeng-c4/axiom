@@ -1375,6 +1375,9 @@ semantic_domain:
           - name: "await_with_progress"
             kind: "function"
             public: false
+          - name: "cb_gen_writable_scope"
+            kind: "function"
+            public: false
           - name: "workflow_goal_envelope"
             kind: "function"
             public: false
@@ -4675,5 +4678,14 @@ changes:
       Issue #2187: the WI orientation documents agent-first capability-plan
       review, explicit human-only opt-in, and accepted versus needs_revision
       publication behavior.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #2545: target-native `aw cb gen` prompt contracts declare the
+      complete possible write surface for the selected Rust, Python, or
+      TypeScript emitter, including its package manifest, source tree, and
+      generated unit-test inventory.
     impl_mode: hand-written
 ```
