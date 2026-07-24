@@ -37,6 +37,7 @@ fn spec(replicas: u32) -> RelaySpec {
         auth: "off".into(),
         tokens_secret: None,
         peer_tls_secret: None,
+        body_limit_bytes: 8 * 1024 * 1024,
         backup: None,
     }
 }
