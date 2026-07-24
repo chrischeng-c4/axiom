@@ -98,6 +98,37 @@ lumen k8s instance render --profile staging --namespace search --name catalog --
 kubectl apply -f /tmp/lumen-k8s/lumen.yaml
 ```
 
+### 3f. CRD versioning & upgrade order
+
+**Versioning.** The CRD ships one version, `v1alpha1`. Additive `spec`/`status`
+fields land within `v1alpha1` release-to-release — the served schema is
+regenerated from source every release, so a new optional field is a normal
+minor-version bump, not a CRD-version bump. A breaking shape change
+(rename/remove/retype an existing field) requires a new CRD version
+(`v1alpha2`/`v1`) plus an explicit conversion story between versions. **No
+conversion webhook exists today** — that is a current limitation, not a
+promise, so only additive `v1alpha1` evolution is supported until one ships.
+
+**Upgrade order — CRD first, always** (the #2456 lesson): the API server
+silently prunes any field the *stored* schema doesn't know yet, so applying a
+CR with a new field (e.g. `tokensSecretCsiDriver`, `serviceAccountName`)
+against the *old* CRD drops that field without an error.
+
+```bash
+lumen k8s crd render --out /tmp/lumen-k8s/crd.yaml
+kubectl apply -f /tmp/lumen-k8s/crd.yaml               # 1. CRD first
+lumen k8s operator render --namespace lumen-system --out /tmp/lumen-k8s
+kubectl apply -f /tmp/lumen-k8s/operator.yaml          # 2. operator next
+kubectl apply -f /tmp/lumen-k8s/lumen.yaml             # 3. CR last
+```
+
+**Rollback contract:**
+
+| Path | Contract |
+|------|----------|
+| Binary/image downgrade | Supported. Same-minor rollback (e.g. 0.4.25 → 0.4.24) is expected safe; cross-minor rollback is untested — no compatibility matrix is published for the WAL (`WAL_FORMAT_VERSION`) or segment (`FORMAT_VER`) on-disk formats, so treat it as unverified rather than assumed-safe. |
+| CRD downgrade | Not recommended once CRs use newer-version fields — reverting/removing the CRD is destructive (the API server re-validates stored objects against the reverted schema and can reject or prune them). Leave the newer CRD in place across a binary rollback; only the workload image needs to move back. |
+
 ---
 
 ## 4. Environment variables

@@ -641,6 +641,10 @@ the cleanup verifier reported `clean`. Reproduce with an immutable Lumen image:
 This proof deliberately excludes Sift collection, CPU/memory actuation, live
 replica membership, and cold restore from GCS; each has its own gate.
 
+CRD versioning policy, the CRD-first safe upgrade order (the #2456
+schema-pruning lesson), and the binary/CRD rollback contract are documented in
+`apps/lumen/docs/deployment-handoff.md` (§3f).
+
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | apps/lumen/k8s |
