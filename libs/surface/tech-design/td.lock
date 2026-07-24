@@ -2,10 +2,16 @@ version = 2
 project = "surface"
 ir_kind = "td"
 td_path = "libs/surface/tech-design"
-generated_at = "2026-07-07T15:58:25.715245+00:00"
-digest = "sha256:83900fafc40a78f9192665e890a0cb112190d115c1df68643562e6ae44c1e442"
-source_digest = "sha256:83900fafc40a78f9192665e890a0cb112190d115c1df68643562e6ae44c1e442"
-ir_digest = "sha256:31ee38a9a24c15a2009621486587729cca55d26d021f33509319503d1573d2c3"
+generated_at = "2026-07-24T07:24:18.182847+00:00"
+digest = "sha256:d4838eebb25eb477970b8f23f120b5b3016089574f750c7f5b456b2ec8698b79"
+source_digest = "sha256:d4838eebb25eb477970b8f23f120b5b3016089574f750c7f5b456b2ec8698b79"
+ir_digest = "sha256:2e3eb30a448e30919a08c370ecdb896e437857eb1bc48050bd384c7c8c0c27c5"
+
+[[files]]
+path = "semantic/add-compact-indexed-microdom-v1-with-semantic-selectors.md"
+digest = "sha256:518a25ade959a0a2a2b6cb56b45fa27d48b81cd9e5519988fa2af492c42bb66d"
+ir_digest = "sha256:51220fb7add392a74d022772fc465410b54b680e591dd0bc08dfa0ddb9d104d6"
+section_count = 3
 
 [[files]]
 path = "semantic/source/libs-surface-cargo-toml.md"
