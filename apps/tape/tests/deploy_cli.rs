@@ -75,7 +75,11 @@ fn render_verbs_emit_parseable_yaml_offline() {
     let image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
         .as_str()
         .expect("operator deployment image");
-    assert_eq!(image, "tape:0.4.5", "operator image is release-pinned");
+    assert_eq!(
+        image,
+        "ghcr.io/chrischeng-c4/tape:0.4.10",
+        "operator image is release-pinned"
+    );
     assert_ne!(image, "tape:latest", "operator never emits a mutable tag");
 
     // Instance render: all four profiles emit a `kind: Tape` CR.
