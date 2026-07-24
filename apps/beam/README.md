@@ -228,14 +228,20 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #769
 Status: confirmed
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, vector collection/index/query routes.
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, vector collection/index/query routes.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer (`service_http::trace_layer()`) accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency), wiring pending (#2490 adoption batch).
 EC Dimensions: behavior: pending h2c/OpenAPI route-list gate - probes, metrics, OpenAPI, and route inventory
 Required Verification: smoke, conformance
 Promise:
 Beam exposes a compact h2c/OpenAPI API list for vector collection, index,
-ingest, query, and operator workflows.
+ingest, query, and operator workflows. Every HTTP request is correlatable
+end to end: W3C `traceparent` is honored when present and a local root
+trace is created when absent, with the ids flowing into every request span
+and structured log line. Server-Timing per-response latency attribution
+(the shared `service-http::server_timing` contract) is not yet wired into
+beam's HTTP stack — that lands in a separate #2490 adoption batch.
 Gate Inventory:
 - pending: apps/beam/tests/http_api.rs
+- passing (trace-context accept/generate): `cargo test -p service-http` (libs/service-http/src/transport.rs) — beam wires `service_http::trace_layer()` in apps/beam/src/service.rs; no beam-owned trace-context test exists yet
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
