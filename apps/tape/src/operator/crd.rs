@@ -95,12 +95,18 @@ pub struct TapeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret_csi_driver: Option<String>,
 
-    /// Exact backup object URI used only when a replacement replica starts on
-    /// a fresh PVC. The server consumes it before Raft catch-up and refuses a
-    /// non-empty data directory, so this is cold recovery rather than live
-    /// replica synchronization. One-shot (#2468): once the seeded topology
-    /// converges, remove this field from the CR — leaving it set makes every
-    /// future pod replacement crash-loop on the same non-empty-PVC refusal.
+    /// Exact backup object URI consulted to seed a replica whose data
+    /// directory is still EMPTY before Raft catch-up. Bootstrap-if-empty
+    /// (#2468): the server probes the durable data directory first — a pod
+    /// that already has raft state (including a routine restart onto its own
+    /// PVC) skips the seed and boots from that existing state instead of
+    /// refusing, so this field may harmlessly stay set on the CR after a
+    /// successful bootstrap. It only ever seeds a fresh (empty) data
+    /// directory, so this is cold recovery rather than live replica
+    /// synchronization. Recommended hygiene: remove it once the bootstrap
+    /// converges anyway, so the CR does not silently re-seed if the PVC is
+    /// ever recreated (e.g. deleted-and-reprovisioned) — the field's presence
+    /// alone would then look like a fresh empty PVC again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_seed_uri: Option<String>,
 }
