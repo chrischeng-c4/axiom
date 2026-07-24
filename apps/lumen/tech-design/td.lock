@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-24T08:02:08.721964+00:00"
-digest = "sha256:570cd49582b9a239e7d0ae405a9a1903a02971d3ae88468ef025fd0c20ca8b2d"
-source_digest = "sha256:570cd49582b9a239e7d0ae405a9a1903a02971d3ae88468ef025fd0c20ca8b2d"
-ir_digest = "sha256:6b3bc70c0e1aa1ba4f83dac4e9bdb08e756f368c1da1cf8a90b6b5b4102a1ee3"
+generated_at = "2026-07-24T08:19:23.590778+00:00"
+digest = "sha256:9735f1fa22b141672605f2fed25bfbe75c86c6ca91ac91ab4a1425309536d577"
+source_digest = "sha256:9735f1fa22b141672605f2fed25bfbe75c86c6ca91ac91ab4a1425309536d577"
+ir_digest = "sha256:5ddcd8e7ae044dcd018c0d460b55b8c6f4080b9be4c0c3486125ec403999d37e"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -279,8 +279,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-components-observability.md"
-digest = "sha256:a2dc5da4d0d2ea6b1d77645f7de72e49ef023cf498a4fa49449bd1edfc204adf"
-ir_digest = "sha256:bd4e50c9c03e8d6fd6b7de8f0be3a7af6cbc1d556e6d07b238658764b4561566"
+digest = "sha256:303b61c5d3a205fe1abc53ee13a00329bdec53b990a05b0219a9bce05ed27acb"
+ir_digest = "sha256:e68cc1603ac305bd721004c48b1ecf83fa4ccedf60fd865b358497af7f22cbe4"
 section_count = 2
 
 [[files]]
@@ -297,20 +297,20 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-prod.md"
-digest = "sha256:8d3c04bc2fe2e072d7adb52181336812940993a2b4a9ccd6b93d02962c6311c0"
-ir_digest = "sha256:fe76e407bff910ce92a1372a594a4c667f5dd67ae15b95cb18305066e0062b86"
+digest = "sha256:4d19a027dc82d219bd11cab10b01d3e36b3e11d2983382cea499d5b4076785cf"
+ir_digest = "sha256:927fd90502b5b3d6fbe6bc81b8e2efc97541d45c6a2c0637baf27ff4411a3d48"
 section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-staging.md"
-digest = "sha256:cde1fac9e7e9863083ec631adc4df0139fd0a83ef920b6febd4e78b82ba6a1f5"
-ir_digest = "sha256:369dd80785262d01d64d7a88de3a928fd2be5854576262fd017304d47e96e4ea"
+digest = "sha256:d4f0a22317a257d0e0ec00caa22dd38a4f8f2071513f7eb57e074cab4b788b87"
+ir_digest = "sha256:8cd709627195500d28f9f213e064f75725e72b32973b4f8bcbddc8bea847bb6b"
 section_count = 2
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-template.md"
-digest = "sha256:bb5c30d73bcea0f596549d6d7d150ea64c3c89656235b516d6387fd7e8635c1b"
-ir_digest = "sha256:15a2050b6e15690c927fd579bc6646ec1e0811eb7db29477e407125ce9034d1b"
+digest = "sha256:c61d6da38c74b34f00f0b513020797f41c6e3d29563fe24b262bba4e3eb5b96d"
+ir_digest = "sha256:30057a8814a8de8555d66021cbf0fd95ded81a0284424d9443f1fcd898291eb8"
 section_count = 2
 
 [[files]]
