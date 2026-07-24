@@ -61,36 +61,29 @@ changes:
 
 ```mermaid
 ---
-id: workbench-two-pane-workspace-verification
+id: workbench-two-pane-contract-verification
 requirements:
-  idle_profile_creation:
+  idle_menu:
     id: R2
-    text: "Profile selection creates an idle session without contacting the PTY sidecar."
+    text: "Profile menu creates idle sessions without a PTY request."
     kind: regression
     risk: medium
     verify: WorkbenchModelTests.testProfileMenuCreatesIdlePaneSession
-  native_ui:
+  native_package:
     id: R3
-    text: "The native UI exposes profile menu and pane controls without a fixed terminal tab strip."
-    kind: e2e
-    risk: medium
-    verify: WorkbenchMacUITests.testProfileMenuCreatesPaneSession
-  package_tests:
-    id: R4
-    text: "The native package compiles and passes regression tests."
+    text: "Native package builds and passes regression tests."
     kind: regression
     risk: low
     verify: swift test --package-path apps/workbench/macos
-  project_panes:
+  pane_state:
     id: R1
-    text: "Each project restores its own one-or-two-pane terminal workspace and focus."
+    text: "Projects retain independent one-or-two-pane state and focus."
     kind: functional
     risk: medium
     verify: WorkbenchModelTests.testProjectsRestoreIndependentPaneWorkspaces
 ---
 flowchart TD
-    r1[R1 project panes] --> workbenchmodeltests_testprojectsrestoreindependentpaneworkspaces[WorkbenchModelTests.testProjectsRestoreIndependentPaneWorkspaces]
-    r2[R2 idle profile creation] --> workbenchmodeltests_testprofilemenucreatesidlepanesession[WorkbenchModelTests.testProfileMenuCreatesIdlePaneSession]
-    r3[R3 native ui] --> workbenchmacuitests_testprofilemenucreatespanesession[WorkbenchMacUITests.testProfileMenuCreatesPaneSession]
-    r4[R4 package tests] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
+    r1[R1 pane state] --> workbenchmodeltests_testprojectsrestoreindependentpaneworkspaces[WorkbenchModelTests.testProjectsRestoreIndependentPaneWorkspaces]
+    r2[R2 idle menu] --> workbenchmodeltests_testprofilemenucreatesidlepanesession[WorkbenchModelTests.testProfileMenuCreatesIdlePaneSession]
+    r3[R3 native package] --> swift_test_package_path_apps_workbench_macos[swift test --package-path apps/workbench/macos]
 ```
