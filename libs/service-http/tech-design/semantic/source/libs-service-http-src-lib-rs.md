@@ -27,8 +27,9 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 | `metrics` | libs/service-http/src/lib.rs | module | pub | 77 | pub mod metrics; |
 | `probes` | libs/service-http/src/lib.rs | module | pub | 78 | pub mod probes; |
 | `readiness` | libs/service-http/src/lib.rs | module | pub | 79 | pub mod readiness; |
-| `signal` | libs/service-http/src/lib.rs | module | pub | 80 | pub mod signal; |
-| `transport` | libs/service-http/src/lib.rs | module | pub | 81 | pub mod transport; |
+| `server_timing` | libs/service-http/src/lib.rs | module | pub | 90 | pub mod server_timing; |
+| `signal` | libs/service-http/src/lib.rs | module | pub | 91 | pub mod signal; |
+| `transport` | libs/service-http/src/lib.rs | module | pub | 92 | pub mod transport; |
 | `HttpConfig` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
 | `LogFormat` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
 | `ServiceIdentity` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
@@ -43,11 +44,14 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 | `MetricsProvider` | libs/service-http/src/lib.rs | re-export | pub | 86 | pub use metrics::MetricsProvider; |
 | `standard_probe_routes` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use probes::standard_probe_routes; |
 | `ReadinessHook` | libs/service-http/src/lib.rs | re-export | pub | 88 | pub use readiness::ReadinessHook; |
-| `shutdown_with_drain` | libs/service-http/src/lib.rs | re-export | pub | 89 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
-| `wait_shutdown_signal` | libs/service-http/src/lib.rs | re-export | pub | 89 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
-| `serve` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
-| `trace_layer` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
-| `PropagatingMakeSpan` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
+| `server_timing_middleware` | libs/service-http/src/lib.rs | re-export | pub | 109 | pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt}; |
+| `ServerTimingDisclosure` | libs/service-http/src/lib.rs | re-export | pub | 109 | pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt}; |
+| `ServerTimingExt` | libs/service-http/src/lib.rs | re-export | pub | 109 | pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt}; |
+| `shutdown_with_drain` | libs/service-http/src/lib.rs | re-export | pub | 111 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
+| `wait_shutdown_signal` | libs/service-http/src/lib.rs | re-export | pub | 111 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
+| `serve` | libs/service-http/src/lib.rs | re-export | pub | 112 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
+| `trace_layer` | libs/service-http/src/lib.rs | re-export | pub | 112 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
+| `PropagatingMakeSpan` | libs/service-http/src/lib.rs | re-export | pub | 112 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
 
 
 ## Source
@@ -60,7 +64,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! lumen, keep, relay, and loom compose the same HTTP policy shell: the
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
 //! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
-//! readiness/shutdown re-exports, runtime delegation, and the
+//! readiness/shutdown re-exports, runtime delegation, per-request
+//! `Server-Timing` attribution ([`server_timing`]), and the
 //! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
 //! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
@@ -82,7 +87,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! use std::time::Duration;
 //! use service_http::{
 //!     HttpConfig, LogFormat, MetricsProvider, ReadinessHook,
-//!     init_tracing, serve, shutdown_with_drain, standard_probe_routes, trace_layer,
+//!     init_tracing, serve, server_timing_middleware, shutdown_with_drain,
+//!     standard_probe_routes, trace_layer,
 //! };
 //!
 //! # async fn run(cfg: HttpConfig, readiness: Arc<R>, data_plane: axum::Router) -> anyhow::Result<()>
@@ -91,7 +97,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //!
 //! let app = standard_probe_routes(readiness.clone(), None, my_service::openapi)
 //!     .merge(data_plane)
-//!     .layer(trace_layer());
+//!     .layer(trace_layer())
+//!     .layer(axum::middleware::from_fn(server_timing_middleware));
 //!
 //! let listener = tokio::net::TcpListener::bind(cfg.bind_addr()).await?;
 //! let grace = Duration::from_secs(cfg.grace_secs);
@@ -110,6 +117,11 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! Auth and backup are deliberately out of scope (separate follow-ups); a
 //! service keeps owning those on its data plane. OTLP trace export is optional
 //! behind the `otlp` feature; a service supplies its own stable identity.
+//! [`server_timing_middleware`] always renders the `app;dur=` baseline and
+//! defaults every response to [`ServerTimingDisclosure::TotalOnly`] — this
+//! crate cannot see a request's auth outcome (see [`server_timing`] for why)
+//! so it does not attempt to gate the phase breakdown on it; a service opts
+//! a response into [`ServerTimingDisclosure::Full`] itself.
 //!
 //! [`error::ErrorEnvelope`]'s derived `utoipa::ToSchema` is named
 //! `ErrorEnvelope` in a service's generated OpenAPI document. A service that
@@ -133,13 +145,14 @@ pub mod logging;
 pub mod metrics;
 pub mod probes;
 pub mod readiness;
+pub mod server_timing;
 pub mod signal;
 pub mod transport;
 
 pub use admission::{
-    admission_middleware, AdmissionController, AdmissionDecision, AdmissionEvent, AdmissionInput,
-    AdmissionMiddleware, AdmissionObserver, AdmissionOutcome, AdmissionPolicy,
-    AdmissionPolicyError, NoopAdmissionObserver,
+    admission_middleware, AdmissionConfig, AdmissionConfigError, AdmissionController,
+    AdmissionDecision, AdmissionEvent, AdmissionInput, AdmissionMiddleware, AdmissionObserver,
+    AdmissionOutcome, AdmissionPolicy, AdmissionPolicyError, NoopAdmissionObserver,
 };
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
@@ -151,6 +164,7 @@ pub use logging::{
 pub use metrics::MetricsProvider;
 pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
+pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt};
 pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
@@ -169,4 +183,13 @@ changes:
     description: |
       Re-exports the optional OTLP configuration, initialization and W3C span
       propagation surfaces so Lumen and Tape consume one public contract.
+  - path: "libs/service-http/src/lib.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      Wire the new server_timing module (the Server-Timing response
+      middleware, its ServerTimingExt phase-append extension, and the
+      ServerTimingDisclosure posture type) into the crate's public
+      re-export surface. #2490
 ```

@@ -6,7 +6,8 @@
 //! lumen, keep, relay, and loom compose the same HTTP policy shell: the
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
 //! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
-//! readiness/shutdown re-exports, runtime delegation, and the
+//! readiness/shutdown re-exports, runtime delegation, per-request
+//! `Server-Timing` attribution ([`server_timing`]), and the
 //! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
 //! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
@@ -28,7 +29,8 @@
 //! use std::time::Duration;
 //! use service_http::{
 //!     HttpConfig, LogFormat, MetricsProvider, ReadinessHook,
-//!     init_tracing, serve, shutdown_with_drain, standard_probe_routes, trace_layer,
+//!     init_tracing, serve, server_timing_middleware, shutdown_with_drain,
+//!     standard_probe_routes, trace_layer,
 //! };
 //!
 //! # async fn run(cfg: HttpConfig, readiness: Arc<R>, data_plane: axum::Router) -> anyhow::Result<()>
@@ -37,7 +39,8 @@
 //!
 //! let app = standard_probe_routes(readiness.clone(), None, my_service::openapi)
 //!     .merge(data_plane)
-//!     .layer(trace_layer());
+//!     .layer(trace_layer())
+//!     .layer(axum::middleware::from_fn(server_timing_middleware));
 //!
 //! let listener = tokio::net::TcpListener::bind(cfg.bind_addr()).await?;
 //! let grace = Duration::from_secs(cfg.grace_secs);
@@ -56,6 +59,11 @@
 //! Auth and backup are deliberately out of scope (separate follow-ups); a
 //! service keeps owning those on its data plane. OTLP trace export is optional
 //! behind the `otlp` feature; a service supplies its own stable identity.
+//! [`server_timing_middleware`] always renders the `app;dur=` baseline and
+//! defaults every response to [`ServerTimingDisclosure::TotalOnly`] — this
+//! crate cannot see a request's auth outcome (see [`server_timing`] for why)
+//! so it does not attempt to gate the phase breakdown on it; a service opts
+//! a response into [`ServerTimingDisclosure::Full`] itself.
 //!
 //! [`error::ErrorEnvelope`]'s derived `utoipa::ToSchema` is named
 //! `ErrorEnvelope` in a service's generated OpenAPI document. A service that
@@ -79,6 +87,7 @@ pub mod logging;
 pub mod metrics;
 pub mod probes;
 pub mod readiness;
+pub mod server_timing;
 pub mod signal;
 pub mod transport;
 
@@ -97,6 +106,7 @@ pub use logging::{
 pub use metrics::MetricsProvider;
 pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
+pub use server_timing::{server_timing_middleware, ServerTimingDisclosure, ServerTimingExt};
 pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
