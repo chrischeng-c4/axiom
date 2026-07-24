@@ -16,6 +16,7 @@ admission and drain state belong to `server-http` and `server-lifecycle`.
 |---|---:|---|---|---|---|---|
 | Shared HTTP Service Scaffold | #1640 | implemented | passing | conformance | ready | probes, HTTP propagation, lifecycle adapters, and error envelope |
 | Opaque-Key Admission Control | #1642 | implemented | verified | conformance | ready | bounded token buckets, redacted events, and standard 429 responses |
+| Server-Timing Response Attribution | #2490 | implemented | verified | conformance | ready | `Server-Timing: app;dur=` on every response, phase-append extension, total-only-by-default disclosure posture |
 
 ### Shared HTTP Service Scaffold
 
@@ -60,3 +61,33 @@ Gate Inventory: `cargo test -p service-http`; libs/service-http/src/admission.rs
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | opaque-key-admission-control | change | #1642 | implemented | verified | conformance | `cargo test -p service-http`; libs/service-http/src/admission.rs |
+
+### Server-Timing Response Attribution
+
+ID: server-timing-response-attribution
+Type: DeveloperTool
+Root WI: 2490
+Status: verified
+Surfaces: Rust API: `service_http::server_timing_middleware`, `service_http::ServerTimingExt`, `service_http::ServerTimingDisclosure`.
+EC Dimensions: behavior: `cargo test -p service-http --test server_timing` - header presence/parseability, phase-append round trip, and disclosure posture coverage
+Required Verification: smoke
+Promise:
+Every response leaving `server_timing_middleware` carries a W3C `Server-Timing`
+header with an `app;dur=<ms>` baseline measured at the same request/response
+boundary `trace_layer` spans, so integrators without Prometheus or log access
+still see per-request latency. Handlers may push named phase entries onto the
+per-request `ServerTimingExt` extension; those entries render after the
+baseline only on responses a handler explicitly marks
+`ServerTimingDisclosure::Full`. This crate has no visibility into a request's
+auth outcome (it does not depend on `service-auth`, and no crate-neutral
+"authenticated" signal exists on either the request or the response), so every
+response defaults to `ServerTimingDisclosure::TotalOnly` — the safe posture
+the originating issue calls for when auth state isn't visible at this layer.
+The `Full` opt-in via response extensions is the documented hook a service's
+own auth layer can use later to gate the phase breakdown on a successful auth
+context.
+Gate Inventory: `cargo test -p service-http --test server_timing`; `cargo test -p service-http server_timing`; libs/service-http/src/server_timing.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| server-timing-response-attribution | change | #2490 | implemented | verified | conformance | `cargo test -p service-http --test server_timing`; `cargo test -p service-http server_timing`; libs/service-http/src/server_timing.rs |
