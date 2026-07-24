@@ -21,6 +21,35 @@ contract currently lives in `apps/tape/README.md` (`cap_path`); this section
 records real-cloud proof runs until the #1848 cap_path relocation lands.
 Harness: `benchmarks/gcp-operator-acceptance` (`ACCEPTANCE_APPS=tape`).
 
+### GKE acceptance run 0724161853 (2026-07-24, PASSED — 0.4.11 candidate, #2468 restart + #2485 lag gauges proven)
+
+Tape-only run on the unified harness (restored `ACCEPTANCE_APPS=tape` mode
+after the app/tape→main rebase; Cloud Build from HEAD `7d063ff3d5`), all 13
+proofs `passed` in `tape-acceptance.json` (`axiom.gcp.tape.acceptance.v1`)
+and `cleanup.json` `status: clean` (verified `2026-07-24T16:38:13Z`):
+
+- **`bootstrap_seed_uri_restart` (NEW, #2468)**: a pod restart while the CR
+  still carries `bootstrapSeedUri` returns Ready with data intact —
+  the bootstrap-if-empty fix (`562ff7ecfe`) proven in-cluster; the field is
+  declarative bootstrap-if-empty, no longer one-shot.
+- **`subscription_lag_gauge` (NEW, #2485)**: `/metrics` serves
+  `tape_subscription_lag{topic,subscription}` after the append/consume
+  steps (`895d8699cf` scrape-time gauges).
+- Re-proven regression base on the 0.4.11-candidate code (which also
+  carries #2484 end-to-end body limits and #2483's call-time backup-scheme
+  docs): 1x1 reconcile, append/replay lifecycle, subscription pull/ack
+  cursor, pod-restart data retention, Workload-Identity GCS backup (635-byte
+  object), cold restore from the exact backup object, seed-cleared rolling
+  restart retention, 1→3 topology (3 ready), raft leader-pod-replaced
+  failover (term 111→113), post-failover write committed.
+
+Evidence root: `axiom-gcp-run-backup/evidence/0724161853/`. Harness
+hardening shipped en route (runs t1-t4): mode-aware
+render/deploy/verify-clean/operator-cell, the tape backup CronJob restored
+as hand-rolled+suspended (the Tape CRD has no CR-native backup field), and
+a completion sentinel that makes bash expansion-error aborts exit non-zero
+— false-green runs are structurally impossible for BOTH harness modes now.
+
 ### GKE acceptance run 0723135853 (2026-07-23, PASSED — full)
 
 - Cluster: persistent Standard GKE `axiom-operator-acceptance`
