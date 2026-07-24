@@ -124,3 +124,17 @@ fn source_extractor_sees_the_data_plane() {
         router.len()
     );
 }
+
+/// #2561 R1: `clients/openapi.json` is a committed snapshot of
+/// `tape spec --format openapi`'s live output, not a hand-maintained copy —
+/// it must byte-match live generation exactly so the offline contract cannot
+/// silently lag the surface it describes.
+#[test]
+fn openapi_committed_snapshot_matches_live_generation() {
+    let committed = include_str!("../clients/openapi.json");
+    let live = tape::spec::openapi_json();
+    assert_eq!(
+        committed, live,
+        "clients/openapi.json is stale: regenerate via `cargo run -q -p tape --bin tape -- spec --format openapi > apps/tape/clients/openapi.json`"
+    );
+}
