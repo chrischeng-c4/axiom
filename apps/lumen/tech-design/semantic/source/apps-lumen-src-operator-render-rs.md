@@ -620,10 +620,13 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                 "rules": [
                     {
                         "alert": "LumenNoReadyServingPods",
-                        "expr": format!("kube_deployment_status_replicas_available{{deployment=\"{}\"}} == 0", cx.name),
+                        "expr": format!(
+                            "kube_statefulset_status_replicas_ready{{statefulset=\"{}\", namespace=\"{}\"}} == 0",
+                            cx.name, cx.ns
+                        ),
                         "for": "2m",
                         "labels": { "severity": "critical" },
-                        "annotations": { "summary": "No ready lumen serving pods for {{ $labels.deployment }}" },
+                        "annotations": { "summary": "No ready lumen serving pods for {{ $labels.statefulset }}" },
                     },
                     {
                         "alert": "LumenBackupCronJobFailed",
@@ -651,6 +654,7 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     })
 }
 // CODEGEN-END
+
 ```
 
 ## Changes
