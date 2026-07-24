@@ -27,16 +27,23 @@ pub struct AppState {
     verifier: Arc<ReloadableRoleMapVerifier>,
     metrics: Arc<DeferMetrics>,
     draining: Arc<AtomicBool>,
+    body_limit_bytes: usize,
 }
 
 impl AppState {
-    pub fn new(raft: Arc<DeferRaft>, dispatcher: HttpDispatcher, auth: AuthConfig) -> Self {
+    pub fn new(
+        raft: Arc<DeferRaft>,
+        dispatcher: HttpDispatcher,
+        auth: AuthConfig,
+        body_limit_bytes: usize,
+    ) -> Self {
         Self {
             raft,
             dispatcher: Arc::new(dispatcher),
             verifier: Arc::new(auth.verifier()),
             metrics: Arc::new(DeferMetrics::default()),
             draining: Arc::new(AtomicBool::new(false)),
+            body_limit_bytes,
         }
     }
 
@@ -54,6 +61,11 @@ impl AppState {
 
     pub fn verifier(&self) -> Arc<ReloadableRoleMapVerifier> {
         self.verifier.clone()
+    }
+
+    /// The configured data-plane request body size limit (bytes).
+    pub fn body_limit_bytes(&self) -> usize {
+        self.body_limit_bytes
     }
 
     /// Run one bounded dispatcher pass across the committed queue inventory.
@@ -133,6 +145,7 @@ fn router_inner(
     admission: Option<service_http::AdmissionController>,
 ) -> Router {
     let verifier = state.verifier.clone();
+    let body_limit = state.body_limit_bytes();
     let data = Router::new()
         .route("/v1/queues/{queue}", get(queue_get).put(queue_put))
         .route("/v1/queues/{queue}/control", post(queue_control))
@@ -148,7 +161,11 @@ fn router_inner(
             verifier,
             service_auth::auth_middleware::<ReloadableRoleMapVerifier>,
         ))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // Data-plane-only request body cap (#2556); probes stay
+        // unbounded, matching `service_http`'s documented probe behavior.
+        // Enforces the configured body_limit_bytes with a structured 413 envelope.
+        .layer(service_http::body_limit_layer(body_limit));
     let data = match admission {
         Some(controller) => data.route_layer(from_fn_with_state(
             service_http::AdmissionMiddleware::new(controller, |request| {

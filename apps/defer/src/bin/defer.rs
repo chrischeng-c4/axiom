@@ -86,6 +86,11 @@ struct ServeArgs {
     otlp_endpoint: Option<String>,
     #[arg(long, env = "DEFER_BOOTSTRAP_SEED_URI")]
     bootstrap_seed_uri: Option<String>,
+    /// Data-plane request body size limit (bytes). Requests with
+    /// `Content-Length` exceeding this are rejected with 413; streamed bodies
+    /// are bounded mid-read. Defaults to 8 MiB (`DEFER_BODY_LIMIT_BYTES`).
+    #[arg(long, env = "DEFER_BODY_LIMIT_BYTES", default_value_t = 8 * 1024 * 1024)]
+    body_limit_bytes: usize,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -675,7 +680,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
     let dispatcher = HttpDispatcher::new(Duration::from_secs(args.target_timeout_secs), signing)?;
     let peer_router = peer_transport.as_ref().map(|_| raft.router());
-    let state = defer::server::AppState::new(raft, dispatcher, auth);
+    let state = defer::server::AppState::new(raft, dispatcher, auth, args.body_limit_bytes);
     if let Some(path) = args.token_registry_file.as_deref() {
         std::mem::drop(service_auth::spawn_registry_file_watcher(
             state.verifier(),

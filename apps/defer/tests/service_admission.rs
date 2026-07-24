@@ -58,6 +58,7 @@ async fn app(admission: Option<AdmissionController>) -> (tempfile::TempDir, axum
         raft,
         HttpDispatcher::new(Duration::from_secs(1), None).unwrap(),
         AuthConfig::open(),
+        8 * 1024 * 1024,
     );
     (dir, defer::server::router_with_admission(state, admission))
 }

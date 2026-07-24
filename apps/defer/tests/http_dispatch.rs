@@ -383,6 +383,7 @@ async fn shared_executor_dispatches_concurrently_with_a_hard_bound() {
         raft,
         HttpDispatcher::new(Duration::from_secs(2), None).unwrap(),
         AuthConfig::open(),
+        8 * 1024 * 1024,
     );
     assert_eq!(app.dispatch_tick(8, 3).await.unwrap(), 8);
     assert_eq!(peak.load(Ordering::SeqCst), 3);
