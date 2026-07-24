@@ -28,6 +28,7 @@ fn lumen_with_backup() -> Lumen {
         reshard_policy: ReshardPolicy::default(),
         observability: false,
         admission: None,
+        service_account_name: None,
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {

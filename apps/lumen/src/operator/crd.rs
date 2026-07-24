@@ -121,6 +121,14 @@ pub struct LumenSpec {
     #[serde(default)]
     pub tokens_secret_csi_driver: Option<String>,
 
+    /// Name of a pre-existing, externally-managed ServiceAccount for the
+    /// workload pods. When set, the operator uses this SA and never creates,
+    /// owns, updates, or deletes a ServiceAccount for the instance (the
+    /// deployer owns its lifecycle and any Workload Identity annotations).
+    /// When unset, the operator creates and owns `<instance>` as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_name: Option<String>,
+
     /// Stateless serving-fleet shape.
     #[serde(default)]
     pub serving: ServingSpec,

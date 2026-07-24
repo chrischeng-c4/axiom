@@ -55,6 +55,7 @@ fn dev_spec() -> LumenSpec {
         reshard_policy: ReshardPolicy::default(),
         observability: false,
         admission: None,
+        service_account_name: None,
     }
 }
 
@@ -86,6 +87,7 @@ fn prod_spec() -> LumenSpec {
         reshard_policy: ReshardPolicy::default(),
         observability: true,
         admission: None,
+        service_account_name: None,
     }
 }
 
@@ -170,6 +172,79 @@ fn dev_renders_full_managed_set() {
         assert_eq!(owner["kind"], "Lumen");
         assert_eq!(owner["uid"], "uid-1234");
         assert_eq!(owner["controller"], true);
+    }
+}
+
+#[test]
+fn unset_service_account_name_renders_and_uses_operator_owned_sa() {
+    // Regression: with `serviceAccountName` unset, the operator still
+    // renders and owns a workload ServiceAccount named after the instance,
+    // and the StatefulSet pod spec references it (#2497).
+    let l = lumen("search", dev_spec());
+    let objs = render(&l);
+
+    assert!(
+        has(&objs, "ServiceAccount", "search"),
+        "expected operator-owned workload ServiceAccount/search; got {:?}",
+        kinds(&objs)
+    );
+    let sts = find(&objs, "StatefulSet", "search");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "search"
+    );
+}
+
+#[test]
+fn set_service_account_name_omits_workload_sa_and_uses_external_name() {
+    // When `spec.serviceAccountName` points at a pre-existing, externally
+    // managed ServiceAccount, the operator must never render (and so never
+    // own or delete) a workload ServiceAccount of its own, and the
+    // StatefulSet pod spec must reference the external name (#2497).
+    let mut spec = dev_spec();
+    spec.service_account_name = Some("external-sa".into());
+    let l = lumen("search", spec);
+    let objs = render(&l);
+
+    // The backup ServiceAccount is a separate, still operator-owned concern
+    // and is unaffected by this field — assert specifically on the workload
+    // SA named after the instance, not "no ServiceAccount at all".
+    assert!(
+        !has(&objs, "ServiceAccount", "search"),
+        "workload ServiceAccount/search must not be rendered when \
+         serviceAccountName is set; got {:?}",
+        kinds(&objs)
+    );
+
+    let sts = find(&objs, "StatefulSet", "search");
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["serviceAccountName"],
+        "external-sa"
+    );
+}
+
+#[test]
+fn set_service_account_name_never_emits_any_serviceaccount_named_the_instance() {
+    // Ownership proof: the operator's apply/prune loop only ever manages
+    // objects it renders (see reconcile.rs module docs — there is no
+    // generic delete-by-kind sweep). Proving that no ServiceAccount object
+    // named `<instance>` ever appears in the render set — across every
+    // topology, not just the default one — is sufficient to prove the
+    // externally-managed SA can never be pruned or deleted by the operator.
+    for spec_fn in [dev_spec, prod_spec] {
+        let mut spec = spec_fn();
+        spec.service_account_name = Some("external-sa".into());
+        let l = lumen("search", spec);
+        let objs = render(&l);
+
+        assert!(
+            !objs
+                .iter()
+                .any(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "search"),
+            "no ServiceAccount named the instance may ever be rendered when \
+             serviceAccountName is externally managed; got {:?}",
+            kinds(&objs)
+        );
     }
 }
 
