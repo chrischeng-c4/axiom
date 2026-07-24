@@ -45,8 +45,8 @@ fn required_auth() -> AuthConfig {
 
 async fn start_server(auth: Option<AuthConfig>) -> SocketAddr {
     let state = match auth {
-        Some(a) => AppState::with_auth(TapeJournal::default(), None, a),
-        None => AppState::new(TapeJournal::default(), None),
+        Some(a) => AppState::with_auth(TapeJournal::default(), None, a, 8 * 1024 * 1024),
+        None => AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024),
     };
     let app = router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

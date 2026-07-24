@@ -76,8 +76,7 @@ fn render_verbs_emit_parseable_yaml_offline() {
         .as_str()
         .expect("operator deployment image");
     assert_eq!(
-        image,
-        "ghcr.io/chrischeng-c4/tape:0.4.10",
+        image, "ghcr.io/chrischeng-c4/tape:0.4.10",
         "operator image is release-pinned"
     );
     assert_ne!(image, "tape:latest", "operator never emits a mutable tag");

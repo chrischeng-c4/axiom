@@ -28,7 +28,7 @@ async fn start_server_with_state(state: AppState) -> SocketAddr {
 }
 
 async fn start_server() -> (SocketAddr, AppState) {
-    let state = AppState::new(TapeJournal::default(), None);
+    let state = AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024);
     let addr = start_server_with_state(state.clone()).await;
     (addr, state)
 }
@@ -45,7 +45,7 @@ async fn admin_backup_requires_admin_and_streams_snapshot_over_http() {
     .to_string();
     let auth = tape::auth::AuthConfig::resolve("required", None, Some(&tokens)).unwrap();
     let journal = TapeJournal::default();
-    let state = AppState::with_auth(journal, None, auth);
+    let state = AppState::with_auth(journal, None, auth, 8 * 1024 * 1024);
     let handle = state.journal_handle();
     handle
         .lock()

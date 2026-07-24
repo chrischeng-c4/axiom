@@ -22,12 +22,10 @@ use tape::TapeJournal;
 async fn seeded_group_surfaces_data(up_to: u64) -> Vec<tempfile::TempDir> {
     let source = Arc::new(Mutex::new(TapeJournal::default()));
     for n in 1..=3 {
-        source.lock().unwrap().append(
-            "acceptance",
-            None,
-            serde_json::json!({ "n": n }),
-            Some(100),
-        );
+        source
+            .lock()
+            .unwrap()
+            .append("acceptance", None, serde_json::json!({ "n": n }), Some(100));
     }
     let bytes = snapshot_bytes(&source, up_to).unwrap();
 
@@ -82,7 +80,12 @@ async fn seeded_group_surfaces_data(up_to: u64) -> Vec<tempfile::TempDir> {
         let applied: Vec<u64> = rafts.iter().map(|r| r.applied_index()).collect();
         let replayed: Vec<usize> = journals
             .iter()
-            .map(|j| j.lock().unwrap().replay("acceptance", None, None, None).len())
+            .map(|j| {
+                j.lock()
+                    .unwrap()
+                    .replay("acceptance", None, None, None)
+                    .len()
+            })
             .collect();
         if applied.iter().all(|&a| a >= want_applied) && replayed.iter().all(|&n| n == 3) {
             return dirs;

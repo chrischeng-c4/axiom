@@ -6,7 +6,7 @@ use tape::server::{router, AppState};
 use tape::TapeJournal;
 
 async fn start_server() -> SocketAddr {
-    let app = router(AppState::new(TapeJournal::default(), None));
+    let app = router(AppState::new(TapeJournal::default(), None, 8 * 1024 * 1024));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(service_http::serve(
