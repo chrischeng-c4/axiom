@@ -535,9 +535,13 @@ Type: Service
 Root WI: #1327, #1585
 Status: confirmed
 Surfaces: RaftHost: leader forwarding, committed apply, InstallSnapshot, and
-follower catch-up; Backup seed: exact `file://`, `s3://`, or `gs://` (workload-identity
-ADC in-cluster, GKE-proven) object read through `libs/service-backup` before an
-empty PVC joins the group.
+follower catch-up; Backup seed: exact `file://`, `s3://` (feature `backup`,
+`service-backup/s3`), or `gs://` (always linked, unconditional) object — the
+scheme set `libs/service-backup/src/destination.rs`'s `SUPPORTED_SCHEMES`
+accepts — read through `libs/service-backup` before an empty PVC joins the
+group. `gs://` authenticates via workload-identity ADC in-cluster and is
+GKE-proven end-to-end: CronJob backup + cold restore both via `gs://`
+(CAPABILITIES.md GKE acceptance run `0723135853`).
 EC Dimensions: behavior: `cargo test -p tape --test raft_cluster --test
 bootstrap` - live replica convergence and seed-before-catch-up conformance;
 stability: `cargo test -p tape --test raft_failover --test raft_persistence` -
@@ -553,7 +557,7 @@ Gate Inventory:
 - apps/tape/src/{raft,bin/tape}.rs
 - apps/tape/tests/{raft_cluster,raft_failover,raft_persistence,bootstrap}.rs
 - libs/raft-host
-- libs/service-backup/src/source.rs
+- libs/service-backup/src/{destination,source}.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

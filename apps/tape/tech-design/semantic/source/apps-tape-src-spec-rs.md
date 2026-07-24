@@ -32,6 +32,18 @@ fill_sections: [overview, schema, unit-test, changes]
 first Tape service slice. It emits OpenAPI-shaped JSON/YAML, JSON schemas, a
 route inventory, and LLM topic bodies.
 
+`LLM_BACKUP_TOPICS`/`llm_backup_sectioned_topic()` (#2483, #2494) is Tape's
+first `cli_std::llm::SectionedTopic` adoption: its destination-scheme
+content is a `TopicSection::Generated` section rendered at call time from
+`service_backup::llm::SECTIONED_TOPICS` (in turn backed by
+`service_backup::SUPPORTED_SCHEMES`), so the scheme list can never freeze
+stale inside a hand-copied `&'static str` again — the exact drift class
+#2483 found (CLI help, deployment-handoff.md, and README all claiming
+`file://`+`s3://` only after `gs://` unconditionally shipped). Not yet
+wired into `tape llm`'s dispatch (`LLM_TOPICS`/`llm()` in
+`src/bin/tape.rs`, a different file's ownership) — this function is the
+call-time-correct topic body ready for that wiring.
+
 ## Schema
 <!-- type: schema lang: yaml -->
 
@@ -113,4 +125,9 @@ changes:
     section: schema
     impl_mode: hand-written
     description: "Declare bounded pull and explicit ack inventory schemas without adding live h2c delivery handlers (#1255)."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Add LLM_BACKUP_TOPICS/llm_backup_sectioned_topic(): Tape's first cli_std::llm::SectionedTopic, composing service_backup::llm::SECTIONED_TOPICS (service_backup::SUPPORTED_SCHEMES-backed) as a TopicSection::Generated section rendered via cli_std::llm::render_sectioned at call time. Kills the #2483 stale-scheme-list drift class permanently; not yet reachable from `tape llm` because that dispatch lives in src/bin/tape.rs (#2483, #2494)."
 ```
