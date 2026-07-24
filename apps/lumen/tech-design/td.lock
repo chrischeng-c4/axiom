@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-24T03:20:34.622347+00:00"
-digest = "sha256:5b44901a3a03048ef779f968adeea544fc45299b65e0118b3690b544398cbd5a"
-source_digest = "sha256:5b44901a3a03048ef779f968adeea544fc45299b65e0118b3690b544398cbd5a"
-ir_digest = "sha256:c884f49978502873665883e88c53d2e3974f83daf11800eb51bbd021dd04d623"
+generated_at = "2026-07-24T04:05:18.093528+00:00"
+digest = "sha256:75a2eb25af1e5ee1f0864766c802e3b7d92a49dcf45a6c923e87089cf4f9e027"
+source_digest = "sha256:75a2eb25af1e5ee1f0864766c802e3b7d92a49dcf45a6c923e87089cf4f9e027"
+ir_digest = "sha256:b0d88de5d4589f4497ebc4b95a02692b1f0b5482190ecfec0cbfdbea8799481d"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -363,8 +363,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-api-rs.md"
-digest = "sha256:a06538a643eaa287d05f54b6e4c123863d2c5b320ede3ded6fc3053e18fb6511"
-ir_digest = "sha256:dbc1855710441d84e7ff5944ad34f80c4a4834cbba4207c13e06311ef2012038"
+digest = "sha256:bf42161e8da757330d0f24946575b45f903359971b35927331fd04ecf9cf6447"
+ir_digest = "sha256:1cbf483a502bc76ac276b7bf3947d04076f5a6ab9b45071cb4467b8d25b2ee12"
 section_count = 3
 
 [[files]]
