@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tape API",
-    "version": "0.4.3",
-    "description": "Topic replay journal API for append, replay, checkpoints, retention, and standard service endpoints."
+    "version": "0.4.11",
+    "description": "Topic replay journal API for append, replay, subscription resource inventory, checkpoints, retention, and standard service endpoints."
   },
   "paths": {
     "/healthz": {
@@ -84,6 +84,23 @@
               "text/plain": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/backup": {
+      "get": {
+        "summary": "Download an admin-gated whole-journal snapshot",
+        "responses": {
+          "200": {
+            "description": "JournalSnapshot JSON containing the journal at the applied Raft index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
               }
             }
@@ -181,6 +198,289 @@
         }
       }
     },
+    "/topics/{topic}/replay/stream": {
+      "get": {
+        "summary": "Download compact read-only topic replay frames",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "from_timestamp_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Length-framed Tape replay stream",
+            "content": {
+              "application/vnd.tape.replay.v1": {
+                "schema": {
+                  "type": "string",
+                  "contentEncoding": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/subscriptions": {
+      "post": {
+        "summary": "Create a topic delivery resource",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List topic delivery resources",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/subscriptions/{subscription}": {
+      "get": {
+        "summary": "Inspect one topic delivery resource",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subscription",
+            "in": "path",
+            "required": true,
+            "description": "Topic delivery resource name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete topic delivery resource metadata",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subscription",
+            "in": "path",
+            "required": true,
+            "description": "Topic delivery resource name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/subscriptions/{subscription}/pull": {
+      "post": {
+        "summary": "Read a bounded pull subscription window",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subscription",
+            "in": "path",
+            "required": true,
+            "description": "Topic delivery resource name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullSubscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullSubscriptionBatch"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic}/subscriptions/{subscription}/ack": {
+      "post": {
+        "summary": "Advance a pull subscription cursor",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subscription",
+            "in": "path",
+            "required": true,
+            "description": "Topic delivery resource name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullSubscriptionAckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerCheckpoint"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic}/consumers/{consumer}/checkpoint": {
       "get": {
         "summary": "Read a consumer replay checkpoint",
@@ -264,6 +564,32 @@
       }
     },
     "/topics/{topic}/retention": {
+      "get": {
+        "summary": "Read a topic's current retention window",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "description": "Topic name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPolicy"
+                }
+              }
+            }
+          }
+        }
+      },
       "put": {
         "summary": "Configure a topic retention window",
         "parameters": [
@@ -359,6 +685,108 @@
             "items": {
               "$ref": "#/components/schemas/TapeEvent"
             }
+          }
+        }
+      },
+      "SubscriptionCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "Subscription": {
+        "type": "object",
+        "required": [
+          "topic",
+          "name"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SubscriptionListResponse": {
+        "type": "object",
+        "required": [
+          "subscriptions"
+        ],
+        "properties": {
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscription"
+            }
+          }
+        }
+      },
+      "PullSubscriptionRequest": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "default": 100
+          }
+        }
+      },
+      "PullSubscriptionBatch": {
+        "type": "object",
+        "required": [
+          "topic",
+          "subscription",
+          "cursor",
+          "limit",
+          "next_offset",
+          "events"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "subscription": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "next_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TapeEvent"
+            }
+          }
+        }
+      },
+      "PullSubscriptionAckRequest": {
+        "type": "object",
+        "required": [
+          "offset"
+        ],
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
