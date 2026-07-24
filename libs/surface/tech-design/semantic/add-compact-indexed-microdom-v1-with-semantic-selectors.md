@@ -9,47 +9,52 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: surface-microdom-v1-flow
-entry: create
+id: surface-microdom-v1-contract
+entry: construct
 nodes:
-  create: { kind: start, label: "Create an empty MicroDom with compact node and relationship arenas" }
-  insert: { kind: process, label: "Insert a typed node with optional parent, stable semantic id, role, name, state, and actions" }
-  validate_parent: { kind: decision, label: "Does the requested parent NodeId exist" }
-  reject_parent: { kind: terminal, label: "Return InvalidParent without mutating the tree" }
-  validate_semantic_id: { kind: decision, label: "Is the stable semantic id absent from the id index" }
-  reject_duplicate: { kind: terminal, label: "Return DuplicateSemanticId without mutating the tree" }
-  link: { kind: process, label: "Append the node to the arena and link it through indexed first-child and next-sibling relationships" }
-  index: { kind: process, label: "Index semantic id plus semantic role and accessible name" }
-  query: { kind: decision, label: "Lookup by id, role, or role-and-name selector" }
-  traverse: { kind: process, label: "Traverse parent and children in deterministic insertion order" }
-  snapshot: { kind: terminal, label: "Emit canonical schema-versioned nodes in arena order" }
+  construct: { kind: start, label: "MicroDom owns Vec<MicroNode>, stable_id_index, and role_index; NodeId is a checked u32 arena index" }
+  specify: { kind: process, label: "NodeSpec supplies stable_id, typed SemanticRole, optional accessible name, compact NodeState, and ActionSet" }
+  preflight: { kind: decision, label: "Validate parent index and stable-id uniqueness before any arena or index mutation" }
+  invalid_parent: { kind: terminal, label: "Return MicroDomError::InvalidParent with original len and indexes unchanged" }
+  duplicate: { kind: terminal, label: "Return MicroDomError::DuplicateStableId with original len and indexes unchanged" }
+  append: { kind: process, label: "Append one MicroNode value to the contiguous arena; store parent, first_child, last_child, and next_sibling as Option<NodeId>" }
+  link_parent: { kind: process, label: "Link the parent last child to the new sibling or set first child; update last child" }
+  index: { kind: process, label: "Insert stable id to NodeId and append NodeId to its role bucket in arena order" }
+  select: { kind: decision, label: "Selector is stable id, role, or role plus exact accessible name" }
+  id_lookup: { kind: process, label: "Stable-id lookup is direct through stable_id_index" }
+  role_lookup: { kind: process, label: "Role lookup visits only the indexed role bucket; role-and-name applies exact name filtering in insertion order" }
+  traverse: { kind: process, label: "Children iterator follows first_child then next_sibling and validates every NodeId through the arena" }
+  snapshot: { kind: terminal, label: "Canonical snapshot clones nodes in arena order with schema version 1 and excludes unordered indexes" }
 edges:
-  - { from: create, to: insert }
-  - { from: insert, to: validate_parent }
-  - { from: validate_parent, to: reject_parent, label: "no" }
-  - { from: validate_parent, to: validate_semantic_id, label: "yes or root" }
-  - { from: validate_semantic_id, to: reject_duplicate, label: "duplicate" }
-  - { from: validate_semantic_id, to: link, label: "unique" }
-  - { from: link, to: index }
-  - { from: index, to: query }
-  - { from: query, to: traverse, label: "match" }
-  - { from: query, to: snapshot, label: "snapshot request" }
+  - { from: construct, to: specify }
+  - { from: specify, to: preflight }
+  - { from: preflight, to: invalid_parent, label: "parent missing" }
+  - { from: preflight, to: duplicate, label: "stable id exists" }
+  - { from: preflight, to: append, label: "valid" }
+  - { from: append, to: link_parent }
+  - { from: link_parent, to: index }
+  - { from: index, to: select }
+  - { from: select, to: id_lookup, label: "id" }
+  - { from: select, to: role_lookup, label: "role or role-name" }
+  - { from: id_lookup, to: traverse }
+  - { from: role_lookup, to: traverse }
   - { from: traverse, to: snapshot }
 ---
 flowchart TD
-  create([Create MicroDom]) --> insert[Insert typed node]
-  insert --> validate_parent{Parent valid?}
-  validate_parent -->|no| reject_parent([InvalidParent])
-  validate_parent -->|yes or root| validate_semantic_id{Stable id unique?}
-  validate_semantic_id -->|no| reject_duplicate([DuplicateSemanticId])
-  validate_semantic_id -->|yes| link[Append arena node and indexed links]
-  link --> index[Index id and semantic role/name]
-  index --> query{Query or traverse}
-  query -->|match| traverse[Deterministic parent/children traversal]
-  query -->|snapshot| snapshot([Canonical snapshot])
-  traverse --> snapshot
+  construct([Contiguous MicroDom arenas and indexes]) --> specify[Typed NodeSpec]
+  specify --> preflight{Parent valid and stable id unique?}
+  preflight -->|bad parent| invalid_parent([InvalidParent, atomic])
+  preflight -->|duplicate| duplicate([DuplicateStableId, atomic])
+  preflight -->|valid| append[Append value and assign NodeId u32]
+  append --> link_parent[Update indexed sibling links]
+  link_parent --> index[Index stable id and role]
+  index --> select{Semantic selector}
+  select -->|id| id_lookup[Direct id lookup]
+  select -->|role/name| role_lookup[Indexed role bucket plus exact name filter]
+  id_lookup --> traverse[Checked deterministic traversal]
+  role_lookup --> traverse
+  traverse --> snapshot([Schema v1 arena-order snapshot])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
