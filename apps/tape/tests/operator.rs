@@ -33,6 +33,7 @@ fn spec(replicas: u32) -> TapeSpec {
         auth: "off".into(),
         tokens_secret: None,
         tokens_secret_provider_class: None,
+        tokens_secret_csi_driver: None,
         bootstrap_seed_uri: None,
     }
 }
@@ -87,6 +88,7 @@ fn crd_flattens_cluster_spec() {
         "auth",
         "tokensSecret",
         "tokensSecretProviderClass",
+        "tokensSecretCsiDriver",
         "bootstrapSeedUri",
     ] {
         assert!(props.get(field).is_some(), "missing tape knob `{field}`");
@@ -338,6 +340,30 @@ fn token_registry_secret_wiring_is_opt_in() {
         .expect("token-registry volume");
     assert_eq!(vol["secret"]["secretName"], "tape-registry-secret");
     assert!(vol.get("csi").is_none());
+}
+
+/// GKE's managed Secrets Store add-on registers a different CSI driver name
+/// than the community default (#2456/#2457); an explicit
+/// `tokensSecretCsiDriver` must render that name on the pod volume.
+#[test]
+fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
+    let mut csi = spec(3);
+    csi.auth = "required".into();
+    csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
+    csi.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
+    let objs = render(&Tape::new("tape", csi));
+    let sts = of_kind(&objs, "StatefulSet");
+    let vol = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "tape-token-registry")
+        .expect("CSI token-registry volume");
+    assert_eq!(vol["csi"]["driver"], "secrets-store-gke.csi.k8s.io");
+    assert_eq!(
+        vol["csi"]["volumeAttributes"]["secretProviderClass"],
+        "tape-registry-csi"
+    );
 }
 
 /// The optional cold-recovery seed stays absent by default and projects to the
