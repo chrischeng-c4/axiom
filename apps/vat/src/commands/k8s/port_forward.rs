@@ -15,23 +15,23 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::iterator::{Handle as SignalHandle, Signals};
 
 use super::{
+    ActiveSession, ActiveSessionPortForwardArgs, KubeconfigAccess, SessionKubeconfig,
     active_session_expired, ensure_apple_container, exit_code, require_active_session_lease,
     require_private_directory, require_private_file, restrict_dir, run_bounded,
     sensitive_environment, strings, validate_active_session_backing, verify_host_api,
-    write_new_marker, ActiveSession, ActiveSessionPortForwardArgs, KubeconfigAccess,
-    SessionKubeconfig,
+    write_new_marker,
 };
 
 const PORT_FORWARD_SCHEMA: &str = "vat.k8s.session.port-forward.v2";
@@ -112,9 +112,9 @@ fn open_private_lock(path: &Path) -> Result<File> {
             )
         };
         if descriptor < 0 {
-            return Err(std::io::Error::last_os_error()).with_context(|| {
-                "open existing private leased K3s operation lock without following symlinks"
-            });
+            return Err(std::io::Error::last_os_error()).with_context(
+                || "open existing private leased K3s operation lock without following symlinks",
+            );
         }
         descriptor
     };
@@ -1667,7 +1667,9 @@ fn resolve_kubectl_on_path(path: &OsStr) -> Result<PathBuf> {
             "VAT refuses OrbStack-provided kubectl ({rejected}); install an independent kubectl, put it on PATH, then retry the K3s operation"
         );
     }
-    bail!("kubectl was not found on PATH; install an independent kubectl before using VAT K3s")
+    bail!(
+        "kubectl was not found on PATH; install an independent kubectl before using VAT K3s"
+    )
 }
 
 pub(super) fn is_orbstack_managed_path(path: &Path) -> bool {
@@ -1892,8 +1894,9 @@ fn signal_process_group(pgid: u32, signal: i32, label: &str) -> Result<()> {
     match signal_process_group_outcome(pgid, signal, label)? {
         ProcessGroupSignalOutcome::DeliveredOrGone => Ok(()),
         ProcessGroupSignalOutcome::PermissionPartial => {
-            Err(std::io::Error::from_raw_os_error(libc::EPERM))
-                .with_context(|| format!("send signal {signal} to {label} process group {pgid}"))
+            Err(std::io::Error::from_raw_os_error(libc::EPERM)).with_context(|| {
+                format!("send signal {signal} to {label} process group {pgid}")
+            })
         }
     }
 }
@@ -2146,8 +2149,8 @@ mod tests {
             fs::canonicalize(independent.join("kubectl")).expect("canonical standalone kubectl")
         );
 
-        let only_orbstack =
-            std::env::join_paths([orbstack.as_path()]).expect("join OrbStack-only kubectl PATH");
+        let only_orbstack = std::env::join_paths([orbstack.as_path()])
+            .expect("join OrbStack-only kubectl PATH");
         let error = resolve_kubectl_on_path(only_orbstack.as_os_str())
             .expect_err("OrbStack-only kubectl must fail closed");
         assert!(

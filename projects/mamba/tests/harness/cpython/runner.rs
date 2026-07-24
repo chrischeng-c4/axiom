@@ -549,8 +549,7 @@ fn is_full_unfiltered_run() -> bool {
 }
 
 fn verdict_sidecar_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/.cache/conformance/last_gate.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/.cache/conformance/last_gate.json")
 }
 
 fn json_escape(s: &str) -> String {

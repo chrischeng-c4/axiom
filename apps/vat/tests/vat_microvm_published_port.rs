@@ -9,8 +9,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -162,7 +160,6 @@ case "${1:-}" in
     if [ -e "$(dirname "$0")/.vat-fake-rm-failure" ]; then
       exit 23
     fi
-    /bin/rm -f "$(dirname "$0")/.vat-fake-container-live-name"
     ;;
   *)
     exit 2
@@ -504,22 +501,11 @@ fn loopback_listener(test: &str) -> Option<TcpListener> {
 }
 
 fn accept_before_deadline(listener: &TcpListener, test: &str) -> std::io::Result<TcpStream> {
-    accept_before_timeout(listener, test, Duration::from_secs(4))
-}
-
-fn accept_before_timeout(
-    listener: &TcpListener,
-    test: &str,
-    timeout: Duration,
-) -> std::io::Result<TcpStream> {
     listener.set_nonblocking(true)?;
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + Duration::from_secs(4);
     loop {
         match listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false)?;
-                return Ok(stream);
-            }
+            Ok((stream, _)) => return Ok(stream),
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(
@@ -532,33 +518,6 @@ fn accept_before_timeout(
             Err(err) => return Err(err),
         }
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn accepted_test_stream_is_returned_in_blocking_mode() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
-    let address = listener.local_addr().expect("loopback listener address");
-    let _client = TcpStream::connect(address).expect("queue loopback client");
-    let stream = accept_before_timeout(
-        &listener,
-        "accepted test stream blocking-mode regression",
-        Duration::from_secs(1),
-    )
-    .expect("accept queued loopback client");
-
-    let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
-    assert_ne!(
-        flags,
-        -1,
-        "read accepted stream flags: {}",
-        std::io::Error::last_os_error()
-    );
-    assert_eq!(
-        flags & libc::O_NONBLOCK,
-        0,
-        "accepted helper stream must be blocking"
-    );
 }
 
 /// The MicroVM readiness probe deliberately accepts an idle, open TCP stream.
@@ -840,14 +799,10 @@ fn successful_cleanup_error_is_retained_for_retry(target: CleanupRetentionTarget
         .and_then(|services| services.iter().find(|service| service["id"] == "web"))
         .expect("persisted MicroVM service");
     assert_eq!(
-        failed_state["test_run"]["runners"][0]["status"], "exited",
-        "the target completed before cleanup failed: {failed_state}"
-    );
-    assert_eq!(
         failed_state["test_run"]["runners"][0]["exit_code"], 0,
         "the target succeeded before cleanup failed: {failed_state}"
     );
-    assert_eq!(failed_service["status"], "failed", "state: {failed_state}");
+    assert_eq!(failed_service["status"], "exited", "state: {failed_state}");
     assert!(
         failed_service["cleanup_error"]
             .as_str()
@@ -1140,48 +1095,34 @@ fn hung_microvm_cleanup_is_bounded_and_persists_terminal_evidence() {
         .local_addr()
         .expect("reset listener address")
         .port();
-    let reset_server = thread::spawn(move || -> Result<Instant, String> {
-        let stream = accept_before_timeout(
-            &listener,
-            "hung MicroVM cleanup regression",
-            Duration::from_secs(10),
-        )
-        .map_err(|err| err.to_string())?;
-        let readiness_accepted_at = Instant::now();
+    let reset_server = thread::spawn(move || -> Result<(), String> {
+        let stream = accept_before_deadline(&listener, "hung MicroVM cleanup regression")
+            .map_err(|err| err.to_string())?;
         stream
             .shutdown(Shutdown::Both)
-            .map_err(|err| err.to_string())?;
-        Ok(readiness_accepted_at)
+            .map_err(|err| err.to_string())
     });
     write_project(project.path(), port, None, "fake:image");
 
+    let started = Instant::now();
     let output = fake_vat_command(project.path(), vat_home.path(), fake_bin.path(), &fake_log)
         .env("VAT_FAKE_CONTAINER_RM_HANG", "1")
         .args(["run", "smoke", "--keep", "always"])
         .output()
         .expect("vat run");
-    let process_exited_at = Instant::now();
-    let readiness_accepted_at = match reset_server.join().expect("reset server thread") {
-        Ok(accepted_at) => accepted_at,
-        Err(error) => {
-            let fake_calls = fs::read_to_string(&fake_log)
-                .unwrap_or_else(|read_error| format!("<fake log unavailable: {read_error}>"));
-            panic!(
-                "reset server: {error}; VAT stdout:\n{}\nVAT stderr:\n{}\nfake container calls:\n{fake_calls}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-    };
-    let cleanup_elapsed = process_exited_at.saturating_duration_since(readiness_accepted_at);
+    let elapsed = started.elapsed();
+    reset_server
+        .join()
+        .expect("reset server thread")
+        .expect("reset server");
 
     assert!(
         !output.status.success(),
         "cleanup fixture unexpectedly succeeded"
     );
     assert!(
-        cleanup_elapsed < Duration::from_secs(4),
-        "a hung `container rm -f` blocked failure persistence for {cleanup_elapsed:?} after readiness"
+        elapsed < Duration::from_secs(4),
+        "a hung `container rm -f` blocked failure persistence for {elapsed:?}"
     );
     let events = jsonl(&output.stdout);
     assert!(
@@ -1319,12 +1260,8 @@ fn compose_retains_cleanup_error_until_microvm_removal_retries() {
         .expect("reset listener address")
         .port();
     let reset_server = thread::spawn(move || -> Result<(), String> {
-        let stream = accept_before_timeout(
-            &listener,
-            "compose MicroVM cleanup retry regression",
-            Duration::from_secs(10),
-        )
-        .map_err(|err| err.to_string())?;
+        let stream = accept_before_deadline(&listener, "compose MicroVM cleanup retry regression")
+            .map_err(|err| err.to_string())?;
         stream
             .shutdown(Shutdown::Both)
             .map_err(|err| err.to_string())
@@ -1336,15 +1273,10 @@ fn compose_retains_cleanup_error_until_microvm_removal_retries() {
         .args(["compose", "up", "--project", project, "--detach"])
         .output()
         .expect("compose up");
-    if let Err(error) = reset_server.join().expect("reset server thread") {
-        let fake_calls = fs::read_to_string(&fake_log)
-            .unwrap_or_else(|read_error| format!("<fake log unavailable: {read_error}>"));
-        panic!(
-            "reset server: {error}; compose up stdout:\n{}\ncompose up stderr:\n{}\nfake container calls:\n{fake_calls}",
-            String::from_utf8_lossy(&up.stdout),
-            String::from_utf8_lossy(&up.stderr),
-        );
-    }
+    reset_server
+        .join()
+        .expect("reset server thread")
+        .expect("reset server");
     // The parent may observe the child after it publishes the VAT id but
     // before endpoint cleanup completes. In that valid detached handoff race,
     // `up` returns `starting`; the durable cleanup evidence must still retain
@@ -1644,10 +1576,10 @@ fn published_endpoint_diagnostic_timeout_still_persists_and_cleans_up() {
     assert!(
         endpoint_failure["inspect_evidence"]
             .as_str()
-            .is_some_and(|evidence| evidence.contains("timed out after") && evidence.contains("ms")),
+            .unwrap_or_default()
+            .contains("timed out after 1000ms"),
         "event: {endpoint_failure}"
     );
-    assert_eq!(endpoint_failure["diagnostic_budget_ms"], 1_000);
     let id = result_event(&events)["id"]
         .as_str()
         .expect("retained vat id");

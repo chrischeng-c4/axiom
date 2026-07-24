@@ -964,9 +964,10 @@ fn leased_session_exec_timeout_reaps_its_owned_group_and_removes_marker() {
         .trim()
         .parse::<u32>()
         .expect("parse bounded exec child pid");
-    let marker: Value =
-        serde_json::from_slice(&fs::read(&exec_marker).expect("read bounded exec recovery marker"))
-            .expect("parse bounded exec recovery marker");
+    let marker: Value = serde_json::from_slice(
+        &fs::read(&exec_marker).expect("read bounded exec recovery marker"),
+    )
+    .expect("parse bounded exec recovery marker");
     assert_eq!(marker["state"], "running");
     assert_eq!(marker["pgid"], pgid);
     let mut group_cleanup = ProcessGroupCleanup::new(pgid);
@@ -1146,9 +1147,10 @@ fn leased_session_exec_without_timeout_stops_at_remaining_lease_ttl() {
     let state = root.path().join("machine-live");
     let id = create_fake_leased_session(&bin, &vat_home, &state, root.path());
     let session_marker = vat_home.join("k8s-sessions").join(&id).join("session.json");
-    let mut session: Value =
-        serde_json::from_slice(&fs::read(&session_marker).expect("read active lease marker"))
-            .expect("parse active lease marker");
+    let mut session: Value = serde_json::from_slice(
+        &fs::read(&session_marker).expect("read active lease marker"),
+    )
+    .expect("parse active lease marker");
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1223,9 +1225,10 @@ fn leased_session_exec_rejects_timeout_longer_than_remaining_lease_before_child_
     let state = root.path().join("machine-live");
     let id = create_fake_leased_session(&bin, &vat_home, &state, root.path());
     let session_marker = vat_home.join("k8s-sessions").join(&id).join("session.json");
-    let mut marker: Value =
-        serde_json::from_slice(&fs::read(&session_marker).expect("read active lease marker"))
-            .expect("parse active lease marker");
+    let mut marker: Value = serde_json::from_slice(
+        &fs::read(&session_marker).expect("read active lease marker"),
+    )
+    .expect("parse active lease marker");
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1289,9 +1292,7 @@ fn leased_session_exec_recovery_marker_blocks_lifecycle_until_its_recorded_group
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     live_command.process_group(0);
-    let mut live_group = live_command
-        .spawn()
-        .expect("start live recovered exec group");
+    let mut live_group = live_command.spawn().expect("start live recovered exec group");
     let pgid = live_group.id();
     let mut group_cleanup = ProcessGroupCleanup::new(pgid);
     write_private_marker(
@@ -1322,8 +1323,7 @@ fn leased_session_exec_recovery_marker_blocks_lifecycle_until_its_recorded_group
         .expect("reject port-forward behind live exec marker");
     assert!(!forward.status.success());
     assert!(
-        String::from_utf8_lossy(&forward.stderr)
-            .contains("cannot authenticate an arbitrary recovered host command"),
+        String::from_utf8_lossy(&forward.stderr).contains("cannot authenticate an arbitrary recovered host command"),
         "port-forward must fail closed on a live exec marker: {}",
         String::from_utf8_lossy(&forward.stderr)
     );
@@ -1342,9 +1342,10 @@ fn leased_session_exec_recovery_marker_blocks_lifecycle_until_its_recorded_group
     assert!(exec_marker.exists(), "delete must retain the exec marker");
 
     let session_marker = vat_home.join("k8s-sessions").join(&id).join("session.json");
-    let mut session: Value =
-        serde_json::from_slice(&fs::read(&session_marker).expect("read active lease marker"))
-            .expect("parse active lease marker");
+    let mut session: Value = serde_json::from_slice(
+        &fs::read(&session_marker).expect("read active lease marker"),
+    )
+    .expect("parse active lease marker");
     let created_unix_ms = session["created_unix_ms"]
         .as_u64()
         .expect("created lease timestamp fits u64");
@@ -1377,9 +1378,7 @@ fn leased_session_exec_recovery_marker_blocks_lifecycle_until_its_recorded_group
 
     let kill_result = unsafe { libc::kill(-(pgid as libc::pid_t), libc::SIGKILL) };
     assert_eq!(kill_result, 0, "stop live recovered test process group");
-    let _ = live_group
-        .wait()
-        .expect("reap live recovered test group leader");
+    let _ = live_group.wait().expect("reap live recovered test group leader");
     wait_for_process_group_exit(pgid, "manually stopped recovered exec");
     group_cleanup.disarm();
     delete_fake_leased_session(&bin, &vat_home, &state, root.path(), &id);
@@ -1400,11 +1399,16 @@ fn leased_session_exec_recovery_marker_blocks_lifecycle_until_its_recorded_group
         }),
     );
     let mut starting_delete = Command::new(vat_bin());
-    let starting_delete =
-        configure_fake_k8s_command(&mut starting_delete, &bin, &vat_home, &state, root.path())
-            .args(["k8s", "session", "delete", &starting_id])
-            .output()
-            .expect("reject delete behind unconfirmed exec marker");
+    let starting_delete = configure_fake_k8s_command(
+        &mut starting_delete,
+        &bin,
+        &vat_home,
+        &state,
+        root.path(),
+    )
+    .args(["k8s", "session", "delete", &starting_id])
+    .output()
+    .expect("reject delete behind unconfirmed exec marker");
     assert!(!starting_delete.status.success());
     assert!(
         starting_marker.exists() && state.exists(),
@@ -1459,9 +1463,10 @@ fn leased_session_exec_json_rechecks_lease_after_api_probe_before_child_spawn() 
     let kubectl_log = root.path().join("kubectl.log");
     fs::remove_file(&kubectl_log).expect("clear bootstrap kubectl log");
     let marker_path = vat_home.join("k8s-sessions").join(&id).join("session.json");
-    let mut marker: Value =
-        serde_json::from_slice(&fs::read(&marker_path).expect("read active lease marker"))
-            .expect("parse active lease marker");
+    let mut marker: Value = serde_json::from_slice(
+        &fs::read(&marker_path).expect("read active lease marker"),
+    )
+    .expect("parse active lease marker");
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1526,20 +1531,25 @@ fn leased_session_exec_masks_private_paths_when_credentials_or_api_probe_fail() 
     ];
     fs::remove_file(&credential_paths[1]).expect("remove private kubeconfig");
     let mut credential_exec = Command::new(vat_bin());
-    let credential_failure =
-        configure_fake_k8s_command(&mut credential_exec, &bin, &vat_home, &state, root.path())
-            .args([
-                "k8s",
-                "session",
-                "exec",
-                "--format",
-                "json",
-                &credential_id,
-                "--",
-                "agent-json-child",
-            ])
-            .output()
-            .expect("fail closed for missing private K3s credential");
+    let credential_failure = configure_fake_k8s_command(
+        &mut credential_exec,
+        &bin,
+        &vat_home,
+        &state,
+        root.path(),
+    )
+    .args([
+        "k8s",
+        "session",
+        "exec",
+        "--format",
+        "json",
+        &credential_id,
+        "--",
+        "agent-json-child",
+    ])
+    .output()
+    .expect("fail closed for missing private K3s credential");
     assert!(!credential_failure.status.success());
     let credential_rendered = format!(
         "{}\n{}",
@@ -1569,20 +1579,19 @@ fn leased_session_exec_masks_private_paths_when_credentials_or_api_probe_fail() 
     ];
     fs::remove_file(bin.join("kubectl")).expect("remove fake kubectl for spawn failure");
     let mut api_exec = Command::new(vat_bin());
-    let api_failure =
-        configure_fake_k8s_command(&mut api_exec, &bin, &vat_home, &state, root.path())
-            .args([
-                "k8s",
-                "session",
-                "exec",
-                "--format",
-                "json",
-                &api_id,
-                "--",
-                "agent-json-child",
-            ])
-            .output()
-            .expect("fail closed when private API probe cannot spawn kubectl");
+    let api_failure = configure_fake_k8s_command(&mut api_exec, &bin, &vat_home, &state, root.path())
+        .args([
+            "k8s",
+            "session",
+            "exec",
+            "--format",
+            "json",
+            &api_id,
+            "--",
+            "agent-json-child",
+        ])
+        .output()
+        .expect("fail closed when private API probe cannot spawn kubectl");
     assert!(!api_failure.status.success());
     let api_rendered = format!(
         "{}\n{}",
@@ -2127,8 +2136,7 @@ fn leased_session_port_forward_json_masks_private_setup_and_api_failures_without
         }
 
         let mut forward = Command::new(vat_bin());
-        let forward =
-            configure_fake_k8s_command(&mut forward, &bin, &vat_home, &state, root.path());
+        let forward = configure_fake_k8s_command(&mut forward, &bin, &vat_home, &state, root.path());
         if mode == "api" {
             forward.env("VAT_FAKE_KUBECTL_MODE", "fail");
         }
@@ -2268,7 +2276,8 @@ fn leased_session_port_forward_json_rechecks_lease_after_api_verify_before_tunne
         String::from_utf8_lossy(&created.stdout),
         String::from_utf8_lossy(&created.stderr)
     );
-    let id = serde_json::from_slice::<Value>(&created.stdout).expect("short session JSON")["id"]
+    let id = serde_json::from_slice::<Value>(&created.stdout)
+        .expect("short session JSON")["id"]
         .as_str()
         .expect("short leased session id")
         .to_string();
@@ -2373,9 +2382,7 @@ fn leased_session_port_forward_json_emits_no_document_when_cleanup_is_unconfirme
     let residual = session_directory.join("port-forward/unexpected-residual");
     create_private_directory(&residual);
     fs::write(&release_path, b"release").expect("release JSON host child");
-    let status = forward
-        .wait()
-        .expect("reap cleanup-failed JSON port-forward");
+    let status = forward.wait().expect("reap cleanup-failed JSON port-forward");
     let stdout = fs::read_to_string(&forward_stdout).expect("read cleanup-failure stdout");
     let stderr = fs::read_to_string(&forward_stderr).expect("read cleanup-failure stderr");
     assert!(
@@ -2448,11 +2455,7 @@ fn leased_port_forward_json_cleans_background_pipe_descendants_before_joining_ca
         String::from_utf8_lossy(&forwarded.stderr)
     );
     let stdout = String::from_utf8_lossy(&forwarded.stdout);
-    assert_eq!(
-        stdout.lines().count(),
-        1,
-        "JSON output must stay one document"
-    );
+    assert_eq!(stdout.lines().count(), 1, "JSON output must stay one document");
     let terminal: Value = serde_json::from_str(stdout.trim()).expect("background JSON result");
     assert_eq!(terminal["cleanup"], "confirmed");
     assert_eq!(terminal["stdout"], "");

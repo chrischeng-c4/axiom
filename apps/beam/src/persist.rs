@@ -107,8 +107,8 @@ impl BeamSnapshot {
 
     /// Decode from CBOR + lz4.
     pub fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
-        let raw =
-            lz4_flex::decompress_size_prepended(bytes).context("lz4 decompress BeamSnapshot")?;
+        let raw = lz4_flex::decompress_size_prepended(bytes)
+            .context("lz4 decompress BeamSnapshot")?;
         let mut snap: Self = ciborium::from_reader(&raw[..])
             .map_err(|e| anyhow::anyhow!("cbor decode BeamSnapshot: {e}"))?;
         for col in snap.collections.values_mut() {

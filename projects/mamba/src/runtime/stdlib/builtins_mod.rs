@@ -586,7 +586,9 @@ unsafe extern "C" fn dispatch_dir(args_ptr: *const MbValue, nargs: usize) -> MbV
         // #1550: CPython's `dir()` takes at most one positional argument;
         // the type-wall defers arity enforcement here (see check_expr.rs)
         // since this is a runtime-only TypeError, not a static rejection.
-        raise_type_error(&format!("dir() takes at most 1 argument ({nargs} given)"))
+        raise_type_error(&format!(
+            "dir() takes at most 1 argument ({nargs} given)"
+        ))
     } else {
         super::super::class::mb_dir(args[0])
     }

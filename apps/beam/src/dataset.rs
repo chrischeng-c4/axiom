@@ -205,11 +205,7 @@ impl LowRankModel {
                 basis[d * rank + r] = v;
                 norm_sq += v * v;
             }
-            let inv = if norm_sq > 0.0 {
-                1.0 / norm_sq.sqrt()
-            } else {
-                0.0
-            };
+            let inv = if norm_sq > 0.0 { 1.0 / norm_sq.sqrt() } else { 0.0 };
             for d in 0..dim {
                 basis[d * rank + r] *= inv;
             }
@@ -237,7 +233,8 @@ impl LowRankModel {
     /// `coef` is a caller-owned scratch of length `rank` (avoids a per-point
     /// allocation across a million draws). `rng` is advanced for reproducibility.
     pub fn draw(&self, rng: &mut Lcg, coef: &mut [f32], out: &mut [f32]) {
-        let cl = ((rng.next_unit() * self.num_clusters as f32) as usize).min(self.num_clusters - 1);
+        let cl = ((rng.next_unit() * self.num_clusters as f32) as usize)
+            .min(self.num_clusters - 1);
         let cbase = cl * self.rank;
         for (r, cr) in coef.iter_mut().enumerate() {
             *cr = self.coef_centers[cbase + r] + self.coef_jitter * rng.next_gaussian();
@@ -398,10 +395,7 @@ mod tests {
                         .sum::<f32>()
                 })
                 .fold(f32::INFINITY, f32::min);
-            assert!(
-                nearest < 0.25,
-                "point {i} should hug a center, got {nearest}"
-            );
+            assert!(nearest < 0.25, "point {i} should hug a center, got {nearest}");
         }
     }
 

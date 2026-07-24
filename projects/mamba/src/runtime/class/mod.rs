@@ -4208,11 +4208,7 @@ fn instance_new_with_init_impl(
                         // matching CPython's `dict(iterable, **kwargs)`. #1549.
                         let payload = instance.as_ptr().and_then(|ptr| unsafe {
                             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                fields
-                                    .read()
-                                    .unwrap()
-                                    .get(payload_field_for_base(base))
-                                    .copied()
+                                fields.read().unwrap().get(payload_field_for_base(base)).copied()
                             } else {
                                 None
                             }
@@ -26638,11 +26634,7 @@ mod tests {
         static SET_VALUE: AtomicU64 = AtomicU64::new(0);
         static DELETE_CALLED: AtomicBool = AtomicBool::new(false);
 
-        extern "C" fn closure_set_1821(
-            _desc: MbValue,
-            _instance: MbValue,
-            value: MbValue,
-        ) -> MbValue {
+        extern "C" fn closure_set_1821(_desc: MbValue, _instance: MbValue, value: MbValue) -> MbValue {
             SET_CALLED.store(true, Ordering::SeqCst);
             SET_VALUE.store(value.as_int().unwrap_or(-1) as u64, Ordering::SeqCst);
             MbValue::none()
@@ -26714,11 +26706,7 @@ mod tests {
 
         static SET_NAME_CALLED: AtomicBool = AtomicBool::new(false);
 
-        extern "C" fn closure_set_name_1821(
-            _val: MbValue,
-            _owner: MbValue,
-            _name: MbValue,
-        ) -> MbValue {
+        extern "C" fn closure_set_name_1821(_val: MbValue, _owner: MbValue, _name: MbValue) -> MbValue {
             SET_NAME_CALLED.store(true, Ordering::SeqCst);
             MbValue::none()
         }
@@ -26738,9 +26726,7 @@ mod tests {
         mb_class_register("ClosureSetNameHost1821", vec![], HashMap::new());
 
         let desc_inst = mb_instance_new(
-            MbValue::from_ptr(MbObject::new_str(
-                "ClosureSetNameDescriptor1821".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("ClosureSetNameDescriptor1821".to_string())),
             MbValue::none(),
         );
 
@@ -26771,7 +26757,11 @@ mod tests {
         );
 
         mb_class_register("ClosureAttrHost1821", vec![], HashMap::new());
-        mb_class_set_class_attr(s("ClosureAttrHost1821"), s("method_1821"), closure_handle);
+        mb_class_set_class_attr(
+            s("ClosureAttrHost1821"),
+            s("method_1821"),
+            closure_handle,
+        );
 
         let real_addr_registered =
             CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&(real_addr as u64)));

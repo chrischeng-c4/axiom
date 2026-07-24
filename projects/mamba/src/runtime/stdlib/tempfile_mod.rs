@@ -1162,10 +1162,7 @@ mod tests {
                 // #1630: fd must be a real, registered fd (not the old `0`
                 // placeholder) so `os.close(fd)` doesn't raise Errno 9.
                 let fd = items[0].as_int().expect("mkstemp fd should be an int");
-                assert!(
-                    fd >= 0,
-                    "mkstemp fd should be a valid non-negative fd, got {fd}"
-                );
+                assert!(fd >= 0, "mkstemp fd should be a valid non-negative fd, got {fd}");
                 assert!(
                     super::super::os_mod::mb_os_fd_path(fd).is_some(),
                     "mkstemp fd should be registered in the shared os fd table"

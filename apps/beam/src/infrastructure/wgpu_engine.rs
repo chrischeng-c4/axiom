@@ -1,8 +1,8 @@
 //! Infrastructure implementation of DistanceCalculator.
 
-use crate::domain::ports::DistanceCalculator;
-use crate::gpu::GpuContext;
 use std::sync::Arc;
+use crate::gpu::GpuContext;
+use crate::domain::ports::DistanceCalculator;
 
 /// Infrastructure Adapter implementing DistanceCalculator using wgpu / CPU fallback.
 pub struct WgpuDistanceEngine {

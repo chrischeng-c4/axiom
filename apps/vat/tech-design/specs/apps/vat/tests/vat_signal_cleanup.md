@@ -99,45 +99,45 @@ fn vat_log_snapshot(vat_home: &Path) -> String {
 
 struct TestProcessGuard {
     child: Child,
-    emergency_stop: PathBuf,
+    group_leader_markers: Vec<PathBuf>,
     pid_markers: Vec<PathBuf>,
-    child_reaped: bool,
+    disarmed: bool,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_signal_cleanup-rs.md#source
 impl TestProcessGuard {
-    fn new(child: Child, emergency_stop: PathBuf, pid_markers: Vec<PathBuf>) -> Self {
+    fn new(child: Child, group_leader_markers: Vec<PathBuf>, pid_markers: Vec<PathBuf>) -> Self {
         Self {
             child,
-            emergency_stop,
+            group_leader_markers,
             pid_markers,
-            child_reaped: false,
+            disarmed: false,
         }
     }
 
-    fn mark_child_reaped(&mut self) {
-        self.child_reaped = true;
+    fn disarm(&mut self) {
+        self.disarmed = true;
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_signal_cleanup-rs.md#source
 impl Drop for TestProcessGuard {
     fn drop(&mut self) {
-        // Fixture children poll this unique file, so failure cleanup never
-        // signals stale marker PIDs/PGIDs that may have been reused. VAT itself
-        // is killed only while its unreaped Child handle still proves identity.
-        let _ = fs::write(&self.emergency_stop, b"stop");
-        if !self.child_reaped {
-            match self.child.try_wait() {
-                Ok(Some(_)) => self.child_reaped = true,
-                Ok(None) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    self.child_reaped = true;
-                }
-                Err(_) => {}
+        if self.disarmed {
+            return;
+        }
+        // Stop VAT first so the failed test has only this guard as cleanup
+        // owner, then kill only PGIDs/PIDs written by the test fixtures.
+        let _ = unsafe { libc::kill(self.child.id() as libc::pid_t, libc::SIGKILL) };
+        for marker in &self.group_leader_markers {
+            if let Some(pgid) = read_pid(marker) {
+                let _ = unsafe { libc::kill(-(pgid as libc::pid_t), libc::SIGKILL) };
             }
         }
+        for marker in &self.pid_markers {
+            if let Some(pid) = read_pid(marker) {
+                let _ = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            }
+        }
+        let _ = self.child.wait();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             let any_live = self
@@ -159,14 +159,12 @@ struct ExternalListenerGuard {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_signal_cleanup-rs.md#source
 impl ExternalListenerGuard {
     fn endpoint(&self) -> std::net::SocketAddr {
         self.listener.local_addr().expect("external endpoint")
     }
 }
 
-/// @spec apps/vat/tech-design/semantic/source/projects-vat-tests-vat_signal_cleanup-rs.md#source
 impl Drop for ExternalListenerGuard {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -237,7 +235,6 @@ fn run_signal_cleanup_case(first_signal: i32, second_signal: i32, expected_exit:
     let service_descendant = markers.path().join("service-descendant.pid");
     let runner_leader = markers.path().join("runner-leader.pid");
     let runner_descendant = markers.path().join("runner-descendant.pid");
-    let emergency_stop = markers.path().join("emergency-stop");
 
     write_executable(
         &project.path().join("stubborn_server.py"),
@@ -249,15 +246,11 @@ sock = socket.socket()
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.bind(("127.0.0.1", int(sys.argv[1])))
 sock.listen(16)
-sock.settimeout(0.1)
 with open(sys.argv[2], "w") as marker:
     marker.write(str(os.getpid()))
-while not os.path.exists(sys.argv[3]):
-    try:
-        conn, _ = sock.accept()
-        conn.close()
-    except socket.timeout:
-        pass
+while True:
+    conn, _ = sock.accept()
+    conn.close()
 "#,
     );
     write_executable(
@@ -268,8 +261,8 @@ signal.signal(signal.SIGINT, signal.SIG_IGN)
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 with open(sys.argv[1], "w") as marker:
     marker.write(str(os.getpid()))
-while not os.path.exists(sys.argv[2]):
-    time.sleep(0.1)
+while True:
+    time.sleep(1)
 "#,
     );
 
@@ -292,7 +285,6 @@ SERVICE_LEADER = "{}"
 SERVICE_DESCENDANT = "{}"
 RUNNER_LEADER = "{}"
 RUNNER_DESCENDANT = "{}"
-VAT_EMERGENCY_STOP = "{}"
 
 [[services]]
 id = "external"
@@ -301,19 +293,18 @@ timeout_s = 5
 
 [[services]]
 id = "owned"
-cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$SERVICE_LEADER\"; python3 \"$VAT_CONFIG_ROOT/stubborn_server.py\" \"$1\" \"$SERVICE_DESCENDANT\" \"$VAT_EMERGENCY_STOP\" & descendant=$!; wait \"$descendant\"", "--", "{{port}}"]
+cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$SERVICE_LEADER\"; python3 \"$VAT_CONFIG_ROOT/stubborn_server.py\" \"$1\" \"$SERVICE_DESCENDANT\" & descendant=$!; wait \"$descendant\"", "--", "{{port}}"]
 timeout_s = 5
 
 [[runners]]
 id = "interrupt"
 requires = ["external", "owned"]
-cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; python3 \"$VAT_CONFIG_ROOT/stubborn_runner.py\" \"$RUNNER_DESCENDANT\" \"$VAT_EMERGENCY_STOP\" & descendant=$!; wait \"$descendant\""]
+cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; python3 \"$VAT_CONFIG_ROOT/stubborn_runner.py\" \"$RUNNER_DESCENDANT\" & descendant=$!; wait \"$descendant\""]
 "#,
             service_leader.display(),
             service_descendant.display(),
             runner_leader.display(),
             runner_descendant.display(),
-            emergency_stop.display(),
             external_endpoint.port(),
         ),
     )
@@ -329,7 +320,7 @@ cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; pytho
         .expect("spawn vat run");
     let mut vat = TestProcessGuard::new(
         vat,
-        emergency_stop,
+        vec![service_leader.clone(), runner_leader.clone()],
         vec![
             service_leader.clone(),
             service_descendant.clone(),
@@ -389,7 +380,6 @@ cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; pytho
         }
         std::thread::sleep(Duration::from_millis(25));
     };
-    vat.mark_child_reaped();
     assert_eq!(status.code(), Some(expected_exit));
 
     let mut stdout = Vec::new();
@@ -463,6 +453,7 @@ cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; pytho
     TcpListener::bind(("127.0.0.1", owned_port))
         .unwrap_or_else(|error| panic!("owned service port {owned_port} did not rebind: {error}"));
     assert_external_listener_replies(external_endpoint);
+    vat.disarm();
 
     let vat_id = meta["id"].as_str().expect("VAT id");
     let state = Command::new(vat_bin())
@@ -515,45 +506,6 @@ cmd = ["sh", "-c", "trap '' INT TERM; printf '%s' $$ > \"$RUNNER_LEADER\"; pytho
         assert!(meta_path.exists(), "GC must retain interrupted evidence");
     }
 
-    let mut cleanup_meta = meta.clone();
-    cleanup_meta["test_run"]["runner"]["cleanup_error"] =
-        Value::String("injected runner cleanup obligation".to_string());
-    cleanup_meta["test_run"]["runners"][0]["cleanup_error"] =
-        Value::String("injected runner cleanup obligation".to_string());
-    fs::write(
-        &meta_path,
-        serde_json::to_vec_pretty(&cleanup_meta).expect("serialize cleanup metadata"),
-    )
-    .expect("inject runner cleanup obligation");
-    for execute in [false, true] {
-        let mut gc_command = Command::new(vat_bin());
-        gc_command.env("VAT_HOME", vat_home.path()).args([
-            "gc",
-            "--json",
-            "--keep-last",
-            "0",
-            "--include-failed",
-        ]);
-        if execute {
-            gc_command.arg("--execute");
-        }
-        let gc = gc_command
-            .output()
-            .expect("inspect cleanup-obligation GC classification");
-        assert!(gc.status.success());
-        let report: Value = serde_json::from_slice(&gc.stdout).expect("GC JSON");
-        let entry = report["entries"]
-            .as_array()
-            .and_then(|entries| entries.iter().find(|entry| entry["id"] == vat_id))
-            .expect("cleanup-obligation GC entry");
-        assert_eq!(entry["candidate"], false, "{entry}");
-        assert_eq!(entry["reason"], "cleanup_unconfirmed_retained", "{entry}");
-        assert!(
-            meta_path.exists(),
-            "GC --include-failed must retain cleanup obligations"
-        );
-    }
-
     let events = String::from_utf8_lossy(&stdout);
     assert!(events.contains("\"code\":\"run_interrupted\""), "{events}");
     assert!(
@@ -574,7 +526,6 @@ fn run_direct_signal_case(first_signal: i32, second_signal: i32, expected_exit: 
     let markers = tempfile::tempdir().expect("direct marker tempdir");
     let leader = markers.path().join("direct-leader.pid");
     let descendant = markers.path().join("direct-descendant.pid");
-    let emergency_stop = markers.path().join("direct-emergency-stop");
     write_executable(
         &project.path().join("stubborn_runner.py"),
         r#"#!/usr/bin/env python3
@@ -583,8 +534,8 @@ signal.signal(signal.SIGINT, signal.SIG_IGN)
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 with open(sys.argv[1], "w") as marker:
     marker.write(str(os.getpid()))
-while not os.path.exists(sys.argv[2]):
-    time.sleep(0.1)
+while True:
+    time.sleep(1)
 "#,
     );
 
@@ -593,13 +544,12 @@ while not os.path.exists(sys.argv[2]):
         .env("VAT_HOME", vat_home.path())
         .env("DIRECT_LEADER", &leader)
         .env("DIRECT_DESCENDANT", &descendant)
-        .env("DIRECT_EMERGENCY_STOP", &emergency_stop)
         .args([
             "run",
             "--",
             "sh",
             "-c",
-            "trap '' INT TERM; printf '%s' $$ > \"$DIRECT_LEADER\"; python3 stubborn_runner.py \"$DIRECT_DESCENDANT\" \"$DIRECT_EMERGENCY_STOP\" & child=$!; wait \"$child\"",
+            "trap '' INT TERM; printf '%s' $$ > \"$DIRECT_LEADER\"; python3 stubborn_runner.py \"$DIRECT_DESCENDANT\" & child=$!; wait \"$child\"",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -607,7 +557,7 @@ while not os.path.exists(sys.argv[2]):
         .expect("spawn direct vat run");
     let mut vat = TestProcessGuard::new(
         vat,
-        emergency_stop,
+        vec![leader.clone()],
         vec![leader.clone(), descendant.clone()],
     );
 
@@ -641,11 +591,9 @@ while not os.path.exists(sys.argv[2]):
         }
         std::thread::sleep(Duration::from_millis(25));
     };
-    vat.mark_child_reaped();
     assert_eq!(status.code(), Some(expected_exit));
 
-    let (meta_path, mut meta) =
-        read_single_meta(vat_home.path()).expect("direct terminal metadata");
+    let (_, meta) = read_single_meta(vat_home.path()).expect("direct terminal metadata");
     assert_eq!(meta["status"]["state"], "interrupted", "{meta}");
     assert_eq!(meta["status"]["signal"], first_signal, "{meta}");
     assert_eq!(meta["last_run"]["exit_code"], expected_exit, "{meta}");
@@ -658,36 +606,7 @@ while not os.path.exists(sys.argv[2]):
         );
     }
     assert_process_group_absent(read_pid(&leader).expect("direct PGID marker"));
-
-    meta["last_run"]["cleanup_error"] =
-        Value::String("injected direct cleanup obligation".to_string());
-    fs::write(
-        &meta_path,
-        serde_json::to_vec_pretty(&meta).expect("serialize direct cleanup metadata"),
-    )
-    .expect("inject direct cleanup obligation");
-    let vat_id = meta["id"].as_str().expect("direct VAT id");
-    let gc = Command::new(vat_bin())
-        .env("VAT_HOME", vat_home.path())
-        .args([
-            "gc",
-            "--json",
-            "--keep-last",
-            "0",
-            "--include-failed",
-            "--execute",
-        ])
-        .output()
-        .expect("inspect direct cleanup-obligation GC classification");
-    assert!(gc.status.success());
-    let report: Value = serde_json::from_slice(&gc.stdout).expect("GC JSON");
-    let entry = report["entries"]
-        .as_array()
-        .and_then(|entries| entries.iter().find(|entry| entry["id"] == vat_id))
-        .expect("direct cleanup-obligation GC entry");
-    assert_eq!(entry["candidate"], false, "{entry}");
-    assert_eq!(entry["reason"], "cleanup_unconfirmed_retained", "{entry}");
-    assert!(meta_path.exists());
+    vat.disarm();
 }
 
 #[test]

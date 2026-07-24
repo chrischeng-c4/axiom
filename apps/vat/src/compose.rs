@@ -10,7 +10,7 @@ use crate::commands;
 use crate::config::{
     PortSpec, RunnerConfig, ServiceConfig, ServiceRuntime, VatConfig, VolumeMount,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_yaml::Value;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};

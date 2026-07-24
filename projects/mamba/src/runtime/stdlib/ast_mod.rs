@@ -8228,14 +8228,8 @@ mod tests {
         // child node (the Assign statement).
         let node = mb_ast_parse(MbValue::from_ptr(MbObject::new_str("x = 1".to_string())));
         let result = mb_ast_iter_child_nodes(node);
-        assert!(
-            result.as_int().is_some(),
-            "iter_child_nodes returns an iterator"
-        );
-        assert!(
-            mb_next(result).as_ptr().is_some(),
-            "expected one child node"
-        );
+        assert!(result.as_int().is_some(), "iter_child_nodes returns an iterator");
+        assert!(mb_next(result).as_ptr().is_some(), "expected one child node");
         assert!(mb_next(result).is_none(), "expected exactly one child node");
     }
 

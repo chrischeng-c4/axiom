@@ -483,10 +483,7 @@ pub fn register() {
     merge_register(
         "test.support.os_helper",
         vec![
-            (
-                "TESTFN",
-                MbValue::from_ptr(MbObject::new_str(testfn.clone())),
-            ),
+            ("TESTFN", MbValue::from_ptr(MbObject::new_str(testfn.clone()))),
             ("TESTFN_ASCII", MbValue::from_ptr(MbObject::new_str(testfn))),
         ],
     );

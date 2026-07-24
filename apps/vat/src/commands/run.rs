@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -124,41 +124,6 @@ impl std::fmt::Display for RunInterrupted {
 
 impl std::error::Error for RunInterrupted {}
 
-#[derive(Debug, Clone)]
-struct RunCleanupFailed {
-    interruption: RunInterrupted,
-    cleanup_error: String,
-}
-
-impl std::fmt::Display for RunCleanupFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{}; owned cleanup remains unconfirmed: {}",
-            self.interruption, self.cleanup_error
-        )
-    }
-}
-
-impl std::error::Error for RunCleanupFailed {}
-
-#[derive(Debug)]
-struct RunOwnedCleanupFailed {
-    cleanup_error: String,
-}
-
-impl std::fmt::Display for RunOwnedCleanupFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "VAT-owned helper cleanup remains unconfirmed: {}",
-            self.cleanup_error
-        )
-    }
-}
-
-impl std::error::Error for RunOwnedCleanupFailed {}
-
 fn signal_name(signal: i32) -> &'static str {
     match signal {
         libc::SIGINT => "SIGINT",
@@ -171,31 +136,9 @@ fn run_interruption(error: &anyhow::Error) -> Option<RunInterrupted> {
     error.downcast_ref::<RunInterrupted>().cloned()
 }
 
-fn run_cleanup_failure(error: &anyhow::Error) -> Option<RunCleanupFailed> {
-    error.downcast_ref::<RunCleanupFailed>().cloned()
-}
-
-fn run_owned_cleanup_failure(error: &anyhow::Error) -> Option<&RunOwnedCleanupFailed> {
-    error.downcast_ref::<RunOwnedCleanupFailed>()
-}
-
-fn configured_terminal_status(
-    interruption: Option<&RunInterrupted>,
-    cleanup_failed: bool,
-    code: i32,
-) -> Status {
-    match interruption.filter(|_| !cleanup_failed) {
-        Some(interruption) => Status::Interrupted {
-            signal: interruption.signal,
-            reason: interruption.reason.clone(),
-        },
-        None => Status::Exited { code },
-    }
-}
-
-/// Scoped signal observer for one `vat run` invocation. The signal handler
-/// records only the first SIGINT/SIGTERM in an atomic; the ordinary run thread
-/// remains the sole owner of process cleanup and metadata persistence.
+/// Scoped signal observer for one `vat run` invocation. The handler thread
+/// records only the first SIGINT/SIGTERM; the ordinary run thread remains the
+/// sole owner of process cleanup and metadata persistence.
 #[cfg(unix)]
 struct RunCancellation {
     first_signal: Arc<AtomicI32>,
@@ -246,14 +189,6 @@ impl RunCancellation {
             None => Ok(()),
         }
     }
-
-    #[cfg(test)]
-    fn with_observed_signal(signal: i32) -> Self {
-        Self {
-            first_signal: Arc::new(AtomicI32::new(signal)),
-            registrations: Vec::new(),
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -280,54 +215,6 @@ impl RunCancellation {
 
     fn check(&self) -> Result<()> {
         Ok(())
-    }
-
-    #[cfg(test)]
-    fn with_observed_signal(_signal: i32) -> Self {
-        Self
-    }
-}
-
-/// Close the durable `Running` state when a fallible pre-child step fails.
-/// Once `Running` has been published, sandbox selection, plan attachment,
-/// compose handoff, and event logging are part of the run lifecycle even when
-/// no owned child was spawned. They must never leave a ghost active VAT.
-fn finish_pre_child_step<T>(
-    vat: &mut store::Vat,
-    cancellation: &RunCancellation,
-    started: Instant,
-    step: Result<T>,
-    label: &str,
-) -> Result<T> {
-    match step {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            let interruption = cancellation.received().map(RunInterrupted::new);
-            let code = interruption
-                .as_ref()
-                .map(RunInterrupted::exit_code)
-                .unwrap_or(-1);
-            vat.meta.status = configured_terminal_status(interruption.as_ref(), false, code);
-            if let Some(run) = vat.meta.last_run.as_mut() {
-                run.finished_at = Some(Utc::now());
-                run.exit_code = Some(code);
-                run.duration_ms = Some(started.elapsed().as_millis() as u64);
-                run.signal = interruption.as_ref().map(|value| value.signal);
-                run.owned_pgid = None;
-                run.cleanup_error = None;
-            }
-            if let Err(persist_error) = vat.save() {
-                return Err(error).context(format!(
-                    "{label}; additionally failed to persist terminal pre-child state: {persist_error:#}"
-                ));
-            }
-            match interruption {
-                Some(interruption) => Err(anyhow::Error::new(interruption)).context(format!(
-                    "{label}; the pre-child step also failed: {error:#}"
-                )),
-                None => Err(error).with_context(|| label.to_string()),
-            }
-        }
     }
 }
 
@@ -361,7 +248,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             );
         }
     }
-    let result = match target {
+    match target {
         Target::Direct {
             program,
             program_args,
@@ -419,17 +306,6 @@ pub fn exec(args: Args) -> Result<ExitCode> {
                 &cancellation,
             )
         }
-    };
-    finish_exec_result(result)
-}
-
-fn finish_exec_result(result: Result<ExitCode>) -> Result<ExitCode> {
-    match result {
-        Err(error) if run_interruption(&error).is_some() => {
-            let interruption = run_interruption(&error).expect("checked interruption");
-            Ok(process_exit_code(interruption.exit_code()))
-        }
-        result => result,
     }
 }
 
@@ -535,7 +411,6 @@ fn exec_direct(args: DirectArgs, cancellation: &RunCancellation) -> Result<ExitC
     let command: Vec<String> = std::iter::once(args.program.clone())
         .chain(args.program_args.iter().cloned())
         .collect();
-    let started = Instant::now();
     vat.meta.status = Status::Running;
     vat.meta.last_run = Some(RunRecord {
         command: command.clone(),
@@ -543,58 +418,33 @@ fn exec_direct(args: DirectArgs, cancellation: &RunCancellation) -> Result<ExitC
         finished_at: None,
         exit_code: None,
         duration_ms: None,
-        signal: None,
-        owned_pgid: None,
-        cleanup_error: None,
     });
     vat.save()?;
-    let backend_step = sandbox::pick(&spec).map_err(anyhow::Error::msg);
-    let backend = finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        backend_step,
-        "select direct-run sandbox backend",
-    )?;
-    let log_step = vat.log(
+    let backend = sandbox::pick(&spec).map_err(anyhow::Error::msg)?;
+    vat.log(
         Event::new(EventKind::RunStarted, format!("run: {}", command.join(" ")))
             .with_data(serde_json::json!({ "backend": backend.name() })),
-    );
-    finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        log_step,
-        "record direct-run start event",
     )?;
 
     let rootfs = vat.rootfs();
     let (prog, argv) = backend.resolve(&rootfs, &args.program, &args.program_args);
     let cwd = rootfs.join(&spec.workdir);
+    let started = Instant::now();
     let mut cmd = Command::new(&prog);
     cmd.args(&argv).current_dir(&cwd);
     for (key, value) in &spec.env {
         cmd.env(key, value);
     }
     set_process_group(&mut cmd);
-    let mut owned_child = None;
     let outcome = (|| -> Result<ExitStatus> {
         cancellation.check()?;
         let child = cmd
             .spawn()
             .with_context(|| format!("spawn `{prog}` inside vat rootfs"))?;
-        owned_child = Some(OwnedProcessGroup::new(child));
-        wait_owned_process(
-            owned_child.as_mut().expect("stored direct child"),
-            "direct vat run",
-            cancellation,
-        )
+        let mut child = OwnedProcessGroup::new(child);
+        wait_owned_process(&mut child, "direct vat run", cancellation)
     })();
     let duration_ms = started.elapsed().as_millis() as u64;
-    let direct_cleanup_failure = match (&outcome, owned_child.as_mut()) {
-        (Err(error), Some(child)) => preserve_direct_cleanup_failure(child, error),
-        _ => None,
-    };
     let (code, interruption) = match outcome {
         Ok(status) => match cancellation.received() {
             Some(signal) => {
@@ -611,13 +461,6 @@ fn exec_direct(args: DirectArgs, cancellation: &RunCancellation) -> Result<ExitC
                     run.finished_at = Some(Utc::now());
                     run.exit_code = Some(-1);
                     run.duration_ms = Some(duration_ms);
-                    run.signal = cancellation.received();
-                    run.owned_pgid = direct_cleanup_failure
-                        .as_ref()
-                        .and_then(|(owned_pgid, _)| *owned_pgid);
-                    run.cleanup_error = direct_cleanup_failure
-                        .as_ref()
-                        .map(|(_, message)| message.clone());
                 }
                 vat.save()?;
                 return Err(error);
@@ -636,9 +479,6 @@ fn exec_direct(args: DirectArgs, cancellation: &RunCancellation) -> Result<ExitC
         run.finished_at = Some(Utc::now());
         run.exit_code = Some(code);
         run.duration_ms = Some(duration_ms);
-        run.signal = interruption.as_ref().map(|value| value.signal);
-        run.owned_pgid = None;
-        run.cleanup_error = None;
     }
     vat.save()?;
     let changes = vat.changes().unwrap_or_default();
@@ -779,7 +619,6 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
     std::fs::create_dir_all(&logs_dir).with_context(|| format!("create {}", logs_dir.display()))?;
     let topology_services = configured_service_ids(&cfg, &runners, &[])?;
 
-    let started = Instant::now();
     vat.meta.status = Status::Running;
     vat.meta.test_run = Some(TestRunEvidence {
         config: ConfigRef {
@@ -793,7 +632,6 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
-        cleanup_error: None,
         plan: None,
         topology: Some(TopologyEvidence {
             runners: runners.iter().map(|runner| runner.id.clone()).collect(),
@@ -808,34 +646,18 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
     // be logged and ignored: doing so would leave a live service set with no
     // registry owner able to stop it later.
     if let Some(handoff) = args.compose_handoff.as_ref() {
-        let handoff_step = crate::commands::compose::publish_compose_handoff(handoff, &vat.meta.id);
-        finish_pre_child_step(
-            &mut vat,
-            cancellation,
-            started,
-            handoff_step,
-            "publish compose VAT handoff before starting services",
-        )?;
+        if let Err(err) = crate::commands::compose::publish_compose_handoff(handoff, &vat.meta.id) {
+            vat.meta.status = Status::Exited { code: -1 };
+            vat.save()
+                .context("persist terminal VAT state after compose handoff failure")?;
+            return Err(err).context("publish compose VAT handoff before starting services");
+        }
     }
-    let plan_step = attach_plan_file(&mut vat, args.plan.as_deref());
-    finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        plan_step,
-        "attach configured-run plan before starting children",
-    )?;
-    let log_step = vat.log(Event::new(
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
+    vat.log(Event::new(
         EventKind::RunStarted,
         format!("runner: {joined_ids}"),
-    ));
-    finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        log_step,
-        "record configured-run start event",
-    )?;
+    ))?;
 
     let result = run_configured(
         &mut vat,
@@ -848,7 +670,6 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
         cancellation,
     );
     let mut interruption = None;
-    let mut cleanup_failed_after_interruption = false;
     let mut run_error = None;
     let mut code = match result {
         Ok(code) => match cancellation.received() {
@@ -866,59 +687,33 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
             interruption = Some(observed);
             code
         }
-        Err(err) if run_cleanup_failure(&err).is_some() => {
-            let failure = run_cleanup_failure(&err).expect("checked cleanup failure");
-            interruption = Some(failure.interruption);
-            cleanup_failed_after_interruption = true;
-            let message = err.to_string();
-            append_test_run_cleanup_error(&mut vat, &failure.cleanup_error);
-            run_error = Some(record_runner_failure_fail_closed(
-                &mut vat,
-                &runners[0],
-                &logs_dir,
-                &message,
-            ));
-            -1
-        }
         Err(err) => {
             let message = err.to_string();
-            if let Some(failure) = run_owned_cleanup_failure(&err) {
-                append_test_run_cleanup_error(&mut vat, &failure.cleanup_error);
-            }
-            run_error = Some(record_runner_failure_fail_closed(
-                &mut vat,
-                &runners[0],
-                &logs_dir,
-                &message,
-            ));
+            record_runner_failure(&mut vat, &runners[0], &logs_dir, &message)?;
+            run_error = Some(message);
             -1
         }
     };
     let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
-    if cleanup_unconfirmed.is_some() {
-        // A runner that passed or was interrupted cannot make an owned process
-        // group/runtime safe to forget. Cleanup proof is a prerequisite for
-        // publishing the successful Interrupted/130/143 terminal contract.
+    if cleanup_unconfirmed.is_some() && interruption.is_none() {
+        // A runner that passed cannot make an unremoved MicroVM safe to
+        // forget. Surface the lifecycle failure and retain its durable name
+        // and cleanup evidence for a later retry.
         code = -1;
-        cleanup_failed_after_interruption |= interruption.is_some();
     }
 
-    if let Some(interruption) = interruption
-        .as_ref()
-        .filter(|_| !cleanup_failed_after_interruption)
-    {
+    if let Some(interruption) = interruption.as_ref() {
         record_runner_interruption(&mut vat, &runners, &logs_dir, interruption)?;
     }
-    vat.meta.status = configured_terminal_status(
-        interruption.as_ref(),
-        cleanup_failed_after_interruption,
-        code,
-    );
+    vat.meta.status = match interruption.as_ref() {
+        Some(interruption) => Status::Interrupted {
+            signal: interruption.signal,
+            reason: interruption.reason.clone(),
+        },
+        None => Status::Exited { code },
+    };
     vat.save()?;
-    if let Some(interruption) = interruption
-        .as_ref()
-        .filter(|_| !cleanup_failed_after_interruption)
-    {
+    if let Some(interruption) = interruption.as_ref() {
         emit_run_interrupted(&vat, interruption)?;
     }
     if let Some(message) = run_error.as_deref() {
@@ -929,7 +724,11 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
         }))?;
     }
     if let Some(message) = cleanup_unconfirmed.as_deref() {
-        emit_owned_cleanup_unconfirmed(&vat, message)?;
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
     }
     let state = vat.project()?;
     let should_remove = should_remove_vat(
@@ -968,13 +767,7 @@ fn exec_runner(args: RunnerArgs, cancellation: &RunCancellation) -> Result<ExitC
         "runners": runner_results,
         "ok": code == 0,
         "exit_code": code,
-        "lifecycle": if cleanup_failed_after_interruption {
-            "cleanup_failed_after_interrupt"
-        } else if interruption.is_some() {
-            "interrupted"
-        } else {
-            "exited"
-        },
+        "lifecycle": if interruption.is_some() { "interrupted" } else { "exited" },
         "signal": interruption.as_ref().map(|value| value.signal),
         "reason": interruption.as_ref().map(|value| value.reason.as_str()),
         "state": if kept { "kept" } else { "removed" },
@@ -1102,7 +895,6 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
     let logs_dir = vat.dir.join(crate::paths::file::LOGS);
     std::fs::create_dir_all(&logs_dir).with_context(|| format!("create {}", logs_dir.display()))?;
 
-    let started = Instant::now();
     vat.meta.status = Status::Running;
     vat.meta.test_run = Some(TestRunEvidence {
         config: ConfigRef {
@@ -1124,7 +916,6 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
-        cleanup_error: None,
         plan: None,
         topology: Some(TopologyEvidence {
             runners: vec![runner.id.clone()],
@@ -1134,25 +925,11 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
         }),
     });
     vat.save()?;
-    let plan_step = attach_plan_file(&mut vat, args.plan.as_deref());
-    finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        plan_step,
-        "attach scenario plan before starting children",
-    )?;
-    let log_step = vat.log(Event::new(
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
+    vat.log(Event::new(
         EventKind::RunStarted,
         format!("scenario: {}", scenario.id),
-    ));
-    finish_pre_child_step(
-        &mut vat,
-        cancellation,
-        started,
-        log_step,
-        "record scenario start event",
-    )?;
+    ))?;
 
     let runners = vec![runner.clone()];
     let result = run_configured(
@@ -1166,7 +943,6 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
         cancellation,
     );
     let mut interruption = None;
-    let mut cleanup_failed_after_interruption = false;
     let mut run_error = None;
     let mut code = match result {
         Ok(code) => match cancellation.received() {
@@ -1184,50 +960,30 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
             interruption = Some(observed);
             code
         }
-        Err(err) if run_cleanup_failure(&err).is_some() => {
-            let failure = run_cleanup_failure(&err).expect("checked cleanup failure");
-            interruption = Some(failure.interruption);
-            cleanup_failed_after_interruption = true;
-            let message = err.to_string();
-            append_test_run_cleanup_error(&mut vat, &failure.cleanup_error);
-            run_error = Some(record_runner_failure_fail_closed(
-                &mut vat, &runner, &logs_dir, &message,
-            ));
-            -1
-        }
         Err(err) => {
             let message = err.to_string();
-            if let Some(failure) = run_owned_cleanup_failure(&err) {
-                append_test_run_cleanup_error(&mut vat, &failure.cleanup_error);
-            }
-            run_error = Some(record_runner_failure_fail_closed(
-                &mut vat, &runner, &logs_dir, &message,
-            ));
+            record_runner_failure(&mut vat, &runner, &logs_dir, &message)?;
+            run_error = Some(message);
             -1
         }
     };
     let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
-    if cleanup_unconfirmed.is_some() {
+    if cleanup_unconfirmed.is_some() && interruption.is_none() {
         code = -1;
-        cleanup_failed_after_interruption |= interruption.is_some();
     }
 
-    if let Some(interruption) = interruption
-        .as_ref()
-        .filter(|_| !cleanup_failed_after_interruption)
-    {
+    if let Some(interruption) = interruption.as_ref() {
         record_runner_interruption(&mut vat, &runners, &logs_dir, interruption)?;
     }
-    vat.meta.status = configured_terminal_status(
-        interruption.as_ref(),
-        cleanup_failed_after_interruption,
-        code,
-    );
+    vat.meta.status = match interruption.as_ref() {
+        Some(interruption) => Status::Interrupted {
+            signal: interruption.signal,
+            reason: interruption.reason.clone(),
+        },
+        None => Status::Exited { code },
+    };
     vat.save()?;
-    if let Some(interruption) = interruption
-        .as_ref()
-        .filter(|_| !cleanup_failed_after_interruption)
-    {
+    if let Some(interruption) = interruption.as_ref() {
         emit_run_interrupted(&vat, interruption)?;
     }
     if let Some(message) = run_error.as_deref() {
@@ -1238,7 +994,11 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
         }))?;
     }
     if let Some(message) = cleanup_unconfirmed.as_deref() {
-        emit_owned_cleanup_unconfirmed(&vat, message)?;
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
     }
     let state = vat.project()?;
     let should_remove = should_remove_vat(
@@ -1259,13 +1019,7 @@ fn exec_scenario(args: ScenarioArgs, cancellation: &RunCancellation) -> Result<E
         "runner": runner.id.as_str(),
         "ok": code == 0,
         "exit_code": code,
-        "lifecycle": if cleanup_failed_after_interruption {
-            "cleanup_failed_after_interrupt"
-        } else if interruption.is_some() {
-            "interrupted"
-        } else {
-            "exited"
-        },
+        "lifecycle": if interruption.is_some() { "interrupted" } else { "exited" },
         "signal": interruption.as_ref().map(|value| value.signal),
         "reason": interruption.as_ref().map(|value| value.reason.as_str()),
         "state": if kept { "kept" } else { "removed" },
@@ -1359,13 +1113,6 @@ fn take_detached_compose_stop_request(path: &Path) -> bool {
     }
     let _ = std::fs::remove_file(path);
     true
-}
-
-fn consume_detached_compose_stop_request(path: &Path, phase: &str) -> Result<()> {
-    if take_detached_compose_stop_request(path) {
-        bail!("detached compose stop requested during {phase}");
-    }
-    Ok(())
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="1872" reason="Expose validated active-run service capture paths to trusted same-run runners.">
@@ -1492,99 +1239,68 @@ fn run_configured(
     // VAT neither parses nor replays them to its own JSONL stdout.
     let service_log_env = prepare_service_log_handoff(&vat.dir, logs_dir, &service_ids)?;
     let mut service_plans = Vec::new();
+    let mut run_env = vat.meta.spec.env.clone();
+    for service in ordered_required_services(cfg, &service_ids)? {
+        cancellation.check()?;
+        let plan = prepare_service(vat, cfg, service, force_hermetic_proxy)?;
+        for (key, value) in &plan.env {
+            run_env.insert(key.clone(), value.clone());
+        }
+        service_plans.push(plan);
+    }
+    // VAT owns these reserved values. Apply them after user/service exports so
+    // a config cannot redirect a collector to an arbitrary host path.
+    run_env.extend(service_log_env);
+
+    // Transparent service routing (network sandbox): every declared GCP emulator
+    // preset's real googleapis host -> its resolved local endpoint, seeded onto
+    // the http-mock proxy so the runner reaches the local emulator with NO
+    // hand-written [network.routes]. Ports are resolved during the prepare loop
+    // above, so the proxy is spawned with the full (explicit + preset-derived)
+    // route set.
+    seed_preset_routes_into_proxy(&mut service_plans, cfg);
+    persist_scenario_topology(vat, cfg, &service_plans, force_hermetic_proxy)?;
+
+    for step in &cfg.setup {
+        cancellation.check()?;
+        if !config::should_run_setup(&rootfs, step) {
+            continue;
+        }
+        run_setup_step(
+            vat,
+            step,
+            &cwd,
+            logs_dir,
+            &run_env,
+            sandbox_backend.as_ref(),
+            &rootfs,
+            cancellation,
+        )?;
+    }
+
     let mut services = Vec::new();
-    let mut procs = Vec::new();
-    let execution = (|| -> Result<i32> {
-        let mut run_env = vat.meta.spec.env.clone();
-        let compose_stop_request = detached_compose_stop_request_path(vat);
-        for service in ordered_required_services(cfg, &service_ids)? {
-            cancellation.check()?;
-            consume_detached_compose_stop_request(&compose_stop_request, "service preparation")?;
-            let plan = prepare_service(vat, cfg, service, force_hermetic_proxy, cancellation)?;
-            for (key, value) in &plan.env {
-                run_env.insert(key.clone(), value.clone());
-            }
-            service_plans.push(plan);
-            consume_detached_compose_stop_request(&compose_stop_request, "service preparation")?;
-        }
-        // VAT owns these reserved values. Apply them after user/service exports so
-        // a config cannot redirect a collector to an arbitrary host path.
-        run_env.extend(service_log_env);
-
-        // Transparent service routing (network sandbox): every declared GCP emulator
-        // preset's real googleapis host -> its resolved local endpoint, seeded onto
-        // the http-mock proxy so the runner reaches the local emulator with NO
-        // hand-written [network.routes]. Ports are resolved during the prepare loop
-        // above, so the proxy is spawned with the full (explicit + preset-derived)
-        // route set.
-        seed_preset_routes_into_proxy(&mut service_plans, cfg);
-        persist_scenario_topology(vat, cfg, &service_plans, force_hermetic_proxy)?;
-
-        for step in &cfg.setup {
-            cancellation.check()?;
-            consume_detached_compose_stop_request(&compose_stop_request, "setup")?;
-            if !config::should_run_setup(&rootfs, step) {
-                continue;
-            }
-            run_setup_step(
+    for plan in &mut service_plans {
+        if let Err(error) = cancellation.check() {
+            let interruption = run_interruption(&error);
+            finalize_services_and_persist(
                 vat,
-                step,
-                &cwd,
-                logs_dir,
-                &run_env,
-                sandbox_backend.as_ref(),
-                &rootfs,
-                cancellation,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
             )?;
-            consume_detached_compose_stop_request(&compose_stop_request, "setup")?;
+            return Err(error);
         }
-
-        for plan in &mut service_plans {
-            consume_detached_compose_stop_request(&compose_stop_request, "service startup")?;
-            if let Err(error) = cancellation.check() {
-                let interruption = run_interruption(&error);
-                finalize_services_and_persist(
-                    vat,
-                    &mut services,
-                    should_delete_clusters(&retention, -1),
-                    interruption.as_ref(),
-                )?;
-                return Err(error);
-            }
-            let handle = match start_service(
-                vat,
-                plan,
-                &cwd,
-                logs_dir,
-                &run_env,
-                service_sandbox_backend(force_hermetic_proxy, sandbox_backend.as_ref()),
-                &rootfs,
-                cancellation,
-            ) {
-                Ok(handle) => handle,
-                Err(err) => {
-                    finalize_services_and_persist(
-                        vat,
-                        &mut services,
-                        should_delete_clusters(&retention, -1),
-                        None,
-                    )?;
-                    return Err(err);
-                }
-            };
-            services.push(handle);
-            // Transfer cluster ownership from the prepared plan to the live
-            // ServiceHandle. Any cluster still present on a plan at scope exit was
-            // prepared but never started and is deleted by the outer finalizer.
-            plan.cluster = None;
-            // Persist ownership before the blocking readiness loop. If VAT itself
-            // is interrupted while a MicroVM endpoint is still being verified,
-            // `vat state` must retain the generated container name for diagnosis
-            // and cleanup rather than leaving an untracked runtime resource.
-            if let Err(err) = persist_services(vat, &services) {
-                // A failed metadata write is itself terminal, but the service has
-                // already launched. Tear it down before returning so this early
-                // persistence checkpoint cannot create an untracked MicroVM.
+        let handle = match start_service(
+            vat,
+            plan,
+            &cwd,
+            logs_dir,
+            &run_env,
+            service_sandbox_backend(force_hermetic_proxy, sandbox_backend.as_ref()),
+            &rootfs,
+        ) {
+            Ok(handle) => handle,
+            Err(err) => {
                 finalize_services_and_persist(
                     vat,
                     &mut services,
@@ -1593,199 +1309,184 @@ fn run_configured(
                 )?;
                 return Err(err);
             }
-            let last = services.len() - 1;
-            if let Err(err) = wait_for_services(vat, &mut services[last..], cancellation) {
-                let interruption = run_interruption(&err);
-                finalize_services_and_persist(
-                    vat,
-                    &mut services,
-                    should_delete_clusters(&retention, -1),
-                    interruption.as_ref(),
-                )?;
-                return Err(err);
-            }
-            persist_services(vat, &services)?;
+        };
+        services.push(handle);
+        // Persist ownership before the blocking readiness loop. If VAT itself
+        // is interrupted while a MicroVM endpoint is still being verified,
+        // `vat state` must retain the generated container name for diagnosis
+        // and cleanup rather than leaving an untracked runtime resource.
+        if let Err(err) = persist_services(vat, &services) {
+            // A failed metadata write is itself terminal, but the service has
+            // already launched. Tear it down before returning so this early
+            // persistence checkpoint cannot create an untracked MicroVM.
+            finalize_services_and_persist(
+                vat,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                None,
+            )?;
+            return Err(err);
+        }
+        let last = services.len() - 1;
+        if let Err(err) = wait_for_services(vat, &mut services[last..], cancellation) {
+            let interruption = run_interruption(&err);
+            finalize_services_and_persist(
+                vat,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
+            )?;
+            return Err(err);
         }
         persist_services(vat, &services)?;
+    }
+    persist_services(vat, &services)?;
 
-        // Spawn every runner, THEN wait — concurrency comes from the children
-        // running side by side, not from threads in vat.
-        let single = runners.len() == 1;
-        for runner in runners {
-            if let Some(signal) = cancellation.received() {
-                let interruption = RunInterrupted::new(signal);
-                finalize_configured_children(
-                    vat,
-                    &mut procs,
-                    &mut services,
-                    should_delete_clusters(&retention, -1),
-                    Some(&interruption),
-                )?;
-                return Err(interruption.into());
-            }
-            emit_jsonl(serde_json::json!({
-                "type": "runner",
-                "id": runner.id.as_str(),
-                "state": "started",
-            }))?;
-            match spawn_runner_process(
-                runner,
-                &cwd,
-                logs_dir,
-                &run_env,
-                single,
-                sandbox_backend.as_ref(),
-                &rootfs,
-            ) {
-                Ok(proc) => procs.push(proc),
-                Err(err) => {
-                    finalize_configured_children(
-                        vat,
-                        &mut procs,
-                        &mut services,
-                        should_delete_clusters(&retention, -1),
-                        None,
-                    )?;
-                    return Err(err);
-                }
-            }
-        }
-        // Persist an interim RunnerRunRecord carrying each spawned runner's live
-        // pid BEFORE the blocking wait below — mirrors persist_services()'s
-        // early-write pattern for services. Required so a concurrent reader
-        // (`vat compose down`) can observe a live pid while the runner is still
-        // executing; without this, test_run.runner.pid is only ever populated
-        // after wait_runner_processes returns, i.e. after the runner has already
-        // exited (R9).
-        let interim_records: Vec<RunnerRunRecord> = procs
-            .iter()
-            .map(|proc| RunnerRunRecord {
-                id: proc.runner.id.clone(),
-                command: proc.runner.cmd.clone(),
-                status: ProcessStatus::Running,
-                exit_code: None,
-                duration_ms: None,
-                pid: Some(proc.child.id()),
-                cleanup_error: None,
-                stdout_log: proc.stdout_log.clone(),
-                stderr_log: proc.stderr_log.clone(),
-            })
-            .collect();
-        if let Some(test_run) = vat.meta.test_run.as_mut() {
-            test_run.runner = interim_records.first().cloned();
-            test_run.runners = interim_records.clone();
-        }
-        if let Err(error) = vat.save() {
+    // Spawn every runner, THEN wait — concurrency comes from the children
+    // running side by side, not from threads in vat.
+    let single = runners.len() == 1;
+    let mut procs = Vec::new();
+    for runner in runners {
+        if let Some(signal) = cancellation.received() {
+            let interruption = RunInterrupted::new(signal);
             finalize_configured_children(
                 vat,
                 &mut procs,
                 &mut services,
                 should_delete_clusters(&retention, -1),
-                None,
+                Some(&interruption),
             )?;
-            return Err(error);
+            return Err(interruption.into());
         }
-
-        let stop_request = detached_compose_stop_request_path(vat);
-        let records = match wait_runner_processes(&mut procs, &stop_request, cancellation) {
-            Ok(records) => records,
-            Err(error) => {
-                let interruption = run_interruption(&error);
+        emit_jsonl(serde_json::json!({
+            "type": "runner",
+            "id": runner.id.as_str(),
+            "state": "started",
+        }))?;
+        match spawn_runner_process(
+            runner,
+            &cwd,
+            logs_dir,
+            &run_env,
+            single,
+            sandbox_backend.as_ref(),
+            &rootfs,
+        ) {
+            Ok(proc) => procs.push(proc),
+            Err(err) => {
                 finalize_configured_children(
                     vat,
                     &mut procs,
                     &mut services,
                     should_delete_clusters(&retention, -1),
-                    interruption.as_ref(),
+                    None,
                 )?;
-                return Err(error);
+                return Err(err);
             }
-        };
-
-        // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
-        let code = records
-            .iter()
-            .map(|r| r.exit_code.unwrap_or(-1))
-            .fold(0, |acc, c| if acc < 0 || c < 0 { -1 } else { acc.max(c) });
-        let evidence = (|| -> Result<()> {
-            for record in &records {
-                emit_jsonl(serde_json::json!({
-                    "type": "runner",
-                    "id": record.id.as_str(),
-                    "state": "exited",
-                    "exit_code": record.exit_code,
-                }))?;
-            }
-            if let Some(test_run) = vat.meta.test_run.as_mut() {
-                test_run.runner = records.first().cloned();
-                test_run.runners = records.clone();
-                let mut artifacts = Vec::new();
-                for runner in runners {
-                    artifacts.extend(collect_artifacts(&rootfs, &runner.artifacts)?);
-                }
-                test_run.artifacts = artifacts;
-            }
-            vat.save()
-        })();
-        let cleanup = finalize_configured_children(
+        }
+    }
+    // Persist an interim RunnerRunRecord carrying each spawned runner's live
+    // pid BEFORE the blocking wait below — mirrors persist_services()'s
+    // early-write pattern for services. Required so a concurrent reader
+    // (`vat compose down`) can observe a live pid while the runner is still
+    // executing; without this, test_run.runner.pid is only ever populated
+    // after wait_runner_processes returns, i.e. after the runner has already
+    // exited (R9).
+    let interim_records: Vec<RunnerRunRecord> = procs
+        .iter()
+        .map(|proc| RunnerRunRecord {
+            id: proc.runner.id.clone(),
+            command: proc.runner.cmd.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            duration_ms: None,
+            pid: Some(proc.child.id()),
+            cleanup_error: None,
+            stdout_log: proc.stdout_log.clone(),
+            stderr_log: proc.stderr_log.clone(),
+        })
+        .collect();
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.runner = interim_records.first().cloned();
+        test_run.runners = interim_records.clone();
+    }
+    if let Err(error) = vat.save() {
+        finalize_configured_children(
             vat,
             &mut procs,
             &mut services,
-            should_delete_clusters(&retention, code),
+            should_delete_clusters(&retention, -1),
             None,
-        );
-        match (evidence, cleanup) {
-            (Ok(()), Ok(())) => {}
-            (Err(evidence), Ok(())) => return Err(evidence),
-            (Ok(()), Err(cleanup)) => return Err(cleanup),
-            (Err(evidence), Err(cleanup)) => {
-                return Err(cleanup).context(format!(
-                    "configured-run evidence also failed before cleanup: {evidence:#}"
-                ));
-            }
-        }
-        cancellation.check()?;
-        let summary = records
-            .iter()
-            .map(|r| format!("{} exited {}", r.id, r.exit_code.unwrap_or(-1)))
-            .collect::<Vec<_>>()
-            .join("; ");
-        vat.log(Event::new(EventKind::RunFinished, summary))?;
-        Ok(code)
-    })();
+        )?;
+        return Err(error);
+    }
 
-    let interruption = execution.as_ref().err().and_then(|error| {
-        run_interruption(error)
-            .or_else(|| run_cleanup_failure(error).map(|failure| failure.interruption))
-    });
-    let terminal_code = execution.as_ref().copied().unwrap_or(-1);
-    // The outer ordinary-thread finalizer is intentionally redundant with
-    // bounded inner checkpoints. Idempotent child finalizers make it a no-op
-    // after a handled path, while any forgotten `?` still converges here.
-    let child_cleanup = finalize_configured_children(
+    let stop_request = detached_compose_stop_request_path(vat);
+    let records = match wait_runner_processes(&mut procs, &stop_request, cancellation) {
+        Ok(records) => records,
+        Err(error) => {
+            let interruption = run_interruption(&error);
+            finalize_configured_children(
+                vat,
+                &mut procs,
+                &mut services,
+                should_delete_clusters(&retention, -1),
+                interruption.as_ref(),
+            )?;
+            return Err(error);
+        }
+    };
+
+    // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
+    let code = records
+        .iter()
+        .map(|r| r.exit_code.unwrap_or(-1))
+        .fold(0, |acc, c| if acc < 0 || c < 0 { -1 } else { acc.max(c) });
+    let evidence = (|| -> Result<()> {
+        for record in &records {
+            emit_jsonl(serde_json::json!({
+                "type": "runner",
+                "id": record.id.as_str(),
+                "state": "exited",
+                "exit_code": record.exit_code,
+            }))?;
+        }
+        if let Some(test_run) = vat.meta.test_run.as_mut() {
+            test_run.runner = records.first().cloned();
+            test_run.runners = records.clone();
+            let mut artifacts = Vec::new();
+            for runner in runners {
+                artifacts.extend(collect_artifacts(&rootfs, &runner.artifacts)?);
+            }
+            test_run.artifacts = artifacts;
+        }
+        vat.save()
+    })();
+    let cleanup = finalize_configured_children(
         vat,
         &mut procs,
         &mut services,
-        interruption.is_some() || should_delete_clusters(&retention, terminal_code),
-        interruption.as_ref(),
+        should_delete_clusters(&retention, code),
+        None,
     );
-    let prepared_cleanup = cleanup_unstarted_cluster_plans(vat, &service_plans);
-    let cleanup = match (child_cleanup, prepared_cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(children), Ok(())) => Err(children),
-        (Ok(()), Err(prepared)) => Err(prepared),
-        (Err(children), Err(prepared)) => Err(prepared).context(format!(
-            "prepared-cluster cleanup also followed child cleanup failure: {children:#}"
-        )),
-    };
-    match (execution, cleanup) {
-        (Ok(code), Ok(())) => Ok(code),
-        (Err(execution), Ok(())) => Err(execution),
-        (Ok(_), Err(cleanup)) => Err(cleanup),
-        (Err(execution), Err(cleanup)) => Err(cleanup).context(format!(
-            "configured execution also failed before final cleanup: {execution:#}"
-        )),
+    match (evidence, cleanup) {
+        (Ok(()), Ok(())) => {}
+        (Err(evidence), Ok(())) => return Err(evidence),
+        (Ok(()), Err(cleanup)) => return Err(cleanup),
+        (Err(evidence), Err(cleanup)) => {
+            return Err(cleanup).context(format!(
+                "configured-run evidence also failed before cleanup: {evidence:#}"
+            ));
+        }
     }
+    cancellation.check()?;
+    let summary = records
+        .iter()
+        .map(|r| format!("{} exited {}", r.id, r.exit_code.unwrap_or(-1)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    vat.log(Event::new(EventKind::RunFinished, summary))?;
+    Ok(code)
 }
 // </HANDWRITE>
 
@@ -1906,10 +1607,6 @@ fn finalize_runner_processes(procs: &mut [RunnerProc]) -> Result<()> {
             Err(error) => {
                 let detail = format!("runner `{}`: {error:#}", proc.runner.id);
                 proc.cleanup_error = Some(detail.clone());
-                // The ordinary owner now carries the durable retry/diagnostic
-                // obligation. Drop must not signal the same numeric PGID again
-                // after this failed attempt.
-                proc.child.preserve_cleanup_obligation();
                 failures.push(detail);
             }
         }
@@ -2044,10 +1741,6 @@ struct OwnedProcessGroup {
     /// The numeric PGID is no longer pinned and must never be signalled again;
     /// repeated cleanup returns this cached failure without side effects.
     post_reap_cleanup_error: Option<String>,
-    /// Disabled only after the ordinary owner has persisted an unconfirmed
-    /// cleanup obligation. Drop must not silently retry and invalidate that
-    /// durable PID/identity evidence behind the owner's back.
-    drop_cleanup_enabled: bool,
 }
 
 impl OwnedProcessGroup {
@@ -2059,7 +1752,6 @@ impl OwnedProcessGroup {
             final_status: None,
             finalized: false,
             post_reap_cleanup_error: None,
-            drop_cleanup_enabled: true,
         }
     }
 
@@ -2069,10 +1761,6 @@ impl OwnedProcessGroup {
 
     fn leader_reaped(&self) -> bool {
         self.final_status.is_some()
-    }
-
-    fn preserve_cleanup_obligation(&mut self) {
-        self.drop_cleanup_enabled = false;
     }
 
     /// Observe leader completion without reaping it, then finalize the whole
@@ -2137,50 +1825,11 @@ impl OwnedProcessGroup {
             }
         }
     }
-
-    /// Deadline-sharing variant for runtime cleanup helper commands. Unlike
-    /// `finalize`, TERM grace, KILL/reap, and group-absence proof all consume
-    /// one caller-owned absolute deadline; a timed-out Docker client therefore
-    /// cannot silently add the generic 6.3s finalizer tail after its phase.
-    fn finalize_before(&mut self, label: &str, deadline: Instant) -> Result<ExitStatus> {
-        if self.finalized {
-            return self
-                .final_status
-                .context("finalized owned process group is missing exit status");
-        }
-        if let Some(error) = self.post_reap_cleanup_error.as_deref() {
-            bail!("{error}");
-        }
-        if self.final_status.is_some() {
-            bail!("{label} leader was reaped but process-group absence remains unconfirmed");
-        }
-        let status = terminate_and_reap_owned_process_group_before(
-            &mut self.child,
-            self.pgid,
-            label,
-            deadline,
-        )?;
-        self.final_status = Some(status);
-        match confirm_owned_process_group_absent_before(self.pgid, label, deadline) {
-            Ok(()) => {
-                self.finalized = true;
-                Ok(status)
-            }
-            Err(error) => {
-                let message = format!(
-                    "{label} leader {} was reaped, but process-group absence is unconfirmed before the shared deadline: {error:#}; numeric PGID will not be signalled again",
-                    self.pgid
-                );
-                self.post_reap_cleanup_error = Some(message.clone());
-                bail!("{message}")
-            }
-        }
-    }
 }
 
 impl Drop for OwnedProcessGroup {
     fn drop(&mut self) {
-        if self.drop_cleanup_enabled && !self.finalized {
+        if !self.finalized {
             let _ = self.finalize("dropped VAT-owned child");
         }
     }
@@ -2261,63 +1910,16 @@ fn wait_owned_process(
 ) -> Result<ExitStatus> {
     loop {
         if let Some(signal) = cancellation.received() {
-            if let Err(error) = child.finalize(label) {
-                let cleanup_error = preserve_auxiliary_cleanup_failure(child, label, &error)
-                    .unwrap_or_else(|| format!("{label} cleanup failed: {error:#}"));
-                return Err(RunCleanupFailed {
-                    interruption: RunInterrupted::new(signal),
-                    cleanup_error,
-                }
-                .into());
-            }
+            child.finalize(label).with_context(|| {
+                format!("confirm {label} cleanup after {}", signal_name(signal))
+            })?;
             return Err(RunInterrupted::new(signal).into());
         }
-        match child.finished_status(label) {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            Err(error) => {
-                if let Some(cleanup_error) =
-                    preserve_auxiliary_cleanup_failure(child, label, &error)
-                {
-                    bail!("{cleanup_error}");
-                }
-                return Err(error);
-            }
+        if let Some(status) = child.finished_status(label)? {
+            return Ok(status);
         }
         std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
     }
-}
-
-fn preserve_auxiliary_cleanup_failure(
-    child: &mut OwnedProcessGroup,
-    label: &str,
-    error: &anyhow::Error,
-) -> Option<String> {
-    if child.finalized {
-        return None;
-    }
-    let identity = if child.leader_reaped() {
-        "leader reaped; numeric PGID intentionally not retained".to_string()
-    } else {
-        format!("owned PGID {}", child.id())
-    };
-    child.preserve_cleanup_obligation();
-    Some(format!(
-        "{label} cleanup unconfirmed ({identity}): {error:#}"
-    ))
-}
-
-fn preserve_direct_cleanup_failure(
-    child: &mut OwnedProcessGroup,
-    error: &anyhow::Error,
-) -> Option<(Option<u32>, String)> {
-    if child.finalized {
-        return None;
-    }
-    let owned_pgid = (!child.leader_reaped()).then_some(child.id());
-    let message = format!("direct VAT-owned process-group cleanup unconfirmed: {error:#}");
-    child.preserve_cleanup_obligation();
-    Some((owned_pgid, message))
 }
 
 /// Poll every child to completion, enforcing each runner's own timeout
@@ -2390,7 +1992,7 @@ fn wait_runner_processes(
 }
 
 fn run_setup_step(
-    vat: &mut store::Vat,
+    vat: &store::Vat,
     step: &crate::config::SetupStep,
     cwd: &Path,
     logs_dir: &Path,
@@ -2404,40 +2006,12 @@ fn run_setup_step(
     let cmd = sandbox_wrap(backend, rootfs, &step.cmd);
     cancellation.check()?;
     let mut child = command_with_logs(&cmd, cwd, env, &stdout, &stderr)?;
-    let status = match wait_owned_process(&mut child, &format!("setup `{}`", step.id), cancellation)
-    {
-        Ok(status) => status,
-        Err(error) => {
-            if !child.finalized {
-                let cleanup_error = run_cleanup_failure(&error)
-                    .map(|failure| failure.cleanup_error)
-                    .unwrap_or_else(|| format!("{error:#}"));
-                persist_run_auxiliary_cleanup_failure(vat, &cleanup_error).with_context(|| {
-                    format!("persist setup cleanup obligation after original failure: {error:#}")
-                })?;
-            }
-            return Err(error);
-        }
-    };
+    let status = wait_owned_process(&mut child, &format!("setup `{}`", step.id), cancellation)?;
     if !status.success() {
         bail!("setup `{}` failed with {:?}", step.id, status.code());
     }
     vat.log(Event::new(EventKind::Setup, format!("setup {}", step.id)))?;
     Ok(())
-}
-
-fn persist_run_auxiliary_cleanup_failure(vat: &mut store::Vat, detail: &str) -> Result<()> {
-    let test_run = vat
-        .meta
-        .test_run
-        .as_mut()
-        .context("configured run is missing test-run evidence")?;
-    test_run.cleanup_error = Some(match test_run.cleanup_error.take() {
-        Some(existing) => format!("{existing}; {detail}"),
-        None => detail.to_string(),
-    });
-    vat.save()
-        .context("persist run auxiliary cleanup obligation")
 }
 
 #[derive(Debug)]
@@ -2470,10 +2044,10 @@ struct ServicePlan {
     /// False when the service is provided by CI/local infrastructure and vat is
     /// attaching to it instead of starting/stopping a process.
     owned_by_vat: bool,
-    /// True for native command-backed services and Docker's foreground
-    /// `start --attach` child, both of which must remain live through endpoint
-    /// readiness. Cluster, external, and other launcher-style runtimes preserve
-    /// their own readiness/lifecycle semantics.
+    /// True only for native command-backed services whose spawned child is the
+    /// service itself and must remain live through endpoint readiness. Docker,
+    /// cluster, external, and other launcher-style runtimes preserve their own
+    /// readiness/lifecycle semantics instead of inheriting this contract.
     requires_live_child: bool,
     /// Literal 127.0.0.1 endpoints held exclusively from planning until the
     /// instant the owned child is spawned. External/attach services never
@@ -2525,8 +2099,8 @@ struct ServiceHandle {
     /// Endpoints VAT proved unavailable immediately before spawning this
     /// owned child. Readiness requires each one to become reachable afterward.
     owned_endpoints: Vec<SocketAddr>,
-    /// Whether this handle owns a native or Docker-attach service child that
-    /// must remain live until its endpoint completes readiness.
+    /// Whether this handle owns a native service child that must remain live
+    /// until its endpoint completes readiness.
     requires_live_child: bool,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
@@ -2536,33 +2110,27 @@ struct ServiceHandle {
     /// Cluster evidence when the service is a local Kubernetes cluster; the
     /// cluster is deleted on stop subject to the `keep` policy.
     cluster: Option<ClusterRunRecord>,
-    /// Runtime helper groups whose shared-deadline cleanup could not be
-    /// confirmed. The live handle retains ownership until the corresponding
-    /// cleanup_error has been durably persisted; only then may a later
-    /// best-effort finalizer release the in-memory owner.
-    deadline_cleanup_owners: Vec<OwnedProcessGroup>,
 }
 
 fn prepare_service(
-    vat: &mut store::Vat,
+    vat: &store::Vat,
     cfg: &VatConfig,
     service: &ServiceConfig,
     force_hermetic_proxy: bool,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
     let started = Instant::now();
     let plan = if let Some(backend) = service.cluster {
         // Cluster: an ephemeral local Kubernetes cluster (kind / k3d / minikube).
         // Created here in the prepare phase; the runner reaches it via KUBECONFIG.
-        prepare_cluster_service(vat, service, backend, cancellation)?
+        prepare_cluster_service(vat, service, backend)?
     } else if let Some(image) = &service.image {
         // Explicit image: a container-backed service (e.g. AlloyDB) with no
         // native equivalent. `runtime: microvm` routes to Apple's `container`
         // CLI; every other runtime (Auto, Docker, Native) keeps today's
         // `docker run` path unchanged (R4/R5).
         match service.runtime {
-            ServiceRuntime::MicroVm => prepare_microvm_service(vat, service, image, cancellation)?,
-            _ => prepare_image_service(vat, service, image, cancellation)?,
+            ServiceRuntime::MicroVm => prepare_microvm_service(vat, service, image)?,
+            _ => prepare_image_service(vat, service, image)?,
         }
     } else if service.external.is_some() {
         prepare_external_service(service)?
@@ -2578,16 +2146,10 @@ fn prepare_service(
         // official container image when the binary is missing (or as forced).
         // An explicit MicroVM runtime must remain entirely on Apple's
         // `container` CLI; it may never silently route through Docker.
-        match resolve_preset_runtime(service, preset, cancellation)? {
-            ResolvedRuntime::Native => {
-                prepare_preset_service(vat, cfg, service, preset, cancellation)?
-            }
-            ResolvedRuntime::Docker => {
-                prepare_preset_docker_service(vat, service, preset, cancellation)?
-            }
-            ResolvedRuntime::MicroVm => {
-                prepare_preset_microvm_service(vat, service, preset, cancellation)?
-            }
+        match resolve_preset_runtime(service, preset)? {
+            ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
+            ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
+            ResolvedRuntime::MicroVm => prepare_preset_microvm_service(vat, service, preset)?,
             ResolvedRuntime::Builtin => {
                 // Hermetic when the run confines egress (localhost-only/deny):
                 // the http-mock proxy then blocks unmatched requests too.
@@ -2697,12 +2259,10 @@ fn prepare_service(
 /// through the exported `KUBECONFIG`.
 /// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic
 fn prepare_cluster_service(
-    vat: &mut store::Vat,
+    vat: &store::Vat,
     service: &ServiceConfig,
     backend: ClusterBackend,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
-    cancellation.check()?;
     let resolved = match cluster::resolve_backend(backend) {
         Ok(resolved) => resolved,
         Err(unavailable) => {
@@ -2744,95 +2304,22 @@ fn prepare_cluster_service(
         nodes,
         kubeconfig: &kubeconfig,
     };
-    let info =
-        match resolved.create_cancellable(&spec, Duration::from_secs(service.timeout_s), &|| {
-            cancellation.check()
-        }) {
-            Ok(info) => info,
-            Err(err) => {
-                let create_error = format!("{err:#}");
-                let interruption = run_interruption(&err)
-                    .or_else(|| cancellation.received().map(RunInterrupted::new));
-                let command_cleanup_error =
-                    cluster::owned_command_cleanup_failure(&err).map(str::to_string);
-                // A backend can fail after creating enough resources for its
-                // cluster name to remain live. If the compensating delete also
-                // fails, persist that exact ownership obligation before returning:
-                // no ServicePlan exists yet for the outer finalizer to discover.
-                let delete_error = resolved.delete(&name).err();
-                let mut cleanup_errors = Vec::new();
-                if let Some(error) = command_cleanup_error {
-                    cleanup_errors.push(format!(
-                        "cluster create command owned process-group cleanup unconfirmed: {error}"
-                    ));
-                }
-                if let Some(error) = delete_error {
-                    cleanup_errors.push(format!(
-                        "cluster `{name}` ({}) cleanup unconfirmed after create failure: {error:#}",
-                        resolved.name()
-                    ));
-                }
-                if !cleanup_errors.is_empty() {
-                    let cleanup_error = cleanup_errors.join("; ");
-                    let cluster = ClusterRunRecord {
-                        backend: resolved.name().to_string(),
-                        name: name.clone(),
-                        kubeconfig: kubeconfig.to_string_lossy().into_owned(),
-                        node_count: nodes,
-                        ready_ms: None,
-                    };
-                    persist_cluster_create_cleanup_failure(
-                        vat,
-                        service,
-                        cluster,
-                        cleanup_error.clone(),
-                    )
-                    .with_context(|| {
-                        format!(
-                        "persist cluster cleanup obligation after create failed: {create_error}"
-                    )
-                    })?;
-                    emit_jsonl(serde_json::json!({
-                        "type": "error",
-                        "code": "cluster_create_failed",
-                        "service": service.id.as_str(),
-                        "backend": resolved.name(),
-                        "reason": create_error,
-                        "cleanup_error": cleanup_error,
-                    }))?;
-                    if let Some(interruption) = interruption {
-                        let cleanup_failure: anyhow::Error = RunCleanupFailed {
-                            interruption,
-                            cleanup_error,
-                        }
-                        .into();
-                        return Err(cleanup_failure).with_context(|| {
-                            format!("create cluster for service `{}` failed", service.id)
-                        });
-                    }
-                    bail!(
-                        "create cluster for service `{}` failed and cleanup is unconfirmed: {}",
-                        service.id,
-                        cleanup_error
-                    );
-                }
-                emit_jsonl(serde_json::json!({
-                    "type": "error",
-                    "code": "cluster_create_failed",
-                    "service": service.id.as_str(),
-                    "backend": resolved.name(),
-                    "reason": create_error,
-                }))?;
-                if let Some(interruption) = interruption {
-                    let interruption: anyhow::Error = interruption.into();
-                    return Err(interruption).with_context(|| {
-                        format!("create cluster for service `{}` failed", service.id)
-                    });
-                }
-                return Err(err)
-                    .with_context(|| format!("create cluster for service `{}`", service.id));
-            }
-        };
+    let info = match resolved.create(&spec, Duration::from_secs(service.timeout_s)) {
+        Ok(info) => info,
+        Err(err) => {
+            // Best-effort cleanup so a half-created cluster does not leak.
+            let _ = resolved.delete(&name);
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "cluster_create_failed",
+                "service": service.id.as_str(),
+                "backend": resolved.name(),
+                "reason": err.to_string(),
+            }))?;
+            return Err(err)
+                .with_context(|| format!("create cluster for service `{}`", service.id));
+        }
+    };
 
     let kubeconfig_str = info.kubeconfig.to_string_lossy().into_owned();
     let mut env = BTreeMap::new();
@@ -2885,52 +2372,6 @@ fn prepare_cluster_service(
     })
 }
 
-fn persist_cluster_create_cleanup_failure(
-    vat: &mut store::Vat,
-    service: &ServiceConfig,
-    cluster: ClusterRunRecord,
-    cleanup_error: String,
-) -> Result<()> {
-    let stdout_log = vat
-        .dir
-        .join(crate::paths::file::LOGS)
-        .join(format!("{}.stdout.log", service.id))
-        .to_string_lossy()
-        .into_owned();
-    let stderr_log = vat
-        .dir
-        .join(crate::paths::file::LOGS)
-        .join(format!("{}.stderr.log", service.id))
-        .to_string_lossy()
-        .into_owned();
-    let record = ServiceRunRecord {
-        id: service.id.clone(),
-        command: Vec::new(),
-        status: ProcessStatus::Failed,
-        preset: None,
-        host: None,
-        port: None,
-        owned_by_vat: Some(true),
-        prepare_mode: Some("cluster_create".to_string()),
-        cache_key: None,
-        prepare_duration_ms: None,
-        ready_duration_ms: None,
-        exported_env: Vec::new(),
-        pid: None,
-        exit_code: None,
-        ready_http: None,
-        docker_name: None,
-        docker_id: None,
-        microvm_name: None,
-        readiness_error: None,
-        cleanup_error: Some(cleanup_error),
-        cluster: Some(cluster),
-        stdout_log,
-        stderr_log,
-    };
-    persist_service_record(vat, record).context("persist half-created cluster cleanup obligation")
-}
-
 /// vat's own spawned services (emulators, the http-mock/record-replay proxy)
 /// are intentionally NEVER sandboxed on the real (non-hermetic-proxy) path —
 /// they need their own network access to serve/forward regardless of the
@@ -2959,11 +2400,10 @@ fn start_service(
     env: &BTreeMap<String, String>,
     service_sandbox: Option<&dyn sandbox::Sandbox>,
     rootfs: &Path,
-    cancellation: &RunCancellation,
 ) -> Result<ServiceHandle> {
     let stdout = logs_dir.join(format!("{}.stdout.log", plan.id));
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
-    let prepared_command = if plan.owned_by_vat {
+    let command = if plan.owned_by_vat {
         service_start_command(plan, service_sandbox, rootfs)
     } else {
         Vec::new()
@@ -2973,21 +2413,7 @@ fn start_service(
     } else {
         Vec::new()
     };
-    let docker_id = if plan.docker_name.is_some() {
-        Some(create_docker_service_id(
-            &prepared_command,
-            Duration::from_secs(plan.timeout_s.max(2)),
-            cancellation,
-            &plan.id,
-        )?)
-    } else {
-        None
-    };
-    let command = docker_id
-        .as_deref()
-        .map(docker_start_command)
-        .unwrap_or(prepared_command);
-    let child = if plan.owned_by_vat && docker_id.is_none() {
+    let child = if plan.owned_by_vat {
         Some(
             command_with_logs(&command, cwd, env, &stdout, &stderr)
                 .with_context(|| format!("spawn service `{}`", plan.id))?,
@@ -2997,12 +2423,8 @@ fn start_service(
     };
     let record = ServiceRunRecord {
         id: plan.id.clone(),
-        command: command.clone(),
-        status: if docker_id.is_some() {
-            ProcessStatus::Created
-        } else {
-            ProcessStatus::Running
-        },
+        command,
+        status: ProcessStatus::Running,
         preset: plan.preset.map(service_preset_name).map(str::to_string),
         host: plan.host.clone(),
         port: plan.port,
@@ -3016,7 +2438,6 @@ fn start_service(
         exit_code: None,
         ready_http: plan.ready_http.clone(),
         docker_name: plan.docker_name.clone(),
-        docker_id,
         microvm_name: plan.microvm_name.clone(),
         readiness_error: None,
         cleanup_error: None,
@@ -3024,7 +2445,15 @@ fn start_service(
         stdout_log: stdout.to_string_lossy().into_owned(),
         stderr_log: stderr.to_string_lossy().into_owned(),
     };
-    let mut handle = ServiceHandle {
+    vat.log(Event::new(
+        EventKind::RunStarted,
+        if plan.owned_by_vat {
+            format!("service {}", plan.id)
+        } else {
+            format!("service {} external", plan.id)
+        },
+    ))?;
+    Ok(ServiceHandle {
         record,
         child,
         timeout_s: plan.timeout_s,
@@ -3033,267 +2462,8 @@ fn start_service(
         requires_live_child: plan.requires_live_child,
         docker_name: plan.docker_name.clone(),
         microvm_name: plan.microvm_name.clone(),
-        // Ownership transfers as soon as the child has spawned, before any
-        // fallible logging/persistence. The prepared-plan finalizer must not
-        // independently delete the same cluster afterward.
-        cluster: plan.cluster.take(),
-        deadline_cleanup_owners: Vec::new(),
-    };
-    if handle.record.docker_id.is_some() {
-        // `docker create` stdout is the immutable ownership boundary. Persist
-        // Created/name/full-ID before starting the foreground attachment so a
-        // start/spawn/persistence failure can clean only that exact object.
-        if let Err(error) = persist_service_record(vat, handle.record.clone()) {
-            return fail_service_start(vat, &mut handle, error, "persist created Docker identity");
-        }
-        match command_with_logs(&command, cwd, env, &stdout, &stderr) {
-            Ok(child) => {
-                handle.record.pid = Some(child.id());
-                handle.child = Some(child);
-            }
-            Err(error) => {
-                return fail_service_start(
-                    vat,
-                    &mut handle,
-                    error,
-                    "spawn foreground Docker start attachment",
-                );
-            }
-        }
-        if let Err(error) = wait_for_docker_running_ack(
-            &mut handle,
-            Duration::from_secs(plan.timeout_s.max(2)),
-            cancellation,
-            &detached_compose_stop_request_path(vat),
-        ) {
-            return fail_service_start(
-                vat,
-                &mut handle,
-                error,
-                "acknowledge foreground Docker start attachment",
-            );
-        }
-        handle.record.status = ProcessStatus::Running;
-        if let Err(error) = persist_service_record(vat, handle.record.clone()) {
-            return fail_service_start(vat, &mut handle, error, "persist running Docker owner");
-        }
-    }
-    if let Err(log_error) = vat.log(Event::new(
-        EventKind::RunStarted,
-        if plan.owned_by_vat {
-            format!("service {}", plan.id)
-        } else {
-            format!("service {} external", plan.id)
-        },
-    )) {
-        if handle.child.is_none() {
-            handle.record.status = ProcessStatus::Failed;
-        }
-        let cleanup = stop_services(std::slice::from_mut(&mut handle), true);
-        let evidence = persist_service_record(vat, handle.record.clone());
-        if evidence.is_ok() {
-            release_persisted_deadline_cleanup_owners(&mut handle.deadline_cleanup_owners);
-        }
-        return match (cleanup, evidence) {
-            (Ok(()), Ok(())) => Err(log_error),
-            (Err(cleanup), Ok(())) => Err(cleanup).context(format!(
-                "service start log also failed before cleanup: {log_error:#}"
-            )),
-            (Ok(()), Err(evidence)) => Err(evidence).context(format!(
-                "service start log also failed before evidence persistence: {log_error:#}"
-            )),
-            (Err(cleanup), Err(evidence)) => Err(evidence).context(format!(
-                "service start log failed ({log_error:#}) and cleanup was unconfirmed ({cleanup:#})"
-            )),
-        };
-    }
-    Ok(handle)
-}
-
-fn create_docker_service_id(
-    command: &[String],
-    timeout: Duration,
-    cancellation: &RunCancellation,
-    service_id: &str,
-) -> Result<String> {
-    let (program, args) = command
-        .split_first()
-        .context("VAT-owned Docker create command is empty")?;
-    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let (status, output) = cancellable_command_output(
-        program,
-        &args,
-        timeout,
-        cancellation,
-        &format!("Docker create for service `{service_id}`"),
-    )?;
-    if !status.success() {
-        bail!(
-            "Docker create for service `{service_id}` exited unsuccessfully ({:?})",
-            status.code()
-        );
-    }
-    let output = String::from_utf8(output)
-        .context("Docker create stdout was not valid UTF-8 full-ID evidence")?;
-    let rows = output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    if rows.len() != 1 || !valid_full_docker_id(rows[0]) {
-        bail!(
-            "Docker create for service `{service_id}` did not emit exactly one lowercase 64-hex full container ID"
-        );
-    }
-    Ok(rows[0].to_string())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum DockerStartTransition {
-    PendingCreated,
-    RunningAcknowledged,
-    Failed(String),
-}
-
-/// Convert the strict immutable-identity observation into the only legal
-/// Created -> Running transition. A reusable name is never startup authority:
-/// only the same full ID in Docker's `running` state can acknowledge the
-/// foreground attachment.
-fn docker_start_transition(observation: &DockerIdentityObservation) -> DockerStartTransition {
-    match observation {
-        DockerIdentityObservation::Exact { state } if state == "created" => {
-            DockerStartTransition::PendingCreated
-        }
-        DockerIdentityObservation::Exact { state } if state == "running" => {
-            DockerStartTransition::RunningAcknowledged
-        }
-        DockerIdentityObservation::Exact { state } => DockerStartTransition::Failed(format!(
-            "same-ID Docker object entered `{state}` before startup acknowledgement"
-        )),
-        DockerIdentityObservation::Absent => DockerStartTransition::Failed(
-            "same-ID Docker object disappeared before startup acknowledgement".to_string(),
-        ),
-        DockerIdentityObservation::Replacement { actual_id } => {
-            DockerStartTransition::Failed(format!(
-                "Docker name belongs to replacement ID `{actual_id}` before startup acknowledgement"
-            ))
-        }
-    }
-}
-
-/// Keep the durable service checkpoint at Created until Docker itself reports
-/// the exact immutable ID as running and the foreground `start --attach`
-/// owner is still live. Identity queries, cancellation/child observations,
-/// polling, and helper process-group cleanup all consume one absolute startup
-/// deadline; no retry resets it.
-fn wait_for_docker_running_ack(
-    handle: &mut ServiceHandle,
-    timeout: Duration,
-    cancellation: &RunCancellation,
-    compose_stop_request: &Path,
-) -> Result<()> {
-    let name = handle
-        .record
-        .docker_name
-        .clone()
-        .context("Docker start acknowledgement is missing the durable container name")?;
-    let docker_id = handle
-        .record
-        .docker_id
-        .clone()
-        .context("Docker start acknowledgement is missing the durable full container ID")?;
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        cancellation.check()?;
-        consume_detached_compose_stop_request(
-            compose_stop_request,
-            "Docker startup acknowledgement",
-        )?;
-        if let Some(status) = service_child_exit_status(handle)? {
-            handle.record.exit_code = status.code();
-            bail!(
-                "foreground Docker start attachment for `{name}` / `{docker_id}` exited {:?} before running acknowledgement",
-                status.code()
-            );
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "Docker start for `{name}` / `{docker_id}` did not reach the exact-ID running state within {}ms",
-                timeout.as_millis()
-            );
-        }
-
-        let observation = observe_docker_identity(
-            &name,
-            &docker_id,
-            deadline,
-            Duration::ZERO,
-            &mut handle.deadline_cleanup_owners,
-        )
-        .with_context(|| {
-            format!(
-                "observe exact Docker identity `{name}` / `{docker_id}` during startup acknowledgement"
-            )
-        })?;
-        match docker_start_transition(&observation) {
-            DockerStartTransition::PendingCreated => {}
-            DockerStartTransition::RunningAcknowledged => {
-                cancellation.check()?;
-                if let Some(status) = service_child_exit_status(handle)? {
-                    handle.record.exit_code = status.code();
-                    bail!(
-                        "foreground Docker start attachment for `{name}` / `{docker_id}` exited {:?} while acknowledging running state",
-                        status.code()
-                    );
-                }
-                return Ok(());
-            }
-            DockerStartTransition::Failed(reason) => {
-                bail!("Docker start for `{name}` / `{docker_id}` failed: {reason}");
-            }
-        }
-
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            bail!(
-                "Docker start for `{name}` / `{docker_id}` did not reach the exact-ID running state within {}ms",
-                timeout.as_millis()
-            );
-        }
-        std::thread::sleep(remaining.min(OWNED_GROUP_POLL_INTERVAL));
-    }
-}
-
-fn fail_service_start(
-    vat: &mut store::Vat,
-    handle: &mut ServiceHandle,
-    primary: anyhow::Error,
-    phase: &str,
-) -> Result<ServiceHandle> {
-    handle.record.status = ProcessStatus::Failed;
-    let cleanup = stop_services(std::slice::from_mut(handle), true);
-    let evidence = persist_service_record(vat, handle.record.clone());
-    if evidence.is_ok() {
-        release_persisted_deadline_cleanup_owners(&mut handle.deadline_cleanup_owners);
-    }
-    match (cleanup, evidence) {
-        (Ok(()), Ok(())) => Err(primary).context(phase.to_string()),
-        (Err(cleanup), Ok(())) => Err(cleanup).context(format!("{phase} also failed: {primary:#}")),
-        (Ok(()), Err(evidence)) => Err(evidence).context(format!(
-            "{phase} failed before evidence persistence: {primary:#}"
-        )),
-        (Err(cleanup), Err(evidence)) => Err(evidence).context(format!(
-            "{phase} failed ({primary:#}) and exact-ID cleanup was unconfirmed ({cleanup:#})"
-        )),
-    }
-}
-
-fn valid_full_docker_id(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        cluster: plan.cluster.clone(),
+    })
 }
 
 fn service_start_command(
@@ -3364,7 +2534,6 @@ fn prepare_preset_service(
     cfg: &VatConfig,
     service: &ServiceConfig,
     preset: ServicePreset,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
     if preset == ServicePreset::Lumen {
         let reservation = reserve_native_service_port(&service.id, &service.port)?;
@@ -3435,9 +2604,7 @@ fn prepare_preset_service(
             }
             std::fs::create_dir_all(&tmp_cache_dir)
                 .with_context(|| format!("create {}", tmp_cache_dir.display()))?;
-            if let Err(err) =
-                cold_prepare_service_image(cfg, service, preset, &tmp_cache_dir, cancellation)
-            {
+            if let Err(err) = cold_prepare_service_image(cfg, service, preset, &tmp_cache_dir) {
                 let _ = std::fs::remove_dir_all(&tmp_cache_dir);
                 return Err(err);
             }
@@ -3512,7 +2679,6 @@ enum ResolvedRuntime {
 fn resolve_preset_runtime(
     service: &ServiceConfig,
     preset: ServicePreset,
-    cancellation: &RunCancellation,
 ) -> Result<ResolvedRuntime> {
     if preset == ServicePreset::Lumen {
         if matches!(
@@ -3546,18 +2712,9 @@ fn resolve_preset_runtime(
             // component must also be installed, else native would be chosen and
             // then fail to start. preset_native_available folds that in so a
             // missing component falls back to Docker.
-            let has_binaries = required_binaries(preset)
-                .iter()
-                .all(|binary| which(binary).is_some());
-            let component = gcloud_component(preset);
-            let installed_components = if component.is_some() {
-                installed_gcloud_components(cancellation)?
-            } else {
-                Vec::new()
-            };
-            if native_available(has_binaries, component, &installed_components) {
+            if preset_native_available(preset) {
                 Ok(ResolvedRuntime::Native)
-            } else if docker_available(cancellation)? {
+            } else if docker_available() {
                 Ok(ResolvedRuntime::Docker)
             } else {
                 let missing: Vec<&str> = required_binaries(preset)
@@ -3565,8 +2722,8 @@ fn resolve_preset_runtime(
                     .filter(|binary| which(binary).is_none())
                     .copied()
                     .collect();
-                let missing_component = component
-                    .filter(|c| !installed_components.iter().any(|installed| installed == c));
+                let missing_component = gcloud_component(preset)
+                    .filter(|c| !installed_gcloud_components().iter().any(|x| x == c));
                 emit_jsonl(serde_json::json!({
                     "type": "error",
                     "code": "service_runtime_unavailable",
@@ -3662,9 +2819,8 @@ fn prepare_preset_docker_service(
     vat: &store::Vat,
     service: &ServiceConfig,
     preset: ServicePreset,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
-    ensure_docker_available(service, cancellation)?;
+    ensure_docker_available(service)?;
     let host_port = resolve_service_port(&service.port)?;
     let container_port = service
         .container_port
@@ -3675,8 +2831,7 @@ fn prepare_preset_docker_service(
     for (key, value) in &service.image_env {
         container_env.insert(key.clone(), value.clone());
     }
-    let mut command =
-        docker_create_command(&name, &image, host_port, container_port, &container_env);
+    let mut command = docker_run_command(&name, &image, host_port, container_port, &container_env);
     // GCP emulators on the cloud-cli image need the emulator start command
     // appended; the datastore/broker official images and Spanner's dedicated
     // image start via their own entrypoint.
@@ -3701,9 +2856,7 @@ fn prepare_preset_docker_service(
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
-        // `docker start --attach <full-id>` is VAT's foreground runtime
-        // owner. Readiness cannot outlive that attachment process.
-        requires_live_child: true,
+        requires_live_child: false,
         endpoint_reservations: Vec::new(),
     })
 }
@@ -3718,15 +2871,14 @@ fn prepare_preset_microvm_service(
     vat: &store::Vat,
     service: &ServiceConfig,
     preset: ServicePreset,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
-    ensure_microvm_available(cancellation)?;
+    ensure_microvm_available()?;
     let host_port = resolve_service_port(&service.port)?;
     let container_port = service
         .container_port
         .unwrap_or_else(|| preset_container_port(preset));
     let image = preset_image(preset, service.version.as_deref());
-    ensure_microvm_image_available(&image, cancellation)?;
+    ensure_microvm_image_available(&image)?;
     let name = container_name(&vat.meta.id, &service.id);
     let mut container_env = preset_container_env(preset);
     for (key, value) in &service.image_env {
@@ -4129,16 +3281,14 @@ fn prepare_image_service(
     vat: &store::Vat,
     service: &ServiceConfig,
     image: &str,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
-    ensure_docker_available(service, cancellation)?;
+    ensure_docker_available(service)?;
     let host_port = resolve_service_port(&service.port)?;
     let container_port = service
         .container_port
         .context("image service missing container_port (validated earlier)")?;
     let name = container_name(&vat.meta.id, &service.id);
-    let command =
-        docker_create_command(&name, image, host_port, container_port, &service.image_env);
+    let command = docker_run_command(&name, image, host_port, container_port, &service.image_env);
     let env = image_exports(service, host_port);
     Ok(ServicePlan {
         id: service.id.clone(),
@@ -4159,9 +3309,7 @@ fn prepare_image_service(
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
-        // `docker start --attach <full-id>` is VAT's foreground runtime
-        // owner. Readiness cannot outlive that attachment process.
-        requires_live_child: true,
+        requires_live_child: false,
         endpoint_reservations: Vec::new(),
     })
 }
@@ -4169,17 +3317,16 @@ fn prepare_image_service(
 /// Run an image-backed service via Apple's `container` CLI (MicroVM
 /// isolation) instead of Docker. Structurally mirrors `prepare_image_service`
 /// line for line: `ensure_microvm_available` replaces `ensure_docker_available`,
-/// `container_run_command` replaces `docker_create_command`, and the returned
+/// `container_run_command` replaces `docker_run_command`, and the returned
 /// plan carries `microvm_name: Some(name)` (`docker_name` stays `None`) so
 /// teardown force-removes the right container kind (R4/R5).
 fn prepare_microvm_service(
     vat: &store::Vat,
     service: &ServiceConfig,
     image: &str,
-    cancellation: &RunCancellation,
 ) -> Result<ServicePlan> {
-    ensure_microvm_available(cancellation)?;
-    ensure_microvm_image_available(image, cancellation)?;
+    ensure_microvm_available()?;
+    ensure_microvm_image_available(image)?;
     let host_port = resolve_service_port(&service.port)?;
     let container_port = service
         .container_port
@@ -4222,12 +3369,11 @@ fn prepare_microvm_service(
     })
 }
 
-/// Build the bounded identity-producing `docker create` argv. Docker prints the
-/// immutable full ID on stdout, so VAT does not assume the daemon can write a
-/// client-host cidfile (which is false for Docker Desktop and remote daemons).
-/// `--rm` keeps normal exits ephemeral; cleanup still requires exact name+ID.
+/// Build a foreground `docker run` argv. `--rm` makes the container ephemeral;
+/// `--name` is deterministic so teardown can force-remove it; the port is bound
+/// to loopback only. Container env is emitted in sorted order (deterministic).
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
-fn docker_create_command(
+fn docker_run_command(
     name: &str,
     image: &str,
     host_port: u16,
@@ -4236,7 +3382,7 @@ fn docker_create_command(
 ) -> Vec<String> {
     let mut cmd = vec![
         "docker".to_string(),
-        "create".to_string(),
+        "run".to_string(),
         "--rm".to_string(),
         "--name".to_string(),
         name.to_string(),
@@ -4251,22 +3397,13 @@ fn docker_create_command(
     cmd
 }
 
-fn docker_start_command(docker_id: &str) -> Vec<String> {
-    vec![
-        "docker".to_string(),
-        "start".to_string(),
-        "--attach".to_string(),
-        docker_id.to_string(),
-    ]
-}
-
 /// Build a foreground `container run` argv (Apple's `container` CLI, MicroVM
-/// isolation). Structurally mirrors `docker_create_command`: `--rm` makes the
+/// isolation). Structurally mirrors `docker_run_command`: `--rm` makes the
 /// container ephemeral, `--name` is deterministic so teardown can
 /// force-remove it, the port is bound to loopback only, then one `-v
 /// name:path` per named-volume entry (compose `volumes:`, R2/R4), then one
 /// `-e key=value` per sorted env entry — both volumes and env iterate in
-/// deterministic order, matching `docker_create_command`'s guarantee (R5).
+/// deterministic order, matching `docker_run_command`'s guarantee (R5).
 fn container_run_command(
     name: &str,
     image: &str,
@@ -4481,37 +3618,24 @@ fn image_exports(service: &ServiceConfig, host_port: u16) -> BTreeMap<String, St
 }
 
 /// Whether Docker is usable: the binary is on PATH and the daemon answers.
-fn docker_available(cancellation: &RunCancellation) -> Result<bool> {
-    if which("docker").is_none() {
-        return Ok(false);
-    }
-    docker_daemon_up(cancellation)
+fn docker_available() -> bool {
+    which("docker").is_some() && docker_daemon_up()
 }
 
-fn docker_daemon_up(cancellation: &RunCancellation) -> Result<bool> {
-    match cancellable_command_status(
-        "docker",
-        &["info"],
-        Duration::from_secs(5),
-        cancellation,
-        "Docker daemon probe",
-    ) {
-        Ok(status) => Ok(status.success()),
-        Err(error)
-            if run_interruption(&error).is_some()
-                || run_cleanup_failure(&error).is_some()
-                || run_owned_cleanup_failure(&error).is_some() =>
-        {
-            Err(error)
-        }
-        Err(_) => Ok(false),
-    }
+fn docker_daemon_up() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Gate a Docker-backed service on a reachable daemon, emitting the structured
 /// `docker_unavailable` error (never a panic) when it is not.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
-fn ensure_docker_available(service: &ServiceConfig, cancellation: &RunCancellation) -> Result<()> {
+fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
     if which("docker").is_none() {
         emit_jsonl(serde_json::json!({
             "type": "error",
@@ -4524,7 +3648,7 @@ fn ensure_docker_available(service: &ServiceConfig, cancellation: &RunCancellati
             service.id
         );
     }
-    if !docker_daemon_up(cancellation)? {
+    if !docker_daemon_up() {
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "docker_unavailable",
@@ -4543,8 +3667,7 @@ fn ensure_docker_available(service: &ServiceConfig, cancellation: &RunCancellati
 /// running container system, emitting the structured `container_unavailable`
 /// error (never a panic) when it is not, mirroring `ensure_docker_available`'s
 /// `docker_unavailable` shape (R5).
-fn ensure_microvm_available(cancellation: &RunCancellation) -> Result<()> {
-    cancellation.check()?;
+fn ensure_microvm_available() -> Result<()> {
     if !sandbox::microvm::available() {
         emit_jsonl(serde_json::json!({
             "type": "error",
@@ -4555,66 +3678,15 @@ fn ensure_microvm_available(cancellation: &RunCancellation) -> Result<()> {
             "service needs Apple's `container` CLI but the `container` binary was not found on PATH"
         );
     }
-    if let Err(error) = ensure_microvm_system_started(Duration::from_secs(30), cancellation) {
-        if run_interruption(&error).is_some()
-            || run_cleanup_failure(&error).is_some()
-            || run_owned_cleanup_failure(&error).is_some()
-        {
-            return Err(error);
-        }
+    if let Err(err) = sandbox::microvm::ensure_system_started(Duration::from_secs(30)) {
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "container_unavailable",
-            "reason": error.to_string(),
+            "reason": err.as_str(),
         }))?;
-        bail!("service needs the `container` system running but it did not start in time: {error}");
+        bail!("service needs the `container` system running but it did not start in time: {err}");
     }
-    cancellation.check()?;
     Ok(())
-}
-
-fn ensure_microvm_system_started(timeout: Duration, cancellation: &RunCancellation) -> Result<()> {
-    ensure_microvm_system_started_with("container", &["system", "status"], timeout, cancellation)
-}
-
-fn ensure_microvm_system_started_with(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-    cancellation: &RunCancellation,
-) -> Result<()> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        cancellation.check()?;
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            bail!("container system did not respond within {timeout:?}");
-        }
-        let probe_timeout = Duration::from_secs(1).min(remaining);
-        match cancellable_command_status(
-            program,
-            args,
-            probe_timeout,
-            cancellation,
-            "Apple Container system status probe",
-        ) {
-            Ok(status) if status.success() => return Ok(()),
-            Ok(_) => {}
-            Err(error)
-                if run_interruption(&error).is_some()
-                    || run_cleanup_failure(&error).is_some()
-                    || run_owned_cleanup_failure(&error).is_some() =>
-            {
-                return Err(error);
-            }
-            Err(_) => {}
-        }
-        let retry_deadline = (Instant::now() + Duration::from_millis(500)).min(deadline);
-        while Instant::now() < retry_deadline {
-            cancellation.check()?;
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
 }
 
 /// Ensure an image service has a local Apple Container image before the
@@ -4623,29 +3695,24 @@ fn ensure_microvm_system_started_with(
 /// to make `runtime = "micro_vm"` a usable agent-facing path rather than a
 /// late, portless child exit. All probes and pulls are bounded and produce
 /// JSONL evidence without leaking CLI progress into VAT's structured stdout.
-fn ensure_microvm_image_available(image: &str, cancellation: &RunCancellation) -> Result<()> {
+fn ensure_microvm_image_available(image: &str) -> Result<()> {
     const INSPECT_TIMEOUT: Duration = Duration::from_secs(5);
     const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 
     let pull_command = format!("container image pull {}", shell_single_quote(image));
-    let inspect = match cancellable_command_status(
-        "container",
-        &["image", "inspect", image],
-        INSPECT_TIMEOUT,
-        cancellation,
-        "Apple Container image inspect",
-    ) {
-        Ok(status) => status,
-        Err(error) => {
-            emit_jsonl(serde_json::json!({
-                "type": "error",
-                "code": "container_image_inspect_unavailable",
-                "image": image,
-                "next": pull_command.as_str(),
-            }))?;
-            return Err(error).context("inspect Apple Container image availability");
-        }
-    };
+    let inspect =
+        match bounded_command_status("container", &["image", "inspect", image], INSPECT_TIMEOUT) {
+            Ok(status) => status,
+            Err(error) => {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "container_image_inspect_unavailable",
+                    "image": image,
+                    "next": pull_command.as_str(),
+                }))?;
+                return Err(error).context("inspect Apple Container image availability");
+            }
+        };
     if inspect.success() {
         return Ok(());
     }
@@ -4656,13 +3723,7 @@ fn ensure_microvm_image_available(image: &str, cancellation: &RunCancellation) -
         "image": image,
         "reason": "missing from the local Apple Container image store",
     }))?;
-    let pull = match cancellable_command_status(
-        "container",
-        &["image", "pull", image],
-        PULL_TIMEOUT,
-        cancellation,
-        "Apple Container image pull",
-    ) {
+    let pull = match bounded_command_status("container", &["image", "pull", image], PULL_TIMEOUT) {
         Ok(status) => status,
         Err(error) => {
             emit_jsonl(serde_json::json!({
@@ -4689,24 +3750,19 @@ fn ensure_microvm_image_available(image: &str, cancellation: &RunCancellation) -
         );
     }
 
-    let verified = match cancellable_command_status(
-        "container",
-        &["image", "inspect", image],
-        INSPECT_TIMEOUT,
-        cancellation,
-        "Apple Container pulled-image verification",
-    ) {
-        Ok(status) => status,
-        Err(error) => {
-            emit_jsonl(serde_json::json!({
-                "type": "error",
-                "code": "container_image_inspect_unavailable",
-                "image": image,
-                "next": pull_command.as_str(),
-            }))?;
-            return Err(error).context("verify pulled Apple Container image");
-        }
-    };
+    let verified =
+        match bounded_command_status("container", &["image", "inspect", image], INSPECT_TIMEOUT) {
+            Ok(status) => status,
+            Err(error) => {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "container_image_inspect_unavailable",
+                    "image": image,
+                    "next": pull_command.as_str(),
+                }))?;
+                return Err(error).context("verify pulled Apple Container image");
+            }
+        };
     if verified.success() {
         return Ok(());
     }
@@ -4727,33 +3783,24 @@ fn cold_prepare_service_image(
     service: &ServiceConfig,
     preset: ServicePreset,
     cache_dir: &Path,
-    cancellation: &RunCancellation,
 ) -> Result<()> {
     match preset {
         ServicePreset::Postgres => {
-            let mut command = Command::new("initdb");
-            command
+            let status = Command::new("initdb")
                 .args(["-D"])
                 .arg(cache_dir)
                 .args(["--auth=trust", "--username=postgres"])
-                .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            let status = run_bounded_owned_command(
-                command,
-                "postgres initdb",
-                Duration::from_secs(service.timeout_s.max(60)),
-                Some(cancellation),
-                &|| Ok(()),
-            )
-            .context("run initdb for postgres service image")?;
+                .stderr(Stdio::null())
+                .status()
+                .context("run initdb for postgres service image")?;
             if !status.success() {
                 bail!("postgres initdb failed for service `{}`", service.id);
             }
             // Apply `.sql` corpus seeds into the data dir ONCE, here in the
             // cold-prepare path. The populated dir is then cached and cloned
             // warm (clonefile COW) on every run, so the corpus is not rebuilt.
-            cold_seed_postgres(cfg, service, cache_dir, cancellation)?;
+            cold_seed_postgres(cfg, service, cache_dir)?;
         }
         ServicePreset::Opensearch => {
             cold_prepare_opensearch_image(service, cache_dir)?;
@@ -4778,12 +3825,7 @@ fn cold_prepare_service_image(
 /// Apply each `.sql` seed to a freshly-initdb'd cluster by briefly starting a
 /// local postgres on a private socket dir (no TCP), running `psql -f`, then
 /// stopping cleanly. Runs during cold prepare so the result is cached.
-fn cold_seed_postgres(
-    cfg: &VatConfig,
-    service: &ServiceConfig,
-    data_dir: &Path,
-    cancellation: &RunCancellation,
-) -> Result<()> {
+fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path) -> Result<()> {
     if service.seed.is_empty() {
         return Ok(());
     }
@@ -4826,47 +3868,23 @@ fn cold_seed_postgres(
             start_stderr_path.display()
         )
     })?;
-    let mut start_command = Command::new("pg_ctl");
-    start_command
+    let start = Command::new("pg_ctl")
         .arg("-D")
         .arg(&data_dir_abs)
         .args(["-w", "-t", "60", "-o"])
         .arg(&sock_arg)
         .arg("start")
-        .stdin(Stdio::null())
         .stdout(start_stdout_handle)
-        .stderr(start_stderr_handle);
-    let start = run_bounded_owned_command(
-        start_command,
-        "temporary postgres seed startup",
-        Duration::from_secs(service.timeout_s.max(65)),
-        Some(cancellation),
-        &|| Ok(()),
-    );
-    match start {
-        Ok(status) if status.success() => {}
-        Ok(_) => {
-            let start_error = anyhow::anyhow!(
-                "could not start temporary postgres to seed service `{}`: stdout: {}; stderr: {}",
-                service.id,
-                command_output_file_tail(&start_stdout_path),
-                command_output_file_tail(&start_stderr_path)
-            );
-            return finish_failed_postgres_seed_start(
-                &data_dir_abs,
-                service,
-                &sock_dir,
-                start_error,
-            );
-        }
-        Err(error) => {
-            return finish_failed_postgres_seed_start(
-                &data_dir_abs,
-                service,
-                &sock_dir,
-                error.context("start temporary postgres for corpus seeding"),
-            );
-        }
+        .stderr(start_stderr_handle)
+        .status()
+        .context("start temporary postgres for corpus seeding")?;
+    if !start.success() {
+        bail!(
+            "could not start temporary postgres to seed service `{}`: stdout: {}; stderr: {}",
+            service.id,
+            command_output_file_tail(&start_stdout_path),
+            command_output_file_tail(&start_stderr_path)
+        );
     }
 
     // Apply every seed, stopping the server even if one fails.
@@ -4885,22 +3903,14 @@ fn cold_seed_postgres(
                 seed_stderr_path.display()
             )
         })?;
-        let mut seed_command = Command::new("psql");
-        seed_command
+        let status = Command::new("psql")
             .args(["-v", "ON_ERROR_STOP=1", "-h"])
             .arg(&sock_dir_abs)
             .args(["-p", "5432", "-U", "postgres", "-d", "postgres", "-f"])
             .arg(&path)
-            .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(seed_stderr_handle);
-        let status = run_bounded_owned_command(
-            seed_command,
-            "postgres corpus seed",
-            Duration::from_secs(service.timeout_s.max(60)),
-            Some(cancellation),
-            &|| Ok(()),
-        );
+            .stderr(seed_stderr_handle)
+            .status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -4913,8 +3923,8 @@ fn cold_seed_postgres(
                 ));
                 break;
             }
-            Err(error) => {
-                seed_result = Err(error.context(format!(
+            Err(err) => {
+                seed_result = Err(anyhow::Error::from(err).context(format!(
                     "run psql -f {} for service `{}`",
                     path.display(),
                     service.id
@@ -4924,105 +3934,24 @@ fn cold_seed_postgres(
         }
     }
 
-    let stop_result = stop_postgres_seed_server(&data_dir_abs, service);
+    let stop = Command::new("pg_ctl")
+        .arg("-D")
+        .arg(&data_dir_abs)
+        .args(["-w", "-t", "60", "-m", "fast", "stop"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("stop temporary postgres after corpus seeding")?;
+    seed_result?;
+    if !stop.success() {
+        bail!(
+            "temporary postgres did not stop cleanly after seeding service `{}`",
+            service.id
+        );
+    }
     // Drop the throwaway socket dir so it is not baked into the cached image.
     let _ = std::fs::remove_dir_all(&sock_dir);
-    match (seed_result, stop_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(seed), Ok(())) => Err(seed),
-        (Ok(()), Err(stop)) => Err(stop),
-        (Err(seed), Err(stop)) => Err(stop).context(format!(
-            "postgres seed execution also failed before stop: {seed:#}"
-        )),
-    }
-}
-
-fn finish_failed_postgres_seed_start(
-    data_dir: &Path,
-    service: &ServiceConfig,
-    sock_dir: &Path,
-    start_error: anyhow::Error,
-) -> Result<()> {
-    let stop_result = stop_postgres_seed_server(data_dir, service);
-    let _ = std::fs::remove_dir_all(sock_dir);
-    match stop_result {
-        Ok(()) => Err(start_error),
-        Err(stop_error) => Err(stop_error).context(format!(
-            "temporary postgres startup also failed: {start_error:#}"
-        )),
-    }
-}
-
-fn stop_postgres_seed_server(data_dir: &Path, service: &ServiceConfig) -> Result<()> {
-    let mut stop_command = Command::new("pg_ctl");
-    stop_command
-        .arg("-D")
-        .arg(data_dir)
-        .args(["-w", "-t", "10", "-m", "fast", "stop"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    stop_postgres_seed_server_command(data_dir, service, stop_command, Duration::from_secs(15))
-}
-
-fn stop_postgres_seed_server_command(
-    data_dir: &Path,
-    service: &ServiceConfig,
-    command: Command,
-    timeout: Duration,
-) -> Result<()> {
-    let status = match run_bounded_owned_command(
-        command,
-        "temporary postgres seed shutdown",
-        timeout,
-        None,
-        &|| Ok(()),
-    ) {
-        Ok(status) => status,
-        Err(error) if data_dir.join("postmaster.pid").exists() => {
-            return Err(postgres_seed_cleanup_failure(data_dir, service, &error));
-        }
-        Err(error) => {
-            return Err(error).context("stop temporary postgres after corpus seeding");
-        }
-    };
-    if !status.success() {
-        if !data_dir.join("postmaster.pid").exists() {
-            // A failed stop against a server that never completed startup is
-            // an exact local absence proof; preserve the original typed
-            // cancellation/startup error instead of replacing it with noise.
-            return Ok(());
-        }
-        let error = anyhow::anyhow!(
-            "temporary postgres stop exited unsuccessfully ({:?})",
-            status.code()
-        );
-        return Err(postgres_seed_cleanup_failure(data_dir, service, &error));
-    }
     Ok(())
-}
-
-fn postgres_seed_cleanup_failure(
-    data_dir: &Path,
-    service: &ServiceConfig,
-    error: &anyhow::Error,
-) -> anyhow::Error {
-    let postmaster_path = data_dir.join("postmaster.pid");
-    let postmaster_pid = std::fs::read_to_string(&postmaster_path)
-        .ok()
-        .and_then(|contents| contents.lines().next().map(str::trim).map(str::to_string))
-        .filter(|pid| !pid.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-    RunOwnedCleanupFailed {
-        cleanup_error: format!(
-            "temporary postgres cleanup unconfirmed for service `{}`: data_dir={}, postmaster_pid={}, recovery=`pg_ctl -D {} -w -t 10 -m fast stop`; cause: {error:#}",
-            service.id,
-            data_dir.display(),
-            postmaster_pid,
-            shell_single_quote(&data_dir.to_string_lossy()),
-        ),
-    }
-    .into()
 }
 
 fn command_output_file_tail(path: &Path) -> String {
@@ -5179,37 +4108,24 @@ fn gcloud_component(preset: ServicePreset) -> Option<&'static str> {
 
 /// Locally-installed gcloud component ids (`--only-local-state` lists only the
 /// installed ones). Empty when gcloud is absent or the query fails.
-fn installed_gcloud_components(cancellation: &RunCancellation) -> Result<Vec<String>> {
-    if which("gcloud").is_none() {
-        return Ok(Vec::new());
-    }
-    match cancellable_command_output(
-        "gcloud",
-        &[
+fn installed_gcloud_components() -> Vec<String> {
+    Command::new("gcloud")
+        .args([
             "components",
             "list",
             "--only-local-state",
             "--format=value(id)",
-        ],
-        Duration::from_secs(15),
-        cancellation,
-        "gcloud installed-component query",
-    ) {
-        Ok((status, stdout)) if status.success() => Ok(String::from_utf8_lossy(&stdout)
-            .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect()),
-        Ok(_) => Ok(Vec::new()),
-        Err(error)
-            if run_interruption(&error).is_some()
-                || run_cleanup_failure(&error).is_some()
-                || run_owned_cleanup_failure(&error).is_some() =>
-        {
-            Err(error)
-        }
-        Err(_) => Ok(Vec::new()),
-    }
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Pure native-availability decision: all binaries present, and (for emulator
@@ -5221,6 +4137,25 @@ fn native_available(has_binaries: bool, component: Option<&str>, installed: &[St
             Some(c) => installed.iter().any(|x| x == c),
             None => true,
         }
+}
+
+/// Whether a preset's native path is usable on this host. For emulator presets
+/// this checks the gcloud component, not just the binary, so `runtime = auto`
+/// falls back to Docker when the component is missing rather than choosing
+/// native and failing to start.
+/// @spec apps/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
+fn preset_native_available(preset: ServicePreset) -> bool {
+    let has_binaries = required_binaries(preset)
+        .iter()
+        .all(|binary| which(binary).is_some());
+    let component = gcloud_component(preset);
+    // Only pay the gcloud query when a component actually gates this preset.
+    let installed = if component.is_some() {
+        installed_gcloud_components()
+    } else {
+        Vec::new()
+    };
+    native_available(has_binaries, component, &installed)
 }
 
 fn preset_uses_service_image(preset: ServicePreset) -> bool {
@@ -5850,9 +4785,7 @@ fn which(binary: &str) -> Option<PathBuf> {
 }
 
 // <HANDWRITE gap="vat-microvm-published-endpoint-readiness" tracker="#1526" reason="Route MicroVM service probes through an endpoint-usability check that distinguishes an immediate EOF or reset from an idle but open protocol connection, while retaining explicit HTTP round trips.">
-const READY_COMMAND_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
-
-fn readiness_ready(probe: &ReadyProbe, cancellation: &RunCancellation) -> Result<bool> {
+fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
     match probe {
         ReadyProbe::None => Ok(true),
         ReadyProbe::Http(url) => http_ready(url),
@@ -5868,73 +4801,14 @@ fn readiness_ready(probe: &ReadyProbe, cancellation: &RunCancellation) -> Result
             if cmd.is_empty() {
                 return Ok(true);
             }
-            readiness_command_with_timeout(cmd, cancellation, READY_COMMAND_ATTEMPT_TIMEOUT)
+            Ok(Command::new(&cmd[0])
+                .args(&cmd[1..])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false))
         }
-    }
-}
-
-fn readiness_command_with_timeout(
-    cmd: &[String],
-    cancellation: &RunCancellation,
-    timeout: Duration,
-) -> Result<bool> {
-    let mut command = Command::new(&cmd[0]);
-    command
-        .args(&cmd[1..])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    set_process_group(&mut command);
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(_) => return Ok(false),
-    };
-    let mut child = OwnedProcessGroup::new(child);
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(signal) = cancellation.received() {
-            if let Err(error) = child.finalize("service readiness command") {
-                let cleanup_error = preserve_auxiliary_cleanup_failure(
-                    &mut child,
-                    "service readiness command",
-                    &error,
-                )
-                .unwrap_or_else(|| format!("service readiness command cleanup failed: {error:#}"));
-                return Err(RunCleanupFailed {
-                    interruption: RunInterrupted::new(signal),
-                    cleanup_error,
-                }
-                .into());
-            }
-            return Err(RunInterrupted::new(signal).into());
-        }
-        match child.finished_status("service readiness command") {
-            Ok(Some(status)) => return Ok(status.success()),
-            Ok(None) => {}
-            Err(error) => {
-                if let Some(cleanup_error) = preserve_auxiliary_cleanup_failure(
-                    &mut child,
-                    "service readiness command",
-                    &error,
-                ) {
-                    bail!("{cleanup_error}");
-                }
-                return Err(error);
-            }
-        }
-        if Instant::now() >= deadline {
-            if let Err(error) = child.finalize("timed-out service readiness command") {
-                if let Some(cleanup_error) = preserve_auxiliary_cleanup_failure(
-                    &mut child,
-                    "timed-out service readiness command",
-                    &error,
-                ) {
-                    bail!("{cleanup_error}");
-                }
-                return Err(error);
-            }
-            return Ok(false);
-        }
-        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
     }
 }
 // </HANDWRITE>
@@ -6045,236 +4919,163 @@ fn compact_container_diagnostic(value: String) -> String {
     }
 }
 
-const CONTAINER_DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(1);
+/// Capture a diagnostic pipe without allowing a misbehaving descendant that
+/// inherited stdout/stderr to block the failure path after its parent exits.
+///
+/// The byte cap is applied while reading, rather than after an unbounded
+/// `read_to_end`, because diagnostics can run precisely when a runtime is
+/// producing pathological output.
+fn bounded_pipe_output<R>(pipe: Option<R>, deadline: Instant) -> String
+where
+    R: Read + Send + 'static,
+{
+    const MAX_DIAGNOSTIC_PIPE_BYTES: u64 = 8 * 1024;
 
-struct ContainerDiagnosticOutcome {
-    evidence: String,
-    deferred_error: Option<anyhow::Error>,
-}
-
-fn container_diagnostic(
-    args: &[&str],
-    cancellation: &RunCancellation,
-) -> ContainerDiagnosticOutcome {
-    classify_container_diagnostic(
-        args,
-        container_diagnostic_cancellable_until(
-            args,
-            Instant::now() + CONTAINER_DIAGNOSTIC_TIMEOUT,
-            cancellation,
-        ),
-    )
-}
-
-fn classify_container_diagnostic(
-    args: &[&str],
-    result: Result<String>,
-) -> ContainerDiagnosticOutcome {
-    match result {
-        Ok(evidence) => ContainerDiagnosticOutcome {
-            evidence,
-            deferred_error: None,
-        },
-        Err(error) => ContainerDiagnosticOutcome {
-            evidence: format!("container {}: {error:#}", args.join(" ")),
-            deferred_error: Some(error),
-        },
+    let Some(mut pipe) = pipe else {
+        return String::new();
+    };
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe
+            .by_ref()
+            .take(MAX_DIAGNOSTIC_PIPE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| {
+                let truncated = bytes.len() as u64 > MAX_DIAGNOSTIC_PIPE_BYTES;
+                if truncated {
+                    bytes.truncate(MAX_DIAGNOSTIC_PIPE_BYTES as usize);
+                }
+                (bytes, truncated)
+            });
+        let _ = sender.send(result);
+    });
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return "output capture skipped: diagnostic deadline exhausted".to_string();
+    }
+    match receiver.recv_timeout(remaining) {
+        Ok(Ok((bytes, truncated))) => {
+            let mut output = String::from_utf8_lossy(&bytes).into_owned();
+            if truncated {
+                output.push_str("\n[output truncated at 8192 bytes]");
+            }
+            output
+        }
+        Ok(Err(err)) => format!("output read failed ({err})"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            "output capture timed out before diagnostic deadline".to_string()
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            "output capture disconnected".to_string()
+        }
     }
 }
 
-fn diagnostic_cleanup_error(error: &anyhow::Error) -> Option<String> {
-    run_cleanup_failure(error)
-        .map(|failure| failure.cleanup_error)
-        .or_else(|| run_owned_cleanup_failure(error).map(|failure| failure.cleanup_error.clone()))
+fn container_diagnostic(args: &[&str]) -> String {
+    container_diagnostic_until(args, Instant::now() + Duration::from_secs(1))
 }
 
 /// Run one read-only Apple Container diagnostic under a caller-owned hard
 /// deadline. The command's output is bounded before it reaches memory and the
 /// caller never waits on a descendant that inherited its pipes.
 pub(crate) fn container_diagnostic_until(args: &[&str], deadline: Instant) -> String {
-    match command_diagnostic_until("container", args, deadline, None) {
-        Ok(output) => output,
-        Err(error) => format!("container {}: {error:#}", args.join(" ")),
-    }
-}
-
-fn container_diagnostic_cancellable_until(
-    args: &[&str],
-    deadline: Instant,
-    cancellation: &RunCancellation,
-) -> Result<String> {
-    match command_diagnostic_until("container", args, deadline, Some(cancellation)) {
-        Err(error)
-            if run_interruption(&error).is_some()
-                || run_cleanup_failure(&error).is_some()
-                || run_owned_cleanup_failure(&error).is_some() =>
-        {
-            Err(error)
-        }
-        Ok(output) => Ok(output),
-        Err(error) => Ok(format!("container {}: {error:#}", args.join(" "))),
-    }
-}
-
-fn command_diagnostic_until(
-    program: &str,
-    args: &[&str],
-    deadline: Instant,
-    cancellation: Option<&RunCancellation>,
-) -> Result<String> {
-    const MAX_DIAGNOSTIC_BYTES: u64 = 8 * 1024;
-    let command_label = format!("{program} {} diagnostic", args.join(" "));
+    let command = format!("container {}", args.join(" "));
     if deadline <= Instant::now() {
-        return Ok(format!(
-            "{program} {}: skipped because diagnostic deadline expired",
-            args.join(" ")
-        ));
+        return format!("{command}: skipped because diagnostic deadline expired");
     }
-    let mut stdout =
-        tempfile::tempfile().with_context(|| format!("capture {command_label} stdout"))?;
-    let mut stderr =
-        tempfile::tempfile().with_context(|| format!("capture {command_label} stderr"))?;
-    let child_stdout = stdout
-        .try_clone()
-        .with_context(|| format!("clone {command_label} stdout"))?;
-    let child_stderr = stderr
-        .try_clone()
-        .with_context(|| format!("clone {command_label} stderr"))?;
-    let mut command = Command::new(program);
-    command
+    let mut child = match Command::new("container")
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(child_stdout))
-        .stderr(Stdio::from(child_stderr));
-    let observe = || {
-        let stdout_len = stdout
-            .metadata()
-            .with_context(|| format!("inspect {command_label} stdout"))?
-            .len();
-        let stderr_len = stderr
-            .metadata()
-            .with_context(|| format!("inspect {command_label} stderr"))?
-            .len();
-        if stdout_len > MAX_DIAGNOSTIC_BYTES || stderr_len > MAX_DIAGNOSTIC_BYTES {
-            bail!("{command_label} exceeded its bounded diagnostic output budget");
-        }
-        Ok(())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => return format!("{command}: unavailable ({err})"),
     };
-    let status = run_bounded_owned_command(
-        command,
-        &command_label,
-        deadline.saturating_duration_since(Instant::now()),
-        cancellation,
-        &observe,
-    )?;
-    let stdout =
-        compact_container_diagnostic(read_diagnostic_capture(&mut stdout, MAX_DIAGNOSTIC_BYTES)?);
-    let stderr =
-        compact_container_diagnostic(read_diagnostic_capture(&mut stderr, MAX_DIAGNOSTIC_BYTES)?);
-    let details = [stdout, stderr]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join(" | ");
-    if details.is_empty() {
-        Ok(format!("{program} {}: {status}", args.join(" ")))
-    } else {
-        Ok(format!("{program} {}: {status}; {details}", args.join(" ")))
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = compact_container_diagnostic(bounded_pipe_output(
+                    child.stdout.take(),
+                    deadline,
+                ));
+                let stderr = compact_container_diagnostic(bounded_pipe_output(
+                    child.stderr.take(),
+                    deadline,
+                ));
+                let details = [stdout, stderr]
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                if details.is_empty() {
+                    return format!("{command}: {status}");
+                } else {
+                    return format!("{command}: {status}; {details}");
+                }
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return format!("{command}: timed out before diagnostic deadline");
+            }
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(Duration::from_millis(20).min(remaining));
+            }
+            Err(err) => return format!("{command}: wait failed ({err})"),
+        }
     }
-}
-
-fn read_diagnostic_capture(file: &mut File, limit: u64) -> Result<String> {
-    file.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    std::io::Read::by_ref(file)
-        .take(limit + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        bytes.truncate(limit as usize);
-        bytes.extend_from_slice(b"\n[output truncated]");
-    }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn report_microvm_endpoint_failure(
-    vat: &mut store::Vat,
-    service: &mut ServiceHandle,
+    vat: &store::Vat,
+    service: &ServiceHandle,
     reason: &str,
-    cancellation: &RunCancellation,
 ) -> Result<()> {
     let endpoint = microvm_endpoint(service);
     let name = service
         .record
         .microvm_name
         .as_deref()
-        .unwrap_or("unavailable")
-        .to_string();
-    let runtime = container_diagnostic(&["--version"], cancellation);
-    let inspect = if service.record.microvm_name.is_some() {
-        container_diagnostic(&["inspect", &name], cancellation)
+        .unwrap_or("unavailable");
+    let runtime_evidence = container_diagnostic(&["--version"]);
+    let inspect_evidence = if service.record.microvm_name.is_some() {
+        container_diagnostic(&["inspect", name])
     } else {
-        ContainerDiagnosticOutcome {
-            evidence: "container inspect unavailable because VAT did not record a MicroVM name"
-                .to_string(),
-            deferred_error: None,
-        }
+        "container inspect unavailable because VAT did not record a MicroVM name".to_string()
     };
     let inspect_command = format!("container inspect {name}");
     let logs_command = format!("vat logs {} {}", vat.meta.id, service.record.id);
     let state_command = format!("vat state {}", vat.meta.id);
 
-    let diagnostic_cleanup = [&runtime, &inspect]
-        .into_iter()
-        .filter_map(|outcome| outcome.deferred_error.as_ref())
-        .filter_map(diagnostic_cleanup_error)
-        .map(|detail| format!("diagnostic helper cleanup unconfirmed: {detail}"))
-        .collect::<Vec<_>>();
-    let persistence_error = if diagnostic_cleanup.is_empty() {
-        None
-    } else {
-        let detail = diagnostic_cleanup.join("; ");
-        service.record.cleanup_error = Some(append_cleanup_detail(
-            service.record.cleanup_error.take(),
-            detail,
-        ));
-        persist_service_record(vat, service.record.clone()).err()
-    };
-
     emit_jsonl(serde_json::json!({
         "type": "error",
         "code": "microvm_published_endpoint_unusable",
         "service": service.record.id.as_str(),
-        "host_endpoint": endpoint.as_str(),
-        "microvm_name": name.as_str(),
+        "host_endpoint": endpoint,
+        "microvm_name": name,
         "reason": reason,
-        "runtime_evidence": runtime.evidence.as_str(),
-        "inspect_evidence": inspect.evidence.as_str(),
-        "diagnostic_budget_ms": CONTAINER_DIAGNOSTIC_TIMEOUT.as_millis() as u64,
-        "inspect": inspect_command.as_str(),
-        "logs": logs_command.as_str(),
-        "state": state_command.as_str(),
-        "next": state_command.as_str(),
+        "runtime_evidence": runtime_evidence,
+        "inspect_evidence": inspect_evidence,
+        "inspect": inspect_command,
+        "logs": logs_command,
+        "state": state_command,
+        "next": state_command,
     }))?;
 
-    let endpoint_error = format!(
+    bail!(
         "microvm_published_endpoint_unusable: service `{}` host endpoint `{}` failed readiness: {}; runtime: {}; inspect: {}; remediation: `{}` then `{}`",
         service.record.id,
         endpoint,
         reason,
-        runtime.evidence,
-        inspect.evidence,
+        runtime_evidence,
+        inspect_evidence,
         inspect_command,
         logs_command,
-    );
-    let deferred_error = runtime.deferred_error.or(inspect.deferred_error);
-    match (deferred_error, persistence_error) {
-        (Some(error), Some(persistence)) => Err(error).context(format!(
-            "{endpoint_error}; diagnostic cleanup evidence persistence also failed: {persistence:#}"
-        )),
-        (Some(error), None) => Err(error).context(endpoint_error),
-        (None, Some(persistence)) => Err(persistence).context(endpoint_error),
-        (None, None) => bail!("{endpoint_error}"),
-    }
+    )
 }
 
 fn wait_for_services(
@@ -6282,27 +5083,17 @@ fn wait_for_services(
     services: &mut [ServiceHandle],
     cancellation: &RunCancellation,
 ) -> Result<()> {
-    let compose_stop_request = detached_compose_stop_request_path(vat);
     for service in services {
         cancellation.check()?;
-        consume_detached_compose_stop_request(&compose_stop_request, "service readiness")?;
         let started = Instant::now();
         let ready_probe = service.ready_probe.clone();
         let microvm_probe = is_microvm_probe(&ready_probe);
         let enforce_live_child = service.requires_live_child || microvm_probe;
         let mut last_microvm_readiness_error = None;
-        let mut docker_attach_ready_candidate = None;
         if matches!(ready_probe, ReadyProbe::None) && service.owned_endpoints.is_empty() {
             if enforce_live_child {
                 if let Some(status) = service_child_exit_status(service)? {
-                    return report_owned_service_child_exit(
-                        vat,
-                        service,
-                        status,
-                        false,
-                        None,
-                        cancellation,
-                    );
+                    return report_owned_service_child_exit(vat, service, status, false, None);
                 }
             }
             service.record.status = ProcessStatus::Ready;
@@ -6317,7 +5108,6 @@ fn wait_for_services(
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
             cancellation.check()?;
-            consume_detached_compose_stop_request(&compose_stop_request, "service readiness")?;
             // Probe success is never sufficient for a native command-backed
             // service: a stale listener may answer after the child has failed.
             // MicroVM probes retain their existing equivalent child check;
@@ -6330,7 +5120,6 @@ fn wait_for_services(
                         status,
                         microvm_probe,
                         last_microvm_readiness_error.as_deref(),
-                        cancellation,
                     );
                 }
             }
@@ -6347,19 +5136,10 @@ fn wait_for_services(
                     Err(err) => Err(err),
                 }
             } else {
-                readiness_ready(&ready_probe, cancellation)
-            };
-            let docker_attach_ready_stable = if service.record.docker_id.is_some() {
-                docker_attach_readiness_is_stable(
-                    &mut docker_attach_ready_candidate,
-                    Instant::now(),
-                    matches!(&readiness, Ok(true)),
-                )
-            } else {
-                true
+                readiness_ready(&ready_probe)
             };
             match readiness {
-                Ok(true) if docker_attach_ready_stable => {
+                Ok(true) => {
                     if enforce_live_child {
                         if let Some(status) = service_child_exit_status(service)? {
                             return report_owned_service_child_exit(
@@ -6368,7 +5148,6 @@ fn wait_for_services(
                                 status,
                                 microvm_probe,
                                 last_microvm_readiness_error.as_deref(),
-                                cancellation,
                             );
                         }
                     }
@@ -6380,29 +5159,12 @@ fn wait_for_services(
                     }
                     break;
                 }
-                Ok(true) => {}
                 Ok(false) => {}
-                Err(err) if run_cleanup_failure(&err).is_some() => {
-                    let detail = run_cleanup_failure(&err)
-                        .expect("matched cleanup failure")
-                        .cleanup_error;
-                    service.record.status = ProcessStatus::Failed;
-                    service.record.cleanup_error = Some(detail);
-                    persist_service_record(vat, service.record.clone())?;
-                    return Err(err);
-                }
-                Err(err) if run_interruption(&err).is_some() => return Err(err),
-                Err(err) if matches!(ready_probe, ReadyProbe::Cmd(_)) => {
-                    service.record.status = ProcessStatus::Failed;
-                    service.record.cleanup_error = Some(format!("{err:#}"));
-                    persist_service_record(vat, service.record.clone())?;
-                    return Err(err);
-                }
                 Err(err) if microvm_probe => {
                     let reason = err.to_string();
                     service.record.status = ProcessStatus::Failed;
                     service.record.readiness_error = Some(reason.clone());
-                    return report_microvm_endpoint_failure(vat, service, &reason, cancellation);
+                    return report_microvm_endpoint_failure(vat, service, &reason);
                 }
                 Err(_) => {}
             }
@@ -6414,7 +5176,6 @@ fn wait_for_services(
                         status,
                         microvm_probe,
                         last_microvm_readiness_error.as_deref(),
-                        cancellation,
                     );
                 }
             } else if let Some(status) = service_child_exit_status(service)? {
@@ -6436,7 +5197,7 @@ fn wait_for_services(
                         )
                     });
                     service.record.readiness_error = Some(reason.clone());
-                    return report_microvm_endpoint_failure(vat, service, &reason, cancellation);
+                    return report_microvm_endpoint_failure(vat, service, &reason);
                 }
                 bail!("service `{}` readiness timed out", service.record.id);
             }
@@ -6454,33 +5215,6 @@ fn wait_for_services(
         emit_service_runtime_hints(service)?;
     }
     Ok(())
-}
-
-const DOCKER_ATTACH_READY_STABILITY: Duration = Duration::from_millis(100);
-
-/// A newly spawned `docker start --attach` can lose a scheduling race to a
-/// stale listener: two immediate `try_wait` calls may see the client alive
-/// before it executes and exits. Require two Ready observations separated by
-/// a normal poll window. The outer loop still observes cancellation and child
-/// exit every tick; this helper never sleeps or changes process ownership.
-fn docker_attach_readiness_is_stable(
-    candidate: &mut Option<Instant>,
-    observed_at: Instant,
-    probe_ready: bool,
-) -> bool {
-    if !probe_ready {
-        *candidate = None;
-        return false;
-    }
-    match *candidate {
-        Some(first_ready) => {
-            observed_at.saturating_duration_since(first_ready) >= DOCKER_ATTACH_READY_STABILITY
-        }
-        None => {
-            *candidate = Some(observed_at);
-            false
-        }
-    }
 }
 
 fn owned_service_endpoints_ready(service: &ServiceHandle) -> bool {
@@ -6507,16 +5241,9 @@ fn report_owned_service_child_exit(
     status: std::process::ExitStatus,
     microvm_probe: bool,
     last_readiness_observation: Option<&str>,
-    cancellation: &RunCancellation,
 ) -> Result<()> {
     if microvm_probe {
-        return report_microvm_child_exit(
-            vat,
-            service,
-            status,
-            last_readiness_observation,
-            cancellation,
-        );
+        return report_microvm_child_exit(vat, service, status, last_readiness_observation);
     }
 
     service.record.status = ProcessStatus::Failed;
@@ -6560,7 +5287,6 @@ fn report_microvm_child_exit(
     service: &mut ServiceHandle,
     status: std::process::ExitStatus,
     last_readiness_observation: Option<&str>,
-    cancellation: &RunCancellation,
 ) -> Result<()> {
     service.record.status = ProcessStatus::Failed;
     service.record.exit_code = status.code();
@@ -6573,7 +5299,7 @@ fn report_microvm_child_exit(
         microvm_endpoint(service),
     );
     service.record.readiness_error = Some(reason.clone());
-    report_microvm_endpoint_failure(vat, service, &reason, cancellation)
+    report_microvm_endpoint_failure(vat, service, &reason)
 }
 // </HANDWRITE>
 
@@ -6613,35 +5339,6 @@ fn emit_run_interrupted(vat: &store::Vat, interruption: &RunInterrupted) -> Resu
         "state": format!("vat state {}", vat.meta.id),
         "next": format!("vat state {}", vat.meta.id),
     }))
-}
-
-fn emit_owned_cleanup_unconfirmed(vat: &store::Vat, message: &str) -> Result<()> {
-    emit_jsonl(serde_json::json!({
-        "type": "error",
-        "code": "owned_cleanup_unconfirmed",
-        "message": message,
-        "state": format!("vat state {}", vat.meta.id),
-        "next": format!("vat state {}", vat.meta.id),
-    }))?;
-    let has_legacy_runtime_cleanup = vat.meta.test_run.as_ref().is_some_and(|run| {
-        run.services.iter().any(|service| {
-            service.cleanup_error.is_some()
-                && (service.docker_name.is_some() || service.microvm_name.is_some())
-        })
-    });
-    if has_legacy_runtime_cleanup {
-        // Compatibility alias for existing runtime-cleanup consumers. New
-        // callers should use the ownership-generic code above, which also
-        // covers native service and runner process-group obligations.
-        emit_jsonl(serde_json::json!({
-            "type": "error",
-            "code": "microvm_cleanup_unconfirmed",
-            "alias_for": "owned_cleanup_unconfirmed",
-            "deprecated": true,
-            "message": message,
-        }))?;
-    }
-    Ok(())
 }
 
 fn interrupted_runner_records(
@@ -6714,47 +5411,10 @@ fn record_runner_interruption(
 
 fn mark_services_interrupted(services: &mut [ServiceHandle], interruption: &RunInterrupted) {
     for service in services {
-        if service.record.owned_by_vat == Some(true)
-            && service.child.is_some()
-            && service.record.cleanup_error.is_none()
-            && !matches!(
-                service.record.status,
-                ProcessStatus::Failed | ProcessStatus::Timeout
-            )
-        {
+        if service.record.owned_by_vat == Some(true) && service.child.is_some() {
             service.record.status = ProcessStatus::Interrupted;
             service.record.exit_code = Some(interruption.exit_code());
             service.record.pid = None;
-        }
-    }
-}
-
-fn append_test_run_cleanup_error(vat: &mut store::Vat, detail: &str) {
-    if let Some(test_run) = vat.meta.test_run.as_mut() {
-        test_run.cleanup_error = Some(append_cleanup_detail(
-            test_run.cleanup_error.take(),
-            detail.to_string(),
-        ));
-    }
-}
-
-/// Failure evidence is useful, but it is not allowed to preempt the terminal
-/// metadata save. Preserve an evidence-write failure as a durable fail-closed
-/// obligation and return one combined diagnostic for the ordinary error path.
-fn record_runner_failure_fail_closed(
-    vat: &mut store::Vat,
-    runner: &RunnerConfig,
-    logs_dir: &Path,
-    message: &str,
-) -> String {
-    match record_runner_failure(vat, runner, logs_dir, message) {
-        Ok(()) => message.to_string(),
-        Err(error) => {
-            let evidence_error = format!(
-                "runner failure evidence write failed; terminal metadata still requires persistence: {error:#}"
-            );
-            append_test_run_cleanup_error(vat, &evidence_error);
-            format!("{message}; {evidence_error}")
         }
     }
 }
@@ -6766,6 +5426,8 @@ fn record_runner_failure(
     message: &str,
 ) -> Result<()> {
     let stderr = logs_dir.join("runner.stderr.log");
+    let mut file = OpenOptions::new().create(true).append(true).open(&stderr)?;
+    writeln!(file, "{message}")?;
     if let Some(test_run) = vat.meta.test_run.as_mut() {
         if test_run.runners.is_empty() {
             test_run.runners.push(RunnerRunRecord {
@@ -6783,75 +5445,37 @@ fn record_runner_failure(
                 stderr_log: stderr.to_string_lossy().into_owned(),
             });
         } else {
+            let mut marked = false;
             for record in &mut test_run.runners {
                 if record.status == ProcessStatus::Running {
                     record.status = ProcessStatus::Failed;
                     record.exit_code = Some(-1);
                     record.pid = None;
+                    marked = true;
                 }
             }
-            // A later lifecycle/evidence/cleanup failure must not rewrite a
-            // runner outcome that was already durably observed. The overall
-            // result and cleanup_error carry that later failure; Exited/0 is
-            // immutable historical evidence of the target command itself.
+            if !marked {
+                if let Some(record) = test_run
+                    .runners
+                    .iter_mut()
+                    .find(|record| record.cleanup_error.is_none())
+                {
+                    record.status = ProcessStatus::Failed;
+                    record.exit_code = Some(-1);
+                    record.pid = None;
+                }
+            }
         }
         test_run.runner = test_run.runners.first().cloned();
     }
-    let mut file = OpenOptions::new().create(true).append(true).open(&stderr)?;
-    writeln!(file, "{message}")?;
     Ok(())
 }
 
 fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<()> {
     if let Some(test_run) = vat.meta.test_run.as_mut() {
-        let mut records = services
-            .iter()
-            .map(|service| service.record.clone())
-            .collect::<Vec<_>>();
-        let current_ids = records
-            .iter()
-            .map(|record| record.id.clone())
-            .collect::<BTreeSet<_>>();
-        // A backend can fail before its ServiceHandle reaches the caller. Keep
-        // that already-durable Failed checkpoint (and every explicit cleanup
-        // obligation) when the ordinary outer finalizer persists an otherwise
-        // empty handle set. Other absent records remain stale and are dropped;
-        // a current handle with the same ID always wins.
-        records.extend(
-            test_run
-                .services
-                .drain(..)
-                .filter(|existing| retain_unrepresented_service_record(existing, &current_ids)),
-        );
-        test_run.services = records;
+        test_run.services = services.iter().map(|s| s.record.clone()).collect();
     }
     vat.save()
-}
-
-fn retain_unrepresented_service_record(
-    existing: &ServiceRunRecord,
-    current_ids: &BTreeSet<String>,
-) -> bool {
-    !current_ids.contains(existing.id.as_str())
-        && (existing.status == ProcessStatus::Failed || existing.cleanup_error.is_some())
-}
-
-fn persist_service_record(vat: &mut store::Vat, record: ServiceRunRecord) -> Result<()> {
-    let test_run = vat
-        .meta
-        .test_run
-        .as_mut()
-        .context("configured run is missing test-run evidence")?;
-    if let Some(existing) = test_run
-        .services
-        .iter_mut()
-        .find(|existing| existing.id == record.id)
-    {
-        *existing = record;
-    } else {
-        test_run.services.push(record);
-    }
-    vat.save().context("persist service run evidence")
 }
 
 /// A persisted cleanup error is an active resource-ownership obligation, not
@@ -6859,17 +5483,16 @@ fn persist_service_record(vat: &mut store::Vat, record: ServiceRunRecord) -> Res
 /// runtime name and retry path while this remains nonempty.
 fn unconfirmed_runtime_cleanup_message(vat: &store::Vat) -> Option<String> {
     let test_run = vat.meta.test_run.as_ref()?;
-    let mut failures = test_run
-        .cleanup_error
-        .as_deref()
-        .map(|error| vec![format!("run auxiliary cleanup: {error}")])
-        .unwrap_or_default();
-    failures.extend(test_run.runners.iter().filter_map(|runner| {
-        runner
-            .cleanup_error
-            .as_deref()
-            .map(|error| format!("runner `{}`: {error}", runner.id))
-    }));
+    let mut failures: Vec<_> = test_run
+        .runners
+        .iter()
+        .filter_map(|runner| {
+            runner
+                .cleanup_error
+                .as_deref()
+                .map(|error| format!("runner `{}`: {error}", runner.id))
+        })
+        .collect();
     failures.extend(test_run.services.iter().filter_map(|service| {
         service
             .cleanup_error
@@ -6896,313 +5519,102 @@ fn should_remove_vat(
 }
 
 // <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Bound teardown of VAT-owned MicroVM resources so a degraded Apple Container runtime cannot prevent terminal readiness evidence from being persisted.">
-const PRE_SERVICE_OUTPUT_LIMIT: u64 = 1024 * 1024;
-
-/// One bounded owner for every synchronous helper command that runs after a
-/// VAT has entered `Running` but before the service child exists. The leader is
-/// kept waitable until TERM/grace/KILL has covered its process group, then it is
-/// reaped and the group is proven absent. Cancellation is observed on the
-/// ordinary run thread, so SIGINT/SIGTERM cannot strand a helper descendant.
-fn run_bounded_owned_command(
-    mut command: Command,
-    label: &str,
-    timeout: Duration,
-    cancellation: Option<&RunCancellation>,
-    observation: &dyn Fn() -> Result<()>,
-) -> Result<ExitStatus> {
-    set_process_group(&mut command);
-    let child = command.spawn().with_context(|| format!("spawn {label}"))?;
-    let mut child = OwnedProcessGroup::new(child);
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(signal) = cancellation.and_then(RunCancellation::received) {
-            return match child.finalize(label) {
-                Ok(_) => Err(RunInterrupted::new(signal).into()),
-                Err(error) => {
-                    let cleanup_error =
-                        preserve_auxiliary_cleanup_failure(&mut child, label, &error)
-                            .unwrap_or_else(|| format!("{label} cleanup failed: {error:#}"));
-                    Err(RunCleanupFailed {
-                        interruption: RunInterrupted::new(signal),
-                        cleanup_error,
-                    }
-                    .into())
-                }
-            };
-        }
-        if let Err(observation_error) = observation() {
-            return match child.finalize(label) {
-                Ok(_) => Err(observation_error)
-                    .with_context(|| format!("observe {label} while it was running")),
-                Err(cleanup_error) => {
-                    let detail =
-                        preserve_auxiliary_cleanup_failure(&mut child, label, &cleanup_error)
-                            .unwrap_or_else(|| {
-                                format!("{label} cleanup failed: {cleanup_error:#}")
-                            });
-                    Err(RunOwnedCleanupFailed {
-                        cleanup_error: format!(
-                            "{label} observation failed ({observation_error:#}); {detail}"
-                        ),
-                    }
-                    .into())
-                }
-            };
-        }
-        match child.finished_status(label) {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            Err(observation_error) => {
-                return match child.finalize(label) {
-                    Ok(_) => Err(observation_error)
-                        .with_context(|| format!("observe {label} process-group leader")),
-                    Err(cleanup_error) => {
-                        let detail =
-                            preserve_auxiliary_cleanup_failure(&mut child, label, &cleanup_error)
-                                .unwrap_or_else(|| {
-                                    format!("{label} cleanup failed: {cleanup_error:#}")
-                                });
-                        Err(RunOwnedCleanupFailed {
-                            cleanup_error: format!(
-                                "{label} leader observation failed ({observation_error:#}); {detail}"
-                            ),
-                        }
-                        .into())
-                    }
-                };
-            }
-        }
-        if Instant::now() >= deadline {
-            return match child.finalize(label) {
-                Ok(_) => bail!("{label} timed out after {}ms", timeout.as_millis()),
-                Err(error) => {
-                    let detail = preserve_auxiliary_cleanup_failure(&mut child, label, &error)
-                        .unwrap_or_else(|| format!("{label} cleanup failed: {error:#}"));
-                    Err(RunOwnedCleanupFailed {
-                        cleanup_error: format!(
-                            "{label} timed out after {}ms; {detail}",
-                            timeout.as_millis()
-                        ),
-                    }
-                    .into())
-                }
-            };
-        }
-        std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
-    }
-}
-
-fn cancellable_command_status(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-    cancellation: &RunCancellation,
-    label: &str,
-) -> Result<ExitStatus> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    run_bounded_owned_command(command, label, timeout, Some(cancellation), &|| Ok(()))
-}
-
-fn cancellable_command_output(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-    cancellation: &RunCancellation,
-    label: &str,
-) -> Result<(ExitStatus, Vec<u8>)> {
-    let mut stdout = tempfile::tempfile().with_context(|| format!("capture {label} stdout"))?;
-    let child_stdout = stdout
-        .try_clone()
-        .with_context(|| format!("clone {label} stdout capture"))?;
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(child_stdout))
-        .stderr(Stdio::null());
-    let observe = || {
-        let size = stdout
-            .metadata()
-            .with_context(|| format!("inspect {label} stdout while command is running"))?
-            .len();
-        if size > PRE_SERVICE_OUTPUT_LIMIT {
-            bail!(
-                "{label} stdout exceeded the {} byte safety limit",
-                PRE_SERVICE_OUTPUT_LIMIT
-            );
-        }
-        Ok(())
-    };
-    let status = run_bounded_owned_command(command, label, timeout, Some(cancellation), &observe)?;
-    let size = stdout
-        .metadata()
-        .with_context(|| format!("inspect {label} stdout capture"))?
-        .len();
-    if size > PRE_SERVICE_OUTPUT_LIMIT {
-        bail!(
-            "{label} stdout exceeded the {} byte safety limit",
-            PRE_SERVICE_OUTPUT_LIMIT
-        );
-    }
-    stdout
-        .seek(SeekFrom::Start(0))
-        .with_context(|| format!("rewind {label} stdout capture"))?;
-    let mut bytes = Vec::with_capacity(size as usize);
-    stdout
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {label} stdout capture"))?;
-    Ok((status, bytes))
-}
-
-/// Runtime cleanup's command runner. The attempt timeout decides when the
-/// client is cancelled, while `phase_envelope_deadline` bounds that attempt
-/// plus TERM/KILL, leader reap, and process-group absence. Docker callers pass
-/// an envelope ending before later proof/remove reserves; no helper finalizer
-/// may consume those phases or append a timeout beyond the shared lifecycle.
-fn run_bounded_owned_command_before(
-    mut command: Command,
-    label: &str,
-    phase_timeout: Duration,
-    phase_envelope_deadline: Instant,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<ExitStatus> {
-    set_process_group(&mut command);
-    let child = command.spawn().with_context(|| format!("spawn {label}"))?;
-    let mut child = OwnedProcessGroup::new(child);
-    let phase_deadline = (Instant::now() + phase_timeout).min(phase_envelope_deadline);
-    loop {
-        #[cfg(unix)]
-        let leader_finished = child_has_exited_without_reap(&child.child)?;
-        #[cfg(not(unix))]
-        let leader_finished = false;
-        if leader_finished {
-            return match child.finalize_before(label, phase_envelope_deadline) {
-                Ok(status) => Ok(status),
-                Err(error) => {
-                    let pgid = child.id();
-                    retained_owners.push(child);
-                    Err(error).context(format!(
-                        "{label} cleanup owner retained with leader PID/PGID {pgid} until its durable cleanup obligation is persisted"
-                    ))
-                }
-            };
-        }
-        #[cfg(not(unix))]
-        if let Some(status) = child.child.try_wait()? {
-            child.final_status = Some(status);
-            child.finalized = true;
-            return Ok(status);
-        }
-        if Instant::now() >= phase_deadline {
-            return match child.finalize_before(label, phase_envelope_deadline) {
-                Ok(_) => bail!(
-                    "{label} timed out after {}ms within the shared Docker cleanup deadline",
-                    phase_timeout.as_millis()
-                ),
-                Err(error) => {
-                    let pgid = child.id();
-                    retained_owners.push(child);
-                    Err(error).context(format!(
-                        "{label} timed out after {}ms and its process-group cleanup was unconfirmed; cleanup owner retained with leader PID/PGID {pgid} until durable evidence is persisted",
-                        phase_timeout.as_millis(),
-                    ))
-                }
-            };
-        }
-        std::thread::sleep(
-            OWNED_GROUP_POLL_INTERVAL.min(phase_deadline.saturating_duration_since(Instant::now())),
-        );
-    }
-}
-
-fn bounded_command_status_before(
-    program: &str,
-    args: &[&str],
-    phase_timeout: Duration,
-    phase_envelope_deadline: Instant,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<ExitStatus> {
-    let command_text = format!("{program} {}", args.join(" "));
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    run_bounded_owned_command_before(
-        command,
-        &format!("teardown command `{command_text}`"),
-        phase_timeout,
-        phase_envelope_deadline,
-        retained_owners,
-    )
-}
-
-fn run_quiet_bounded_before(
-    program: &str,
-    args: &[&str],
-    phase_timeout: Duration,
-    phase_envelope_deadline: Instant,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<()> {
+/// Run a teardown command without allowing a degraded container runtime to
+/// wedge VAT's terminal-state persistence. stdout/stderr are intentionally
+/// closed so descendants cannot retain a diagnostic pipe after their parent
+/// exits.
+fn run_quiet_bounded(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
     let command = format!("{program} {}", args.join(" "));
-    let status = bounded_command_status_before(
-        program,
-        args,
-        phase_timeout,
-        phase_envelope_deadline,
-        retained_owners,
-    )?;
+    let status = bounded_command_status(program, args, timeout)?;
     if status.success() {
         Ok(())
     } else {
         bail!(
             "teardown command `{command}` exited unsuccessfully ({:?})",
             status.code()
-        )
+        );
     }
 }
 
-fn bounded_command_output_before(
+/// Run a teardown-adjacent command with the same no-pipe timeout discipline,
+/// preserving a nonzero exit status for callers that need it.
+fn bounded_command_status(
     program: &str,
     args: &[&str],
-    phase_timeout: Duration,
-    phase_envelope_deadline: Instant,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<(ExitStatus, String)> {
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let command = format!("{program} {}", args.join(" "));
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn teardown command `{command}`"))?;
+    wait_for_bounded_command(&mut child, &command, timeout)
+}
+
+fn wait_for_bounded_command(
+    child: &mut Child,
+    command: &str,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err).with_context(|| format!("wait teardown command `{command}`"));
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "teardown command `{command}` timed out after {}ms",
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Run a bounded query while sending stdout to a temporary file. A list may be
+/// larger than a pipe buffer, so waiting before reading a pipe could itself
+/// deadlock the cleanup path. Query output is capped; an oversized or malformed
+/// response is deliberately not accepted as an absence proof.
+fn bounded_command_output(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String)> {
     const MAX_QUERY_BYTES: u64 = 1024 * 1024;
-    let command_text = format!("{program} {}", args.join(" "));
+    let command = format!("{program} {}", args.join(" "));
     let path = std::env::temp_dir().join(format!("vat-runtime-query-{}", id::fresh()));
-    let result = (|| -> Result<(ExitStatus, String)> {
+    let result = (|| -> Result<(std::process::ExitStatus, String)> {
         let output = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
             .with_context(|| format!("create runtime query output {}", path.display()))?;
-        let mut child = Command::new(program);
-        child
+        let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::from(output))
-            .stderr(Stdio::null());
-        let status = run_bounded_owned_command_before(
-            child,
-            &format!("teardown query `{command_text}`"),
-            phase_timeout,
-            phase_envelope_deadline,
-            retained_owners,
-        )?;
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("spawn teardown query `{command}`"))?;
+        let status = wait_for_bounded_command(&mut child, &command, timeout)?;
         let size = std::fs::metadata(&path)
             .with_context(|| format!("read runtime query metadata {}", path.display()))?
             .len();
         if size > MAX_QUERY_BYTES {
             bail!(
-                "teardown query `{command_text}` produced {size} bytes, exceeding the {MAX_QUERY_BYTES}-byte safety limit"
+                "teardown query `{command}` produced {size} bytes, exceeding the {}-byte safety limit",
+                MAX_QUERY_BYTES
             );
         }
         let bytes = std::fs::read(&path)
@@ -7227,478 +5639,96 @@ impl RuntimeCleanupKind {
         }
     }
 
-    fn key(self) -> &'static str {
+    fn program(self) -> &'static str {
         match self {
             Self::Docker => "docker",
-            Self::MicroVm => "microvm",
+            Self::MicroVm => "container",
+        }
+    }
+
+    /// Apple Container's force-delete acknowledgement routinely outlives the
+    /// old one-second Docker-oriented bound even after the service process has
+    /// exited. Keep teardown bounded, but give the public MicroVM client time
+    /// to complete before retaining a false cleanup failure in a compose
+    /// registry.
+    fn remove_timeout(self) -> Duration {
+        match self {
+            Self::Docker => Duration::from_secs(1),
+            Self::MicroVm => Duration::from_secs(10),
+        }
+    }
+
+    fn absence_probe_timeout(self) -> Duration {
+        match self {
+            Self::Docker => Duration::from_secs(1),
+            Self::MicroVm => Duration::from_secs(5),
         }
     }
 }
 
-const DOCKER_CLEANUP_HARD_TIMEOUT: Duration = Duration::from_secs(15);
-const DOCKER_KILL_TIMEOUT: Duration = Duration::from_secs(3);
-const DOCKER_TERMINAL_RM_TIMEOUT: Duration = Duration::from_secs(3);
-const DOCKER_UNPROVEN_RM_TIMEOUT: Duration = Duration::from_secs(2);
-const DOCKER_IDENTITY_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
-const DOCKER_IDENTITY_FORMAT: &str = "{{.ID}}\t{{.Names}}\t{{.State}}";
-const MICROVM_CLEANUP_HARD_TIMEOUT: Duration = Duration::from_secs(3);
-const MICROVM_REMOVE_TIMEOUT: Duration = Duration::from_secs(2);
-const MICROVM_ABSENCE_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum DockerIdentityObservation {
-    Absent,
-    Exact { state: String },
-    Replacement { actual_id: String },
-}
-
-const RUNTIME_CLEANUP_BLOCK_END: &str = "[/vat-runtime-cleanup]";
-
-fn runtime_cleanup_block_start(kind: RuntimeCleanupKind, name: &str) -> String {
-    format!(
-        "[vat-runtime-cleanup kind={} name={}]",
-        kind.key(),
-        serde_json::to_string(name).expect("runtime name serializes")
-    )
-}
-
-fn runtime_cleanup_detail(kind: RuntimeCleanupKind, name: &str, error: &anyhow::Error) -> String {
+/// A failed `rm -f` is benign only if a *successful exact-name list query*
+/// proves that deterministic name is absent. This accepts normal `--rm`
+/// auto-removal without letting an object-specific inspect failure, an
+/// unavailable daemon, a timeout, or malformed query output release a live
+/// compose binding.
+fn runtime_object_confirmed_absent(kind: RuntimeCleanupKind, name: &str) -> bool {
     match kind {
-        RuntimeCleanupKind::Docker => format!(
-            "{} Docker cleanup for recorded name `{name}` did not finish: {error:#}{RUNTIME_CLEANUP_BLOCK_END}",
-            runtime_cleanup_block_start(kind, name),
-        ),
-        RuntimeCleanupKind::MicroVm => format!(
-            "{} MicroVM cleanup `container rm -f {name}` did not finish: {error:#}{RUNTIME_CLEANUP_BLOCK_END}",
-            runtime_cleanup_block_start(kind, name),
-        ),
-    }
-}
-
-fn append_cleanup_detail(existing: Option<String>, detail: String) -> String {
-    existing
-        .map(|existing| format!("{existing}; {detail}"))
-        .unwrap_or(detail)
-}
-
-/// Remove only the exact structured runtime obligation proved absent. Freeform
-/// cleanup text may describe a process group, cluster, or readiness child and
-/// must survive a successful Docker/MicroVM absence probe.
-fn clear_runtime_cleanup_obligation(
-    cleanup_error: &str,
-    kind: RuntimeCleanupKind,
-    name: &str,
-) -> (Option<String>, bool) {
-    let marker = runtime_cleanup_block_start(kind, name);
-    let mut remaining = cleanup_error.to_string();
-    let mut removed = false;
-    while let Some(start) = remaining.find(&marker) {
-        let body_start = start + marker.len();
-        let Some(relative_end) = remaining[body_start..].find(RUNTIME_CLEANUP_BLOCK_END) else {
-            break;
-        };
-        let end = body_start + relative_end + RUNTIME_CLEANUP_BLOCK_END.len();
-        let before = remaining[..start]
-            .trim_end()
-            .trim_end_matches(';')
-            .trim_end();
-        let after = remaining[end..]
-            .trim_start()
-            .strip_prefix(';')
-            .unwrap_or_else(|| remaining[end..].trim_start())
-            .trim_start();
-        remaining = match (before.is_empty(), after.is_empty()) {
-            (true, true) => String::new(),
-            (false, true) => before.to_string(),
-            (true, false) => after.to_string(),
-            (false, false) => format!("{before}; {after}"),
-        };
-        removed = true;
-    }
-    ((!remaining.is_empty()).then_some(remaining), removed)
-}
-
-fn microvm_object_confirmed_absent_before(
-    name: &str,
-    deadline: Instant,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<bool> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        bail!("MicroVM cleanup exhausted its shared deadline before the exact JSON absence query");
-    }
-    let (status, output) = bounded_command_output_before(
-        "container",
-        &["list", "--all", "--format", "json"],
-        MICROVM_ABSENCE_QUERY_TIMEOUT.min(remaining),
-        deadline,
-        retained_owners,
-    )?;
-    if !status.success() {
-        bail!(
-            "exact MicroVM absence query for `{name}` exited unsuccessfully ({:?})",
-            status.code()
-        );
-    }
-    let containers = serde_json::from_str::<Vec<serde_json::Value>>(&output)
-        .context("exact MicroVM absence query returned malformed JSON")?;
-    for container in containers {
-        let id = container
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .context("exact MicroVM absence query returned an object without a string id")?;
-        if id == name {
-            return Ok(false);
+        RuntimeCleanupKind::Docker => {
+            let filter = format!("name=^/{name}$");
+            let Ok((status, output)) = bounded_command_output(
+                "docker",
+                &[
+                    "container",
+                    "ls",
+                    "--all",
+                    "--filter",
+                    &filter,
+                    "--format",
+                    "{{.Names}}",
+                ],
+                kind.absence_probe_timeout(),
+            ) else {
+                return false;
+            };
+            // The anchored name filter must yield no rows at all. Treat any
+            // unexpected output as non-authoritative rather than assuming an
+            // unrelated row proves this exact name absent.
+            status.success() && output.trim().is_empty()
         }
-    }
-    Ok(true)
-}
-
-/// Remove one VAT-owned Apple Container object under one end-to-end absolute
-/// deadline. The remove client, its process-group finalization, and the exact
-/// JSON absence proof all consume the same budget; even a successful `rm`
-/// cannot release the persisted name without the final list proof.
-fn cleanup_microvm_runtime_handle(
-    name_slot: &mut Option<String>,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<()> {
-    let Some(name) = name_slot.clone() else {
-        return Ok(());
-    };
-    let deadline = Instant::now() + MICROVM_CLEANUP_HARD_TIMEOUT;
-    let remove = run_quiet_bounded_before(
-        "container",
-        &["rm", "-f", &name],
-        MICROVM_REMOVE_TIMEOUT,
-        deadline,
-        retained_owners,
-    );
-    let absence = microvm_object_confirmed_absent_before(&name, deadline, retained_owners);
-    match (remove, absence) {
-        (_, Ok(true)) => {
-            *name_slot = None;
-            Ok(())
-        }
-        (Ok(()), Ok(false)) => {
-            bail!(
-                "MicroVM remove reported success, but exact JSON evidence still contains `{name}`"
-            )
-        }
-        (Err(remove), Ok(false)) => Err(remove).context(format!(
-            "MicroVM object `{name}` remains after the bounded remove attempt"
-        )),
-        (Ok(()), Err(proof)) => Err(proof).context(format!(
-            "MicroVM remove for `{name}` reported success without a final absence proof"
-        )),
-        (Err(remove), Err(proof)) => Err(proof).context(format!(
-            "MicroVM cleanup for `{name}` could not prove absence after remove failure: {remove:#}"
-        )),
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DockerHelperPhaseBudget {
-    attempt_timeout: Duration,
-    envelope_deadline: Instant,
-}
-
-fn docker_cleanup_phase_budget(
-    deadline: Instant,
-    cap: Duration,
-    reserve: Duration,
-    phase: &str,
-) -> Result<DockerHelperPhaseBudget> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let available = remaining.checked_sub(reserve).with_context(|| {
-        format!(
-            "Docker cleanup exhausted its shared {}ms deadline before {phase}; {}ms remained but {}ms is reserved for later proof/finalization",
-            DOCKER_CLEANUP_HARD_TIMEOUT.as_millis(),
-            remaining.as_millis(),
-            reserve.as_millis(),
-        )
-    })?;
-    let attempt_timeout = cap.min(available);
-    if attempt_timeout.is_zero() {
-        bail!("Docker cleanup has no shared deadline budget left for {phase}");
-    }
-    // The whole helper lifecycle, including TERM/KILL, leader reap, and group
-    // absence, must end before the later-phase reserve begins. Passing the
-    // global deadline to helper finalization would let a hung Docker client
-    // consume the proof/remove slices this calculation just protected.
-    let envelope_deadline = deadline
-        .checked_sub(reserve)
-        .context("Docker cleanup phase reserve exceeds the monotonic deadline")?;
-    Ok(DockerHelperPhaseBudget {
-        attempt_timeout,
-        envelope_deadline,
-    })
-}
-
-fn observe_docker_identity(
-    name: &str,
-    expected_id: &str,
-    deadline: Instant,
-    reserve: Duration,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<DockerIdentityObservation> {
-    let budget = docker_cleanup_phase_budget(
-        deadline,
-        DOCKER_IDENTITY_QUERY_TIMEOUT,
-        reserve,
-        "the anchored identity query",
-    )?;
-    let filter = docker_exact_name_filter(name)?;
-    let (status, output) = bounded_command_output_before(
-        "docker",
-        &[
-            "container",
-            "ls",
-            "--all",
-            "--no-trunc",
-            "--filter",
-            &filter,
-            "--format",
-            DOCKER_IDENTITY_FORMAT,
-        ],
-        budget.attempt_timeout,
-        budget.envelope_deadline,
-        retained_owners,
-    )?;
-    if !status.success() {
-        bail!(
-            "anchored Docker identity query for `{name}` exited unsuccessfully ({:?})",
-            status.code()
-        );
-    }
-    let rows = output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        return Ok(DockerIdentityObservation::Absent);
-    }
-    if rows.len() != 1 {
-        bail!(
-            "anchored Docker identity query for `{name}` returned {} rows; refusing ambiguous cleanup",
-            rows.len()
-        );
-    }
-    let columns = rows[0].split('\t').collect::<Vec<_>>();
-    if columns.len() != 3 {
-        bail!(
-            "anchored Docker identity query for `{name}` returned malformed full-ID/name/state output"
-        );
-    }
-    let actual_id = columns[0].trim();
-    let actual_name = columns[1].trim();
-    let state = columns[2].trim().to_ascii_lowercase();
-    if !valid_full_docker_id(actual_id) || actual_name != name || state.is_empty() {
-        bail!(
-            "anchored Docker identity query for `{name}` returned invalid full-ID/name/state evidence"
-        );
-    }
-    if actual_id != expected_id {
-        return Ok(DockerIdentityObservation::Replacement {
-            actual_id: actual_id.to_string(),
-        });
-    }
-    Ok(DockerIdentityObservation::Exact { state })
-}
-
-fn docker_exact_name_filter(name: &str) -> Result<String> {
-    if name.is_empty()
-        || !name.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
-        })
-    {
-        bail!("Docker cleanup name `{name}` is not in VAT's sanitized `[A-Za-z0-9_.-]+` form");
-    }
-    let escaped = name.replace('.', "\\.");
-    Ok(format!("name=^/{escaped}$"))
-}
-
-fn docker_state_is_terminal(state: &str) -> bool {
-    matches!(state, "exited" | "dead" | "removing")
-}
-
-fn docker_replacement_error(name: &str, expected_id: &str, actual_id: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "Docker name `{name}` now belongs to replacement ID `{actual_id}`, not VAT-owned ID `{expected_id}`; replacement was not signalled or removed"
-    )
-}
-
-/// Clean one VAT-owned Docker object without ever treating a reusable name as
-/// deletion authority. A single shared deadline covers exact-name/full-ID
-/// queries, a force-kill transition, one remove attempt, and final absence.
-/// The longer remove slice is granted only after the same immutable ID is
-/// observed terminal/removing; an ID alone never makes a hung remove trusted.
-fn cleanup_docker_runtime_handle(
-    name_slot: &mut Option<String>,
-    docker_id: Option<&str>,
-    retained_owners: &mut Vec<OwnedProcessGroup>,
-) -> Result<()> {
-    let Some(name) = name_slot.clone() else {
-        return Ok(());
-    };
-    let docker_id = docker_id.context(format!(
-        "VAT-owned Docker service `{name}` has no persisted full container ID; legacy name-only cleanup is fail-closed"
-    ))?;
-    if !valid_full_docker_id(docker_id) {
-        bail!(
-            "VAT-owned Docker service `{name}` has invalid persisted full container ID `{docker_id}`; cleanup is fail-closed"
-        );
-    }
-
-    let deadline = Instant::now() + DOCKER_CLEANUP_HARD_TIMEOUT;
-    let initial_state = match observe_docker_identity(
-        &name,
-        docker_id,
-        deadline,
-        DOCKER_KILL_TIMEOUT + DOCKER_TERMINAL_RM_TIMEOUT + 2 * DOCKER_IDENTITY_QUERY_TIMEOUT,
-        retained_owners,
-    )? {
-        DockerIdentityObservation::Absent => {
-            *name_slot = None;
-            return Ok(());
-        }
-        DockerIdentityObservation::Replacement { actual_id } => {
-            return Err(docker_replacement_error(&name, docker_id, &actual_id));
-        }
-        DockerIdentityObservation::Exact { state } => state,
-    };
-    let mut terminal = docker_state_is_terminal(&initial_state);
-    let created = initial_state == "created";
-
-    let mut kill_error = None;
-    if !terminal && !created {
-        let kill_budget = docker_cleanup_phase_budget(
-            deadline,
-            DOCKER_KILL_TIMEOUT,
-            DOCKER_TERMINAL_RM_TIMEOUT + 2 * DOCKER_IDENTITY_QUERY_TIMEOUT,
-            "the immutable-ID kill",
-        )?;
-        let retained_before = retained_owners.len();
-        match run_quiet_bounded_before(
-            "docker",
-            &["kill", docker_id],
-            kill_budget.attempt_timeout,
-            kill_budget.envelope_deadline,
-            retained_owners,
-        ) {
-            Ok(()) => {}
-            Err(error) if retained_owners.len() > retained_before => {
-                return Err(error).context(
-                    "Docker kill helper ownership remained unconfirmed inside its phase envelope",
-                );
+        RuntimeCleanupKind::MicroVm => {
+            let Ok((status, output)) = bounded_command_output(
+                "container",
+                &["list", "--all", "--format", "json"],
+                kind.absence_probe_timeout(),
+            ) else {
+                return false;
+            };
+            if !status.success() {
+                return false;
             }
-            Err(error) => kill_error = Some(error),
-        }
-        match observe_docker_identity(
-            &name,
-            docker_id,
-            deadline,
-            DOCKER_TERMINAL_RM_TIMEOUT + DOCKER_IDENTITY_QUERY_TIMEOUT,
-            retained_owners,
-        )? {
-            DockerIdentityObservation::Absent => {
-                *name_slot = None;
-                return Ok(());
-            }
-            DockerIdentityObservation::Replacement { actual_id } => {
-                return Err(docker_replacement_error(&name, docker_id, &actual_id));
-            }
-            DockerIdentityObservation::Exact { state } => {
-                terminal = docker_state_is_terminal(&state);
-            }
+            serde_json::from_str::<Vec<serde_json::Value>>(&output)
+                .map(|containers| {
+                    !containers.iter().any(|container| {
+                        container.get("id").and_then(serde_json::Value::as_str) == Some(name)
+                    })
+                })
+                .unwrap_or(false)
         }
     }
-
-    let rm_cap = if terminal {
-        DOCKER_TERMINAL_RM_TIMEOUT
-    } else {
-        DOCKER_UNPROVEN_RM_TIMEOUT
-    };
-    let rm_budget = docker_cleanup_phase_budget(
-        deadline,
-        rm_cap,
-        DOCKER_IDENTITY_QUERY_TIMEOUT,
-        "the single immutable-ID remove attempt",
-    )?;
-    let retained_before = retained_owners.len();
-    let rm_error = match run_quiet_bounded_before(
-        "docker",
-        &["rm", "-f", docker_id],
-        rm_budget.attempt_timeout,
-        rm_budget.envelope_deadline,
-        retained_owners,
-    ) {
-        Ok(()) => None,
-        Err(error) if retained_owners.len() > retained_before => {
-            return Err(error).context(
-                "Docker remove helper ownership remained unconfirmed inside its phase envelope",
-            );
-        }
-        Err(error) => Some(error),
-    };
-    let final_observation =
-        observe_docker_identity(&name, docker_id, deadline, Duration::ZERO, retained_owners);
-    match final_observation {
-        Ok(DockerIdentityObservation::Absent) => {
-            *name_slot = None;
-            Ok(())
-        }
-        Ok(DockerIdentityObservation::Replacement { actual_id }) => {
-            Err(docker_replacement_error(&name, docker_id, &actual_id))
-        }
-        Ok(DockerIdentityObservation::Exact { state }) => {
-            let rm_error = rm_error
-                .map(|error| format!("; remove failed: {error:#}"))
-                .unwrap_or_else(|| "; remove reported success but the object remains".to_string());
-            let kill_error = kill_error
-                .map(|error| format!("; kill failed: {error:#}"))
-                .unwrap_or_default();
-            bail!(
-                "Docker object `{name}` / `{docker_id}` remains in state `{state}` after the one cleanup lifecycle{kill_error}{rm_error}"
-            )
-        }
-        Err(proof_error) => {
-            let rm_error = rm_error
-                .map(|error| format!("; remove failed: {error:#}"))
-                .unwrap_or_default();
-            let kill_error = kill_error
-                .map(|error| format!("; kill failed: {error:#}"))
-                .unwrap_or_default();
-            Err(proof_error).context(format!(
-                "Docker cleanup for `{name}` / `{docker_id}` could not prove final absence{kill_error}{rm_error}"
-            ))
-        }
-    }
-}
-
-fn has_runtime_cleanup_obligation(
-    cleanup_error: Option<&str>,
-    kind: RuntimeCleanupKind,
-    name: &str,
-) -> bool {
-    cleanup_error
-        .map(|error| clear_runtime_cleanup_obligation(error, kind, name).1)
-        .unwrap_or(false)
 }
 
 fn record_runtime_cleanup_failure(
     service: &mut ServiceHandle,
-    kind: RuntimeCleanupKind,
+    runtime: &str,
+    program: &str,
     name: &str,
     error: &anyhow::Error,
 ) {
-    let existing = service.record.cleanup_error.take();
-    let existing = existing.and_then(|error| {
-        let (remaining, _) = clear_runtime_cleanup_obligation(&error, kind, name);
-        remaining
+    let detail = format!("{runtime} cleanup `{program} rm -f {name}` did not finish: {error}");
+    service.record.cleanup_error = Some(match service.record.cleanup_error.take() {
+        Some(existing) => format!("{existing}; {detail}"),
+        None => detail,
     });
-    let detail = runtime_cleanup_detail(kind, name, error);
-    service.record.status = ProcessStatus::Failed;
-    service.record.cleanup_error = Some(append_cleanup_detail(existing, detail));
 }
 // </HANDWRITE>
 
@@ -7713,7 +5743,6 @@ pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<
     };
 
     let mut failures = Vec::new();
-    let mut retained_owners = Vec::new();
     for service in &mut test_run.services {
         if service.cleanup_error.is_none() {
             continue;
@@ -7740,58 +5769,21 @@ pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<
             }
         };
         let runtime = kind.label();
-        let existing = service
-            .cleanup_error
-            .as_deref()
-            .expect("checked cleanup error")
-            .to_string();
-        let (_, has_runtime_obligation) = clear_runtime_cleanup_obligation(&existing, kind, name);
-        if !has_runtime_obligation {
-            failures.push(format!(
-                "service `{}` has cleanup evidence unrelated to the persisted {runtime} name; retained without deleting `{name}`",
-                service.id
-            ));
-            continue;
-        }
-        let cleanup = match kind {
-            RuntimeCleanupKind::Docker => {
-                let mut name_slot = Some(name.to_string());
-                cleanup_docker_runtime_handle(
-                    &mut name_slot,
-                    service.docker_id.as_deref(),
-                    &mut retained_owners,
-                )
-            }
-            RuntimeCleanupKind::MicroVm => {
-                let mut name_slot = Some(name.to_string());
-                cleanup_microvm_runtime_handle(&mut name_slot, &mut retained_owners)
-            }
-        };
-        match cleanup {
-            Ok(()) => {
-                let (remaining, removed) = clear_runtime_cleanup_obligation(&existing, kind, name);
-                debug_assert!(removed);
-                service.cleanup_error = remaining;
+        let program = kind.program();
+        let command = format!("{program} rm -f {name}");
+        match run_quiet_bounded(program, &["rm", "-f", name], kind.remove_timeout()) {
+            Ok(()) => service.cleanup_error = None,
+            Err(_) if runtime_object_confirmed_absent(kind, name) => {
+                service.cleanup_error = None;
             }
             Err(error) => {
-                let (remaining, removed) = clear_runtime_cleanup_obligation(&existing, kind, name);
-                debug_assert!(removed);
-                let detail = runtime_cleanup_detail(kind, name, &error);
-                service.cleanup_error = Some(append_cleanup_detail(remaining, detail.clone()));
+                let detail = format!("{runtime} cleanup `{command}` did not finish: {error}");
+                service.cleanup_error = Some(detail.clone());
                 failures.push(format!("service `{}`: {detail}", service.id));
             }
         }
-        if let Some(error) = service.cleanup_error.as_deref() {
-            failures.push(format!(
-                "service `{}` retains unrelated cleanup obligation: {error}",
-                service.id
-            ));
-        }
     }
-    persist_before_releasing_cleanup_owners(
-        || vat.save(),
-        || release_persisted_deadline_cleanup_owners(&mut retained_owners),
-    )?;
+    vat.save()?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -7804,138 +5796,9 @@ pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<
 
 // </HANDWRITE>
 
-const CLUSTER_CLEANUP_BLOCK_END: &str = "[/vat-cluster-cleanup]";
-
-fn cluster_cleanup_block_start(record: &ClusterRunRecord, cli_group_unconfirmed: bool) -> String {
-    format!(
-        "[vat-cluster-cleanup backend={} name={} cli_group_unconfirmed={cli_group_unconfirmed}]",
-        serde_json::to_string(&record.backend).expect("cluster backend serializes"),
-        serde_json::to_string(&record.name).expect("cluster name serializes"),
-    )
-}
-
-fn cluster_cleanup_detail(record: &ClusterRunRecord, error: &anyhow::Error) -> String {
-    let cli_group_unconfirmed = cluster::owned_command_cleanup_failure(error).is_some();
-    format!(
-        "{} cluster cleanup `{}` ({}) unconfirmed: {error:#}{CLUSTER_CLEANUP_BLOCK_END}",
-        cluster_cleanup_block_start(record, cli_group_unconfirmed),
-        record.name,
-        record.backend,
-    )
-}
-
-/// Remove only an exact structured cluster-resource obligation. A prior CLI
-/// process-group obligation is deliberately retained: a later successful
-/// resource delete does not prove that the earlier delete command's PGID is
-/// absent. Legacy freeform cluster cleanup text remains fail-closed.
-fn clear_cluster_cleanup_obligation(
-    cleanup_error: &str,
-    record: &ClusterRunRecord,
-) -> (Option<String>, bool, bool) {
-    let mut remaining = cleanup_error.to_string();
-    let mut removed_resource = false;
-    let mut cli_group_unconfirmed = false;
-    for command_group in [false, true] {
-        let marker = cluster_cleanup_block_start(record, command_group);
-        while let Some(start) = remaining.find(&marker) {
-            if command_group {
-                cli_group_unconfirmed = true;
-                break;
-            }
-            let body_start = start + marker.len();
-            let Some(relative_end) = remaining[body_start..].find(CLUSTER_CLEANUP_BLOCK_END) else {
-                break;
-            };
-            let end = body_start + relative_end + CLUSTER_CLEANUP_BLOCK_END.len();
-            let before = remaining[..start]
-                .trim_end()
-                .trim_end_matches(';')
-                .trim_end();
-            let after = remaining[end..]
-                .trim_start()
-                .strip_prefix(';')
-                .unwrap_or_else(|| remaining[end..].trim_start())
-                .trim_start();
-            remaining = match (before.is_empty(), after.is_empty()) {
-                (true, true) => String::new(),
-                (false, true) => before.to_string(),
-                (true, false) => after.to_string(),
-                (false, false) => format!("{before}; {after}"),
-            };
-            removed_resource = true;
-        }
-    }
-    (
-        (!remaining.is_empty()).then_some(remaining),
-        removed_resource,
-        cli_group_unconfirmed,
-    )
-}
-
-fn record_cluster_delete_success(service: &mut ServiceHandle, record: &ClusterRunRecord) {
-    let existing = service.record.cleanup_error.take();
-    let (remaining, _, cli_group_unconfirmed) = existing
-        .as_deref()
-        .map(|error| clear_cluster_cleanup_obligation(error, record))
-        .unwrap_or((None, false, false));
-    let legacy_cluster_obligation = existing.as_deref().is_some_and(|error| {
-        error.contains("cluster cleanup") && !error.contains("[vat-cluster-cleanup")
-    });
-    if cli_group_unconfirmed || legacy_cluster_obligation {
-        // Resource absence cannot discharge an older CLI PGID obligation.
-        // Retain both evidence and the ownership handle for manual recovery.
-        service.record.cleanup_error = existing;
-        service.record.status = ProcessStatus::Failed;
-    } else {
-        // The live resource handle is discharged. Keep record.cluster as
-        // historical evidence while making the outer finalizer idempotent.
-        service.cluster = None;
-        service.record.cleanup_error = remaining;
-    }
-}
-
-fn cleanup_docker_service_runtime(service: &mut ServiceHandle) {
-    let Some(name) = service.docker_name.clone() else {
-        return;
-    };
-    let cleanup_already_unconfirmed = has_runtime_cleanup_obligation(
-        service.record.cleanup_error.as_deref(),
-        RuntimeCleanupKind::Docker,
-        &name,
-    );
-    if cleanup_already_unconfirmed {
-        // An inner checkpoint already persisted this exact ownership
-        // obligation. The redundant outer finalizer must be a true no-op;
-        // retry is an explicit later compose-down operation.
-        service.record.status = ProcessStatus::Failed;
-        return;
-    }
-    match cleanup_docker_runtime_handle(
-        &mut service.docker_name,
-        service.record.docker_id.as_deref(),
-        &mut service.deadline_cleanup_owners,
-    ) {
-        Ok(()) => {
-            if let Some(existing) = service.record.cleanup_error.take() {
-                let (remaining, _) =
-                    clear_runtime_cleanup_obligation(&existing, RuntimeCleanupKind::Docker, &name);
-                service.record.cleanup_error = remaining;
-            }
-        }
-        Err(error) => {
-            record_runtime_cleanup_failure(service, RuntimeCleanupKind::Docker, &name, &error)
-        }
-    }
-}
-
 fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) -> Result<()> {
+    let mut owned_group_failures = Vec::new();
     for service in services.iter_mut().rev() {
-        // Remove a Docker container while its foreground `docker run --rm`
-        // client is still waitable. Killing that client first can race
-        // Docker's automatic removal and leave a second `docker rm -f`
-        // blocked behind an already-in-progress daemon delete.
-        cleanup_docker_service_runtime(service);
-
         let mut group_cleanup_failed = false;
         let child_exit = match service.child.as_mut() {
             Some(child) => match child.finalize(&format!("service `{}`", service.record.id)) {
@@ -7953,7 +5816,7 @@ fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) -> Resul
                         });
                     service.record.status = ProcessStatus::Failed;
                     service.record.pid = (!child.leader_reaped()).then_some(child.id());
-                    child.preserve_cleanup_obligation();
+                    owned_group_failures.push(detail);
                     None
                 }
             },
@@ -7974,37 +5837,33 @@ fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) -> Resul
                 service.record.status = ProcessStatus::Exited;
             }
         }
+        // Force-remove the container regardless of how the `docker run` child
+        // fared — a detached or wedged container must never outlive the run.
+        if let Some(name) = service.docker_name.clone() {
+            match run_quiet_bounded(
+                "docker",
+                &["rm", "-f", &name],
+                RuntimeCleanupKind::Docker.remove_timeout(),
+            ) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::Docker, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "Docker", "docker", &name, &error);
+                }
+            }
+        }
         // Same force-removal guarantee for a `container run` (MicroVM) child,
         // parallel to the docker_name branch above (R5).
         if let Some(name) = service.microvm_name.clone() {
-            let cleanup_already_unconfirmed = has_runtime_cleanup_obligation(
-                service.record.cleanup_error.as_deref(),
-                RuntimeCleanupKind::MicroVm,
-                &name,
-            );
-            if cleanup_already_unconfirmed {
-                service.record.status = ProcessStatus::Failed;
-            } else {
-                match cleanup_microvm_runtime_handle(
-                    &mut service.microvm_name,
-                    &mut service.deadline_cleanup_owners,
-                ) {
-                    Ok(()) => {
-                        if let Some(existing) = service.record.cleanup_error.take() {
-                            let (remaining, _) = clear_runtime_cleanup_obligation(
-                                &existing,
-                                RuntimeCleanupKind::MicroVm,
-                                &name,
-                            );
-                            service.record.cleanup_error = remaining;
-                        }
-                    }
-                    Err(error) => record_runtime_cleanup_failure(
-                        service,
-                        RuntimeCleanupKind::MicroVm,
-                        &name,
-                        &error,
-                    ),
+            match run_quiet_bounded(
+                "container",
+                &["rm", "-f", &name],
+                RuntimeCleanupKind::MicroVm.remove_timeout(),
+            ) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::MicroVm, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "MicroVM", "container", &name, &error);
                 }
             }
         }
@@ -8012,46 +5871,19 @@ fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) -> Resul
         // remove it. Delete it explicitly when the run policy says to; keep it
         // for `kubectl` diagnosis otherwise.
         if delete_clusters {
-            if let Some(record) = service.cluster.clone() {
-                let cleanup = match ResolvedBackend::from_name(&record.backend) {
-                    Some(backend) => backend.delete(&record.name),
-                    None => Err(anyhow::anyhow!(
-                        "unknown cluster backend `{}`",
-                        record.backend
-                    )),
-                };
-                match cleanup {
-                    Ok(()) => record_cluster_delete_success(service, &record),
-                    Err(error) => {
-                        let detail = cluster_cleanup_detail(&record, &error);
-                        service.record.status = ProcessStatus::Failed;
-                        service.record.cleanup_error = Some(
-                            service
-                                .record
-                                .cleanup_error
-                                .take()
-                                .map(|existing| format!("{existing}; {detail}"))
-                                .unwrap_or(detail),
-                        );
-                    }
+            if let Some(record) = &service.cluster {
+                if let Some(backend) = ResolvedBackend::from_name(&record.backend) {
+                    let _ = backend.delete(&record.name);
                 }
             }
         }
     }
-    let cleanup_failures = services
-        .iter_mut()
-        .filter_map(|service| {
-            let error = service.record.cleanup_error.as_deref()?;
-            service.record.status = ProcessStatus::Failed;
-            Some(format!("service `{}`: {error}", service.record.id))
-        })
-        .collect::<Vec<_>>();
-    if cleanup_failures.is_empty() {
+    if owned_group_failures.is_empty() {
         Ok(())
     } else {
         bail!(
             "VAT-owned service cleanup unconfirmed: {}",
-            cleanup_failures.join("; ")
+            owned_group_failures.join("; ")
         )
     }
 }
@@ -8067,22 +5899,8 @@ fn finalize_services_and_persist(
         if let Some(interruption) = interruption {
             mark_services_interrupted(services, interruption);
         }
-    } else if let Some(interruption) = interruption {
-        for service in services.iter_mut() {
-            if let Some(error) = service.record.cleanup_error.as_mut() {
-                let signal_context = format!("cleanup attempted after {}", interruption.reason);
-                if !error.contains(&signal_context) {
-                    *error = format!("{error}; {signal_context}");
-                }
-            }
-        }
     }
     let persistence = persist_services(vat, services);
-    if persistence.is_ok() {
-        for service in services.iter_mut() {
-            release_persisted_deadline_cleanup_owners(&mut service.deadline_cleanup_owners);
-        }
-    }
     match (cleanup, persistence) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(cleanup), Ok(())) => Err(cleanup),
@@ -8091,25 +5909,6 @@ fn finalize_services_and_persist(
             "persist service cleanup evidence after cleanup failure: {cleanup:#}"
         )),
     }
-}
-
-fn release_persisted_deadline_cleanup_owners(owners: &mut Vec<OwnedProcessGroup>) {
-    for mut owner in owners.drain(..) {
-        // The durable cleanup_error already names this leader PID/PGID. A
-        // second best-effort finalizer is therefore allowed to outlive the
-        // original operation deadline without ever losing the in-memory owner
-        // before persistence. Cached post-reap failures remain non-signalling.
-        let _ = owner.finalize("persisted runtime cleanup helper");
-    }
-}
-
-fn persist_before_releasing_cleanup_owners<T>(
-    persist: impl FnOnce() -> Result<T>,
-    release: impl FnOnce(),
-) -> Result<T> {
-    let persisted = persist()?;
-    release();
-    Ok(persisted)
 }
 
 /// The configured-run teardown owner. It always attempts runner groups first,
@@ -8131,159 +5930,19 @@ fn finalize_configured_children(
                 test_run.runners = records;
             }
         }
-        (Err(_), _) => {
-            record_runner_cleanup_outcomes(vat, procs);
-            if let (Some(test_run), Some(interruption)) = (vat.meta.test_run.as_mut(), interruption)
-            {
-                for runner in &mut test_run.runners {
-                    if let Some(error) = runner.cleanup_error.as_mut() {
-                        let signal_context =
-                            format!("cleanup attempted after {}", interruption.reason);
-                        if !error.contains(&signal_context) {
-                            *error = format!("{error}; {signal_context}");
-                        }
-                    }
-                }
-                test_run.runner = test_run.runners.first().cloned();
-            }
-        }
+        (Err(_), _) => record_runner_cleanup_outcomes(vat, procs),
         (Ok(()), None) => {}
     }
     let service_cleanup =
         finalize_services_and_persist(vat, services, delete_clusters, interruption);
-    let cleanup = match (runner_cleanup, service_cleanup) {
+    match (runner_cleanup, service_cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(runners), Ok(())) => Err(runners),
         (Ok(()), Err(services)) => Err(services),
         (Err(runners), Err(services)) => Err(services).context(format!(
             "service cleanup also followed runner cleanup failure: {runners:#}"
         )),
-    };
-    match (cleanup, interruption) {
-        (Err(error), Some(interruption)) => Err(RunCleanupFailed {
-            interruption: interruption.clone(),
-            cleanup_error: format!("{error:#}"),
-        }
-        .into()),
-        (result, _) => result,
     }
-}
-
-#[derive(Debug)]
-struct ClusterCleanupFailure {
-    backend: String,
-    name: String,
-    error: String,
-}
-
-impl ClusterCleanupFailure {
-    fn detail(&self) -> String {
-        format!(
-            "prepared cluster `{}` ({}) cleanup unconfirmed: {}",
-            self.name, self.backend, self.error
-        )
-    }
-}
-
-fn cleanup_unstarted_cluster_plans(vat: &mut store::Vat, plans: &[ServicePlan]) -> Result<()> {
-    let failures = cleanup_cluster_records_with(
-        plans.iter().filter_map(|plan| plan.cluster.as_ref()),
-        |backend, name| backend.delete(name),
-    );
-    if failures.is_empty() {
-        return Ok(());
-    }
-    if let Some(test_run) = vat.meta.test_run.as_mut() {
-        for failure in &failures {
-            let Some(plan) = plans.iter().find(|plan| {
-                plan.cluster
-                    .as_ref()
-                    .is_some_and(|cluster| cluster.name == failure.name)
-            }) else {
-                continue;
-            };
-            let detail = failure.detail();
-            let record = ServiceRunRecord {
-                id: plan.id.clone(),
-                command: plan.command.clone(),
-                status: ProcessStatus::Failed,
-                preset: plan.preset.map(service_preset_name).map(str::to_string),
-                host: plan.host.clone(),
-                port: plan.port,
-                owned_by_vat: Some(true),
-                prepare_mode: Some(plan.prepare_mode.clone()),
-                cache_key: plan.cache_key.clone(),
-                prepare_duration_ms: Some(plan.prepare_duration_ms),
-                ready_duration_ms: None,
-                exported_env: plan.exported_env.clone(),
-                pid: None,
-                exit_code: None,
-                ready_http: plan.ready_http.clone(),
-                docker_name: None,
-                docker_id: None,
-                microvm_name: None,
-                readiness_error: None,
-                cleanup_error: Some(detail),
-                cluster: plan.cluster.clone(),
-                stdout_log: vat
-                    .dir
-                    .join(crate::paths::file::LOGS)
-                    .join(format!("{}.stdout.log", plan.id))
-                    .to_string_lossy()
-                    .into_owned(),
-                stderr_log: vat
-                    .dir
-                    .join(crate::paths::file::LOGS)
-                    .join(format!("{}.stderr.log", plan.id))
-                    .to_string_lossy()
-                    .into_owned(),
-            };
-            if let Some(existing) = test_run
-                .services
-                .iter_mut()
-                .find(|service| service.id == plan.id)
-            {
-                *existing = record;
-            } else {
-                test_run.services.push(record);
-            }
-        }
-    }
-    vat.save()
-        .context("persist prepared cluster cleanup obligations")?;
-    bail!(
-        "prepared-but-unstarted cluster cleanup unconfirmed: {}",
-        failures
-            .iter()
-            .map(ClusterCleanupFailure::detail)
-            .collect::<Vec<_>>()
-            .join("; ")
-    )
-}
-
-fn cleanup_cluster_records_with<'a>(
-    records: impl IntoIterator<Item = &'a ClusterRunRecord>,
-    mut delete: impl FnMut(ResolvedBackend, &str) -> Result<()>,
-) -> Vec<ClusterCleanupFailure> {
-    let mut failures = Vec::new();
-    for record in records {
-        let Some(backend) = ResolvedBackend::from_name(&record.backend) else {
-            failures.push(ClusterCleanupFailure {
-                backend: record.backend.clone(),
-                name: record.name.clone(),
-                error: "unknown cluster backend".to_string(),
-            });
-            continue;
-        };
-        if let Err(error) = delete(backend, &record.name) {
-            failures.push(ClusterCleanupFailure {
-                backend: record.backend.clone(),
-                name: record.name.clone(),
-                error: format!("{error:#}"),
-            });
-        }
-    }
-    failures
 }
 
 /// Whether run-scoped clusters should be deleted at teardown, mirroring the
@@ -8302,555 +5961,6 @@ mod tests {
     use super::*;
 
     use crate::config::ExternalServiceConfig;
-
-    fn test_cancellation() -> RunCancellation {
-        RunCancellation::with_observed_signal(0)
-    }
-
-    #[test]
-    fn service_startup_stop_request_is_consumed_once_by_the_vat_owner() {
-        let temp = tempfile::tempdir().expect("compose stop request tempdir");
-        let request = temp.path().join(".compose-stop-request");
-        std::fs::write(&request, b"stop").expect("seed compose stop request");
-        let error = consume_detached_compose_stop_request(&request, "service readiness")
-            .expect_err("first owner poll must consume the stop request");
-        assert!(error.to_string().contains("service readiness"));
-        assert!(!request.exists(), "the stop request must be one-shot");
-        consume_detached_compose_stop_request(&request, "service readiness")
-            .expect("a consumed request cannot stop the owner twice");
-    }
-
-    fn pre_child_test_vat(mode: &str) -> (tempfile::TempDir, store::Vat) {
-        let temp = tempfile::tempdir().expect("pre-child VAT tempdir");
-        let now = Utc::now();
-        let last_run = (mode == "direct").then(|| RunRecord {
-            command: vec!["missing-runtime".to_string()],
-            started_at: now,
-            finished_at: None,
-            exit_code: None,
-            duration_ms: None,
-            signal: None,
-            owned_pgid: None,
-            cleanup_error: None,
-        });
-        let test_run = (mode != "direct").then(|| TestRunEvidence {
-            config: ConfigRef {
-                path: "vat.toml".to_string(),
-                digest: "test".to_string(),
-            },
-            runner_id: "runner".to_string(),
-            retention: RetentionPolicy::Always,
-            services: Vec::new(),
-            scenario: (mode == "scenario").then(|| ScenarioRunRecord {
-                id: "scenario".to_string(),
-                app: "app".to_string(),
-                runner: "runner".to_string(),
-                network: "open".to_string(),
-                services: Vec::new(),
-                routes: Vec::new(),
-                hermetic: false,
-            }),
-            runner: None,
-            runners: Vec::new(),
-            artifacts: Vec::new(),
-            cleanup_error: None,
-            plan: None,
-            topology: None,
-        });
-        let mut vat = store::Vat {
-            dir: temp.path().to_path_buf(),
-            meta: crate::state::VatMeta {
-                id: format!("vat-pre-child-{mode}"),
-                name: None,
-                status: Status::Running,
-                created_at: now,
-                updated_at: now,
-                spec: EnvSpec::default(),
-                lineage: Vec::new(),
-                last_run,
-                test_run,
-                plan: None,
-            },
-        };
-        vat.save().expect("persist Running pre-child state");
-        (temp, vat)
-    }
-
-    fn assert_pre_child_failure_persisted(mode: &str) -> crate::state::VatMeta {
-        let (_temp, mut vat) = pre_child_test_vat(mode);
-        let cancellation = RunCancellation::new().expect("test cancellation observer");
-        let step: Result<()> = Err(anyhow::anyhow!("injected {mode} pre-child failure"));
-        let error = finish_pre_child_step(
-            &mut vat,
-            &cancellation,
-            Instant::now(),
-            step,
-            "injected pre-child step",
-        )
-        .expect_err("pre-child failure must propagate");
-        assert!(error.to_string().contains("injected pre-child step"));
-        serde_json::from_slice(&std::fs::read(vat.meta_path()).expect("read persisted meta"))
-            .expect("parse persisted meta")
-    }
-
-    #[test]
-    fn direct_pre_child_failure_terminalizes_running_record() {
-        let meta = assert_pre_child_failure_persisted("direct");
-        assert_eq!(meta.status, Status::Exited { code: -1 });
-        let run = meta.last_run.expect("direct run record");
-        assert!(run.finished_at.is_some());
-        assert_eq!(run.exit_code, Some(-1));
-        assert!(run.duration_ms.is_some());
-        assert_eq!(run.signal, None);
-        assert_eq!(run.owned_pgid, None);
-        assert_eq!(run.cleanup_error, None);
-    }
-
-    #[test]
-    fn configured_runner_pre_child_failure_terminalizes_running_vat() {
-        let meta = assert_pre_child_failure_persisted("runner");
-        assert_eq!(meta.status, Status::Exited { code: -1 });
-        assert!(meta.test_run.is_some());
-        assert!(meta.last_run.is_none());
-    }
-
-    #[test]
-    fn scenario_pre_child_failure_terminalizes_running_vat() {
-        let meta = assert_pre_child_failure_persisted("scenario");
-        assert_eq!(meta.status, Status::Exited { code: -1 });
-        assert!(meta
-            .test_run
-            .and_then(|run| run.scenario)
-            .is_some_and(|scenario| scenario.id == "scenario"));
-    }
-
-    #[test]
-    fn concurrent_pre_child_signal_is_terminal_and_returns_signal_exit_for_all_modes() {
-        for mode in ["direct", "runner", "scenario"] {
-            let (_temp, mut vat) = pre_child_test_vat(mode);
-            let cancellation = RunCancellation::with_observed_signal(libc::SIGTERM);
-            let error = finish_pre_child_step(
-                &mut vat,
-                &cancellation,
-                Instant::now(),
-                Err::<(), _>(anyhow::anyhow!("injected {mode} evidence failure")),
-                "injected signal-racing pre-child step",
-            )
-            .expect_err("signal must win the process exit contract");
-            assert_eq!(
-                run_interruption(&error).map(|interruption| interruption.signal),
-                Some(libc::SIGTERM)
-            );
-            let exit = finish_exec_result(Err(error)).expect("signal maps to a process exit code");
-            assert_eq!(exit, ExitCode::from(143));
-            let persisted: crate::state::VatMeta = serde_json::from_slice(
-                &std::fs::read(vat.meta_path()).expect("read persisted signal state"),
-            )
-            .expect("parse persisted signal state");
-            assert!(matches!(
-                persisted.status,
-                Status::Interrupted {
-                    signal: libc::SIGTERM,
-                    ..
-                }
-            ));
-            if let Some(run) = persisted.last_run {
-                assert_eq!(run.exit_code, Some(143));
-                assert_eq!(run.signal, Some(libc::SIGTERM));
-                assert!(run.finished_at.is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn runner_failure_log_error_cannot_preempt_terminal_metadata_persistence() {
-        let (_temp, mut vat) = pre_child_test_vat("runner");
-        let logs_blocker = vat.dir.join("logs-blocker");
-        std::fs::write(&logs_blocker, b"not a directory").expect("create log-path blocker");
-        let runner = RunnerConfig {
-            id: "runner".to_string(),
-            requires: Vec::new(),
-            cmd: vec!["false".to_string()],
-            timeout_s: None,
-            artifacts: Vec::new(),
-        };
-        let message = record_runner_failure_fail_closed(
-            &mut vat,
-            &runner,
-            &logs_blocker,
-            "injected execution failure",
-        );
-        assert!(message.contains("runner failure evidence write failed"));
-        vat.meta.status = Status::Exited { code: -1 };
-        vat.save()
-            .expect("terminal metadata save must remain reachable after log failure");
-
-        let persisted: crate::state::VatMeta = serde_json::from_slice(
-            &std::fs::read(vat.meta_path()).expect("read terminal metadata"),
-        )
-        .expect("parse terminal metadata");
-        assert_eq!(persisted.status, Status::Exited { code: -1 });
-        let run = persisted.test_run.expect("configured run evidence");
-        assert!(run
-            .cleanup_error
-            .as_deref()
-            .is_some_and(|error| error.contains("runner failure evidence write failed")));
-        assert!(run.runners.iter().any(|runner| {
-            runner.id == "runner"
-                && runner.status == ProcessStatus::Failed
-                && runner.exit_code == Some(-1)
-        }));
-    }
-
-    #[test]
-    fn later_failure_evidence_does_not_rewrite_completed_runner_outcome() {
-        let (_temp, mut vat) = pre_child_test_vat("runner");
-        let logs_dir = vat.dir.join("logs");
-        std::fs::create_dir_all(&logs_dir).expect("create runner logs");
-        let runner = RunnerConfig {
-            id: "runner".to_string(),
-            requires: Vec::new(),
-            cmd: vec!["true".to_string()],
-            timeout_s: None,
-            artifacts: Vec::new(),
-        };
-        let completed = RunnerRunRecord {
-            id: runner.id.clone(),
-            command: runner.cmd.clone(),
-            status: ProcessStatus::Exited,
-            exit_code: Some(0),
-            duration_ms: Some(12),
-            pid: None,
-            cleanup_error: None,
-            stdout_log: logs_dir
-                .join("runner.stdout.log")
-                .to_string_lossy()
-                .into_owned(),
-            stderr_log: logs_dir
-                .join("runner.stderr.log")
-                .to_string_lossy()
-                .into_owned(),
-        };
-        let test_run = vat.meta.test_run.as_mut().expect("configured run evidence");
-        test_run.runner = Some(completed.clone());
-        test_run.runners = vec![completed];
-
-        record_runner_failure(&mut vat, &runner, &logs_dir, "later MicroVM cleanup failed")
-            .expect("append later failure evidence");
-
-        let test_run = vat.meta.test_run.as_ref().expect("configured run evidence");
-        assert_eq!(test_run.runners.len(), 1);
-        assert_eq!(test_run.runners[0].status, ProcessStatus::Exited);
-        assert_eq!(test_run.runners[0].exit_code, Some(0));
-        assert_eq!(test_run.runners[0].duration_ms, Some(12));
-        let compatibility = test_run.runner.as_ref().expect("compatibility runner");
-        assert_eq!(compatibility.status, ProcessStatus::Exited);
-        assert_eq!(compatibility.exit_code, Some(0));
-    }
-
-    #[test]
-    fn container_diagnostic_cleanup_failure_is_deferred_after_one_second_policy() {
-        assert_eq!(CONTAINER_DIAGNOSTIC_TIMEOUT, Duration::from_secs(1));
-        let cleanup_detail = "diagnostic process group 4242 remains";
-        let outcome = classify_container_diagnostic(
-            &["inspect", "owned-microvm"],
-            Err(RunOwnedCleanupFailed {
-                cleanup_error: cleanup_detail.to_string(),
-            }
-            .into()),
-        );
-        assert!(outcome.evidence.contains("container inspect owned-microvm"));
-        assert!(outcome.evidence.contains(cleanup_detail));
-        let deferred = outcome
-            .deferred_error
-            .expect("cleanup-unconfirmed diagnostic must be deferred");
-        assert_eq!(
-            diagnostic_cleanup_error(&deferred).as_deref(),
-            Some(cleanup_detail)
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn pre_service_cancellation_cleans_term_resistant_helper_descendants() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let leader_marker = temp.path().join("leader.pid");
-        let descendant_marker = temp.path().join("descendant.pid");
-        let cancellation = test_cancellation();
-        let signal = Arc::clone(&cancellation.first_signal);
-        let leader_for_signal = leader_marker.clone();
-        let descendant_for_signal = descendant_marker.clone();
-        let signaler = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while !(leader_for_signal.exists() && descendant_for_signal.exists()) {
-                assert!(
-                    Instant::now() < deadline,
-                    "helper never published pid markers"
-                );
-                std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
-            }
-            signal.store(libc::SIGTERM, Ordering::Release);
-        });
-        let mut command = Command::new("/bin/sh");
-        command
-            .env("LEADER_MARKER", &leader_marker)
-            .env("DESCENDANT_MARKER", &descendant_marker)
-            .args([
-                "-c",
-                "echo $$ > \"$LEADER_MARKER\"; /bin/sh -c 'trap \"\" TERM; echo $$ > \"$DESCENDANT_MARKER\"; while :; do :; done' & trap '' TERM; while :; do :; done",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let started = Instant::now();
-        let error = run_bounded_owned_command(
-            command,
-            "configured pre-service helper",
-            Duration::from_secs(5),
-            Some(&cancellation),
-            &|| Ok(()),
-        )
-        .expect_err("helper must observe cancellation");
-        signaler.join().expect("signal thread");
-        assert_eq!(
-            run_interruption(&error).map(|interruption| interruption.signal),
-            Some(libc::SIGTERM)
-        );
-        assert!(started.elapsed() < Duration::from_secs(3));
-        assert_test_pid_markers_absent(&[leader_marker, descendant_marker]);
-    }
-
-    #[cfg(unix)]
-    fn assert_cancellable_microvm_helper_cleans_descendants(
-        invoke: impl FnOnce(&[&str], &RunCancellation) -> Result<()>,
-    ) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let leader_marker = temp.path().join("leader.pid");
-        let descendant_marker = temp.path().join("descendant.pid");
-        let leader_path = leader_marker.to_string_lossy().into_owned();
-        let descendant_path = descendant_marker.to_string_lossy().into_owned();
-        let script = "trap '' TERM; echo $$ > \"$1\"; DESCENDANT_MARKER=\"$2\" /bin/sh -c 'trap \"\" TERM; echo $$ > \"$DESCENDANT_MARKER\"; while :; do :; done' & while :; do :; done";
-        let args = [
-            "-c",
-            script,
-            "vat-microvm-helper-test",
-            leader_path.as_str(),
-            descendant_path.as_str(),
-        ];
-        let cancellation = test_cancellation();
-        let signal = Arc::clone(&cancellation.first_signal);
-        let leader_for_signal = leader_marker.clone();
-        let descendant_for_signal = descendant_marker.clone();
-        let signaler = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while !(leader_for_signal.exists() && descendant_for_signal.exists()) {
-                assert!(
-                    Instant::now() < deadline,
-                    "helper never published pid markers"
-                );
-                std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
-            }
-            signal.store(libc::SIGTERM, Ordering::Release);
-        });
-
-        let started = Instant::now();
-        let error = invoke(&args, &cancellation).expect_err("helper must observe cancellation");
-        signaler.join().expect("signal thread");
-        assert_eq!(
-            run_interruption(&error).map(|interruption| interruption.signal),
-            Some(libc::SIGTERM)
-        );
-        assert!(started.elapsed() < Duration::from_secs(3));
-        assert_test_pid_markers_absent(&[leader_marker, descendant_marker]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn microvm_system_probe_cancellation_cleans_helper_descendants() {
-        assert_cancellable_microvm_helper_cleans_descendants(|args, cancellation| {
-            ensure_microvm_system_started_with(
-                "/bin/sh",
-                args,
-                Duration::from_secs(5),
-                cancellation,
-            )
-        });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn microvm_diagnostic_cancellation_cleans_helper_descendants() {
-        assert_cancellable_microvm_helper_cleans_descendants(|args, cancellation| {
-            command_diagnostic_until(
-                "/bin/sh",
-                args,
-                Instant::now() + Duration::from_secs(5),
-                Some(cancellation),
-            )
-            .map(|_| ())
-        });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn postgres_seed_stop_faults_persist_typed_recovery_obligation() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let data_dir = temp.path().join("postgres-data");
-        std::fs::create_dir_all(&data_dir).expect("create postgres data dir");
-        std::fs::write(data_dir.join("postmaster.pid"), b"4242\n")
-            .expect("write detached postgres identity");
-        let service = test_service("postgres", &[]);
-        let mut cleanup_details = Vec::new();
-
-        for (label, script, timeout) in [
-            ("nonzero", "exit 7", Duration::from_secs(1)),
-            (
-                "timeout",
-                "trap '' TERM; while :; do :; done",
-                Duration::from_millis(50),
-            ),
-        ] {
-            let mut command = Command::new("/bin/sh");
-            command
-                .args(["-c", script])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            let error = stop_postgres_seed_server_command(&data_dir, &service, command, timeout)
-                .expect_err("postmaster identity requires a typed cleanup obligation");
-            let contextual = error.context(format!(
-                "postgres seed {label} path also failed before shutdown"
-            ));
-            let failure = run_owned_cleanup_failure(&contextual)
-                .expect("cleanup type must survive seed/start/psql context");
-            assert!(failure.cleanup_error.contains("service `postgres`"));
-            assert!(failure
-                .cleanup_error
-                .contains(&format!("data_dir={}", data_dir.display())));
-            assert!(failure.cleanup_error.contains("postmaster_pid=4242"));
-            assert!(failure.cleanup_error.contains("recovery=`pg_ctl -D"));
-            assert!(failure.cleanup_error.contains("-m fast stop`"));
-            cleanup_details.push(failure.cleanup_error.clone());
-        }
-
-        let (_vat_temp, mut vat) = pre_child_test_vat("runner");
-        for detail in &cleanup_details {
-            append_test_run_cleanup_error(&mut vat, detail);
-        }
-        let logs_dir = vat.dir.join("logs");
-        std::fs::create_dir_all(&logs_dir).expect("create runner logs");
-        let runner = RunnerConfig {
-            id: "runner".to_string(),
-            requires: Vec::new(),
-            cmd: vec!["true".to_string()],
-            timeout_s: None,
-            artifacts: Vec::new(),
-        };
-        record_runner_failure_fail_closed(
-            &mut vat,
-            &runner,
-            &logs_dir,
-            "temporary postgres cleanup failed",
-        );
-        vat.save().expect("persist typed cleanup evidence");
-        let persisted: crate::state::VatMeta = serde_json::from_slice(
-            &std::fs::read(vat.meta_path()).expect("read persisted cleanup evidence"),
-        )
-        .expect("parse persisted cleanup evidence");
-        let cleanup_error = persisted
-            .test_run
-            .and_then(|run| run.cleanup_error)
-            .expect("test_run cleanup obligation");
-        assert!(cleanup_error.contains(&data_dir.to_string_lossy().into_owned()));
-        assert!(cleanup_error.contains("postmaster_pid=4242"));
-        assert!(cleanup_error.contains("pg_ctl -D"));
-        assert!(!should_remove_vat(&RetentionPolicy::Never, -1, true, false));
-    }
-
-    #[cfg(unix)]
-    fn assert_test_pid_markers_absent(markers: &[PathBuf]) {
-        for marker in markers {
-            let pid = std::fs::read_to_string(marker)
-                .unwrap_or_else(|error| panic!("read {}: {error}", marker.display()))
-                .trim()
-                .parse::<i32>()
-                .expect("fixture pid");
-            let deadline = Instant::now() + Duration::from_secs(1);
-            loop {
-                let result = unsafe { libc::kill(pid, 0) };
-                if result == -1
-                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-                {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "pid {pid} survived cleanup");
-                std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
-            }
-        }
-    }
-
-    #[test]
-    fn runtime_retry_clears_only_its_structured_cleanup_obligation() {
-        let runtime = runtime_cleanup_detail(
-            RuntimeCleanupKind::Docker,
-            "owned-container",
-            &anyhow::anyhow!("daemon timeout; diagnostic detail"),
-        );
-        let mixed = format!(
-            "owned process-group cleanup unconfirmed; {runtime}; cluster cleanup unconfirmed; readiness command cleanup unconfirmed"
-        );
-        let (remaining, removed) =
-            clear_runtime_cleanup_obligation(&mixed, RuntimeCleanupKind::Docker, "owned-container");
-        assert!(removed);
-        let remaining = remaining.expect("unrelated obligations remain");
-        assert!(remaining.contains("owned process-group cleanup unconfirmed"));
-        assert!(remaining.contains("cluster cleanup unconfirmed"));
-        assert!(remaining.contains("readiness command cleanup unconfirmed"));
-        assert!(!remaining.contains("vat-runtime-cleanup"));
-
-        let (unchanged, removed) = clear_runtime_cleanup_obligation(
-            &mixed,
-            RuntimeCleanupKind::Docker,
-            "replacement-container",
-        );
-        assert!(!removed);
-        assert_eq!(unchanged.as_deref(), Some(mixed.as_str()));
-
-        let legacy_mixed = "Docker cleanup `docker rm -f owned-container` did not finish: timeout; cluster cleanup `owned-cluster` unconfirmed";
-        let (unchanged, removed) = clear_runtime_cleanup_obligation(
-            legacy_mixed,
-            RuntimeCleanupKind::Docker,
-            "owned-container",
-        );
-        assert!(!removed, "legacy mixed text must remain fail-closed");
-        assert_eq!(unchanged.as_deref(), Some(legacy_mixed));
-    }
-
-    #[test]
-    fn deadline_cleanup_owner_is_released_only_after_durable_persistence() {
-        let events = std::cell::RefCell::new(Vec::new());
-        persist_before_releasing_cleanup_owners(
-            || {
-                events.borrow_mut().push("persist");
-                Ok(())
-            },
-            || events.borrow_mut().push("release"),
-        )
-        .expect("persistence before release");
-        assert_eq!(&*events.borrow(), &["persist", "release"]);
-
-        let failed_events = std::cell::RefCell::new(Vec::new());
-        let error = persist_before_releasing_cleanup_owners::<()>(
-            || {
-                failed_events.borrow_mut().push("persist-failed");
-                bail!("injected persistence failure")
-            },
-            || failed_events.borrow_mut().push("release"),
-        )
-        .expect_err("failed persistence must retain the owner");
-        assert!(error.to_string().contains("injected persistence failure"));
-        assert_eq!(&*failed_events.borrow(), &["persist-failed"]);
-    }
 
     /// R10/AC4: the run.rs `gpu_satisfied()` preflight helper — the second,
     /// independent fail-closed layer alongside `sandbox::pick()` — must
@@ -8984,253 +6094,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cleanup_failure_after_signal_never_publishes_interrupted_success() {
-        let interruption = RunInterrupted::new(libc::SIGTERM);
-        let error: anyhow::Error = RunCleanupFailed {
-            interruption: interruption.clone(),
-            cleanup_error: "runner group 42 remains".to_string(),
-        }
-        .into();
-        let failure = run_cleanup_failure(&error).expect("typed cleanup failure");
-        assert_eq!(failure.interruption.signal, libc::SIGTERM);
-        assert!(failure.cleanup_error.contains("group 42"));
-        assert_eq!(
-            configured_terminal_status(Some(&interruption), true, -1),
-            Status::Exited { code: -1 }
-        );
-        assert!(matches!(
-            configured_terminal_status(Some(&interruption), false, 143),
-            Status::Interrupted {
-                signal: libc::SIGTERM,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn cleanup_obligation_is_failed_and_not_overwritten_by_interruption() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let order_path = temp.path().join("stop-order.txt");
-        let mut services = vec![spawn_trapping_service(temp.path(), &order_path, "owned")];
-        services[0].record.cleanup_error = Some("synthetic PGID absence failure".to_string());
-        std::thread::sleep(Duration::from_millis(100));
-
-        let error = stop_services(&mut services, false).expect_err("cleanup must fail closed");
-        assert!(error.to_string().contains("synthetic PGID absence failure"));
-        mark_services_interrupted(&mut services, &RunInterrupted::new(libc::SIGINT));
-        assert_eq!(services[0].record.status, ProcessStatus::Failed);
-        assert!(services[0].record.pid.is_none());
-        assert!(services[0].record.cleanup_error.is_some());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn configured_cleanup_failure_disables_drop_retry() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let command = vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "trap 'exit 0' TERM; while :; do sleep 1; done".to_string(),
-        ];
-        let mut runner_child = command_with_logs(
-            &command,
-            temp.path(),
-            &BTreeMap::new(),
-            &temp.path().join("runner.stdout"),
-            &temp.path().join("runner.stderr"),
-        )
-        .expect("spawn runner child");
-        runner_child.post_reap_cleanup_error =
-            Some("injected pre-reap cleanup failure".to_string());
-        let mut runners = vec![RunnerProc {
-            runner: RunnerConfig {
-                id: "runner".to_string(),
-                requires: Vec::new(),
-                cmd: command,
-                timeout_s: None,
-                artifacts: Vec::new(),
-            },
-            child: runner_child,
-            cleanup_error: None,
-            started: Instant::now(),
-            deadline: None,
-            stdout_log: String::new(),
-            stderr_log: String::new(),
-        }];
-        assert!(finalize_runner_processes(&mut runners).is_err());
-        assert!(runners[0].cleanup_error.is_some());
-        assert!(!runners[0].child.drop_cleanup_enabled);
-
-        // Explicit test cleanup after proving Drop cannot retry implicitly.
-        runners[0].child.post_reap_cleanup_error = None;
-        runners[0].child.drop_cleanup_enabled = true;
-        runners[0]
-            .child
-            .finalize("test runner cleanup")
-            .expect("clean test runner");
-
-        let order_path = temp.path().join("stop-order.txt");
-        let mut service = spawn_trapping_service(temp.path(), &order_path, "service");
-        let child = service.child.as_mut().expect("owned service child");
-        child.post_reap_cleanup_error = Some("injected pre-reap cleanup failure".to_string());
-        assert!(stop_services(std::slice::from_mut(&mut service), false).is_err());
-        let child = service.child.as_mut().expect("owned service child");
-        assert!(!child.drop_cleanup_enabled);
-        assert!(service.record.pid.is_some());
-        assert!(service.record.cleanup_error.is_some());
-
-        child.post_reap_cleanup_error = None;
-        child.drop_cleanup_enabled = true;
-        child
-            .finalize("test service cleanup")
-            .expect("clean test service");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn readiness_command_is_bounded_and_observes_cancellation() {
-        let command = vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "trap '' INT TERM; while :; do sleep 1; done".to_string(),
-        ];
-        let no_signal = RunCancellation::new().expect("install scoped handlers");
-        let started = Instant::now();
-        assert!(
-            !readiness_command_with_timeout(&command, &no_signal, Duration::from_millis(40),)
-                .expect("bounded readiness timeout")
-        );
-        assert!(started.elapsed() < Duration::from_secs(2));
-
-        let interrupted = RunCancellation::with_observed_signal(libc::SIGTERM);
-        let error = readiness_command_with_timeout(&command, &interrupted, Duration::from_secs(5))
-            .expect_err("readiness command must observe cancellation");
-        assert_eq!(
-            run_interruption(&error).expect("typed interruption").signal,
-            libc::SIGTERM
-        );
-    }
-
-    #[test]
-    fn prepared_cluster_cleanup_attempts_every_record_after_one_failure() {
-        let records = vec![
-            ClusterRunRecord {
-                backend: "kind".to_string(),
-                name: "first".to_string(),
-                kubeconfig: "first.kubeconfig".to_string(),
-                node_count: 1,
-                ready_ms: None,
-            },
-            ClusterRunRecord {
-                backend: "k3d".to_string(),
-                name: "second".to_string(),
-                kubeconfig: "second.kubeconfig".to_string(),
-                node_count: 1,
-                ready_ms: None,
-            },
-        ];
-        let mut attempted = Vec::new();
-        let failures = cleanup_cluster_records_with(&records, |_, name| {
-            attempted.push(name.to_string());
-            if name == "first" {
-                bail!("injected delete failure");
-            }
-            Ok(())
-        });
-        assert_eq!(attempted, vec!["first", "second"]);
-        assert_eq!(failures.len(), 1);
-        assert!(failures[0].detail().contains("first"));
-    }
-
-    #[test]
-    fn started_cluster_delete_error_becomes_durable_service_obligation() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let order_path = temp.path().join("stop-order.txt");
-        let mut service = spawn_trapping_service(temp.path(), &order_path, "cluster");
-        let cluster = ClusterRunRecord {
-            backend: "injected-unknown".to_string(),
-            name: "owned-cluster".to_string(),
-            kubeconfig: "owned.kubeconfig".to_string(),
-            node_count: 1,
-            ready_ms: None,
-        };
-        service.cluster = Some(cluster.clone());
-        service.record.cluster = Some(cluster);
-        std::thread::sleep(Duration::from_millis(100));
-
-        let error = stop_services(std::slice::from_mut(&mut service), true)
-            .expect_err("unknown backend must fail closed");
-        assert!(error.to_string().contains("cluster cleanup"));
-        assert_eq!(service.record.status, ProcessStatus::Failed);
-        assert!(service
-            .record
-            .cleanup_error
-            .as_deref()
-            .is_some_and(|error| error.contains("unknown cluster backend")));
-    }
-
-    #[test]
-    fn later_resource_delete_success_cannot_clear_prior_cli_group_obligation() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let order_path = temp.path().join("stop-order.txt");
-        let mut service = spawn_trapping_service(temp.path(), &order_path, "cluster-retry");
-        let record = ClusterRunRecord {
-            backend: "kind".to_string(),
-            name: "owned-cluster".to_string(),
-            kubeconfig: "owned.kubeconfig".to_string(),
-            node_count: 1,
-            ready_ms: None,
-        };
-        service.cluster = Some(record.clone());
-        service.record.cluster = Some(record.clone());
-        let first_error = cluster::injected_owned_command_cleanup_failure(
-            "delete command PGID 4242 remains after TERM/KILL",
-        );
-        service.record.cleanup_error = Some(cluster_cleanup_detail(&record, &first_error));
-
-        record_cluster_delete_success(&mut service, &record);
-
-        assert!(
-            service.cluster.is_some(),
-            "ownership handle must be retained"
-        );
-        assert_eq!(service.record.status, ProcessStatus::Failed);
-        assert!(service
-            .record
-            .cleanup_error
-            .as_deref()
-            .is_some_and(|error| error.contains("cli_group_unconfirmed=true")));
-    }
-
-    #[test]
-    fn confirmed_cluster_resource_cleanup_preserves_unrelated_obligations() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let order_path = temp.path().join("stop-order.txt");
-        let mut service = spawn_trapping_service(temp.path(), &order_path, "cluster-confirmed");
-        let record = ClusterRunRecord {
-            backend: "kind".to_string(),
-            name: "owned-cluster".to_string(),
-            kubeconfig: "owned.kubeconfig".to_string(),
-            node_count: 1,
-            ready_ms: None,
-        };
-        service.cluster = Some(record.clone());
-        let resource_error = anyhow::anyhow!("backend resource delete timed out");
-        service.record.cleanup_error = Some(format!(
-            "readiness cleanup unconfirmed; {}",
-            cluster_cleanup_detail(&record, &resource_error)
-        ));
-
-        record_cluster_delete_success(&mut service, &record);
-
-        assert!(service.cluster.is_none());
-        assert_eq!(
-            service.record.cleanup_error.as_deref(),
-            Some("readiness cleanup unconfirmed")
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn post_reap_cleanup_failure_never_resignals_a_numeric_pgid() {
@@ -9268,18 +6131,7 @@ mod tests {
             final_status: Some(status),
             finalized: false,
             post_reap_cleanup_error: Some("synthetic post-reap PGID-absence failure".to_string()),
-            drop_cleanup_enabled: true,
         };
-
-        let injected = anyhow::anyhow!("injected direct cleanup failure");
-        let (owned_pgid, cleanup_error) = preserve_direct_cleanup_failure(&mut stale, &injected)
-            .expect("unconfirmed direct cleanup evidence");
-        assert_eq!(
-            owned_pgid, None,
-            "reaped leader must not persist a stale PGID"
-        );
-        assert!(cleanup_error.contains("injected direct cleanup failure"));
-        assert!(!stale.drop_cleanup_enabled);
 
         assert!(stale.finalize("synthetic reaped group").is_err());
         assert!(stale.finalize("synthetic reaped group").is_err());
@@ -9728,14 +6580,8 @@ mod tests {
         let cache = temp.path().join("image");
         std::fs::create_dir_all(&cache).unwrap();
         // Full cold-prepare path: initdb + seed apply + clean shutdown.
-        cold_prepare_service_image(
-            &cfg,
-            &service,
-            ServicePreset::Postgres,
-            &cache,
-            &test_cancellation(),
-        )
-        .expect("cold prepare + seed postgres");
+        cold_prepare_service_image(&cfg, &service, ServicePreset::Postgres, &cache)
+            .expect("cold prepare + seed postgres");
 
         // The throwaway seed socket dir must not be baked into the cached image.
         assert!(!cache.join("seed-sock").exists());
@@ -9840,16 +6686,16 @@ mod tests {
     }
 
     #[test]
-    fn docker_create_and_start_commands_are_well_formed_and_deterministic() {
+    fn docker_run_command_is_well_formed_and_deterministic() {
         let mut env = BTreeMap::new();
         env.insert("POSTGRES_HOST_AUTH_METHOD".to_string(), "trust".to_string());
         env.insert("POSTGRES_DB".to_string(), "app".to_string());
-        let cmd = docker_create_command("vat-abc-pg", "postgres:16", 54321, 5432, &env);
+        let cmd = docker_run_command("vat-abc-pg", "postgres:16", 54321, 5432, &env);
         assert_eq!(
             cmd,
             vec![
                 "docker",
-                "create",
+                "run",
                 "--rm",
                 "--name",
                 "vat-abc-pg",
@@ -9863,135 +6709,6 @@ mod tests {
                 "postgres:16",
             ]
         );
-        assert_eq!(
-            docker_start_command(
-                "1111111111111111111111111111111111111111111111111111111111111111"
-            ),
-            vec![
-                "docker",
-                "start",
-                "--attach",
-                "1111111111111111111111111111111111111111111111111111111111111111",
-            ]
-        );
-    }
-
-    #[test]
-    fn docker_created_checkpoint_transitions_only_on_exact_running_ack() {
-        assert_eq!(
-            docker_start_transition(&DockerIdentityObservation::Exact {
-                state: "created".to_string(),
-            }),
-            DockerStartTransition::PendingCreated
-        );
-        assert_eq!(
-            docker_start_transition(&DockerIdentityObservation::Exact {
-                state: "running".to_string(),
-            }),
-            DockerStartTransition::RunningAcknowledged
-        );
-        assert!(matches!(
-            docker_start_transition(&DockerIdentityObservation::Exact {
-                state: "exited".to_string(),
-            }),
-            DockerStartTransition::Failed(reason) if reason.contains("exited")
-        ));
-        assert!(matches!(
-            docker_start_transition(&DockerIdentityObservation::Absent),
-            DockerStartTransition::Failed(reason) if reason.contains("disappeared")
-        ));
-        assert!(matches!(
-            docker_start_transition(&DockerIdentityObservation::Replacement {
-                actual_id:
-                    "2222222222222222222222222222222222222222222222222222222222222222"
-                        .to_string(),
-            }),
-            DockerStartTransition::Failed(reason) if reason.contains("replacement ID")
-        ));
-    }
-
-    #[test]
-    fn service_persistence_retains_only_unrepresented_failures_or_cleanup_obligations() {
-        let record = |status, cleanup_error: Option<&str>| ServiceRunRecord {
-            id: "web".to_string(),
-            command: Vec::new(),
-            status,
-            preset: None,
-            host: None,
-            port: None,
-            owned_by_vat: Some(true),
-            prepare_mode: None,
-            cache_key: None,
-            prepare_duration_ms: None,
-            ready_duration_ms: None,
-            exported_env: Vec::new(),
-            pid: None,
-            exit_code: None,
-            ready_http: None,
-            docker_name: None,
-            docker_id: None,
-            microvm_name: None,
-            readiness_error: None,
-            cleanup_error: cleanup_error.map(str::to_string),
-            cluster: None,
-            stdout_log: String::new(),
-            stderr_log: String::new(),
-        };
-        let no_current = BTreeSet::new();
-        assert!(retain_unrepresented_service_record(
-            &record(ProcessStatus::Failed, None),
-            &no_current,
-        ));
-        assert!(!retain_unrepresented_service_record(
-            &record(ProcessStatus::Running, None),
-            &no_current,
-        ));
-        assert!(retain_unrepresented_service_record(
-            &record(ProcessStatus::Running, Some("cleanup unconfirmed")),
-            &no_current,
-        ));
-
-        let current_ids = BTreeSet::from(["web".to_string()]);
-        assert!(
-            !retain_unrepresented_service_record(
-                &record(ProcessStatus::Failed, Some("older obligation")),
-                &current_ids,
-            ),
-            "a current handle with the same ID must overwrite older evidence"
-        );
-    }
-
-    #[test]
-    fn docker_attach_readiness_requires_consecutive_stable_observations() {
-        let mut candidate = None;
-        let first = Instant::now();
-        assert!(!docker_attach_readiness_is_stable(
-            &mut candidate,
-            first,
-            true
-        ));
-        assert!(!docker_attach_readiness_is_stable(
-            &mut candidate,
-            first + Duration::from_millis(99),
-            true
-        ));
-        assert!(docker_attach_readiness_is_stable(
-            &mut candidate,
-            first + Duration::from_millis(100),
-            true
-        ));
-
-        assert!(!docker_attach_readiness_is_stable(
-            &mut candidate,
-            first + Duration::from_millis(200),
-            false
-        ));
-        assert_eq!(candidate, None, "a non-ready probe resets the candidate");
-        assert!(!docker_attach_readiness_is_stable(
-            &mut candidate,
-            first + Duration::from_millis(300),
-            true
-        ));
     }
 
     #[test]
@@ -10231,7 +6948,7 @@ mod tests {
         svc.runtime = ServiceRuntime::Auto;
 
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::Lumen, &test_cancellation()).unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::Lumen).unwrap(),
             ResolvedRuntime::Native
         ));
         assert!(matches!(
@@ -10258,7 +6975,7 @@ mod tests {
     fn lumen_preset_rejects_docker_runtime_without_a_fallback() {
         let mut svc = test_service("lumen", &[]);
         svc.runtime = ServiceRuntime::Docker;
-        match resolve_preset_runtime(&svc, ServicePreset::Lumen, &test_cancellation()) {
+        match resolve_preset_runtime(&svc, ServicePreset::Lumen) {
             Err(error) => assert!(error.to_string().contains("native-only")),
             Ok(_) => panic!("lumen must not fall back to Docker"),
         }
@@ -10325,12 +7042,11 @@ mod tests {
     fn builtin_presets_resolve_to_builtin_under_auto() {
         let svc = test_service("svc", &[]);
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::Pubsub, &test_cancellation()).unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::Pubsub).unwrap(),
             ResolvedRuntime::Builtin
         ));
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth, &test_cancellation(),)
-                .unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth).unwrap(),
             ResolvedRuntime::Builtin
         ));
     }
@@ -10429,7 +7145,7 @@ mod tests {
             ),
         ] {
             assert!(matches!(
-                resolve_preset_runtime(&svc, preset, &test_cancellation()).unwrap(),
+                resolve_preset_runtime(&svc, preset).unwrap(),
                 ResolvedRuntime::Builtin
             ));
             let plan = prepare_builtin_service(&svc, preset, Path::new("."), &[], false).unwrap();
@@ -10445,17 +7161,17 @@ mod tests {
         svc.preset = Some(ServicePreset::Postgres);
         svc.runtime = ServiceRuntime::Native;
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::Postgres, &test_cancellation()).unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
             ResolvedRuntime::Native
         ));
         svc.runtime = ServiceRuntime::Docker;
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::Postgres, &test_cancellation()).unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
             ResolvedRuntime::Docker
         ));
         svc.runtime = ServiceRuntime::MicroVm;
         assert!(matches!(
-            resolve_preset_runtime(&svc, ServicePreset::Postgres, &test_cancellation()).unwrap(),
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
             ResolvedRuntime::MicroVm
         ));
     }
@@ -10466,7 +7182,7 @@ mod tests {
         svc.cmd = Vec::new();
         svc.preset = Some(ServicePreset::FirebaseAuth);
         svc.runtime = ServiceRuntime::MicroVm;
-        let error = resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth, &test_cancellation())
+        let error = resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth)
             .expect_err("builtin-only preset must not pretend a generic image is equivalent");
         assert!(error
             .to_string()
@@ -10483,7 +7199,7 @@ mod tests {
             name: "cache-data".to_string(),
             path: "/data".to_string(),
         });
-        let error = resolve_preset_runtime(&svc, ServicePreset::Redis, &test_cancellation())
+        let error = resolve_preset_runtime(&svc, ServicePreset::Redis)
             .expect_err("MicroVM preset volume route must fail until lifetime proof exists");
         assert!(error
             .to_string()
@@ -10494,38 +7210,6 @@ mod tests {
     fn container_name_sanitizes_disallowed_chars() {
         assert_eq!(container_name("vat-5oyh3vc", "pg"), "vat-5oyh3vc-pg");
         assert_eq!(container_name("vat/x", "a b"), "vat-x-a-b");
-    }
-
-    #[test]
-    fn docker_identity_filter_is_anchored_and_regex_escapes_sanitized_dots() {
-        assert_eq!(
-            docker_exact_name_filter("vat-a.b-c_d").expect("sanitized Docker name"),
-            r"name=^/vat-a\.b-c_d$"
-        );
-        assert!(docker_exact_name_filter("vat/name").is_err());
-        assert!(docker_exact_name_filter("").is_err());
-    }
-
-    #[test]
-    fn docker_cleanup_budget_reserves_every_later_phase() {
-        let after_initial_query = DOCKER_KILL_TIMEOUT
-            + DOCKER_IDENTITY_QUERY_TIMEOUT
-            + DOCKER_TERMINAL_RM_TIMEOUT
-            + DOCKER_IDENTITY_QUERY_TIMEOUT;
-        let after_kill = DOCKER_IDENTITY_QUERY_TIMEOUT
-            + DOCKER_TERMINAL_RM_TIMEOUT
-            + DOCKER_IDENTITY_QUERY_TIMEOUT;
-        let after_post_kill_query = DOCKER_TERMINAL_RM_TIMEOUT + DOCKER_IDENTITY_QUERY_TIMEOUT;
-        let after_remove = DOCKER_IDENTITY_QUERY_TIMEOUT;
-        let running_attempt_budget =
-            DOCKER_IDENTITY_QUERY_TIMEOUT + DOCKER_KILL_TIMEOUT + after_kill;
-
-        assert_eq!(after_initial_query, Duration::from_secs(10));
-        assert_eq!(after_kill, Duration::from_secs(7));
-        assert_eq!(after_post_kill_query, Duration::from_secs(5));
-        assert_eq!(after_remove, Duration::from_secs(2));
-        assert_eq!(running_attempt_budget, Duration::from_secs(12));
-        assert!(running_attempt_budget < DOCKER_CLEANUP_HARD_TIMEOUT);
     }
 
     #[test]
@@ -10545,11 +7229,10 @@ mod tests {
     }
 
     fn spawn_trapping_service(root: &Path, order_path: &Path, id: &str) -> ServiceHandle {
-        let ready_path = root.join(format!("{id}.ready"));
         let command = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
-            "trap 'printf \"%s\\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; : > \"$VAT_STOP_READY\"; while :; do :; done".to_string(),
+            "trap 'printf \"%s\\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; while :; do sleep 1; done".to_string(),
         ];
         let mut env = BTreeMap::new();
         env.insert("VAT_STOP_ID".to_string(), id.to_string());
@@ -10557,22 +7240,10 @@ mod tests {
             "VAT_STOP_ORDER".to_string(),
             order_path.to_string_lossy().into_owned(),
         );
-        env.insert(
-            "VAT_STOP_READY".to_string(),
-            ready_path.to_string_lossy().into_owned(),
-        );
         let stdout = root.join(format!("{id}.stdout.log"));
         let stderr = root.join(format!("{id}.stderr.log"));
         let child =
             command_with_logs(&command, root, &env, &stdout, &stderr).expect("service child");
-        let ready_deadline = Instant::now() + Duration::from_secs(2);
-        while !ready_path.exists() {
-            assert!(
-                Instant::now() < ready_deadline,
-                "service `{id}` did not install its TERM handler"
-            );
-            std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);
-        }
         ServiceHandle {
             record: ServiceRunRecord {
                 id: id.to_string(),
@@ -10591,7 +7262,6 @@ mod tests {
                 exit_code: None,
                 ready_http: None,
                 docker_name: None,
-                docker_id: None,
                 microvm_name: None,
                 readiness_error: None,
                 cleanup_error: None,
@@ -10607,7 +7277,6 @@ mod tests {
             docker_name: None,
             microvm_name: None,
             cluster: None,
-            deadline_cleanup_owners: Vec::new(),
         }
     }
 }
@@ -10660,121 +7329,6 @@ enum ProcessGroupSignalOutcome {
 }
 
 #[cfg(unix)]
-fn terminate_and_reap_owned_process_group_before(
-    child: &mut Child,
-    pgid: u32,
-    label: &str,
-    deadline: Instant,
-) -> Result<ExitStatus> {
-    if Instant::now() >= deadline {
-        bail!("{label} has no shared deadline budget left for TERM/KILL/reap");
-    }
-    let term = signal_owned_process_group(pgid, libc::SIGTERM, label)?;
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    // Reserve at least half of the remaining budget for KILL/reap and the
-    // subsequent explicit group-absence proof.
-    let grace_deadline = Instant::now() + Duration::from_millis(100).min(remaining / 4);
-    while Instant::now() < grace_deadline {
-        if child_has_exited_without_reap(child)? || !process_group_exists(pgid)? {
-            break;
-        }
-        std::thread::sleep(
-            OWNED_GROUP_POLL_INTERVAL.min(grace_deadline.saturating_duration_since(Instant::now())),
-        );
-    }
-
-    let kill = if process_group_exists(pgid)? {
-        signal_owned_process_group(pgid, libc::SIGKILL, label)?
-    } else {
-        ProcessGroupSignalOutcome::DeliveredOrGone
-    };
-    let permission_partial = matches!(term, ProcessGroupSignalOutcome::PermissionPartial)
-        || matches!(kill, ProcessGroupSignalOutcome::PermissionPartial);
-    if permission_partial && !child_has_exited_without_reap(child)? {
-        match child.kill() {
-            Ok(()) => {}
-            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
-            Err(error) => {
-                return Err(error).with_context(|| format!("send direct KILL to {label}"));
-            }
-        }
-    }
-
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let reap_deadline = Instant::now() + remaining / 2;
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .with_context(|| format!("reap {label} process-group leader {pgid}"))?
-        {
-            return Ok(status);
-        }
-        if Instant::now() >= reap_deadline {
-            bail!("{label} process-group leader {pgid} did not exit before its shared cleanup deadline");
-        }
-        std::thread::sleep(
-            OWNED_GROUP_POLL_INTERVAL.min(reap_deadline.saturating_duration_since(Instant::now())),
-        );
-    }
-}
-
-#[cfg(not(unix))]
-fn terminate_and_reap_owned_process_group_before(
-    child: &mut Child,
-    _pgid: u32,
-    label: &str,
-    deadline: Instant,
-) -> Result<ExitStatus> {
-    if Instant::now() >= deadline {
-        bail!("{label} has no shared deadline budget left for termination");
-    }
-    match child.try_wait()? {
-        Some(status) => Ok(status),
-        None => {
-            child
-                .kill()
-                .with_context(|| format!("stop {label} child"))?;
-            while Instant::now() < deadline {
-                if let Some(status) = child.try_wait()? {
-                    return Ok(status);
-                }
-                std::thread::sleep(
-                    OWNED_GROUP_POLL_INTERVAL
-                        .min(deadline.saturating_duration_since(Instant::now())),
-                );
-            }
-            bail!("{label} child did not exit before its shared cleanup deadline")
-        }
-    }
-}
-
-#[cfg(unix)]
-fn confirm_owned_process_group_absent_before(
-    pgid: u32,
-    label: &str,
-    deadline: Instant,
-) -> Result<()> {
-    while process_group_exists(pgid)? && Instant::now() < deadline {
-        std::thread::sleep(
-            OWNED_GROUP_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
-        );
-    }
-    if process_group_exists(pgid)? {
-        bail!("{label} process group {pgid} remains at the shared cleanup deadline");
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn confirm_owned_process_group_absent_before(
-    _pgid: u32,
-    _label: &str,
-    _deadline: Instant,
-) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 fn terminate_and_reap_owned_process_group(
     child: &mut Child,
     pgid: u32,
@@ -10785,12 +7339,7 @@ fn terminate_and_reap_owned_process_group(
     let term = signal_owned_process_group(pgid, libc::SIGTERM, label)?;
     let grace_deadline = Instant::now() + term_grace;
     while Instant::now() < grace_deadline {
-        // A waitable exited leader still makes kill(-pgid, 0) report that the
-        // group exists. Observe that exit without reaping so TERM-responsive
-        // commands do not burn the full grace period, while the unreaped
-        // leader continues pinning the numeric PGID until KILL covers any
-        // resistant descendants.
-        if child_has_exited_without_reap(child)? || !process_group_exists(pgid)? {
+        if !process_group_exists(pgid)? {
             break;
         }
         std::thread::sleep(OWNED_GROUP_POLL_INTERVAL);

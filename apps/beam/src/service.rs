@@ -195,7 +195,11 @@ fn conflict_err(message: impl Into<String>) -> ApiErr {
 }
 
 fn internal_err(message: impl Into<String>) -> ApiErr {
-    ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
+    ApiErr::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        message,
+    )
 }
 
 // -- JSON <-> engine mapping ----------------------------------------------
@@ -642,7 +646,10 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
         )
         .route("/v1/collections/{name}", delete(drop_collection))
         .route("/v1/collections/{name}/vectors", post(upsert_vectors))
-        .route("/v1/collections/{name}/vectors/{id}", delete(delete_vector))
+        .route(
+            "/v1/collections/{name}/vectors/{id}",
+            delete(delete_vector),
+        )
         .route("/v1/collections/{name}/query", post(query_collection))
         .route("/admin/backup", get(admin_backup))
         .route("/admin/restore", post(admin_restore))
@@ -651,7 +658,8 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
     let drain = Arc::new(server_lifecycle::DrainController::new());
 
     let probes = service_http::standard_probe_routes(
-        drain, None, // metrics provider
+        drain,
+        None, // metrics provider
         openapi,
     );
 

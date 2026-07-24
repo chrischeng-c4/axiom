@@ -82,18 +82,19 @@ impl GpuIvfScanner {
         let adc_pipeline = compute_pipeline(&device, &shader, &adc_layout, "adc", "beam_ivfpq_adc");
 
         // Cell-tiled shared-memory ADC kernel: bindings 10..16.
-        let adc_shared_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("beam_ivfpq_adc_shared_bgl"),
-            entries: &[
-                storage_entry(10, true),  // tables
-                storage_entry(11, true),  // codes
-                storage_entry(12, true),  // tile_slot
-                storage_entry(13, true),  // tile_base
-                storage_entry(14, true),  // tile_len
-                uniform_entry(15),        // params
-                storage_entry(16, false), // out
-            ],
-        });
+        let adc_shared_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("beam_ivfpq_adc_shared_bgl"),
+                entries: &[
+                    storage_entry(10, true),  // tables
+                    storage_entry(11, true),  // codes
+                    storage_entry(12, true),  // tile_slot
+                    storage_entry(13, true),  // tile_base
+                    storage_entry(14, true),  // tile_len
+                    uniform_entry(15),        // params
+                    storage_entry(16, false), // out
+                ],
+            });
         let adc_shared_pipeline = compute_pipeline(
             &device,
             &shader,

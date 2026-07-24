@@ -56,17 +56,12 @@ Public API manifest for `apps/vat/src/cluster.rs` generated from AST during Scor
 //! panicking.
 
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
 use crate::config::ClusterBackend;
-
-const CLUSTER_DELETE_TIMEOUT: Duration = Duration::from_secs(30);
-const COMMAND_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A concrete cluster backend resolved against the host.
 /// @spec apps/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic
@@ -217,7 +212,7 @@ impl ResolvedBackend {
 
     /// Delete the cluster via the backend CLI.
     pub fn delete(self, name: &str) -> Result<()> {
-        let cmd = match self {
+        let mut cmd = match self {
             Self::Kind => {
                 let mut c = Command::new("kind");
                 c.args(["delete", "cluster", "--name", name]);
@@ -234,11 +229,15 @@ impl ResolvedBackend {
                 c
             }
         };
-        run_capture(
-            cmd,
-            CLUSTER_DELETE_TIMEOUT,
-            &format!("{} delete cluster `{name}`", self.name()),
-        )
+        let status = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .with_context(|| format!("{} delete cluster", self.name()))?;
+        if !status.success() {
+            bail!("{} failed to delete cluster `{name}`", self.name());
+        }
+        Ok(())
     }
 
     /// List cluster names this backend currently owns.
@@ -443,15 +442,12 @@ fn kind_multinode_config(nodes: u32) -> String {
 /// child is killed on overrun. stdout/stderr go to null to avoid pipe
 /// deadlocks on long-running creates.
 fn run_capture(mut cmd: Command, timeout: Duration, what: &str) -> Result<()> {
-    #[cfg(unix)]
-    cmd.process_group(0);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .with_context(|| format!("spawn {what}"))?;
-    let owned_pgid = child.id();
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait()? {
@@ -461,51 +457,12 @@ fn run_capture(mut cmd: Command, timeout: Duration, what: &str) -> Result<()> {
             bail!("{what} failed with {:?}", status.code());
         }
         if Instant::now() >= deadline {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(owned_pgid as i32), libc::SIGKILL);
-            }
-            #[cfg(not(unix))]
             let _ = child.kill();
-            let reap_deadline = Instant::now() + COMMAND_REAP_TIMEOUT;
-            let mut leader_reaped = false;
-            loop {
-                if !leader_reaped {
-                    leader_reaped = child.try_wait()?.is_some();
-                }
-                if leader_reaped && command_group_confirmed_absent(owned_pgid)? {
-                    bail!("{what} timed out after {}s", timeout.as_secs());
-                }
-                if Instant::now() >= reap_deadline {
-                    bail!(
-                        "{what} timed out after {}s and owned process-group absence was not confirmed within {}s",
-                        timeout.as_secs(),
-                        COMMAND_REAP_TIMEOUT.as_secs()
-                    );
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            let _ = child.wait();
+            bail!("{what} timed out after {}s", timeout.as_secs());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-}
-
-#[cfg(unix)]
-fn command_group_confirmed_absent(pgid: u32) -> Result<bool> {
-    let result = unsafe { libc::kill(-(pgid as i32), 0) };
-    if result == 0 {
-        return Ok(false);
-    }
-    match std::io::Error::last_os_error().raw_os_error() {
-        Some(libc::ESRCH) => Ok(true),
-        Some(libc::EPERM) => Ok(false),
-        code => bail!("probe owned process group {pgid} absence failed with {code:?}"),
-    }
-}
-
-#[cfg(not(unix))]
-fn command_group_confirmed_absent(_pgid: u32) -> Result<bool> {
-    Ok(true)
 }
 
 /// Whether the Docker daemon answers — every backend needs it on macOS.
@@ -584,42 +541,6 @@ mod tests {
         let cfg = kind_multinode_config(3);
         assert!(cfg.contains("control-plane"));
         assert_eq!(cfg.matches("role: worker").count(), 2);
-    }
-
-    #[test]
-    fn captured_command_timeout_is_bounded() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let leader_marker = temp.path().join("leader.pid");
-        let descendant_marker = temp.path().join("descendant.pid");
-        let mut command = Command::new("/bin/sh");
-        command
-            .env("LEADER_MARKER", &leader_marker)
-            .env("DESCENDANT_MARKER", &descendant_marker)
-            .args([
-                "-c",
-                "echo $$ > \"$LEADER_MARKER\"; /bin/sh -c 'trap : TERM; echo $$ > \"$DESCENDANT_MARKER\"; while :; do sleep 1; done' & trap : TERM; while :; do sleep 1; done",
-            ]);
-        let started = Instant::now();
-        let error = run_capture(
-            command,
-            Duration::from_millis(20),
-            "injected cluster cleanup",
-        )
-        .expect_err("command must time out");
-        assert!(error.to_string().contains("timed out"));
-        assert!(started.elapsed() < Duration::from_secs(2));
-        for marker in [leader_marker, descendant_marker] {
-            let pid = std::fs::read_to_string(&marker)
-                .unwrap_or_else(|error| panic!("read {}: {error}", marker.display()))
-                .trim()
-                .parse::<i32>()
-                .expect("fixture pid");
-            assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "pid {pid} survived");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::ESRCH)
-            );
-        }
     }
 }
 ````

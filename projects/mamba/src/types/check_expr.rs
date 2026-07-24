@@ -1562,9 +1562,7 @@ impl TypeChecker {
             }
         };
         if let Some((symbol, widened_ty)) = self_ref_widen {
-            self.truncate_errors(
-                self_ref_errors_mark.expect("mark taken alongside self_ref_widen"),
-            );
+            self.truncate_errors(self_ref_errors_mark.expect("mark taken alongside self_ref_widen"));
             self.set_sym_type(symbol.0, widened_ty);
         }
         ty
@@ -1608,9 +1606,9 @@ impl TypeChecker {
             // literal container that merely carries the receiver as one of
             // its elements is just as self-referential as `.extend(cyclic)`
             // itself.
-            Expr::ListLit(elems) | Expr::TupleLit(elems) if attr.as_str() == "extend" => elems
-                .iter()
-                .any(|e| matches!(&e.node, Expr::Ident(n) if n == name)),
+            Expr::ListLit(elems) | Expr::TupleLit(elems) if attr.as_str() == "extend" => {
+                elems.iter().any(|e| matches!(&e.node, Expr::Ident(n) if n == name))
+            }
             _ => false,
         };
         if !is_self_ref {
@@ -1623,7 +1621,9 @@ impl TypeChecker {
             ("append" | "insert" | "extend", Ty::List(elem)) if elem != any => {
                 Some((symbol, self.tcx.intern(Ty::List(any))))
             }
-            ("add", Ty::Set(elem)) if elem != any => Some((symbol, self.tcx.intern(Ty::Set(any)))),
+            ("add", Ty::Set(elem)) if elem != any => {
+                Some((symbol, self.tcx.intern(Ty::Set(any))))
+            }
             _ => None,
         }
     }
@@ -2490,8 +2490,10 @@ impl TypeChecker {
                 external: Some(receiver),
                 ..
             } => {
-                let (module, qualifier, name) =
-                    Self::structured_stdlib_constructor(&receiver.module, &receiver.name)?;
+                let (module, qualifier, name) = Self::structured_stdlib_constructor(
+                    &receiver.module,
+                    &receiver.name,
+                )?;
                 // #1628: this is the path actually taken for a class-object
                 // call bound to a plain identifier (`NamedTuple(...)`) — the
                 // `constructor_result_receiver` skip must apply here too, or
@@ -2575,26 +2577,28 @@ impl TypeChecker {
                             receiver: None,
                         })
                     } else {
-                        Self::structured_stdlib_constructor(module, member).map(
-                            |(owner_module, owner_qualifier, constructor)| {
-                                let receiver = Self::constructor_result_receiver(
-                                    &owner_module,
-                                    &owner_qualifier,
-                                    ExternalClass {
-                                        module: module.clone(),
-                                        name: member.to_string(),
-                                        args: Vec::new(),
-                                    },
-                                );
-                                ResolvedStdlibSpecCall {
-                                    module: owner_module,
-                                    qualifier: owner_qualifier,
-                                    name: constructor.to_string(),
-                                    access: StdlibSpecAccess::Constructor,
-                                    receiver,
-                                }
-                            },
-                        )
+                        Self::structured_stdlib_constructor(module, member).map(|(
+                            owner_module,
+                            owner_qualifier,
+                            constructor,
+                        )| {
+                            let receiver = Self::constructor_result_receiver(
+                                &owner_module,
+                                &owner_qualifier,
+                                ExternalClass {
+                                    module: module.clone(),
+                                    name: member.to_string(),
+                                    args: Vec::new(),
+                                },
+                            );
+                            ResolvedStdlibSpecCall {
+                                module: owner_module,
+                                qualifier: owner_qualifier,
+                                name: constructor.to_string(),
+                                access: StdlibSpecAccess::Constructor,
+                                receiver,
+                            }
+                        })
                     }
                 })
                 .or_else(|| {
@@ -4570,11 +4574,7 @@ impl TypeChecker {
                 }
             }
             return Some(target.receiver.as_ref().map(|receiver| {
-                self.external_class_instance(
-                    &receiver.module,
-                    &receiver.name,
-                    receiver.args.clone(),
-                )
+                self.external_class_instance(&receiver.module, &receiver.name, receiver.args.clone())
             }));
         }
         let constructor_result = if target.access == StdlibSpecAccess::Constructor {

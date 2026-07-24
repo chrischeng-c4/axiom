@@ -11,10 +11,10 @@
 //! with that private helper: `commands::run::tests::
 //! gpu_satisfied_rejects_microvm_required_before_workspace_clone`.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use vat::sandbox;
 use vat::spec::{EgressPolicy, EnvSpec, GpuRequest, Isolation};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[test]
 fn gpu_required_rejected() {
@@ -31,17 +31,10 @@ fn gpu_required_rejected() {
     };
 
     let result = sandbox::pick(&spec);
-    assert!(
-        result.is_err(),
-        "pick() should reject GPU required with MicroVm"
-    );
+    assert!(result.is_err(), "pick() should reject GPU required with MicroVm");
     match result {
         Err(err) => {
-            assert!(
-                err.contains("micro_vm"),
-                "error must mention isolation mode: {}",
-                err
-            );
+            assert!(err.contains("micro_vm"), "error must mention isolation mode: {}", err);
             assert!(err.contains("gpu"), "error must mention GPU: {}", err);
         }
         Ok(_) => panic!("pick() should have returned an error"),
@@ -63,10 +56,7 @@ fn missing_image_rejected() {
     };
 
     let result = sandbox::pick(&spec);
-    assert!(
-        result.is_err(),
-        "pick() should reject missing microvm_image"
-    );
+    assert!(result.is_err(), "pick() should reject missing microvm_image");
     match result {
         Err(err) => {
             assert!(
@@ -94,10 +84,7 @@ fn localhost_only_rejected_with_gateway_reasoning() {
     };
 
     let result = sandbox::pick(&spec);
-    assert!(
-        result.is_err(),
-        "pick() should reject LocalhostOnly with MicroVm"
-    );
+    assert!(result.is_err(), "pick() should reject LocalhostOnly with MicroVm");
     match result {
         Err(err) => {
             // Per Phase 0 spike #1472: gateway IP messaging, not generic "no bridge"
@@ -133,10 +120,7 @@ fn container_unavailable_rejected() {
     };
 
     let result = sandbox::pick(&spec);
-    assert!(
-        result.is_err(),
-        "pick() should reject when container unavailable"
-    );
+    assert!(result.is_err(), "pick() should reject when container unavailable");
     match result {
         Err(err) => {
             assert!(

@@ -58,18 +58,6 @@ pub struct RunRecord {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
-    /// Signal observed by VAT even when cleanup failed and the top-level
-    /// terminal state therefore cannot truthfully be `Interrupted`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signal: Option<i32>,
-    /// Owned process-group id only while the direct child leader remains
-    /// unreaped and pins that numeric identity. Never persisted after reap.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owned_pgid: Option<u32>,
-    /// Direct-mode process-group cleanup diagnosis. A non-empty value is an
-    /// active retention obligation and blocks GC even with `--include-failed`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cleanup_error: Option<String>,
 }
 
 /// Persisted, on-disk record of a vat. Stored as `meta.json`.
@@ -156,11 +144,6 @@ pub struct ServiceRunRecord {
     /// failed teardown remains retryable after the VAT process exits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_name: Option<String>,
-    /// Immutable full Docker container ID captured from bounded `docker create`
-    /// stdout before `docker start --attach`. Cleanup authority requires this
-    /// ID in addition to `docker_name`; a name alone can name a replacement.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub docker_id: Option<String>,
     /// VAT-owned Apple `container` name for a MicroVM-backed service. Kept so
     /// terminal readiness evidence identifies the exact resource cleanup owns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -288,11 +271,6 @@ pub struct TestRunEvidence {
     pub runners: Vec<RunnerRunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
-    /// Cleanup failure for a run-owned auxiliary process that is neither a
-    /// service nor a runner (currently setup commands). Non-empty means the
-    /// VAT must be retained for diagnosis and must not be garbage-collected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cleanup_error: Option<String>,
     /// Opaque upstream execution plan attached with `vat run --plan`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<PlanEvidence>,

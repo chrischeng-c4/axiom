@@ -24,12 +24,7 @@ fn r1_workspace_crate_has_lib_and_bin() {
     assert_eq!(beam::not_implemented("x"), "not implemented yet: x");
     assert!(beam::LUMEN_BOUNDARY.contains("Lumen"));
     // The binary runs at all (bin target built).
-    assert!(beam()
-        .arg("--help")
-        .output()
-        .expect("run beam --help")
-        .status
-        .success());
+    assert!(beam().arg("--help").output().expect("run beam --help").status.success());
 }
 
 /// R2: `beam --help` lists the standard convention verbs.
@@ -37,10 +32,7 @@ fn r1_workspace_crate_has_lib_and_bin() {
 fn r2_help_lists_standard_verbs() {
     let help = stdout_of(&["--help"]);
     for verb in ["llm", "upgrade", "issue"] {
-        assert!(
-            help.contains(verb),
-            "help missing standard verb `{verb}`:\n{help}"
-        );
+        assert!(help.contains(verb), "help missing standard verb `{verb}`:\n{help}");
     }
 }
 
@@ -49,31 +41,13 @@ fn r2_help_lists_standard_verbs() {
 #[test]
 fn r3_service_verbs_are_implemented() {
     let help = stdout_of(&["--help"]);
-    for verb in [
-        "serve",
-        "query",
-        "dockerfile",
-        "k8s",
-        "connect",
-        "backup",
-        "spec",
-    ] {
-        assert!(
-            help.contains(verb),
-            "help missing service verb `{verb}`:\n{help}"
-        );
+    for verb in ["serve", "query", "dockerfile", "k8s", "connect", "backup", "spec"] {
+        assert!(help.contains(verb), "help missing service verb `{verb}`:\n{help}");
     }
 
     for verb in ["query", "dockerfile", "k8s"] {
-        let out = beam()
-            .arg(verb)
-            .arg("--help")
-            .output()
-            .expect("run service verb help");
-        assert!(
-            out.status.success(),
-            "`beam {verb} --help` should exit successfully"
-        );
+        let out = beam().arg(verb).arg("--help").output().expect("run service verb help");
+        assert!(out.status.success(), "`beam {verb} --help` should exit successfully");
     }
 }
 
@@ -82,23 +56,14 @@ fn r3_service_verbs_are_implemented() {
 #[test]
 fn r4_llm_outline_states_beam_and_lumen_boundary() {
     let outline = stdout_of(&["llm", "--topic", "outline"]);
-    assert!(
-        outline.contains("vector"),
-        "outline should name Beam a vector DB:\n{outline}"
-    );
-    assert!(
-        outline.contains("Lumen"),
-        "outline should name the Lumen boundary:\n{outline}"
-    );
+    assert!(outline.contains("vector"), "outline should name Beam a vector DB:\n{outline}");
+    assert!(outline.contains("Lumen"), "outline should name the Lumen boundary:\n{outline}");
     assert!(
         outline.contains("mixed search"),
         "outline should state Lumen owns mixed search:\n{outline}"
     );
     for owned in ["ranking", "dedup"] {
-        assert!(
-            outline.contains(owned),
-            "outline should mention Lumen owns `{owned}`:\n{outline}"
-        );
+        assert!(outline.contains(owned), "outline should mention Lumen owns `{owned}`:\n{outline}");
     }
 }
 
@@ -106,14 +71,7 @@ fn r4_llm_outline_states_beam_and_lumen_boundary() {
 /// preview surfaces the derived labels without any network access).
 #[test]
 fn r5_issue_is_project_beam_scoped() {
-    let preview = stdout_of(&[
-        "issue",
-        "create",
-        "--dry-run",
-        "--title",
-        "beam: probe",
-        "hello",
-    ]);
+    let preview = stdout_of(&["issue", "create", "--dry-run", "--title", "beam: probe", "hello"]);
     assert!(
         preview.contains("project:beam"),
         "issue create should be scoped project:beam:\n{preview}"
@@ -126,12 +84,6 @@ fn r5_issue_is_project_beam_scoped() {
 #[test]
 fn r6_architecture_topic_names_gpu_engine() {
     let arch = stdout_of(&["llm", "--topic", "architecture"]);
-    assert!(
-        arch.contains("wgpu"),
-        "architecture topic must name the wgpu backend"
-    );
-    assert!(
-        arch.contains("Metal"),
-        "architecture topic must name the Metal (Apple) backend"
-    );
+    assert!(arch.contains("wgpu"), "architecture topic must name the wgpu backend");
+    assert!(arch.contains("Metal"), "architecture topic must name the Metal (Apple) backend");
 }

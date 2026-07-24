@@ -46,11 +46,7 @@ async fn service_end_to_end() {
     // GPU flat path when a GPU is reachable (this Mac / Metal), else the CPU flat
     // oracle — the graceful GPU-or-CPU choice, identical results.
     let gpu = beam::gpu::GpuContext::new().map(Arc::new);
-    let query_path = if gpu.is_some() {
-        "GPU flat"
-    } else {
-        "CPU flat oracle"
-    };
+    let query_path = if gpu.is_some() { "GPU flat" } else { "CPU flat oracle" };
     eprintln!("beam service test: query path = {query_path}");
 
     let app = beam::service::router(gpu);
@@ -64,21 +60,11 @@ async fn service_end_to_end() {
 
     // 1. Health/readiness probes → 200.
     assert_eq!(
-        client
-            .get(format!("{base}/healthz"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        client.get(format!("{base}/healthz")).send().await.unwrap().status(),
         200
     );
     assert_eq!(
-        client
-            .get(format!("{base}/readyz"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        client.get(format!("{base}/readyz")).send().await.unwrap().status(),
         200
     );
 
@@ -146,14 +132,8 @@ async fn service_end_to_end() {
     assert_eq!(ns.len(), 2);
     assert_eq!(ns[0]["id"], "a");
     assert_eq!(ns[1]["id"], "b");
-    let (s0, s1) = (
-        ns[0]["score"].as_f64().unwrap(),
-        ns[1]["score"].as_f64().unwrap(),
-    );
-    assert!(
-        s0 < s1,
-        "L2 scores must be ascending (smaller = nearer): {s0} !< {s1}"
-    );
+    let (s0, s1) = (ns[0]["score"].as_f64().unwrap(), ns[1]["score"].as_f64().unwrap());
+    assert!(s0 < s1, "L2 scores must be ascending (smaller = nearer): {s0} !< {s1}");
     // Payload round-trips on the returned neighbor.
     assert_eq!(ns[0]["payload"]["category"], 1);
     assert_eq!(ns[0]["payload"]["lang"], "en");
@@ -178,10 +158,7 @@ async fn service_end_to_end() {
     assert_eq!(nf[0]["id"], "b");
     assert_eq!(nf[1]["id"], "d");
     assert!(nf.iter().all(|n| n["payload"]["category"] == 2));
-    assert!(
-        nf.iter().all(|n| n["id"] != "a"),
-        "filtered-out `a` must be absent"
-    );
+    assert!(nf.iter().all(|n| n["id"] != "a"), "filtered-out `a` must be absent");
 
     // 3b. Range filter over an integer attribute.
     let qr: Value = client
@@ -222,10 +199,7 @@ async fn service_end_to_end() {
     assert_eq!(nd.len(), 2);
     assert_eq!(nd[0]["id"], "b", "b is nearest once a is deleted");
     assert_eq!(nd[1]["id"], "c");
-    assert!(
-        nd.iter().all(|n| n["id"] != "a"),
-        "deleted `a` must not appear"
-    );
+    assert!(nd.iter().all(|n| n["id"] != "a"), "deleted `a` must not appear");
 
     // 5. Error cases.
     // Wrong query dim → 400.
@@ -266,12 +240,7 @@ async fn service_end_to_end() {
 
     // Drop the collection, verify listing is empty, then restore and verify it returns.
     assert_eq!(
-        client
-            .delete(format!("{base}/v1/collections/docs"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
         200
     );
     let list_empty: Value = client
@@ -307,21 +276,11 @@ async fn service_end_to_end() {
 
     // Drop the collection → 200, and dropping again → 404.
     assert_eq!(
-        client
-            .delete(format!("{base}/v1/collections/docs"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
         200
     );
     assert_eq!(
-        client
-            .delete(format!("{base}/v1/collections/docs"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
         404
     );
 

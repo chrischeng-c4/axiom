@@ -45,15 +45,8 @@ const TRAIN_SEED: u64 = 0xF117_E022;
 
 /// The shared clustered L2 corpus with deterministic per-row payloads.
 fn corpus_with_payloads() -> Collection {
-    let mut c = dataset::clustered_collection(
-        "filt",
-        N,
-        DIM,
-        Metric::L2,
-        NUM_CLUSTERS,
-        JITTER,
-        CORPUS_SEED,
-    );
+    let mut c =
+        dataset::clustered_collection("filt", N, DIM, Metric::L2, NUM_CLUSTERS, JITTER, CORPUS_SEED);
     for i in 0..c.len() {
         c.set_payload(
             i,
@@ -86,10 +79,7 @@ fn ivf_config() -> IvfPqConfig {
 fn test_filters() -> Vec<(&'static str, Filter)> {
     vec![
         ("category == 3", Filter::new().eq("category", 3i64)),
-        (
-            "20 <= bucket <= 40",
-            Filter::new().int_range("bucket", 20, 40),
-        ),
+        ("20 <= bucket <= 40", Filter::new().int_range("bucket", 20, 40)),
     ]
 }
 
@@ -160,11 +150,7 @@ fn filtered_flat_gpu_matches_cpu_oracle() {
             let cpu_res = cpu.search_knn_filtered(q, K, &filter);
             let gpu_res = gpu_index.search_knn_filtered(q, K, &filter);
             let ctx = format!("flat [{name}]");
-            assert_eq!(
-                cpu_res.len(),
-                K,
-                "{ctx}: oracle should fill k (filter matches >> k)"
-            );
+            assert_eq!(cpu_res.len(), K, "{ctx}: oracle should fill k (filter matches >> k)");
             assert_same_topk(&cpu_res, &gpu_res, &ctx);
             assert_all_match(&corpus, &gpu_res, &filter, &ctx);
         }
@@ -191,18 +177,12 @@ fn filtered_ivf_gpu_matches_cpu_oracle() {
             let cpu_res = oracle.search_knn_filtered(q, K, &filter);
             let gpu_res = scanner.search_filtered(&index, q, K, nprobe, &filter);
             let ctx = format!("ivf [{name}]");
-            assert_eq!(
-                cpu_res.len(),
-                K,
-                "{ctx}: oracle should fill k (filter matches >> k)"
-            );
+            assert_eq!(cpu_res.len(), K, "{ctx}: oracle should fill k (filter matches >> k)");
             assert_same_topk(&cpu_res, &gpu_res, &ctx);
             assert_all_match(&corpus, &gpu_res, &filter, &ctx);
         }
     }
-    eprintln!(
-        "  filtered IVF (Flat, full probe) GPU == filtered flat oracle for all queries + filters"
-    );
+    eprintln!("  filtered IVF (Flat, full probe) GPU == filtered flat oracle for all queries + filters");
 }
 
 /// (2) The filter actually restricts: every filtered neighbor satisfies the
@@ -276,28 +256,19 @@ fn selectivity_edge_cases() {
             "{name}: a filter matching 6 rows must return exactly 6 (not k={K}), got {}",
             res.len()
         );
-        assert_eq!(
-            row_set(res),
-            expected,
-            "{name}: must return exactly rows 0..=5"
-        );
+        assert_eq!(row_set(res), expected, "{name}: must return exactly rows 0..=5");
         assert_all_match(&corpus, res, &few, name);
     }
 
     // --- Zero matches: no row has category 42. ---
     let none = Filter::new().eq("category", 42i64);
-    assert!(
-        cpu.search_knn_filtered(q, K, &none).is_empty(),
-        "cpu: 0-match filter must be empty"
-    );
+    assert!(cpu.search_knn_filtered(q, K, &none).is_empty(), "cpu: 0-match filter must be empty");
     assert!(
         gpu_index.search_knn_filtered(q, K, &none).is_empty(),
         "gpu-flat: 0-match filter must be empty"
     );
     assert!(
-        scanner
-            .search_filtered(&index, q, K, nprobe, &none)
-            .is_empty(),
+        scanner.search_filtered(&index, q, K, nprobe, &none).is_empty(),
         "ivf: 0-match filter must be empty"
     );
     eprintln!("  selectivity edges: <k returns exact matches (6), 0-match returns empty");

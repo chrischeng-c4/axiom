@@ -449,14 +449,14 @@ impl CraneliftJitBackend {
             }
             hidden_sig
                 .returns
-                .push(AbiParam::new(Self::mamba_to_cl_type(
-                    tcx.get(body.return_ty),
-                )));
+                .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(body.return_ty))));
             let hidden_name = format!("_mb_{}_h", body.name.0);
             let hidden_id = self
                 .module()
                 .declare_function(&hidden_name, Linkage::Local, &hidden_sig)
-                .map_err(|e| crate::error::MambaError::codegen(format!("declare hidden: {e}")))?;
+                .map_err(|e| {
+                    crate::error::MambaError::codegen(format!("declare hidden: {e}"))
+                })?;
             self.internal_hidden_funcs.insert(body.name.0, hidden_id);
         }
         Ok(func_id)
@@ -789,7 +789,9 @@ impl CraneliftJitBackend {
         let mut ctx = cranelift_codegen::Context::for_function(func);
         self.module()
             .define_function(func_id, &mut ctx)
-            .map_err(|e| crate::error::MambaError::codegen(format!("define trampoline: {e}")))?;
+            .map_err(|e| {
+                crate::error::MambaError::codegen(format!("define trampoline: {e}"))
+            })?;
         Ok(())
     }
 
@@ -2886,35 +2888,34 @@ impl CraneliftJitBackend {
                     let depth_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 0);
                     let limit_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 8);
                     Some((depth_ptr, limit_ptr))
-                } else if let Some(&state_ptr_id) = self.extern_funcs.get("mb_recursion_state_ptr")
-                {
-                    let state_ptr_ref = self
-                        .module()
-                        .declare_func_in_func(state_ptr_id, builder.func);
-                    let state_ptr_call = builder.ins().call(state_ptr_ref, &[]);
-                    let state_ptr = builder.inst_results(state_ptr_call)[0];
-                    let depth_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 0);
-                    let limit_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 8);
-                    Some((depth_ptr, limit_ptr))
-                } else if let (Some(&depth_ptr_id), Some(&limit_ptr_id)) = (
-                    self.extern_funcs.get("mb_recursion_depth_ptr"),
-                    self.extern_funcs.get("mb_recursion_limit_ptr"),
-                ) {
-                    let depth_ptr_ref = self
-                        .module()
-                        .declare_func_in_func(depth_ptr_id, builder.func);
-                    let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
-                    let depth_ptr = builder.inst_results(depth_ptr_call)[0];
+                } else if let Some(&state_ptr_id) = self.extern_funcs.get("mb_recursion_state_ptr") {
+                        let state_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(state_ptr_id, builder.func);
+                        let state_ptr_call = builder.ins().call(state_ptr_ref, &[]);
+                        let state_ptr = builder.inst_results(state_ptr_call)[0];
+                        let depth_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 0);
+                        let limit_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 8);
+                        Some((depth_ptr, limit_ptr))
+                    } else if let (Some(&depth_ptr_id), Some(&limit_ptr_id)) = (
+                        self.extern_funcs.get("mb_recursion_depth_ptr"),
+                        self.extern_funcs.get("mb_recursion_limit_ptr"),
+                    ) {
+                        let depth_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(depth_ptr_id, builder.func);
+                        let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
+                        let depth_ptr = builder.inst_results(depth_ptr_call)[0];
 
-                    let limit_ptr_ref = self
-                        .module()
-                        .declare_func_in_func(limit_ptr_id, builder.func);
-                    let limit_ptr_call = builder.ins().call(limit_ptr_ref, &[]);
-                    let limit_ptr = builder.inst_results(limit_ptr_call)[0];
-                    Some((depth_ptr, limit_ptr))
-                } else {
-                    None
-                };
+                        let limit_ptr_ref = self
+                            .module()
+                            .declare_func_in_func(limit_ptr_id, builder.func);
+                        let limit_ptr_call = builder.ins().call(limit_ptr_ref, &[]);
+                        let limit_ptr = builder.inst_results(limit_ptr_call)[0];
+                        Some((depth_ptr, limit_ptr))
+                    } else {
+                        None
+                    };
 
                 if let Some((depth_ptr, limit_ptr)) = ptrs {
                     vars.recursion_depth_ptr = Some(depth_ptr);

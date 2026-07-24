@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 const REPO: &str = "chrischeng-c4/axiom";
 
@@ -32,7 +32,9 @@ pub fn normalize_selector(version: Option<&str>) -> Result<Option<String>> {
     {
         return Ok(Some(version.to_string()));
     }
-    bail!("lumen preset version must be an exact `lumen@<version>` release tag; got `{version}`")
+    bail!(
+        "lumen preset version must be an exact `lumen@<version>` release tag; got `{version}`"
+    )
 }
 
 pub fn target() -> Result<&'static str> {
@@ -63,18 +65,10 @@ pub fn resolve(version: Option<&str>) -> Result<ResolvedLumen> {
     };
     let binary = cached_binary(&tag, target)?;
     if executable(&binary) {
-        return Ok(ResolvedLumen {
-            tag,
-            executable: binary,
-            cache_hit: true,
-        });
+        return Ok(ResolvedLumen { tag, executable: binary, cache_hit: true });
     }
     materialize(&tag, target, &binary)?;
-    Ok(ResolvedLumen {
-        tag,
-        executable: binary,
-        cache_hit: false,
-    })
+    Ok(ResolvedLumen { tag, executable: binary, cache_hit: false })
 }
 
 fn release_base() -> String {
@@ -90,14 +84,10 @@ fn materialize(requested_tag: &str, target: &str, binary: &Path) -> Result<()> {
     if executable(&binary) {
         return Ok(());
     }
-    let parent = binary
-        .parent()
-        .context("lumen cache binary has no parent")?;
+    let parent = binary.parent().context("lumen cache binary has no parent")?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     let tmp = parent.join(format!(".download-{}", std::process::id()));
-    if tmp.exists() {
-        fs::remove_dir_all(&tmp).ok();
-    }
+    if tmp.exists() { fs::remove_dir_all(&tmp).ok(); }
     fs::create_dir_all(&tmp)?;
     let archive = tmp.join(format!("lumen-{target}.tar.gz"));
     let asset = format!("lumen-{target}.tar.gz");
@@ -105,119 +95,52 @@ fn materialize(requested_tag: &str, target: &str, binary: &Path) -> Result<()> {
     curl_to(&url, &archive)?;
     verify_optional_checksum(&url, &archive)?;
     let status = Command::new("tar")
-        .arg("-C")
-        .arg(&tmp)
-        .arg("-xzf")
-        .arg(&archive)
-        .status()
-        .context("start tar for Lumen release archive")?;
-    if !status.success() {
-        bail!("extract Lumen release archive `{url}` failed with {status}");
-    }
+        .arg("-C").arg(&tmp).arg("-xzf").arg(&archive)
+        .status().context("start tar for Lumen release archive")?;
+    if !status.success() { bail!("extract Lumen release archive `{url}` failed with {status}"); }
     let extracted = tmp.join(format!("lumen-{target}")).join("lumen");
-    if !executable(&extracted) {
-        bail!("Lumen release archive `{url}` did not contain lumen-{target}/lumen");
-    }
+    if !executable(&extracted) { bail!("Lumen release archive `{url}` did not contain lumen-{target}/lumen"); }
     let staged = parent.join(format!(".lumen-{}", std::process::id()));
     fs::copy(&extracted, &staged).with_context(|| format!("copy {}", extracted.display()))?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
-    }
+    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?; }
     fs::rename(&staged, &binary).with_context(|| format!("promote {}", binary.display()))?;
     fs::remove_dir_all(&tmp).ok();
     Ok(())
 }
 
 fn discover_latest() -> Result<String> {
-    let url = format!(
-        "{}/releases?per_page=100",
-        release_base().replace("github.com/", "api.github.com/repos/")
-    );
+    let url = format!("{}/releases?per_page=100", release_base().replace("github.com/", "api.github.com/repos/"));
     let output = curl_stdout(&url)?;
-    let releases: serde_json::Value =
-        serde_json::from_slice(&output).context("parse Lumen release list")?;
-    releases
-        .as_array()
-        .and_then(|items| {
-            items.iter().find_map(|release| {
-                release
-                    .get("tag_name")
-                    .and_then(|tag| tag.as_str())
-                    .filter(|tag| tag.starts_with("lumen@"))
-                    .map(str::to_owned)
-            })
-        })
+    let releases: serde_json::Value = serde_json::from_slice(&output).context("parse Lumen release list")?;
+    releases.as_array().and_then(|items| items.iter().find_map(|release| release.get("tag_name").and_then(|tag| tag.as_str()).filter(|tag| tag.starts_with("lumen@")).map(str::to_owned)))
         .context("no lumen@ release found while resolving latest")
 }
 
 fn curl_to(url: &str, path: &Path) -> Result<()> {
-    let status = Command::new("curl")
-        .args(["-fsSL", url, "-o"])
-        .arg(path)
-        .status()
-        .context("start curl for Lumen release")?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("download Lumen release asset `{url}` failed with {status}")
-    }
+    let status = Command::new("curl").args(["-fsSL", url, "-o"]).arg(path).status().context("start curl for Lumen release")?;
+    if status.success() { Ok(()) } else { bail!("download Lumen release asset `{url}` failed with {status}") }
 }
 
 fn curl_stdout(url: &str) -> Result<Vec<u8>> {
-    let output = Command::new("curl")
-        .args(["-fsSL", url])
-        .output()
-        .context("start curl for Lumen release metadata")?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        bail!(
-            "download Lumen release metadata `{url}` failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    }
+    let output = Command::new("curl").args(["-fsSL", url]).output().context("start curl for Lumen release metadata")?;
+    if output.status.success() { Ok(output.stdout) } else { bail!("download Lumen release metadata `{url}` failed: {}", String::from_utf8_lossy(&output.stderr)) }
 }
 
 fn verify_optional_checksum(asset_url: &str, archive: &Path) -> Result<()> {
     let checksum = archive.with_extension("tar.gz.sha256");
     let sha_url = format!("{asset_url}.sha256");
-    let status = Command::new("curl")
-        .args(["-fsSL", &sha_url, "-o"])
-        .arg(&checksum)
-        .status()
-        .context("start curl for Lumen checksum")?;
-    if !status.success() {
-        return Ok(());
-    }
-    let expected = fs::read_to_string(&checksum)?
-        .split_whitespace()
-        .next()
-        .context("empty Lumen checksum")?
-        .to_string();
-    let output = Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(archive)
-        .output()
-        .context("start shasum for Lumen archive")?;
-    if !output.status.success() {
-        bail!("sha256 verification for {} failed", archive.display());
-    }
-    let actual = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_string();
-    if actual != expected {
-        bail!("Lumen archive checksum mismatch: expected {expected}, got {actual}");
-    }
+    let status = Command::new("curl").args(["-fsSL", &sha_url, "-o"]).arg(&checksum).status().context("start curl for Lumen checksum")?;
+    if !status.success() { return Ok(()); }
+    let expected = fs::read_to_string(&checksum)?.split_whitespace().next().context("empty Lumen checksum")?.to_string();
+    let output = Command::new("shasum").args(["-a", "256"]).arg(archive).output().context("start shasum for Lumen archive")?;
+    if !output.status.success() { bail!("sha256 verification for {} failed", archive.display()); }
+    let actual = String::from_utf8_lossy(&output.stdout).split_whitespace().next().unwrap_or_default().to_string();
+    if actual != expected { bail!("Lumen archive checksum mismatch: expected {expected}, got {actual}"); }
     Ok(())
 }
 
-fn executable(path: &Path) -> bool {
-    path.is_file()
-}
+fn executable(path: &Path) -> bool { path.is_file() }
 
 #[cfg(test)]
 mod tests {
@@ -225,10 +148,7 @@ mod tests {
     #[test]
     fn selector_requires_lumen_release_tag() {
         assert_eq!(normalize_selector(None).unwrap(), None);
-        assert_eq!(
-            normalize_selector(Some("lumen@0.4.21")).unwrap(),
-            Some("lumen@0.4.21".into())
-        );
+        assert_eq!(normalize_selector(Some("lumen@0.4.21")).unwrap(), Some("lumen@0.4.21".into()));
         assert!(normalize_selector(Some("0.4.21")).is_err());
         assert!(normalize_selector(Some("latest")).is_err());
     }
