@@ -34,6 +34,7 @@ fn spec(shard_count: u32, replicas: u32) -> KeepSpec {
         grace_secs: 30,
         storage: "10Gi".into(),
         storage_class: None,
+        body_limit_bytes: 16 * 1024 * 1024,
         backup: None,
     }
 }
