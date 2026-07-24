@@ -46,7 +46,7 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in production_journey.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2502" reason="logic section in production_journey.rs is hand-written pending codegen support">
 fn evidence_root() -> PathBuf {
     if std::env::var_os("WORKBENCH_REFRESH_EVIDENCE").as_deref()
         == Some(std::ffi::OsStr::new("1"))
