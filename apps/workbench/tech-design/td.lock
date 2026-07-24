@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T04:24:52.617232+00:00"
-digest = "sha256:a8f4b91f3edb185ae401bbd3749c3edc363904e3fbdef6bcb95e5d5e9cedf1d7"
-source_digest = "sha256:a8f4b91f3edb185ae401bbd3749c3edc363904e3fbdef6bcb95e5d5e9cedf1d7"
-ir_digest = "sha256:158e4cd62fdbc59f781efd9101f85db0dc38b27b0b8c9d5bb08198feab6d3a04"
+generated_at = "2026-07-24T04:37:30.514666+00:00"
+digest = "sha256:5227f918ce29a5e65e67676ca139bca0faffa178820d6197cdce6f53feab9f32"
+source_digest = "sha256:5227f918ce29a5e65e67676ca139bca0faffa178820d6197cdce6f53feab9f32"
+ir_digest = "sha256:e2d733b7a4a93ad747f2550a04d30cd84755995cf2983f2a7d5c67fcfe4a884b"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -95,6 +95,12 @@ section_count = 3
 path = "logic/host-terminal-tabs-in-native-macos-titlebar.md"
 digest = "sha256:99d05cbc4156864f724f82e6c664713a5bb34c4a19fc26689989a2cb95e5a0cc"
 ir_digest = "sha256:de311b006c81c7461b9aa4e6d00ed9668ee39050b0ac91cf911ecfd6bf834e36"
+section_count = 3
+
+[[files]]
+path = "logic/isolate-production-journey-runtime-artifacts-from-retained-evide.md"
+digest = "sha256:1d167bc57303ffeaf228621117a00fbb0f7664fe3f47ccd9d03d8232b8073ea5"
+ir_digest = "sha256:3f10425317e0c603f58a84a8ed21319c5b28c54051837a65d7e5bbb2ac8195af"
 section_count = 3
 
 [[files]]
