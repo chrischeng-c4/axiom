@@ -185,6 +185,81 @@ capture_restore_diagnostics() {
     >> "$EVIDENCE_DIR/kubernetes/lumen-restore-pods.log" 2>&1 || true
 }
 
+# ---- lumen-authcsi: Secret Manager + SecretProviderClass provider:gke auth+CSI
+# regression leg (#2457) helpers ----
+authcsi_forward_pid=""
+stop_authcsi_forward() {
+  if [[ -n "$authcsi_forward_pid" ]]; then
+    kill "$authcsi_forward_pid" >/dev/null 2>&1 || true
+    wait "$authcsi_forward_pid" >/dev/null 2>&1 || true
+    authcsi_forward_pid=""
+  fi
+}
+
+start_authcsi_forward() {
+  stop_authcsi_forward
+  local deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if [[ -z "$authcsi_forward_pid" ]] || ! kill -0 "$authcsi_forward_pid" >/dev/null 2>&1; then
+      stop_authcsi_forward
+      kubectl -n lumen port-forward service/lumen-authcsi 17375:7373 \
+        >>"$EVIDENCE_DIR/kubernetes/lumen-authcsi-port-forward.log" 2>&1 &
+      authcsi_forward_pid="$!"
+      sleep 1
+    fi
+    if curl --max-time 5 --silent --show-error --fail \
+      http://127.0.0.1:17375/readyz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for lumen-authcsi service readiness through port-forward" >&2
+  return 1
+}
+
+authcsi_search_authenticated() {
+  curl --silent --show-error --fail-with-body -X POST \
+    http://127.0.0.1:17375/collections/acceptance-authcsi/search \
+    -H 'content-type: application/json' \
+    -H "authorization: Bearer ${LUMEN_AUTHCSI_TOKEN}" \
+    --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-authcsi-${RUN_ID}\"}},\"limit\":10}"
+}
+
+# Preserve the authcsi CR/StatefulSet/pod/SecretProviderClass state before it
+# gets torn down, so a mount failure stays provable instead of silently
+# disappearing with the instance.
+capture_authcsi_diagnostics() {
+  kubectl -n lumen get lumen/lumen-authcsi statefulset/lumen-authcsi -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-failure.yaml" 2>&1 || true
+  kubectl -n lumen get secretproviderclass/lumen-authcsi-tokens -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-secretproviderclass.yaml" 2>&1 || true
+  kubectl -n lumen describe pods -l app.kubernetes.io/instance=lumen-authcsi \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pods-describe.txt" 2>&1 || true
+  kubectl -n lumen get events --field-selector involvedObject.name=lumen-authcsi-0 \
+    -o json > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod-events-failure.json" 2>&1 || true
+  kubectl -n lumen logs pod/lumen-authcsi-0 --all-containers --tail=200 --prefix \
+    >> "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pods.log" 2>&1 || true
+}
+
+# Mirrors deploy.sh's wait_ready_cr / wait_ready_restore_cr, scoped to the
+# lumen-authcsi CR.
+wait_ready_authcsi_cr() {
+  local expected_generation observed_generation phase
+  local deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    expected_generation="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed_generation="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    phase="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    if [[ -n "$expected_generation" && "$observed_generation" == "$expected_generation" && "$phase" == "Ready" ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "timed out waiting for lumen/lumen-authcsi status generation and Ready phase — the #2456 fail-signature is FailedMount/0-ready" >&2
+  capture_authcsi_diagnostics
+  return 1
+}
+
 start_forward
 curl --silent --show-error --fail-with-body -X PUT \
   http://127.0.0.1:17373/collections/acceptance \
@@ -361,6 +436,174 @@ kubectl -n lumen delete statefulset/lumen-restore --wait=true --timeout=180s \
 kubectl -n lumen delete pvc -l app.kubernetes.io/instance=lumen-restore \
   --wait=true --timeout=300s --ignore-not-found
 
+# ---- Auth+CSI regression leg: Secret Manager + SecretProviderClass provider:gke (#2457) ----
+# Exercises the integrator's mainstream GKE auth stack end to end — the exact
+# #2456 failure path — so it can never silently regress again: GCP Secret
+# Manager -> SecretProviderClass (`provider: gke`) -> `auth: required` +
+# `tokensSecretProviderClass`/`tokensSecretCsiDriver:
+# secrets-store-gke.csi.k8s.io` on a second small CR (`lumen-authcsi`,
+# mirrors the `lumen-restore` pattern above so it never destabilizes the main
+# instance). Ordered here — after cold-restore, before reshard — so it stays
+# grouped with the other secondary-instance legs and never mixes with the
+# main instance's disk-pressure/reshard state.
+#
+# PRECONDITION the next live run must satisfy: the persistent acceptance
+# cluster needs the GKE-managed Secret Manager add-on (installs the
+# `secrets-store-gke.csi.k8s.io` CSIDriver). It should already be on for the
+# persistent cluster, but if not, enable it once (the harness never enables
+# cluster features itself — same policy as the required_apis check in
+# run.sh):
+#   gcloud container clusters update <cluster> --zone <zone> --enable-secret-manager
+# If the CSIDriver is absent, this leg records a loud skip in evidence
+# instead of failing the whole run.
+authcsi_status="passed"
+authcsi_skip_reason=""
+if ! kubectl get csidrivers.storage.k8s.io secrets-store-gke.csi.k8s.io -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-csidriver.json" \
+  2> "$EVIDENCE_DIR/kubernetes/lumen-authcsi-csidriver-absent.txt"; then
+  authcsi_status="skipped_no_addon"
+  authcsi_skip_reason="secrets-store-gke.csi.k8s.io CSIDriver is not registered on this cluster; enable the GKE Secret Manager add-on with: gcloud container clusters update <cluster> --zone <zone> --enable-secret-manager"
+  echo "SKIPPING auth+CSI regression leg (#2457): $authcsi_skip_reason" >&2
+  jq -n --arg reason "$authcsi_skip_reason" \
+    '{schema:"axiom.gcp.lumen.authcsi.v1", status:"skipped_no_addon", reason:$reason}' \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-skip.json"
+else
+  : "${LUMEN_AUTHCSI_SECRET_ID:?LUMEN_AUTHCSI_SECRET_ID is required for the auth+CSI leg}"
+  # Deterministic from RUN_ID, independently computed the same way Terraform
+  # computed the secret payload's key (environment/secretmanager.tf) — no
+  # Terraform output roundtrip needed for the token value itself.
+  LUMEN_AUTHCSI_TOKEN="axo-${RUN_ID}-lumen-authcsi-token"
+
+  cat <<EOF | kubectl apply -f - > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-secretproviderclass-apply.txt"
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: lumen-authcsi-tokens
+  namespace: lumen
+spec:
+  provider: gke
+  parameters:
+    secrets: |
+      - resourceName: "projects/${PROJECT_ID}/secrets/${LUMEN_AUTHCSI_SECRET_ID}/versions/latest"
+        path: "token-registry.json"
+EOF
+
+  # A separate small CR (not a patch on the main `lumen/lumen` instance):
+  # auth mode and the CSI driver are both real production topology choices,
+  # not something to toggle on the primary serving instance mid-run — same
+  # reasoning as the lumen-restore leg above.
+  cat <<EOF | kubectl apply -f - > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-cr-apply.txt"
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: lumen-authcsi
+  namespace: lumen
+spec:
+  image: ${main_cr_image}
+  imagePullPolicy: IfNotPresent
+  shardCount: 1
+  replicasPerShard: 1
+  voterCount: 1
+  logFormat: json
+  auth: required
+  tokensSecretProviderClass: lumen-authcsi-tokens
+  tokensSecretCsiDriver: secrets-store-gke.csi.k8s.io
+  serving:
+    cpu: 500m
+    memory: 1Gi
+    raftStorage: ${main_cr_raft_storage}
+EOF
+  wait_ready_authcsi_cr
+  kubectl -n lumen get lumen/lumen-authcsi -o json \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-after-apply.json"
+
+  # Explicit CSI-mount + Ready assertions beyond CR-level status: the #2456
+  # fail-signature was FailedMount events with the pod stuck at 0/1 ready.
+  kubectl -n lumen get pod lumen-authcsi-0 -o json \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod.json"
+  jq -e '[.spec.volumes[]? | select(.name == "lumen-token-registry" and .csi.driver == "secrets-store-gke.csi.k8s.io")] | length == 1' \
+    "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod.json" >/dev/null || {
+    echo "lumen-authcsi-0 pod spec is missing the expected lumen-token-registry CSI volume (driver secrets-store-gke.csi.k8s.io)" >&2
+    capture_authcsi_diagnostics
+    exit 1
+  }
+  jq -e '[.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length == 1' \
+    "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod.json" >/dev/null || {
+    echo "lumen-authcsi-0 pod is not Ready — the #2456 fail-signature is FailedMount/0-ready" >&2
+    capture_authcsi_diagnostics
+    exit 1
+  }
+  kubectl -n lumen get events --field-selector involvedObject.name=lumen-authcsi-0 -o json \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod-events.json"
+  if jq -e '[.items[] | select(.reason == "FailedMount")] | length > 0' \
+    "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod-events.json" >/dev/null; then
+    echo "lumen-authcsi-0 recorded a FailedMount event — the exact #2456 fail-signature" >&2
+    jq '[.items[] | select(.reason == "FailedMount")]' "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod-events.json" >&2
+    capture_authcsi_diagnostics
+    exit 1
+  fi
+
+  start_authcsi_forward
+  curl --silent --show-error --fail-with-body -X PUT \
+    http://127.0.0.1:17375/collections/acceptance-authcsi \
+    -H 'content-type: application/json' \
+    -H "authorization: Bearer ${LUMEN_AUTHCSI_TOKEN}" \
+    --data '{"fields":{"message":{"type":"keyword"}}}' \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-create-collection.json"
+  curl --silent --show-error --fail-with-body -X POST \
+    http://127.0.0.1:17375/collections/acceptance-authcsi/index \
+    -H 'content-type: application/json' \
+    -H "authorization: Bearer ${LUMEN_AUTHCSI_TOKEN}" \
+    --data "{\"items\":[{\"external_id\":\"${RUN_ID}\",\"field\":\"message\",\"value\":\"gke-authcsi-${RUN_ID}\"}]}" \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-index.json"
+
+  # Authenticated request must succeed — proves the CSI-mounted
+  # token-registry.json actually loaded a working token, not just that the
+  # volume mounted.
+  authcsi_auth_deadline=$((SECONDS + 60))
+  until authcsi_search_authenticated > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-authenticated.json" 2>/dev/null \
+    && jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-authenticated.json" >/dev/null 2>&1; do
+    if (( SECONDS >= authcsi_auth_deadline )); then
+      echo "authenticated search against lumen-authcsi never surfaced the indexed document — the CSI-mounted token registry may not have loaded correctly" >&2
+      cat "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-authenticated.json" >&2 || true
+      capture_authcsi_diagnostics
+      exit 1
+    fi
+    kill -0 "$authcsi_forward_pid" >/dev/null 2>&1 || start_authcsi_forward
+    sleep 3
+  done
+
+  # Unauthenticated request must be rejected — proves auth is actually
+  # enforced using the CSI-sourced registry, not silently bypassed (e.g. an
+  # empty/unreadable mount that reads as "no registry configured" -> auth
+  # effectively off).
+  authcsi_unauth_status="$(curl --silent --show-error -o \
+    "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-unauthenticated-body.json" \
+    -w '%{http_code}' -X POST \
+    http://127.0.0.1:17375/collections/acceptance-authcsi/search \
+    -H 'content-type: application/json' \
+    --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-authcsi-${RUN_ID}\"}},\"limit\":10}")"
+  printf '%s\n' "$authcsi_unauth_status" \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-unauthenticated-status.txt"
+  if [[ "$authcsi_unauth_status" != "401" ]]; then
+    echo "unauthenticated request against lumen-authcsi returned HTTP $authcsi_unauth_status, expected 401 — tokens may not be enforced from the CSI mount" >&2
+    cat "$EVIDENCE_DIR/kubernetes/lumen-authcsi-search-unauthenticated-body.json" >&2 || true
+    capture_authcsi_diagnostics
+    exit 1
+  fi
+  stop_authcsi_forward
+
+  # Teardown ordering mirrors the lumen-restore leg above: the CR must be
+  # gone before the StatefulSet/PVCs, or drift repair recreates the
+  # StatefulSet before the owner-ref cascade GC catches up.
+  kubectl -n lumen delete lumen/lumen-authcsi --wait=true --timeout=120s
+  kubectl -n lumen delete statefulset/lumen-authcsi --wait=true --timeout=180s \
+    --cascade=foreground --ignore-not-found
+  kubectl -n lumen delete pvc -l app.kubernetes.io/instance=lumen-authcsi \
+    --wait=true --timeout=300s --ignore-not-found
+  kubectl -n lumen delete secretproviderclass/lumen-authcsi-tokens --ignore-not-found
+fi
+
 # One byte is an acceptance-only pressure threshold. It exercises the existing
 # disk policy without creating a chargeable GiB of test data.
 kubectl -n lumen patch lumen/lumen --type=merge --patch \
@@ -398,5 +641,7 @@ jq -n \
   --arg schema "axiom.gcp.lumen.acceptance.v1" \
   --arg object "$first_object" \
   --argjson bytes "$object_size" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, cpu_memory_actuator:"not_claimed", live_replica_membership:"not_claimed"}' \
+  --arg authcsi_status "$authcsi_status" \
+  --arg authcsi_skip_reason "$authcsi_skip_reason" \
+  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, auth_csi_gke_leg:$authcsi_status, auth_csi_gke_leg_skip_reason:$authcsi_skip_reason, cpu_memory_actuator:"not_claimed", live_replica_membership:"not_claimed"}' \
   > "$EVIDENCE_DIR/lumen-acceptance.json"

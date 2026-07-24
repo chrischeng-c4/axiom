@@ -61,6 +61,8 @@ if [[ "$LUMEN_ONLY" != "1" ]]; then
 fi
 check_empty "backup bucket" gcloud storage buckets list --project="$PROJECT_ID" \
   --filter="name=${bucket}" --format='value(name)'
+check_empty "auth+CSI Secret Manager secret" gcloud secrets list --project="$PROJECT_ID" \
+  --filter="name:${prefix}-lumen-tokens" --format='value(name)'
 check_empty "node service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
   --filter="email:${prefix}-node@${PROJECT_ID}.iam.gserviceaccount.com" --format='value(email)'
 wait_for_empty "backup service account" gcloud iam service-accounts list --project="$PROJECT_ID" \
