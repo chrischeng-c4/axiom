@@ -29,6 +29,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 sha2 = "0.10"
+http-body-util = "0.1"
 opentelemetry = { version = "0.21", optional = true }
 tracing-opentelemetry = { version = "0.22", optional = true }
 
@@ -40,4 +41,4 @@ service-observability = { path = "../service-observability" }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 tower = { workspace = true, features = ["util"] }
-http-body-util = "0.1"
+futures-util = "0.3"
