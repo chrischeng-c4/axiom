@@ -578,7 +578,7 @@ Gate Inventory:
 
 ID: observability
 Type: Devops
-Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint.; K8s: ServiceMonitor + PrometheusRule manifests.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.
+Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint.; K8s: ServiceMonitor + PrometheusRule manifests.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.
 EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
 Root WI: -
 Status: verified
@@ -586,7 +586,11 @@ Required Verification: conformance
 Promise:
 Expose metrics and telemetry surfaces for long-running operations: Prometheus
 pull metrics, kustomize scrape/alert resources, structured logs, and opt-in
-OTLP traces/metrics.
+OTLP traces/metrics. Every HTTP request is correlatable end to end: W3C
+`traceparent` is honored when present and a local root trace is created when
+absent, with the ids flowing into every request span and structured log line.
+The `otlp` feature upgrades this from local correlation to full OpenTelemetry
+export via the shared observability/service HTTP libraries.
 Gate Inventory:
 - apps/lumen/tests/api_e2e.rs; apps/lumen/k8s/components/observability; apps/lumen/compose.yaml
 
