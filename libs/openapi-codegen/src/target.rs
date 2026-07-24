@@ -1,3 +1,5 @@
+// <HANDWRITE gap="missing-generator:target-profile-contract" tracker="#1569" reason="versioned language target profiles and toolchain requirements are hand-written">
+// @spec libs/openapi-codegen/tech-design/config/add-versioned-target-profiles-to-openapi-code-generation.md#logic
 //! Versioned language targets and their generated-artifact requirements.
 //!
 //! A target is intentionally separate from [`crate::Lang`]: `Lang` selects an
@@ -306,3 +308,4 @@ mod tests {
         assert!(TargetProfile::from_id("python-3.15").is_err());
     }
 }
+// </HANDWRITE>
