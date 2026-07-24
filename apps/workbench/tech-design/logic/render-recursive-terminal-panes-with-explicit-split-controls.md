@@ -9,33 +9,44 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-recursive-pane-renderer-applicability
+id: workbench-recursive-pane-renderer-contract
 entry: pane-tree
 nodes:
-  tree: { kind: start, label: "project pane tree" }
-  leaf: { kind: process, label: "stable terminal leaf" }
-  split: { kind: process, label: "recursive split container" }
-  control: { kind: process, label: "explicit add or split menu" }
-  surface: { kind: terminal, label: "existing SwiftTerm host" }
+  tree: { kind: start, label: "published pane tree" }
+  leaf: { kind: process, label: "pane leaf" }
+  hsplit: { kind: process, label: "HStack split right" }
+  vsplit: { kind: process, label: "VStack split down" }
+  divider: { kind: process, label: "ratio drag handle" }
+  add: { kind: process, label: "profile add menu" }
+  surface: { kind: terminal, label: "project-pane-session surface id" }
 edges:
   - { from: tree, to: leaf }
-  - { from: tree, to: split }
-  - { from: split, to: leaf }
-  - { from: control, to: split }
+  - { from: tree, to: hsplit }
+  - { from: tree, to: vsplit }
+  - { from: hsplit, to: divider }
+  - { from: vsplit, to: divider }
+  - { from: add, to: leaf, label: "empty focus" }
+  - { from: add, to: hsplit, label: "Split Right" }
+  - { from: add, to: vsplit, label: "Split Down" }
   - { from: leaf, to: surface }
 ---
 flowchart LR
-  tree([Project pane tree]) --> leaf[Stable terminal leaf]
-  tree --> split[Recursive split container]
-  split --> leaf
-  control[Explicit add / split menu] --> split
-  leaf --> surface([Existing SwiftTerm host])
+  tree([Published pane tree]) --> leaf[Pane leaf]
+  tree --> hsplit[HStack: Split Right]
+  tree --> vsplit[VStack: Split Down]
+  hsplit --> divider[Ratio drag handle]
+  vsplit --> divider
+  add[Profile menu] -->|empty focus| leaf
+  add -->|Split Right| hsplit
+  add -->|Split Down| vsplit
+  leaf --> surface([Project + pane + session id])
 ```
 
-This design applies only to the native macOS presentation of the project-scoped `TerminalPaneTree` introduced by #2499. It replaces the flat pane `HStack` with a recursive SwiftUI renderer, exposes explicit Split Right and Split Down profile actions, and allows a split ratio to be updated without changing terminal-session identity. Rust remains the sole PTY owner and the existing `TerminalSurface` continues to render bytes for the referenced `TerminalTab`.
+`paneTreeContent(_:)` recursively renders `TerminalPaneTree`. A `.leaf` delegates to the existing pane header, idle/failure state, or `TerminalSurface`. A `.split(axis: .horizontal)` places first, divider, and second in an `HStack`; `.vertical` uses a `VStack`. The first child receives `ratio` of the available axis and the second receives the remainder. A divider drag computes a normalized ratio from the container-local pointer and calls `setSplitRatio(splitId:ratio:)`; the model recursively changes only that split and clamps the value to `0.15...0.85`. Leaf and tab identifiers are unchanged.
 
-Drag-to-split, worktree lifecycle, persisted restart restoration, tabs inside a pane, and Auxiliary feature expansion remain outside this slice.
+The top `+` menu is state-sensitive. When the focused leaf is empty, each profile calls `addTerminal(profile:)`. When it contains a session, the menu shows `Split Right` and `Split Down` submenus; each profile calls `splitActivePane(axis:profile:)`. Pane headers repeat the same explicit split options near the focused terminal, show only the lifecycle color dot and profile title, and omit the redundant `Running` text. Every control has a stable accessibility identifier and label.
 
+`TerminalSurface` keeps the identity `projectId::paneId::tabId`. Focus changes do not conditionally remove a leaf or change this id, so SwiftUI updates input eligibility in place rather than replaying terminal output. Layout changes preserve the original leaf as the first child and mount only the newly created sibling. Each pane reserves a practical minimum of 240 points horizontally and 160 points vertically; impossible drags clamp rather than collapse either side.
 ## Changes
 <!-- type: changes lang: yaml -->
 
