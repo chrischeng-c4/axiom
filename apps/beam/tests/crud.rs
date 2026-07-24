@@ -97,7 +97,10 @@ fn assert_same_ids_scores(oracle: &[Neighbor], got: &[Neighbor], ctx: &str) {
         id_set(got),
         "{ctx}: id set mismatch\n  oracle={oracle:?}\n  got={got:?}"
     );
-    let by_id: HashMap<&str, f32> = oracle.iter().map(|n| (n.external_id.as_str(), n.score)).collect();
+    let by_id: HashMap<&str, f32> = oracle
+        .iter()
+        .map(|n| (n.external_id.as_str(), n.score))
+        .collect();
     for nb in got {
         let want = by_id[nb.external_id.as_str()];
         assert!(
@@ -139,7 +142,11 @@ fn delete_excludes_flat() {
     for id in &del {
         assert!(c.delete(id));
     }
-    assert_eq!(c.len(), N - del.len(), "live count drops by the delete count");
+    assert_eq!(
+        c.len(),
+        N - del.len(),
+        "live count drops by the delete count"
+    );
     assert_eq!(c.tombstoned(), del.len());
 
     // GPU flat over the mutated collection folds the live-mask into the keep-set.
@@ -148,14 +155,21 @@ fn delete_excludes_flat() {
     let got = gpu_idx.search_knn(q, K);
     assert_eq!(got.len(), K);
     for nb in &got {
-        assert!(!del.contains(&nb.external_id), "deleted id {} was returned", nb.external_id);
+        assert!(
+            !del.contains(&nb.external_id),
+            "deleted id {} was returned",
+            nb.external_id
+        );
     }
 
     // GPU == freshly-built CpuFlatIndex over ONLY the live rows.
     let live = live_only(&c);
     let oracle = CpuFlatIndex::new(&live);
     assert_same_ids_scores(&oracle.search_knn(q, K), &got, "delete flat");
-    eprintln!("  delete flat: {} deleted, GPU == live CPU oracle, no deleted id returned", del.len());
+    eprintln!(
+        "  delete flat: {} deleted, GPU == live CPU oracle, no deleted id returned",
+        del.len()
+    );
 }
 
 /// (1) Delete excludes — IVF (Flat, full probe): same, on the IVF path.
@@ -178,7 +192,11 @@ fn delete_excludes_ivf() {
     let got = scanner.search(&index, q, K, nprobe);
     assert_eq!(got.len(), K);
     for nb in &got {
-        assert!(!del.contains(&nb.external_id), "deleted id {} was returned", nb.external_id);
+        assert!(
+            !del.contains(&nb.external_id),
+            "deleted id {} was returned",
+            nb.external_id
+        );
     }
 
     let live = live_only(&c);
@@ -203,7 +221,10 @@ fn delete_nearest_neighbor_next_takes_place_flat() {
     // Delete the query's own nearest neighbor.
     assert!(c.delete(&pre[0].external_id));
     // Mask-only: reflect the delete WITHOUT re-uploading the vector buffer.
-    assert!(gpu_idx.refresh_mask(&c), "a delete-only change is a mask-only refresh");
+    assert!(
+        gpu_idx.refresh_mask(&c),
+        "a delete-only change is a mask-only refresh"
+    );
     assert_eq!(gpu_idx.len(), c.len());
 
     let post = gpu_idx.search_knn(q, K);
@@ -211,11 +232,20 @@ fn delete_nearest_neighbor_next_takes_place_flat() {
         post.iter().all(|nb| nb.external_id != pre[0].external_id),
         "deleted nearest neighbor still returned"
     );
-    assert_eq!(post[0].external_id, pre[1].external_id, "the previous 2nd-nearest takes the top spot");
+    assert_eq!(
+        post[0].external_id, pre[1].external_id,
+        "the previous 2nd-nearest takes the top spot"
+    );
 
     let live = live_only(&c);
-    assert_same_ids_scores(&CpuFlatIndex::new(&live).search_knn(q, K), &post, "delete-nn flat");
-    eprintln!("  delete NN flat (mask-only refresh): next result took its place, GPU == live oracle");
+    assert_same_ids_scores(
+        &CpuFlatIndex::new(&live).search_knn(q, K),
+        &post,
+        "delete-nn flat",
+    );
+    eprintln!(
+        "  delete NN flat (mask-only refresh): next result took its place, GPU == live oracle"
+    );
 }
 
 /// (1) Same on the IVF path, mask-only via `IvfPqIndex::refresh_mask` (no retrain).
@@ -233,18 +263,30 @@ fn delete_nearest_neighbor_next_takes_place_ivf() {
     assert_eq!(pre.len(), K);
 
     assert!(c.delete(&pre[0].external_id));
-    assert!(index.refresh_mask(&c), "a delete-only change is a mask-only refresh (no retrain)");
+    assert!(
+        index.refresh_mask(&c),
+        "a delete-only change is a mask-only refresh (no retrain)"
+    );
 
     let post = scanner.search(&index, q, K, nprobe);
     assert!(
         post.iter().all(|nb| nb.external_id != pre[0].external_id),
         "deleted nearest neighbor still returned"
     );
-    assert_eq!(post[0].external_id, pre[1].external_id, "the previous 2nd-nearest takes the top spot");
+    assert_eq!(
+        post[0].external_id, pre[1].external_id,
+        "the previous 2nd-nearest takes the top spot"
+    );
 
     let live = live_only(&c);
-    assert_same_ids_scores(&CpuFlatIndex::new(&live).search_knn(q, K), &post, "delete-nn ivf");
-    eprintln!("  delete NN ivf (mask-only refresh): next result took its place, GPU == live oracle");
+    assert_same_ids_scores(
+        &CpuFlatIndex::new(&live).search_knn(q, K),
+        &post,
+        "delete-nn ivf",
+    );
+    eprintln!(
+        "  delete NN ivf (mask-only refresh): next result took its place, GPU == live oracle"
+    );
 }
 
 /// (2) Update replaces — flat GPU: found near the NEW location, absent near the
@@ -264,14 +306,24 @@ fn update_replaces_flat() {
 
     assert!(c.update(target, &new_vec, Payload::new()));
     let new_row = c.row_of(target).unwrap();
-    assert_ne!(new_row, old_row, "update re-points the id to a fresh appended row");
-    assert_eq!(c.row(new_row as usize), new_vec.as_slice(), "id resolves to the new vector");
+    assert_ne!(
+        new_row, old_row,
+        "update re-points the id to a fresh appended row"
+    );
+    assert_eq!(
+        c.row(new_row as usize),
+        new_vec.as_slice(),
+        "id resolves to the new vector"
+    );
     assert_eq!(c.len(), N, "update keeps the live count");
     assert_eq!(c.capacity(), N + 1, "old row retained, new row appended");
 
     let gpu_idx = GpuFlatIndex::new(&gpu, &c);
     let near_new = gpu_idx.search_knn(&new_vec, K);
-    assert_eq!(near_new[0].external_id, target, "updated id found at the new location");
+    assert_eq!(
+        near_new[0].external_id, target,
+        "updated id found at the new location"
+    );
     let near_old = gpu_idx.search_knn(&old_vec, K);
     assert!(
         near_old.iter().all(|nb| nb.external_id != target),
@@ -279,7 +331,11 @@ fn update_replaces_flat() {
     );
 
     let live = live_only(&c);
-    assert_same_ids_scores(&CpuFlatIndex::new(&live).search_knn(&new_vec, K), &near_new, "update flat");
+    assert_same_ids_scores(
+        &CpuFlatIndex::new(&live).search_knn(&new_vec, K),
+        &near_new,
+        "update flat",
+    );
     eprintln!("  update flat: id re-points to the new vector; found near new, absent near old; GPU == live oracle");
 }
 
@@ -300,7 +356,10 @@ fn update_replaces_ivf() {
     let nprobe = index.nlist();
 
     let near_new = scanner.search(&index, &new_vec, K, nprobe);
-    assert_eq!(near_new[0].external_id, target, "updated id found at the new location");
+    assert_eq!(
+        near_new[0].external_id, target,
+        "updated id found at the new location"
+    );
     let near_old = scanner.search(&index, &old_vec, K, nprobe);
     assert!(
         near_old.iter().all(|nb| nb.external_id != target),
@@ -308,8 +367,14 @@ fn update_replaces_ivf() {
     );
 
     let live = live_only(&c);
-    assert_same_ids_scores(&CpuFlatIndex::new(&live).search_knn(&new_vec, K), &near_new, "update ivf");
-    eprintln!("  update ivf (Flat, full probe): found near new, absent near old; GPU == live oracle");
+    assert_same_ids_scores(
+        &CpuFlatIndex::new(&live).search_knn(&new_vec, K),
+        &near_new,
+        "update ivf",
+    );
+    eprintln!(
+        "  update ivf (Flat, full probe): found near new, absent near old; GPU == live oracle"
+    );
 }
 
 /// (3) Upsert — flat GPU: a new id adds, an existing id replaces (live count
@@ -324,7 +389,10 @@ fn upsert_adds_then_replaces_flat() {
 
     // Upsert a NEW id → adds.
     let replaced = c.upsert("vNEW", &[2.0f32; DIM], Payload::new()).unwrap();
-    assert!(!replaced, "upsert of a new id reports 'added' (not replaced)");
+    assert!(
+        !replaced,
+        "upsert of a new id reports 'added' (not replaced)"
+    );
     assert_eq!(c.len(), before + 1);
     assert!(c.contains("vNEW"));
 
@@ -332,11 +400,17 @@ fn upsert_adds_then_replaces_flat() {
     let replaced = c.upsert("vNEW", &[-2.0f32; DIM], Payload::new()).unwrap();
     assert!(replaced, "upsert of an existing id reports 'replaced'");
     assert_eq!(c.len(), before + 1, "replace keeps the live count");
-    assert_eq!(c.row(c.row_of("vNEW").unwrap() as usize), vec![-2.0f32; DIM].as_slice());
+    assert_eq!(
+        c.row(c.row_of("vNEW").unwrap() as usize),
+        vec![-2.0f32; DIM].as_slice()
+    );
 
     let gpu_idx = GpuFlatIndex::new(&gpu, &c);
     let near_new = gpu_idx.search_knn(&[-2.0f32; DIM], K);
-    assert_eq!(near_new[0].external_id, "vNEW", "replacement found at its new location");
+    assert_eq!(
+        near_new[0].external_id, "vNEW",
+        "replacement found at its new location"
+    );
     let near_old = gpu_idx.search_knn(&[2.0f32; DIM], K);
     assert!(
         near_old.iter().all(|nb| nb.external_id != "vNEW"),
@@ -376,7 +450,10 @@ fn len_tracks_live_across_mixed_crud() {
     }
     assert_eq!(c.len(), N - 5, "update leaves the live count unchanged");
     assert_eq!(c.capacity(), N + 3);
-    assert!(!c.update("nope", &[0.25f32; DIM], Payload::new()), "update of an unknown id fails");
+    assert!(
+        !c.update("nope", &[0.25f32; DIM], Payload::new()),
+        "update of an unknown id fails"
+    );
 
     // Upsert 2 new ids → +2.
     assert!(!c.upsert("a", &[0.1f32; DIM], Payload::new()).unwrap());
@@ -395,7 +472,10 @@ fn len_tracks_live_across_mixed_crud() {
     assert_eq!(c.tombstoned(), 0);
     assert!(c.contains("a") && c.contains("b"));
     for i in 0..5 {
-        assert!(!c.contains(&format!("v{i}")), "deleted ids stay gone after compaction");
+        assert!(
+            !c.contains(&format!("v{i}")),
+            "deleted ids stay gone after compaction"
+        );
     }
     eprintln!("  counts: len() tracked the live set across delete/update/upsert; compaction reclaimed tombstones");
 }

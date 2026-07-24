@@ -6,7 +6,11 @@ use std::future::Future;
 pub trait VectorRepository: Send + Sync {
     /// Asynchronously fetch raw vector data from NVMe disk given their physical offsets.
     /// Returns a flat vector of floats representing the fetched records.
-    fn fetch_async(&self, offsets: &[u64], vector_bytes: usize) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
+    fn fetch_async(
+        &self,
+        offsets: &[u64],
+        vector_bytes: usize,
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
 
 /// Hexagonal port for batched vector distance calculation.

@@ -507,7 +507,10 @@ mod tests {
         c.add("a", &[3.0, 4.0]).unwrap();
         let row = c.row(0);
         let norm: f32 = row.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-6, "row norm should be 1, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-6,
+            "row norm should be 1, got {norm}"
+        );
         assert!((row[0] - 0.6).abs() < 1e-6);
         assert!((row[1] - 0.8).abs() < 1e-6);
     }
@@ -569,9 +572,15 @@ mod tests {
     #[test]
     fn upsert_adds_then_replaces() {
         let mut c = Collection::new("t", 2, Metric::L2);
-        assert!(!c.upsert("a", &[0.0, 0.0], Payload::new()).unwrap(), "new id → added");
+        assert!(
+            !c.upsert("a", &[0.0, 0.0], Payload::new()).unwrap(),
+            "new id → added"
+        );
         assert_eq!(c.len(), 1);
-        assert!(c.upsert("a", &[2.0, 2.0], Payload::new()).unwrap(), "existing id → replaced");
+        assert!(
+            c.upsert("a", &[2.0, 2.0], Payload::new()).unwrap(),
+            "existing id → replaced"
+        );
         assert_eq!(c.len(), 1, "replace keeps live count");
         assert_eq!(c.row(c.row_of("a").unwrap() as usize), &[2.0, 2.0]);
     }

@@ -21,7 +21,7 @@ entry: start
 nodes:
   start: { kind: start, label: "VAT starts an image-backed service or enters a compose lifecycle operation" }
   route: { kind: decision, label: "MicroVm service path, unchanged runtime, or compose lifecycle" }
-  unchanged: { kind: process, label: "Auto, Docker, and Native retain docker_ready_probe and existing lifecycle behavior" }
+  unchanged: { kind: process, label: "Native retains its lifecycle; Docker uses create stdout full-ID, durable Created/name/ID, foreground start --attach, and exact running acknowledgement" }
   prepare: { kind: process, label: "prepare_microvm_service creates a VAT-owned container name, loopback mapping, and a MicroVm-specific readiness probe" }
   probe_kind: { kind: decision, label: "explicit ready_http present" }
   http: { kind: process, label: "substitute the allocated host port and require an HTTP 2xx or 3xx round trip through 127.0.0.1:published-port" }
@@ -29,10 +29,10 @@ nodes:
   start_service: { kind: process, label: "start_service persists Running evidence, including owned microvm_name, host, port, and log paths; if that ownership persistence fails after launch, it removes the launched VAT-owned resource before returning the error" }
   wait: { kind: decision, label: "wait_for_services probe outcome before timeout" }
   ready: { kind: process, label: "persist ProcessStatus::Ready and ready duration only after the host endpoint contract succeeds" }
-  observe_failure: { kind: process, label: "persist Failed or Timeout; retain the last readiness error and collect best-effort container --version and container inspect evidence" }
-  cleanup: { kind: process, label: "stop_services attempts bounded removal of exactly the persisted VAT-owned Docker or MicroVM resource name and persists terminal service evidence; an already-reaped VAT-owned child is Exited, while a removal failure is durable cleanup_error unless a successful exact-name bounded list query proves absence" }
-  cleanup_confirmed: { kind: decision, label: "VAT-owned runtime cleanup confirmed by rm success or successful exact-name list absence proof" }
-  error: { kind: terminal, label: "return nonzero microvm_published_endpoint_unusable with service id, host endpoint, known guest endpoint or unavailable, runtime evidence, and a runnable inspect/logs remediation; cleanup_error adds retry remediation and forces runner or scenario retention" }
+  observe_failure: { kind: process, label: "persist Failed or Timeout and retain the last readiness error; each container --version or inspect diagnostic has an explicit 1s budget, ordinary timeout/exit becomes evidence, and cleanup-unconfirmed is deferred until cleanup_error persistence is attempted and the endpoint event is emitted" }
+  cleanup: { kind: process, label: "Docker cleanup requires persisted name plus immutable full ID under one 15s query/kill/rm/proof deadline; MicroVM rm, owned-helper finalization, and exact JSON absence proof share one 3s recorded-name deadline" }
+  cleanup_confirmed: { kind: decision, label: "the same VAT-owned immutable runtime identity is proven absent" }
+  error: { kind: terminal, label: "emit microvm_published_endpoint_unusable with service, endpoint, 1s diagnostic policy, runtime/inspect evidence, and inspect/logs remediation; after any diagnostic cleanup_error persistence attempt and event emission, return the endpoint error combined with deferred cleanup or persistence failure" }
   registry_claim: { kind: process, label: "every compose registry read-modify-write holds StartupClaim on persistent startup.lock and publishes project.json by unique temp write, sync, and rename; current records carry durable handoff_protocol 1 through publish and reset" }
   compose_handoff: { kind: process, label: "both foreground and detached compose up construct ComposeHandoff project plus token and persist a handoff_protocol 1 marker with the token while holding the claim; foreground passes it directly to in-process run, while detached reconstructs it through VAT_COMPOSE_PROJECT and VAT_COMPOSE_STARTUP_TOKEN" }
   handoff_register: { kind: process, label: "the token owner takes the same claim with a bounded ten-second internal handoff wait, token-matches and records its own PID, or exits before VAT creation when a newer lifecycle owns the record; external up/down/ps remains non-blocking" }
@@ -40,16 +40,16 @@ nodes:
   registry_reread: { kind: process, label: "a detached parent may reread only the token-owned project.json for quick feedback; it never polls global VAT-store name/time evidence or writes a discovered vat_id" }
   handoff_expired: { kind: process, label: "a token-backed record with neither VAT evidence nor launcher PID is terminal after the two-second grace window; a no-token record with no VAT id remains conservatively starting, and protocol provenance rather than token absence controls later missing-metadata recovery" }
   reconcile: { kind: decision, label: "load persisted vat test_run service and synthesized-runner states" }
-  still_starting: { kind: terminal, label: "emit status starting until a vat id, every Ready service record, and a live synthesized-runner pid are available" }
+  still_starting: { kind: terminal, label: "internal state remains Starting until every service and runner proof exists; generic up reaching its 10s handoff returns evidence-unavailable, not success" }
   compose_ready: { kind: terminal, label: "persist and emit status ready only when every compose service is Ready and the synthesized runner is live" }
   stopping: { kind: process, label: "runner-exited or terminal-service evidence while VAT remains Status::Running is stopping, not terminal; retain the registry until VAT exit, terminal services, and cleanup confirmation" }
   compose_failed: { kind: process, label: "reset the compose registry to imported only after Status::Exited, every tracked service is terminal, and cleanup_error is absent, except the compatibility-only protocol-absent record whose metadata stat proves NotFound; preserve project metadata and VAT logs/state for diagnosis" }
-  cleanup_unconfirmed: { kind: process, label: "retain vat_id and compose binding when persisted cleanup_error says a VAT-owned Docker or MicroVM may still exist; any list query error, timeout, malformed output, or matching object remains unconfirmed, and runner/scenario lifecycles report failure/nonzero even keep=never or keep=failed" }
+  cleanup_unconfirmed: { kind: process, label: "retain vat_id and compose binding when persisted cleanup_error says a VAT-owned Docker or MicroVM may still exist; any list query error, timeout, malformed output, or matching object remains unconfirmed, and runner/scenario lifecycles report failure/nonzero even keep=never or keep=failed without rewriting an already observed terminal runner outcome" }
   legacy_metadata_absence: { kind: decision, label: "load failed: historic protocol-absent record and a separate metadata(meta.json) stat returns NotFound" }
   evidence_unavailable: { kind: process, label: "current handoff_protocol 1 metadata load/read/malformed/missing error is EvidenceUnavailable, never terminal evidence: retain the compose binding and return retry remediation rather than reset" }
-  down_request: { kind: process, label: "compose down holds the claim, writes the VAT directory .compose-stop-request, and never directly signals a persisted PID" }
-  down_acknowledge: { kind: decision, label: "VAT parent consumes request, tears down its own runner/services, and reaches Status::Exited only when every compose service is terminal and cleanup_error is absent" }
-  down_retry_cleanup: { kind: process, label: "for CleanupUnconfirmed, down reloads VAT and retries only the persisted Docker or MicroVM removal by its recorded name; a nonzero rm -f clears cleanup_error only after successful exact-name list proof: Docker anchored container ls output has no exact name line, or MicroVM JSON container list has no matching id" }
+  down_request: { kind: process, label: "Ready or current token-published Starting down writes the VAT directory .compose-stop-request and never directly signals a persisted PID" }
+  down_acknowledge: { kind: decision, label: "setup/preparation/Docker-ack/readiness or runner wait consumes the request; terminal state requires every service terminal and no cleanup_error" }
+  down_retry_cleanup: { kind: process, label: "CleanupUnconfirmed retries Docker only by persisted name/full-ID under its shared deadline; MicroVM retries recorded-name rm plus exact JSON absence under one 3s absolute deadline" }
   down_reset: { kind: process, label: "only after acknowledgement or successful cleanup retry clear vat_id/startup_pid/startup_token/startup_started_at while retaining handoff_protocol 1 and imported project metadata" }
   compose_error: { kind: terminal, label: "return nonzero terminal startup failure rather than a false ready state" }
   success: { kind: terminal, label: "continue runner or compose lifecycle with verified service evidence" }
@@ -90,6 +90,7 @@ edges:
   - { from: reconcile, to: compose_failed, label: "terminal failure" }
   - { from: reconcile, to: cleanup_unconfirmed, label: "cleanup_error" }
   - { from: reconcile, to: down_request, label: "ready down" }
+  - { from: reconcile, to: down_request, label: "current token-published starting down" }
   - { from: compose_failed, to: compose_error }
   - { from: cleanup_unconfirmed, to: down_retry_cleanup, label: "retry down" }
   - { from: down_retry_cleanup, to: down_reset, label: "cleanup confirmed" }
@@ -125,13 +126,13 @@ requirements:
     verify: vat_microvm_published_port
   failure_persists_evidence_and_cleans_up:
     id: R3
-    text: "A MicroVM readiness failure persists terminal service evidence and reports an actionable endpoint diagnostic. It removes only the VAT-owned resource name; a nonzero rm -f is benign only after a successful bounded exact-name list proves absence. Docker uses anchored container-ls exact lines and MicroVM parses container-list JSON with no matching id. Otherwise cleanup_error retains the compose binding for retry rather than releasing its published port."
+    text: "A MicroVM readiness failure persists terminal service evidence and reports an actionable endpoint diagnostic. MicroVM removes only its VAT-owned recorded name under one absolute three-second deadline shared by rm, owned-helper finalization, and bounded parsed container-list JSON proof; even successful rm requires final absence. Docker separately requires persisted name plus immutable full ID and one 15-second query/kill/remove/final-proof deadline; replacement identity is untouched. Otherwise cleanup_error retains the compose binding."
     kind: regression
     risk: high
     verify: vat_microvm_published_port
   compose_handoff_reconciles_real_service_state:
     id: R4
-    text: "Foreground and detached compose serialize registry mutations with StartupClaim and share ComposeHandoff { project, token }. Only the token owner registers and synchronously publishes vat_id after durable VAT creation; parents only reread the token-owned registry and never discover VATs by global store name/time. Current records retain handoff_protocol: 1 after transient PID/token clearing, while internal parent/child claim reacquisition waits at most ten seconds and external lifecycle commands remain non-blocking. Ready still requires every service Ready and a live synthesized runner."
+    text: "Foreground and detached compose serialize registry mutations with StartupClaim and share ComposeHandoff { project, token }. Only the token owner publishes vat_id after durable VAT creation. Ready requires every service Ready and a live synthesized runner; generic up still Starting at the original ten-second handoff returns evidence-unavailable and retains the binding rather than reporting success."
     kind: functional
     risk: high
     verify: apps/vat/tests/vat_compose.rs::test_compose_detached_up_uses_atomic_claim_and_creates_one_run
@@ -143,13 +144,13 @@ requirements:
     verify: apps/vat/tests/vat_compose.rs::test_compose_up_reclaims_expired_token_without_launcher_pid
   down_is_parent_acknowledged:
     id: R7
-    text: "compose down writes a stop request for the VAT parent and holds its registry claim until Status::Exited, terminal service cleanup, and no cleanup_error are persisted; runner-exited evidence while VAT is Running is stopping, and a current handoff_protocol: 1 VAT load/read/malformed/missing error is EvidenceUnavailable, neither resettable terminal state. Only protocol-absent historic JSON plus a separate metadata NotFound may use legacy recovery. No persisted runner PID is a direct signal target."
+    text: "compose down writes a stop request for Ready or current token-published Starting VATs and holds its registry claim until Status::Exited, terminal service cleanup, and no cleanup_error are persisted. Pending/unpublished startup remains fail-closed. No persisted runner PID is a direct signal target; the owning VAT consumes the request during startup/readiness or runner wait."
     kind: regression
     risk: high
     verify: apps/vat/tests/vat_compose.rs::test_compose_up_is_rejected_while_down_holds_lifecycle_claim
   cleanup_unconfirmed_blocks_reuse:
     id: R8
-    text: "Any persisted runtime cleanup_error yields CleanupUnconfirmed, retaining the VAT id and compose binding until retry removes the recorded Docker or MicroVM resource name. A nonzero retry clears evidence only after a successful bounded exact-name list proves absence; query error, timeout, malformed output, or a match retains it. Runner and scenario lifecycle results are failure/nonzero and retain the VAT even with keep=never or keep=failed."
+    text: "Any persisted runtime cleanup_error yields CleanupUnconfirmed. Docker retry requires recorded name/full-ID and strict same-ID absence proof within one absolute deadline; legacy name-only, replacement, query error, timeout, ambiguity, or a remaining object retains it. MicroVM removal and exact recorded-name JSON absence share one three-second absolute deadline and retain the obligation on any unproven result."
     kind: regression
     risk: high
     verify: commands::compose::tests::cleanup_unconfirmed_blocks_compose_reuse_until_retry_succeeds
@@ -171,6 +172,18 @@ requirements:
     kind: regression
     risk: high
     verify: apps/vat/tests/vat_compose.rs
+  diagnostic_failure_is_fail_soft_until_durable_event:
+    id: R12
+    text: "Each endpoint diagnostic has an explicit one-second policy budget. Ordinary timeout or nonzero exit is compact evidence. A typed helper cleanup failure first augments service cleanup_error and attempts durable persistence, then still emits the endpoint event, and only afterward returns a combined endpoint/cleanup/persistence error."
+    kind: regression
+    risk: high
+    verify: commands::run::tests::container_diagnostic_cleanup_failure_is_deferred_after_one_second_policy
+  completed_runner_outcome_is_immutable:
+    id: R13
+    text: "A runner already observed Exited/0 remains Exited/0 when later MicroVM cleanup, diagnostic evidence, or lifecycle persistence fails; service cleanup_error and the overall nonzero result represent the later failure."
+    kind: regression
+    risk: high
+    verify: commands::run::tests::later_failure_evidence_does_not_rewrite_completed_runner_outcome
   non_microvm_regression:
     id: R5
     text: "Docker and native readiness retain their existing probe selection and lifecycle behavior."
@@ -189,6 +202,8 @@ flowchart TD
     r9[R9 already reaped owned service terminal] --> vat_compose_reaped_service[apps/vat/tests/vat_compose.rs::test_compose_down_marks_already_exited_ready_service_terminal]
     r10[R10 stopping requires full terminal evidence] --> vat_compose_stopping[apps/vat/tests/vat_compose.rs]
     r11[R11 unavailable evidence never resets] --> vat_compose_evidence_unavailable[apps/vat/tests/vat_compose.rs]
+    r12[R12 diagnostic failure is fail soft until durable event] --> diagnostic_deferred[commands::run::tests::container_diagnostic_cleanup_failure_is_deferred_after_one_second_policy]
+    r13[R13 completed runner outcome is immutable] --> runner_outcome_immutable[commands::run::tests::later_failure_evidence_does_not_rewrite_completed_runner_outcome]
     r5[R5 non microvm regression] --> vat_compose
 ```
 
@@ -206,8 +221,8 @@ e2e_tests:
     command: "VAT_MICROVM_E2E_REQUIRED=1 cargo test -p vat --test vat_microvm_published_port -- --ignored --nocapture"
     assertions:
       - "On an explicit opt-in host with Apple's container CLI, a VAT-owned nginx MicroVM has its guest and published host endpoint checked separately."
-      - "A host endpoint that resets or cannot complete the configured HTTP contract fails nonzero with service, endpoint, runtime, inspect, and logs remediation rather than Ready."
-      - "The test removes only its uniquely named VAT-owned MicroVM and records the observed Apple container evidence for tracker review. A nonzero rm -f is accepted only when the successful bounded JSON list has no matching id; query failure, timeout, malformed JSON, or a matching id leaves durable cleanup_error, keeps the VAT and compose binding unavailable for reuse until retry, and returns nonzero."
+      - "A host endpoint that resets or cannot complete the configured HTTP contract fails nonzero with service, endpoint, explicit one-second diagnostic budget, runtime, inspect, and logs remediation rather than Ready. Ordinary diagnostic timeout is evidence; diagnostic helper cleanup failure is persisted before the event is emitted and the combined error returns."
+      - "The test removes only its uniquely named VAT-owned MicroVM and records the observed Apple container evidence for tracker review. rm, owned-helper finalization, and exact JSON absence share one three-second deadline; a nonzero rm -f is accepted only when the successful bounded JSON list has no matching id, and successful rm also requires that proof. Query failure, timeout, malformed JSON, or a matching id leaves durable cleanup_error, keeps the VAT and compose binding unavailable for reuse until retry, and returns nonzero."
   - id: vat-compose-detached-ownership-and-cleanup
     name: "Compose handoff and down are registry-linearizable and parent acknowledged"
     capability_id: agent-native-gpu-native-dev-containers
@@ -218,8 +233,8 @@ e2e_tests:
     assertions:
       - "Foreground and detached paths use the same project/token handoff. Only the token owner creates and synchronously publishes the durable VAT id; the parent only rereads the token-owned registry and never polls global VAT-store name/time evidence. handoff_protocol: 1 survives transient PID/token clearing; internal parent/child claim reacquisition waits at most ten seconds while external lifecycle commands remain non-blocking."
       - "A token without a launcher PID expires after its bounded grace period; a stale child cannot overwrite a newer project binding."
-      - "down writes the VAT-owned stop request, projects stopping while VAT remains Running with runner/service teardown pending, and treats every current handoff_protocol: 1 metadata load/read/malformed/missing error as EvidenceUnavailable rather than terminal reset. Only a protocol-absent historic record with a separately confirmed metadata NotFound may recover. It waits for Status::Exited plus terminal runner/service state and rejects a concurrent up until cleanup acknowledgement completes."
-      - "A persisted cleanup_error retains the VAT, binding, and published-port ownership; retrying down removes the recorded Docker or MicroVM resource and releases only after rm success or successful exact-name list absence proof. The runner or scenario result is nonzero even when keep is never or failed."
+      - "Generic up cannot turn a ten-second Starting handoff into success. Ready and current token-published Starting down write the VAT-owned stop request; pending publication remains fail-closed, and no persisted PID is directly signalled."
+      - "A persisted cleanup_error retains the VAT, binding, and published-port ownership. Docker release requires strict recorded name/full-ID absence proof under one shared deadline and never touches a replacement; MicroVM rm/finalization/exact absence share one three-second deadline. A completed synthesized target remains Exited/0 while the service and lifecycle report later cleanup failure."
 ```
 
 ## Changes
@@ -244,7 +259,7 @@ changes:
     anchor: wait_for_services
     gap: vat-microvm-published-endpoint-failure-evidence
     tracker: "#1526"
-    reason: "Persist terminal MicroVM readiness evidence, collect best-effort runtime and inspect diagnostics, and attempt bounded removal of only the VAT-owned resource. A nonzero Docker or MicroVM removal is confirmed only when a successful bounded exact-name list proves absence: Docker uses anchored container-ls output and MicroVM parses list JSON with no matching id. Otherwise cleanup_error is durable rather than a readiness error, and runner/scenario finalization force failure/nonzero retention even when keep is never or failed."
+    reason: "Persist terminal MicroVM readiness evidence, fail-soft one-second diagnostic evidence with cleanup_error persistence before event/return ordering, and recorded-name cleanup under one three-second absolute remove/finalize/proof deadline. Docker cleanup is separately bound to persisted name/full-ID, strict state evidence, and one absolute deadline; replacement or uncertainty becomes durable cleanup_error. Runner/scenario finalization forces nonzero retention when cleanup remains unconfirmed without rewriting an already terminal runner outcome."
     refs:
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
   - path: apps/vat/src/commands/run.rs
@@ -274,7 +289,7 @@ changes:
     anchor: down_cmd
     gap: vat-compose-parent-owned-stop-and-cleanup-retry
     tracker: "#1526"
-    reason: "Hold the registry claim through a VAT-parent stop request, stopping/EvidenceUnavailable/terminal acknowledgement, cleanup confirmation, and reset. Current handoff_protocol: 1 load failures remain retained; only a protocol-absent historic record plus metadata NotFound takes the compatibility recovery path. CleanupUnconfirmed keeps the binding and retries persisted Docker or MicroVM removals by their recorded names; a nonzero rm needs successful exact-name list absence proof before release, and no compose path directly signals a persisted OS PID."
+    reason: "Hold the registry claim through a VAT-parent stop request, terminal acknowledgement, cleanup confirmation, and reset. Ready and current token-published Starting VATs use the owner request; pending publication remains retained. Docker retry requires recorded name/full-ID under one shared deadline; MicroVM removal, owned-helper finalization, and exact recorded-name JSON proof share one three-second deadline; no compose path directly signals a persisted OS PID."
     refs:
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#logic"
   - path: apps/vat/src/commands/compose.rs
@@ -301,7 +316,7 @@ changes:
     impl_mode: hand-written
     gap: vat-microvm-published-port-regression
     tracker: "#1526"
-    reason: "Add deterministic TCP reset, HTTP round-trip, failure-evidence, cleanup, and opt-in real Apple-container published-endpoint coverage."
+    reason: "Add deterministic TCP reset, HTTP round-trip, one-second diagnostic policy/evidence ordering, three-second absolute cleanup, terminal-runner immutability, cleanup retry, and opt-in real Apple-container published-endpoint coverage."
     refs:
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#unit-test"
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#e2e-test"
@@ -312,7 +327,7 @@ changes:
     anchor: test_compose_full_cycle_up_down
     gap: vat-compose-detached-status-regression
     tracker: "#1526"
-    reason: "Lock atomic foreground/detached claim-token handoff with a bounded ten-second internal claim wait, two-second no-PID reclamation, token-owner VAT publication without parent store polling, durable handoff_protocol: 1 provenance after transient handoff fields clear, current-record EvidenceUnavailable before full terminal evidence, the protocol-absent plus metadata-NotFound compatibility recovery, parent-owned stop acknowledgement, already-reaped child terminalization, and binding retention through Docker or MicroVM cleanup retry with exact-name list proof without changing normal Docker behavior."
+    reason: "Lock atomic claim-token publication, a definitive ten-second generic handoff that cannot report Starting success, current-protocol evidence retention, and parent-owned stop acknowledgement from Ready or token-published Starting. Preserve binding retention through immutable-ID Docker cleanup or bounded MicroVM recorded-name proof."
     refs:
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#unit-test"
   - path: apps/vat/aw.toml

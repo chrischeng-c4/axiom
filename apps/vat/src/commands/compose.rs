@@ -297,9 +297,11 @@ const COMPOSE_SHUTDOWN_WAIT: Duration = Duration::from_secs(60);
 /// normal spawn-to-exec handoff for a failed launch.
 const DETACHED_HANDOFF_GRACE: Duration = Duration::from_secs(2);
 
-/// Historic non-wait `compose up -d` behavior waits briefly for a
-/// token-owned child to publish its VAT id. `--wait` supplies its own bounded
-/// readiness deadline instead of adding this interval after it.
+/// Non-wait `compose up -d` gives one bounded total budget to publish the VAT
+/// id and observe the first definitive startup evidence. A still-starting
+/// service may be returned at the bound, but a terminal/stopping transition
+/// observed inside it is never reported as startup success. `--wait` supplies
+/// its own readiness deadline instead.
 const DEFAULT_DETACHED_HANDOFF_WAIT: Duration = Duration::from_secs(10);
 
 /// Main dispatch for compose subcommands.
@@ -384,6 +386,18 @@ pub(crate) enum DockerShimLaunch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockerShimWaitTarget {
     profile: crate::compose::DockerComposeProfile,
+    generation: u64,
+    ticket: String,
+}
+
+/// Immutable identity for every detached launch, including the generic VAT
+/// CLI path. The one-shot handoff token is deliberately absent: publication
+/// consumes that token, while this identity must remain stable long enough for
+/// the parent to recognize a publish that lands exactly at its poll deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetachedLaunchIdentity {
+    project: String,
+    docker_shim_profile: Option<String>,
     generation: u64,
     ticket: String,
 }
@@ -932,6 +946,62 @@ fn docker_shim_wait_target_matches(
         && record.launch_ticket.as_deref() == Some(target.ticket.as_str())
 }
 
+fn detached_launch_identity_from_record(record: &ComposeRecord) -> Result<DetachedLaunchIdentity> {
+    if record.launch_generation == 0 {
+        bail!("detached compose launch did not persist a nonzero launch generation");
+    }
+    let ticket = record
+        .launch_ticket
+        .clone()
+        .context("detached compose launch did not persist a launch ticket")?;
+    Ok(DetachedLaunchIdentity {
+        project: record.project.clone(),
+        docker_shim_profile: record.docker_shim_profile.clone(),
+        generation: record.launch_generation,
+        ticket,
+    })
+}
+
+fn detached_launch_identity_matches(
+    record: &ComposeRecord,
+    identity: &DetachedLaunchIdentity,
+) -> bool {
+    record.project == identity.project
+        && record.docker_shim_profile == identity.docker_shim_profile
+        && record.launch_generation == identity.generation
+        && record.launch_ticket.as_deref() == Some(identity.ticket.as_str())
+}
+
+/// Validate the final claimed registry against the immutable launch identity.
+/// A child may publish after the poll observes its deadline but before the
+/// parent reacquires the final claim. In that edge, the final record itself is
+/// authoritative only when its generation/ticket/profile still identify this
+/// launch; a down, re-import, or relaunch necessarily invalidates that proof.
+fn detached_handoff_record_matches(
+    record: &ComposeRecord,
+    identity: &DetachedLaunchIdentity,
+    handoff: &ComposeHandoff,
+    observed_vat_id: Option<&str>,
+) -> bool {
+    if !detached_launch_identity_matches(record, identity) {
+        return false;
+    }
+
+    match (token_bound_published_vat_id(record), observed_vat_id) {
+        (Some(actual), Some(observed)) => actual == observed,
+        // The poll reached its deadline immediately before the token owner
+        // published. Identity equality makes this late final record safe to
+        // adopt without global name/time discovery.
+        (Some(_), None) => true,
+        (None, None) => {
+            record.vat_id.is_none()
+                && record.status == "starting"
+                && record.startup_token.as_deref() == Some(handoff.token.as_str())
+        }
+        _ => false,
+    }
+}
+
 // <HANDWRITE gap="vat-compose-detached-readiness-reconciliation" tracker="#1526" reason="Reconcile persisted VAT service records for detached compose so starting, ready, and terminal startup failure are truthful and diagnosable.">
 #[derive(Debug)]
 struct ComposeUpOutcome {
@@ -1058,6 +1128,7 @@ fn up_cmd(
     write_registry(&registry_dir, &record)?;
 
     if detach {
+        let launch_identity = detached_launch_identity_from_record(&record)?;
         // Persist this immutable target before a child exists. A timeout after
         // spawn must return it to the shim without trying to rediscover a VAT
         // id (which could already belong to a replacement lifecycle).
@@ -1171,21 +1242,37 @@ fn up_cmd(
         // A parent must never infer a VAT id from the global store: a normal
         // `vat run --name <project>` can otherwise win the same-name race and
         // redirect compose cleanup to an unrelated service set.
-        let token_matches = record.startup_token.as_deref() == Some(handoff.token.as_str());
-        let child_already_published = match (record.vat_id.as_deref(), observed_vat_id.as_deref()) {
-            (Some(actual), Some(observed)) => actual == observed && record.startup_token.is_none(),
-            (None, None) => token_matches,
-            _ => false,
-        };
+        let child_already_published = detached_handoff_record_matches(
+            &record,
+            &launch_identity,
+            &handoff,
+            observed_vat_id.as_deref(),
+        );
         if !child_already_published {
             bail!(
                 "detached compose startup for `{project_name}` lost registry ownership; inspect `vat compose ps {project_name}`"
             );
         }
-        match reconcile_detached_startup(&record)? {
+        let wait_for_definitive_startup =
+            matches!(access, ComposeAccess::VatCli) && readiness_deadline.is_none();
+        let startup = if wait_for_definitive_startup {
+            reconcile_initial_detached_startup_until(&record, handoff_deadline)?
+        } else {
+            reconcile_detached_startup(&record)?
+        };
+        match startup {
             DetachedStartup::Starting => record.status = "starting".to_string(),
             DetachedStartup::Ready => record.status = "ready".to_string(),
-            DetachedStartup::Stopping => record.status = "stopping".to_string(),
+            DetachedStartup::Stopping => {
+                record.status = "stopping".to_string();
+                write_registry(&registry_dir, &record)?;
+                if wait_for_definitive_startup {
+                    let vat_id = record.vat_id.as_deref().unwrap_or("unpublished");
+                    bail!(
+                        "detached compose startup for `{project_name}` entered teardown before reaching Ready; registry retained until VAT `{vat_id}` confirms terminal cleanup; inspect with `vat compose ps {project_name}` and retry `vat compose down {project_name}`"
+                    );
+                }
+            }
             DetachedStartup::EvidenceUnavailable(message) => {
                 return Err(anyhow::anyhow!(
                     "detached compose startup for `{project_name}` VAT evidence is temporarily unavailable: {message}; registry retained to avoid overlapping services"
@@ -1306,9 +1393,26 @@ fn down_cmd(project: String, access: ComposeAccess) -> Result<ExitCode> {
         bail!("compose project `{project_name}` is imported but has no active vat run");
     }
     match reconcile_detached_startup(&record)? {
-        DetachedStartup::Starting => bail!(
-            "compose project `{project_name}` is still starting; retry `vat compose down {project_name}` once the runner PID is persisted"
-        ),
+        DetachedStartup::Starting => {
+            let Some(vat_id) = token_bound_published_vat_id(&record).map(str::to_string) else {
+                bail!(
+                    "compose project `{project_name}` is still starting without a completed token-bound VAT handoff; retry `vat compose down {project_name}` once the VAT id is published"
+                );
+            };
+            let vat = crate::store::load(&vat_id).with_context(|| {
+                format!(
+                    "load starting VAT {vat_id} for compose project `{project_name}` stop request"
+                )
+            })?;
+            // A token-published VAT is already the exclusive lifecycle owner
+            // even before its runner exists. Ask that parent to unwind service
+            // preparation/readiness itself; never signal the startup PID.
+            crate::commands::run::request_detached_compose_stop(&vat)?;
+            wait_for_compose_shutdown(&vat_id, &record.service_ids, COMPOSE_SHUTDOWN_WAIT)?;
+            reset_active_run(&registry_dir, &mut record)?;
+            println!("Stopped starting compose project `{project_name}` after VAT cleanup");
+            return Ok(ExitCode::SUCCESS);
+        }
         DetachedStartup::EvidenceUnavailable(message) => {
             bail!(
                 "compose project `{project_name}` VAT evidence is temporarily unavailable: {message}; registry retained to avoid overlapping services; retry `vat compose down {project_name}`"
@@ -1391,6 +1495,19 @@ fn down_cmd(project: String, access: ComposeAccess) -> Result<ExitCode> {
     reset_active_run(&registry_dir, &mut record)?;
     println!("Stopped compose project `{project_name}` after VAT cleanup");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Only the current one-shot handoff protocol may authorize a stop before the
+/// runner PID exists. Publication atomically records the VAT id and clears all
+/// transient token/launcher fields; a name, legacy id, or pending token is not
+/// enough authority to request cleanup.
+fn token_bound_published_vat_id(record: &ComposeRecord) -> Option<&str> {
+    (record.handoff_protocol == HANDOFF_PROTOCOL
+        && record.startup_token.is_none()
+        && record.startup_pid.is_none()
+        && record.startup_started_at.is_none())
+    .then(|| record.vat_id.as_deref())
+    .flatten()
 }
 
 /// Forward-compatible escape hatch for an inactive record created by a newer
@@ -2304,6 +2421,37 @@ fn poll_for_detached_handoff(
     }
 }
 
+/// After token-owned VAT publication, generic `vat compose up -d` waits only
+/// within the original handoff budget for the first definitive Ready or
+/// terminal observation. Publication alone is ownership evidence, not
+/// readiness evidence. Starting, teardown-in-progress, and transient read
+/// failures are re-observed; the caller still handles the bounded final state
+/// fail-closed.
+fn reconcile_initial_detached_startup_until(
+    record: &ComposeRecord,
+    deadline: Instant,
+) -> Result<DetachedStartup> {
+    loop {
+        let state = reconcile_detached_startup(record)?;
+        let transient = matches!(
+            &state,
+            DetachedStartup::Starting
+                | DetachedStartup::Stopping
+                | DetachedStartup::EvidenceUnavailable(_)
+        );
+        if Instant::now() >= deadline && matches!(state, DetachedStartup::Starting) {
+            return Ok(DetachedStartup::EvidenceUnavailable(format!(
+                "VAT remained Starting through the detached handoff deadline without definitive Ready or terminal evidence"
+            )));
+        }
+        if !transient || Instant::now() >= deadline {
+            return Ok(state);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        std::thread::sleep(remaining.min(Duration::from_millis(50)));
+    }
+}
+
 /// Reconciliation plus the exact evidence revision used to make that
 /// lifecycle decision. `docker compose ps` retains this value under its
 /// registry claim instead of reconciling one VAT metadata revision and
@@ -2395,8 +2543,9 @@ fn reconcile_detached_startup_with_evidence(
     let crate::store::Vat { meta, .. } = vat;
     let status = meta.status;
     let test_run = meta.test_run;
-    if !matches!(&status, Status::Exited { .. } | Status::Interrupted { .. }) {
-        let state = detached_startup_while_active(&record.service_ids, test_run.as_ref());
+    if let Some(state) =
+        detached_startup_for_nonterminal_vat(&status, &record.service_ids, test_run.as_ref())
+    {
         return Ok(ReconciledStartupEvidence { state, test_run });
     }
     let terminal_state = vat_terminal_state_label(&status);
@@ -2442,6 +2591,83 @@ fn vat_terminal_state_label(status: &Status) -> &'static str {
         Status::Exited { .. } => "Exited",
         Status::Created | Status::Running | Status::Snapshot => "nonterminal",
     }
+}
+
+/// Route every active VAT status through the same detached-evidence
+/// validation. `Created` and `Snapshot` are just as capable of carrying a
+/// durable cleanup obligation or contradictory persisted process evidence as
+/// `Running`; neither may bypass those checks on the way to Starting/Ready.
+fn detached_startup_for_nonterminal_vat(
+    status: &Status,
+    service_ids: &[String],
+    test_run: Option<&TestRunEvidence>,
+) -> Option<DetachedStartup> {
+    match status {
+        Status::Running => Some(detached_startup_while_active(service_ids, test_run)),
+        Status::Created | Status::Snapshot => {
+            if let Some(message) = compose_cleanup_error(test_run, service_ids) {
+                return Some(DetachedStartup::CleanupUnconfirmed(message));
+            }
+            if let Some(message) = compose_live_process_evidence(test_run, service_ids) {
+                return Some(DetachedStartup::CleanupUnconfirmed(message));
+            }
+            let lifecycle = match status {
+                Status::Created => "Created (never started)",
+                Status::Snapshot => "Snapshot (frozen)",
+                _ => unreachable!("matched Created or Snapshot"),
+            };
+            Some(DetachedStartup::Terminal(format!(
+                "VAT is {lifecycle} and cannot own an active detached compose runtime"
+            )))
+        }
+        Status::Exited { .. } | Status::Interrupted { .. } => None,
+    }
+}
+
+fn compose_live_process_evidence(
+    test_run: Option<&TestRunEvidence>,
+    service_ids: &[String],
+) -> Option<String> {
+    let test_run = test_run?;
+    if let Some((id, pid)) = runner_evidence(test_run)
+        .iter()
+        .filter_map(|runner| runner.pid.map(|pid| (runner.id.as_str(), pid)))
+        .find(|(_, pid)| persisted_process_or_group_is_alive(*pid))
+    {
+        return Some(format!(
+            "runner `{id}` retains live PID/PGID {pid} while VAT status forbids an active compose runtime"
+        ));
+    }
+    test_run.services.iter().find_map(|service| {
+        if service.owned_by_vat == Some(false)
+            || !service_ids.iter().any(|service_id| service_id == &service.id)
+        {
+            return None;
+        }
+        service.pid.and_then(|pid| {
+            persisted_process_or_group_is_alive(pid).then(|| {
+                format!(
+                    "service `{}` retains live PID/PGID {pid} while VAT status forbids an active compose runtime",
+                    service.id
+                )
+            })
+        })
+    })
+}
+
+#[cfg(unix)]
+fn persisted_process_or_group_is_alive(pid: u32) -> bool {
+    let process = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if process == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
+        return true;
+    }
+    let group = unsafe { libc::kill(-(pid as libc::pid_t), 0) };
+    group == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn persisted_process_or_group_is_alive(_pid: u32) -> bool {
+    true
 }
 
 /// A compatibility-only absence proof for records from before compose
@@ -2539,25 +2765,57 @@ fn compose_services_are_terminal(
     let Some(test_run) = test_run else {
         return true;
     };
-    service_ids.iter().all(|service_id| {
+    if compose_evidence_conflict(test_run, service_ids).is_some() {
+        return false;
+    }
+    let runners_are_terminal = runner_evidence(test_run).iter().all(|runner| {
+        process_status_is_terminal(runner.status)
+            && runner.pid.is_none()
+            && runner.cleanup_error.is_none()
+    });
+    runners_are_terminal
+        && service_ids.iter().all(|service_id| {
+            let mut matching = test_run
+                .services
+                .iter()
+                .filter(|service| service.id == *service_id);
+            matching
+                .next()
+                .map(|service| {
+                    service.cleanup_error.is_none()
+                        && (service.owned_by_vat == Some(false)
+                            || (process_status_is_terminal(service.status)
+                                && service.pid.is_none()))
+                })
+                // An exited VAT that never recorded this service did not have
+                // a live process for it in the first place.
+                .unwrap_or(true)
+        })
+}
+
+/// Prefer the current multi-runner evidence. `runner` mirrors its first entry
+/// for backward compatibility and therefore must not be double-counted as a
+/// duplicate. Legacy metadata with no `runners` list still uses that singleton.
+fn runner_evidence(test_run: &TestRunEvidence) -> &[crate::state::RunnerRunRecord] {
+    if test_run.runners.is_empty() {
         test_run
-            .services
-            .iter()
-            .find(|service| service.id == *service_id)
-            .map(|service| {
-                service.owned_by_vat == Some(false)
-                    || (matches!(
-                        service.status,
-                        ProcessStatus::Interrupted
-                            | ProcessStatus::Exited
-                            | ProcessStatus::Failed
-                            | ProcessStatus::Timeout
-                    ) && service.cleanup_error.is_none())
-            })
-            // An exited VAT that never recorded this service did not have a
-            // live process for it in the first place.
-            .unwrap_or(true)
-    })
+            .runner
+            .as_ref()
+            .map(std::slice::from_ref)
+            .unwrap_or(&[])
+    } else {
+        &test_run.runners
+    }
+}
+
+fn process_status_is_terminal(status: ProcessStatus) -> bool {
+    matches!(
+        status,
+        ProcessStatus::Interrupted
+            | ProcessStatus::Exited
+            | ProcessStatus::Failed
+            | ProcessStatus::Timeout
+    )
 }
 
 fn detached_startup_from_evidence(
@@ -2604,35 +2862,26 @@ fn detached_startup_from_evidence(
         }
     }
 
-    if let Some(runner) = test_run
-        .runner
-        .iter()
-        .chain(test_run.runners.iter())
-        .find(|runner| {
-            matches!(
-                runner.status,
-                ProcessStatus::Interrupted
-                    | ProcessStatus::Exited
-                    | ProcessStatus::Failed
-                    | ProcessStatus::Timeout
-            )
-        })
-    {
+    if let Some(runner) = runner_evidence(test_run).iter().find(|runner| {
+        matches!(
+            runner.status,
+            ProcessStatus::Interrupted
+                | ProcessStatus::Exited
+                | ProcessStatus::Failed
+                | ProcessStatus::Timeout
+        )
+    }) {
         return DetachedStartup::Terminal(format!(
             "runner `{}` is {:?} before compose startup completed",
             runner.id, runner.status
         ));
     }
 
-    let runner_is_live = test_run
-        .runner
-        .iter()
-        .chain(test_run.runners.iter())
-        .any(|runner| {
-            runner.id == RUNNER_ID
-                && runner.status == ProcessStatus::Running
-                && runner.pid.is_some()
-        });
+    let runners = runner_evidence(test_run);
+    let runner_is_live = runners.len() == 1
+        && runners[0].id == RUNNER_ID
+        && runners[0].status == ProcessStatus::Running
+        && runners[0].pid.is_some();
 
     if runner_is_live && all_registered_services_are_uniquely_ready(test_run, service_ids) {
         return DetachedStartup::Ready;
@@ -2654,32 +2903,28 @@ fn detached_startup_while_active(
         return DetachedStartup::Starting;
     };
 
-    let runner_is_live = test_run
-        .runner
-        .iter()
-        .chain(test_run.runners.iter())
-        .any(|runner| {
-            runner.id == RUNNER_ID
-                && runner.status == ProcessStatus::Running
-                && runner.pid.is_some()
-        });
+    if let Some(message) = compose_cleanup_error(Some(test_run), service_ids) {
+        return DetachedStartup::CleanupUnconfirmed(message);
+    }
+
+    let runners = runner_evidence(test_run);
+    let runner_is_live = runners.len() == 1
+        && runners[0].id == RUNNER_ID
+        && runners[0].status == ProcessStatus::Running
+        && runners[0].pid.is_some();
     if runner_is_live && all_registered_services_are_uniquely_ready(test_run, service_ids) {
         return DetachedStartup::Ready;
     }
 
-    let runner_is_terminal = test_run
-        .runner
-        .iter()
-        .chain(test_run.runners.iter())
-        .any(|runner| {
-            matches!(
-                runner.status,
-                ProcessStatus::Interrupted
-                    | ProcessStatus::Exited
-                    | ProcessStatus::Failed
-                    | ProcessStatus::Timeout
-            )
-        });
+    let runner_is_terminal = runner_evidence(test_run).iter().any(|runner| {
+        matches!(
+            runner.status,
+            ProcessStatus::Interrupted
+                | ProcessStatus::Exited
+                | ProcessStatus::Failed
+                | ProcessStatus::Timeout
+        )
+    });
     let service_is_terminal = service_ids.iter().any(|service_id| {
         test_run
             .services
@@ -2722,14 +2967,93 @@ fn compose_cleanup_error(
     service_ids: &[String],
 ) -> Option<String> {
     let test_run = test_run?;
-    service_ids.iter().find_map(|service_id| {
-        let service = test_run
+    if let Some(error) = test_run.cleanup_error.as_deref() {
+        return Some(format!("run auxiliary cleanup: {error}"));
+    }
+    if let Some(error) = compose_evidence_conflict(test_run, service_ids) {
+        return Some(error);
+    }
+    if let Some(error) = runner_evidence(test_run).iter().find_map(|runner| {
+        if let Some(error) = runner.cleanup_error.as_deref() {
+            return Some(format!(
+                "runner `{}`: {error}{}",
+                runner.id,
+                runner
+                    .pid
+                    .map(|pid| format!("; retained leader pid {pid}"))
+                    .unwrap_or_default()
+            ));
+        }
+        runner.pid.and_then(|pid| {
+            if runner.status == ProcessStatus::Running {
+                return None;
+            }
+            let lifecycle = if process_status_is_terminal(runner.status) {
+                "terminal"
+            } else {
+                "nonterminal"
+            };
+            Some(format!(
+                "runner `{}` is {lifecycle} ({:?}) but still retains leader pid {pid}",
+                runner.id, runner.status
+            ))
+        })
+    }) {
+        return Some(error);
+    }
+    test_run.services.iter().find_map(|service| {
+        if let Some(error) = service.cleanup_error.as_deref() {
+            return Some(format!("service `{}`: {error}", service.id));
+        }
+        service.pid.and_then(|pid| {
+            process_status_is_terminal(service.status).then(|| {
+                format!(
+                    "service `{}` is terminal ({:?}) but still retains leader pid {pid}",
+                    service.id, service.status,
+                )
+            })
+        })
+    })
+}
+
+/// Detect ambiguous evidence before any active detached path is allowed to
+/// return Starting or Ready. Exact legacy/current runner mirrors are accepted;
+/// divergent mirrors, duplicate current runner IDs, and duplicate compose
+/// service IDs are not ownership proofs.
+fn compose_evidence_conflict(test_run: &TestRunEvidence, service_ids: &[String]) -> Option<String> {
+    if let (Some(legacy), Some(current)) = (test_run.runner.as_ref(), test_run.runners.first()) {
+        if legacy.id != current.id
+            || legacy.status != current.status
+            || legacy.pid != current.pid
+            || legacy.cleanup_error != current.cleanup_error
+        {
+            return Some(format!(
+                "runner `{}` legacy/current evidence is contradictory",
+                current.id
+            ));
+        }
+    }
+
+    let runners = runner_evidence(test_run);
+    if runners.len() > 1 {
+        return Some(format!(
+            "compose runner evidence has {} duplicate or extra current records; expected exactly one `{RUNNER_ID}` runner",
+            runners.len()
+        ));
+    }
+
+    for service_id in service_ids {
+        if test_run
             .services
             .iter()
-            .find(|service| service.id == *service_id)?;
-        let error = service.cleanup_error.as_deref()?;
-        Some(format!("service `{service_id}`: {error}"))
-    })
+            .filter(|service| service.id == *service_id)
+            .nth(1)
+            .is_some()
+        {
+            return Some(format!("service `{service_id}` has duplicate evidence"));
+        }
+    }
+    None
 }
 
 fn compose_terminal_startup_error(
@@ -3025,6 +3349,7 @@ mod tests {
             exit_code: None,
             ready_http: None,
             docker_name: None,
+            docker_id: None,
             microvm_name: None,
             readiness_error: readiness_error.map(str::to_string),
             cleanup_error: None,
@@ -3057,6 +3382,7 @@ mod tests {
             }),
             runners: Vec::new(),
             artifacts: Vec::new(),
+            cleanup_error: None,
             plan: None,
             topology: None,
         }
@@ -3188,13 +3514,13 @@ mod tests {
         );
         assert_eq!(
             detached_startup_from_evidence(&ids, Some(&duplicate_same_id)),
-            DetachedStartup::Starting,
-            "duplicate service evidence must reject the exited-run readiness proof"
+            DetachedStartup::CleanupUnconfirmed("service `web` has duplicate evidence".to_string()),
+            "duplicate service evidence must fail closed on the exited-run path"
         );
         assert_eq!(
             detached_startup_while_active(&ids, Some(&duplicate_same_id)),
-            DetachedStartup::Starting,
-            "duplicate service evidence must reject the active-run readiness proof before exec can spawn"
+            DetachedStartup::CleanupUnconfirmed("service `web` has duplicate evidence".to_string()),
+            "duplicate service evidence must fail closed before exec can spawn"
         );
 
         assert_eq!(
@@ -3225,6 +3551,157 @@ mod tests {
             state,
             DetachedStartup::Terminal(message)
                 if message.contains("web") && message.contains("host endpoint reset")
+        ));
+    }
+
+    #[test]
+    fn active_process_pids_are_valid_but_terminal_pids_block_compose_reuse() {
+        let ids = vec!["web".to_string()];
+        let mut run = evidence(
+            vec![service("web", ProcessStatus::Running, None)],
+            Some(ProcessStatus::Running),
+        );
+        run.services[0].pid = Some(5151);
+
+        assert_eq!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::Starting,
+            "live runner and service leaders are expected during startup"
+        );
+
+        let runner = run.runner.as_mut().expect("live runner evidence");
+        runner.status = ProcessStatus::Exited;
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("runner") && message.contains("42")
+        ));
+
+        let runner = run.runner.as_mut().expect("terminal runner evidence");
+        runner.pid = None;
+        run.services[0].status = ProcessStatus::Exited;
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("service") && message.contains("5151")
+        ));
+    }
+
+    #[test]
+    fn every_nonterminal_vat_status_validates_cleanup_duplicates_and_pid_evidence() {
+        let ids = vec!["web".to_string()];
+        let statuses = [Status::Created, Status::Running, Status::Snapshot];
+        let mut run = evidence(
+            vec![service("web", ProcessStatus::Running, None)],
+            Some(ProcessStatus::Running),
+        );
+        run.services[0].pid = Some(5151);
+
+        assert_eq!(
+            detached_startup_for_nonterminal_vat(&Status::Running, &ids, Some(&run)),
+            Some(DetachedStartup::Starting),
+            "active Running+PID evidence remains a valid in-progress state"
+        );
+        run.services[0].status = ProcessStatus::Ready;
+        assert_eq!(
+            detached_startup_for_nonterminal_vat(&Status::Running, &ids, Some(&run)),
+            Some(DetachedStartup::Ready),
+            "one live project.up runner and one Ready service are active evidence"
+        );
+        for status in [Status::Created, Status::Snapshot] {
+            assert!(matches!(
+                detached_startup_for_nonterminal_vat(&status, &ids, Some(&run)),
+                Some(DetachedStartup::Terminal(message))
+                    if message.contains("cannot own an active detached compose runtime")
+            ));
+        }
+        let runner_pid = run.runner.as_ref().and_then(|runner| runner.pid);
+        run.runner.as_mut().expect("runner evidence").pid = Some(std::process::id());
+        run.services[0].pid = Some(std::process::id());
+        for status in [Status::Created, Status::Snapshot] {
+            assert!(matches!(
+                detached_startup_for_nonterminal_vat(&status, &ids, Some(&run)),
+                Some(DetachedStartup::CleanupUnconfirmed(message))
+                    if message.contains("live PID/PGID")
+            ));
+        }
+        run.runner.as_mut().expect("runner evidence").pid = runner_pid;
+        run.services[0].pid = Some(5151);
+        run.services[0].status = ProcessStatus::Running;
+
+        run.cleanup_error = Some("setup process group remains".to_string());
+        for status in &statuses {
+            assert!(matches!(
+                detached_startup_for_nonterminal_vat(status, &ids, Some(&run)),
+                Some(DetachedStartup::CleanupUnconfirmed(message))
+                    if message.contains("setup process group remains")
+            ));
+        }
+        run.cleanup_error = None;
+
+        run.runner.as_mut().expect("runner evidence").cleanup_error =
+            Some("runner group remains".to_string());
+        assert!(matches!(
+            detached_startup_for_nonterminal_vat(&Status::Created, &ids, Some(&run)),
+            Some(DetachedStartup::CleanupUnconfirmed(message))
+                if message.contains("runner group remains")
+        ));
+        run.runner.as_mut().expect("runner evidence").cleanup_error = None;
+
+        run.services[0].cleanup_error = Some("readiness command group remains".to_string());
+        assert!(matches!(
+            detached_startup_for_nonterminal_vat(&Status::Snapshot, &ids, Some(&run)),
+            Some(DetachedStartup::CleanupUnconfirmed(message))
+                if message.contains("readiness command group remains")
+        ));
+        run.services[0].cleanup_error = None;
+
+        let duplicate = run.services[0].clone();
+        run.services.push(duplicate);
+        assert_eq!(
+            detached_startup_for_nonterminal_vat(&Status::Running, &ids, Some(&run)),
+            Some(DetachedStartup::CleanupUnconfirmed(
+                "service `web` has duplicate evidence".to_string()
+            ))
+        );
+        run.services.pop();
+
+        run.services[0].status = ProcessStatus::Exited;
+        assert!(matches!(
+            detached_startup_for_nonterminal_vat(&Status::Running, &ids, Some(&run)),
+            Some(DetachedStartup::CleanupUnconfirmed(message))
+                if message.contains("terminal") && message.contains("5151")
+        ));
+    }
+
+    #[test]
+    fn active_detached_startup_rejects_duplicate_or_divergent_runner_evidence() {
+        let ids = vec!["web".to_string()];
+        let mut run = evidence(
+            vec![service("web", ProcessStatus::Ready, None)],
+            Some(ProcessStatus::Running),
+        );
+        let current = run.runner.clone().expect("legacy runner evidence");
+        run.runners = vec![current.clone(), current];
+        assert!(matches!(
+            detached_startup_while_active(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("duplicate")
+        ));
+
+        run.runners[1].id = "unexpected-runner".to_string();
+        assert!(matches!(
+            detached_startup_while_active(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("extra")
+        ));
+
+        run.runners.pop();
+        run.runner.as_mut().expect("legacy runner mirror").status = ProcessStatus::Exited;
+        assert!(matches!(
+            detached_startup_while_active(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("contradictory")
         ));
     }
 
@@ -3277,6 +3754,62 @@ mod tests {
 
         run.services[0].cleanup_error = None;
         assert!(compose_services_are_terminal(Some(&run), &ids));
+
+        let legacy_runner = run.runner.as_mut().expect("legacy runner evidence");
+        legacy_runner.status = ProcessStatus::Failed;
+        legacy_runner.pid = Some(4242);
+        legacy_runner.cleanup_error = Some("runner process group remains".to_string());
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("runner") && message.contains("4242")
+        ));
+
+        let mut listed_runner = run.runner.take().expect("move legacy runner evidence");
+        listed_runner.cleanup_error = Some("listed runner group remains".to_string());
+        run.runners = vec![listed_runner];
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("listed runner group remains")
+        ));
+
+        run.runners[0].cleanup_error = None;
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("terminal") && message.contains("4242")
+        ));
+
+        run.runners[0].pid = None;
+        run.runners[0].status = ProcessStatus::Exited;
+        run.services[0].pid = Some(5151);
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("service") && message.contains("5151")
+        ));
+        assert!(!compose_services_are_terminal(Some(&run), &ids));
+
+        run.services[0].pid = None;
+        let mut duplicate_service = run.services[0].clone();
+        duplicate_service.cleanup_error = Some("later duplicate cleanup failure".to_string());
+        run.services.push(duplicate_service);
+        assert!(matches!(
+            detached_startup_from_evidence(&ids, Some(&run)),
+            DetachedStartup::CleanupUnconfirmed(message)
+                if message.contains("duplicate evidence")
+        ));
+
+        run.services[1].cleanup_error = None;
+        run.services[1].status = ProcessStatus::Running;
+        assert!(!compose_services_are_terminal(Some(&run), &ids));
+
+        run.services[1].status = ProcessStatus::Exited;
+        let mut duplicate_runner = run.runners[0].clone();
+        duplicate_runner.status = ProcessStatus::Running;
+        run.runners.push(duplicate_runner);
+        assert!(!compose_services_are_terminal(Some(&run), &ids));
     }
 
     fn docker_shim_record(vat_id: &str, service_ids: &[&str]) -> ComposeRecord {
@@ -3294,6 +3827,106 @@ mod tests {
             status: "ready".to_string(),
             created_at: Utc::now().to_rfc3339(),
         }
+    }
+
+    #[test]
+    fn starting_stop_authority_requires_completed_current_token_handoff() {
+        let mut published = docker_shim_record("vat-starting", &["web"]);
+        published.status = "starting".to_string();
+        assert_eq!(
+            token_bound_published_vat_id(&published),
+            Some("vat-starting")
+        );
+
+        let mut pending = published.clone();
+        pending.vat_id = None;
+        pending.startup_pid = Some(4242);
+        pending.startup_token = Some("pending-token".to_string());
+        pending.startup_started_at = Some(Utc::now().to_rfc3339());
+        assert_eq!(token_bound_published_vat_id(&pending), None);
+
+        let mut legacy = published.clone();
+        legacy.handoff_protocol = 0;
+        assert_eq!(token_bound_published_vat_id(&legacy), None);
+
+        let mut contradictory = published;
+        contradictory.startup_token = Some("stale-token".to_string());
+        assert_eq!(token_bound_published_vat_id(&contradictory), None);
+    }
+
+    #[test]
+    fn detached_handoff_final_record_requires_the_same_immutable_launch() {
+        let mut published = docker_shim_record("vat-late-publish", &["web"]);
+        published.project = "slow-definitive-handoff".to_string();
+        published.docker_shim_profile = None;
+        published.status = "starting".to_string();
+        let identity = detached_launch_identity_from_record(&published)
+            .expect("detached launch has an immutable identity");
+        let handoff =
+            ComposeHandoff::new(&published.project, "test-handoff-token").expect("valid handoff");
+
+        // Deterministically model the deadline edge: the poll returned no VAT
+        // id, then this exact token owner published before the final claim.
+        assert!(detached_handoff_record_matches(
+            &published, &identity, &handoff, None
+        ));
+        assert!(detached_handoff_record_matches(
+            &published,
+            &identity,
+            &handoff,
+            Some("vat-late-publish")
+        ));
+        assert!(!detached_handoff_record_matches(
+            &published,
+            &identity,
+            &handoff,
+            Some("vat-unrelated")
+        ));
+
+        let mut pending = published.clone();
+        pending.vat_id = None;
+        pending.startup_pid = Some(4242);
+        pending.startup_token = Some(handoff.token.clone());
+        pending.startup_started_at = Some(Utc::now().to_rfc3339());
+        assert!(detached_handoff_record_matches(
+            &pending, &identity, &handoff, None
+        ));
+        let other_handoff =
+            ComposeHandoff::new(&pending.project, "other-token").expect("valid alternate handoff");
+        assert!(!detached_handoff_record_matches(
+            &pending,
+            &identity,
+            &other_handoff,
+            None
+        ));
+
+        let mut down = published.clone();
+        down.vat_id = None;
+        down.launch_ticket = None;
+        down.status = "imported".to_string();
+        assert!(!detached_handoff_record_matches(
+            &down, &identity, &handoff, None
+        ));
+
+        let mut reimported_with_other_profile = published.clone();
+        reimported_with_other_profile.docker_shim_profile =
+            Some("host-facing-independent-v1".to_string());
+        assert!(!detached_handoff_record_matches(
+            &reimported_with_other_profile,
+            &identity,
+            &handoff,
+            None
+        ));
+
+        let mut relaunched = published;
+        relaunched.launch_generation += 1;
+        relaunched.launch_ticket = Some("replacement-launch-ticket".to_string());
+        assert!(!detached_handoff_record_matches(
+            &relaunched,
+            &identity,
+            &handoff,
+            None
+        ));
     }
 
     #[test]

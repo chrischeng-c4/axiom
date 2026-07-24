@@ -412,7 +412,11 @@ fn check_preset(
             &service.id,
             selector.is_ok() && tools_ok,
             "lumen_native_release",
-            if tools_ok { detail } else { format!("{detail}; install curl, tar, and shasum for native release resolution") },
+            if tools_ok {
+                detail
+            } else {
+                format!("{detail}; install curl, tar, and shasum for native release resolution")
+            },
         );
         return;
     }

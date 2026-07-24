@@ -34,7 +34,10 @@ fn main() {
 
 /// Best-effort short SHA of HEAD. Returns `None` outside a git workspace.
 fn short_sha() -> Option<String> {
-    let out = Command::new("git").args(["rev-parse", "--short=8", "HEAD"]).output().ok()?;
+    let out = Command::new("git")
+        .args(["rev-parse", "--short=8", "HEAD"])
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

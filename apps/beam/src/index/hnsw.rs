@@ -235,7 +235,9 @@ impl HnswIndex {
             Metric::Cosine => {
                 HnswBackend::Cosine(Hnsw::new(m, max_elements, HNSW_MAX_LAYER, efc, DistDot))
             }
-            Metric::Dot => HnswBackend::Dot(Hnsw::new(m, max_elements, HNSW_MAX_LAYER, efc, DistL2)),
+            Metric::Dot => {
+                HnswBackend::Dot(Hnsw::new(m, max_elements, HNSW_MAX_LAYER, efc, DistL2))
+            }
         };
 
         for (i, &is_live) in live.iter().enumerate() {
@@ -392,7 +394,9 @@ impl VectorIndex for HnswIndex {
             .max(self.config.ef_search)
             .min(cap);
         loop {
-            let ids = self.backend.search(query, pool, pool.max(self.config.ef_search));
+            let ids = self
+                .backend
+                .search(query, pool, pool.max(self.config.ef_search));
             let mut out: Vec<Neighbor> = self
                 .resolve(query, ids)
                 .into_iter()

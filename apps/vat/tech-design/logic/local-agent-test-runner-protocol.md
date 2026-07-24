@@ -78,15 +78,39 @@ scenarios:
   - id: unconfirmed_runtime_cleanup_forces_retention
     given:
       - "a runner or scenario has a VAT-owned Docker or MicroVM service"
-      - "the final docker rm -f or container rm -f teardown fails or times out and cannot be proven absent by a successful exact-name bounded list query"
+      - "the final docker rm -f or container rm -f teardown fails or times out and cannot be proven absent by a bounded authoritative query"
       - "workspace.keep is never or failed"
     when:
       - "the runner or scenario lifecycle reaches finalization"
     then:
-      - "vat emits microvm_cleanup_unconfirmed and returns a nonzero lifecycle result"
-      - "vat retains its state, logs, artifacts, diff evidence, persisted runtime name, and cleanup_error despite the normal keep policy"
-      - "a nonzero rm -f is considered auto-removal only when its exact-name list query succeeds and reports no match: Docker uses container ls -a with an anchored name filter and exact line comparison; MicroVM uses container list --all --format json with no matching id. Query error, timeout, malformed JSON, or a live resource remains unconfirmed"
+      - "vat emits owned_cleanup_unconfirmed and returns a nonzero lifecycle result (plus the deprecated microvm_cleanup_unconfirmed alias for Docker/MicroVM compatibility)"
+      - "vat retains its state, logs, artifacts, diff evidence, persisted runtime name, immutable Docker full ID, and cleanup_error despite the normal keep policy"
+      - "Docker cleanup requires both the recorded sanitized name and lowercase 64-hex full ID; legacy name-only evidence fails closed, and a same-name replacement ID is never signalled or removed"
+      - "one absolute 15-second deadline covers the strict anchored `docker container ls --all --no-trunc --filter name=^/<escaped-name>$ --format ID/name/state` query, at most one immutable-ID kill, state verification, at most one immutable-ID remove, helper process-group cleanup, and final absence proof; no helper resets the deadline"
+      - "a Created same-ID object skips kill and receives only the short remove slice; a proven terminal same-ID object may receive the terminal remove slice. Query error, timeout, malformed/ambiguous output, replacement identity, or a live object remains unconfirmed"
+      - "MicroVM uses one absolute three-second cleanup deadline: removal receives at most two seconds, and the exact container list --all --format json absence proof receives at most the remaining one second. The remove client, its owned process-group finalization, and the final proof all consume that same deadline; even successful rm requires no matching id. Query error, timeout, malformed JSON, or a live resource remains unconfirmed"
+      - "a runner result already observed as Exited with exit code 0 remains immutable when later service cleanup, diagnostic evidence, or lifecycle persistence fails; the service cleanup_error and overall nonzero lifecycle result carry the later failure without rewriting the target command's history"
       - "a later compose down retries only the recorded Docker or MicroVM resource; Kubernetes cluster deletion remains deferred to its own phase"
+  - id: docker_create_persists_identity_before_start
+    given:
+      - "a run-scoped service selects the Docker runtime"
+    when:
+      - "vat starts the service and waits for its endpoint"
+    then:
+      - "vat runs bounded `docker create --rm --name ...`, accepts exactly one lowercase 64-hex stdout ID, and atomically persists status Created plus docker_name and docker_id before any start command"
+      - "vat then spawns foreground `docker start --attach <full-id>` and keeps the durable checkpoint at Created until a strict name/full-ID/state query reports that exact object running while the attach child remains live"
+      - "only that acknowledgement permits status Running; endpoint readiness additionally requires two successful observations at least 100ms apart while the attach child stays live"
+      - "spawn, start, acknowledgement, or early-child failure uses the same exact-ID cleanup path and preserves Failed evidence; no successful handoff is emitted"
+  - id: detached_starting_handoff_is_definitive_and_stoppable
+    given:
+      - "vat compose up --detach has token-published a VAT id but a service remains in startup/readiness and no runner PID exists yet"
+    when:
+      - "the original ten-second handoff deadline expires or an agent runs vat compose down"
+    then:
+      - "up returns an evidence-unavailable error instead of treating Starting as success, and retains the starting registry binding plus VAT id"
+      - "down accepts only a VAT id published by the current token handoff protocol; a pending token or legacy/unbound id remains fail-closed"
+      - "down writes the VAT-owned stop-request instead of signalling any persisted PID; setup, service preparation, Docker running acknowledgement, or readiness consumes it and converges through normal exact cleanup and durable terminal state"
+      - "only confirmed terminal cleanup resets the registry to imported with no VAT id"
   - id: direct_command_mode_stays_compatible
     given:
       - "an existing caller uses `vat run -- <cmd>`"
@@ -127,8 +151,8 @@ nodes:
   wait_ready: { kind: choice, label: "services ready" }
   run_runner: { kind: normal, label: "run selected runner" }
   collect_evidence: { kind: normal, label: "collect logs artifacts diff state" }
-  cleanup_services: { kind: normal, label: "terminate service processes and record any unconfirmed Docker/MicroVM cleanup" }
-  cleanup_confirmed: { kind: choice, label: "rm succeeded or successful exact-name list query proves absent" }
+  cleanup_services: { kind: normal, label: "terminate service processes; Docker uses one 15s identity deadline and MicroVM uses one 3s remove/finalize/exact-proof deadline" }
+  cleanup_confirmed: { kind: choice, label: "same immutable runtime identity is proven absent" }
   retain: { kind: choice, label: "apply configured retention policy" }
   forced_retain: { kind: normal, label: "force nonzero result and retain VAT evidence for cleanup retry" }
   done: { kind: terminal, label: "return runner or scenario exit code" }
@@ -224,12 +248,12 @@ nodes:
   resolve_runner: { kind: decision, label: "runner exists" }
   create_vat: { kind: process, label: "create vat workspace and atomically persist metadata" }
   setup: { kind: process, label: "run setup entries" }
-  services: { kind: process, label: "spawn required services with log files" }
-  readiness: { kind: decision, label: "ready before timeout" }
+  services: { kind: process, label: "spawn native services; Docker create, persist Created/name/full-ID, then start --attach" }
+  readiness: { kind: decision, label: "exact runtime acknowledged and endpoint definitively ready before timeout" }
   runner: { kind: process, label: "run runner with env and cwd" }
   evidence: { kind: process, label: "record logs artifacts diff result by unique sibling temp write, sync_all, and rename of VAT metadata" }
-  cleanup: { kind: process, label: "terminate services and persist any unconfirmed Docker/MicroVM cleanup" }
-  cleanup_confirmed: { kind: decision, label: "rm succeeded or successful exact-name list query proves absent" }
+  cleanup: { kind: process, label: "terminate services; Docker identity query/kill/rm/proof share one 15s absolute deadline and MicroVM rm/helper-finalization/exact JSON absence share one 3s absolute deadline" }
+  cleanup_confirmed: { kind: decision, label: "same immutable runtime identity is proven absent" }
   retain: { kind: process, label: "apply configured retention policy" }
   forced_retain: { kind: process, label: "force nonzero result and retain VAT state/logs/diff for cleanup retry" }
   done: { kind: terminal, label: "return runner or scenario exit code" }
@@ -322,12 +346,14 @@ erDiagram
       string runner_id
       string retention
       int exit_code
+      string cleanup_error
     }
     SERVICE_RUN {
       string id
       string status
       string ready_http
       string docker_name
+      string docker_id
       string microvm_name
       string readiness_error
       string cleanup_error
@@ -339,6 +365,7 @@ erDiagram
       string status
       int exit_code
       int pid
+      string cleanup_error
       string stdout_log
       string stderr_log
     }
@@ -356,7 +383,7 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "vat-test-run-evidence.schema.json"
 title: "Vat test run evidence"
 type: object
-required: [config_path, runner_id, retention, services, runner, artifacts]
+required: [config_path, runner_id, retention, services, runner, runners, artifacts]
 properties:
   config_path:
     type: string
@@ -367,6 +394,9 @@ properties:
   retention:
     type: string
     enum: [failed, always, never]
+  cleanup_error:
+    type: [string, "null"]
+    description: Unconfirmed cleanup for a VAT-owned auxiliary process such as a setup command. This forces evidence retention and blocks GC even with include-failed.
   services:
     type: array
     items:
@@ -379,7 +409,11 @@ properties:
         ready_http: { type: [string, "null"] }
         docker_name:
           type: [string, "null"]
-          description: VAT-owned Docker container resource retained for teardown retry.
+          description: Sanitized VAT-owned Docker container name retained for strict anchored lookup; a name alone is never signal or deletion authority.
+        docker_id:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{64}$"
+          description: Immutable full Docker ID captured from bounded docker create stdout and atomically persisted with status Created before docker start --attach. Docker cleanup requires this ID plus docker_name and fails closed for legacy name-only evidence.
         microvm_name:
           type: [string, "null"]
           description: VAT-owned Apple container resource for a MicroVM-backed service.
@@ -388,7 +422,7 @@ properties:
           description: Last terminal readiness observation, including published host-endpoint diagnostics.
         cleanup_error:
           type: [string, "null"]
-          description: Unconfirmed VAT-owned Docker or MicroVM cleanup; a nonzero rm -f clears it only after a successful bounded exact-name list query proves absence: Docker container ls -a with anchored name filtering and exact line comparison, or MicroVM container list JSON with no matching id. Query error, timeout, malformed JSON, or a match remains unconfirmed. Runner and scenario finalization then force a nonzero result and retain the VAT regardless of keep=never or keep=failed. Compose retains the binding and retries the persisted runtime name before another run can reuse the host port.
+          description: Unconfirmed VAT-owned service cleanup, including a native process group or Docker/MicroVM runtime resource. Docker query, kill, one remove, helper cleanup, and final exact-ID absence proof consume one absolute 15-second deadline; a same-name replacement is untouched. MicroVM removal, owned-helper finalization, and exact JSON absence proof consume one absolute three-second deadline, and successful rm alone is not absence. Any cleanup obligation forces a nonzero result and compose retention; a successful interrupt may be published only after cleanup is proven.
         stdout_log: { type: string }
         stderr_log: { type: string }
       additionalProperties: false
@@ -402,12 +436,36 @@ properties:
         type: array
         items: { type: string }
       exit_code: { type: [integer, "null"] }
+      duration_ms: { type: [integer, "null"] }
       pid:
         type: [integer, "null"]
         description: Live runner PID while the VAT parent owns the child; readiness/reconciliation evidence only, never a compose-down signal target.
+      cleanup_error:
+        type: [string, "null"]
+        description: VAT could not prove the owned runner process group absent. Compose retains ownership; on a signal VAT records the signal context but fails closed instead of publishing Interrupted/130/143 success. A later service, diagnostic, or lifecycle failure never rewrites an already observed terminal runner status and exit code.
       stdout_log: { type: string }
       stderr_log: { type: string }
     additionalProperties: false
+  runners:
+    type: array
+    items:
+      type: object
+      required: [id, status, command, stdout_log, stderr_log]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [created, running, interrupted, exited, failed, timeout] }
+        command:
+          type: array
+          items: { type: string }
+        exit_code: { type: [integer, "null"] }
+        duration_ms: { type: [integer, "null"] }
+        pid: { type: [integer, "null"] }
+        cleanup_error:
+          type: [string, "null"]
+          description: Per-runner owned process-group cleanup obligation; terminal evidence must not retain a PID without blocking compose reuse.
+        stdout_log: { type: string }
+        stderr_log: { type: string }
+      additionalProperties: false
   artifacts:
     type: array
     items:
@@ -480,12 +538,21 @@ commands:
           - "Loads vat.toml from the current directory or an ancestor."
           - "Executes the named runner with its setup and required services."
           - "Returns the runner exit code."
-          - "If Docker or MicroVM cleanup remains unconfirmed after rm success or a successful exact-name list absence proof, emits microvm_cleanup_unconfirmed, returns nonzero, and retains the VAT despite keep=never or keep=failed so its state/logs/diff and retry path remain available."
+          - "If any runner/service cleanup remains unconfirmed, emits owned_cleanup_unconfirmed, returns nonzero, and retains the VAT. Docker/MicroVM callers additionally receive the deprecated microvm_cleanup_unconfirmed compatibility alias. A signal is preserved in failure evidence but Interrupted/130/143 is published only after cleanup proof."
   - name: vat logs
     usage: "vat logs <vat-id> [service-id|runner]"
     behavior:
       - "Prints captured stdout and stderr evidence for the selected source."
       - "Defaults to all captured logs for the vat run."
+  - name: vat compose up/down
+    forms:
+      - usage: "vat compose up --project <project> --detach"
+        behavior:
+          - "Publishes a VAT id only through the one-shot token handoff and reports success only after definitive service readiness plus a live runner; reaching the handoff deadline while still Starting is an error that retains the binding."
+      - usage: "vat compose down <project>"
+        behavior:
+          - "For Ready or token-published Starting VATs, writes an owner stop-request and waits for durable terminal cleanup before resetting the registry; it never signals a persisted PID directly."
+          - "A pending/unpublished handoff remains fail-closed, and cleanup uncertainty retains the binding."
 ```
 
 ## Wireframe
@@ -643,9 +710,10 @@ x-aw-contract:
   surface: none
   reason: >
     Vat ships no image and builds none. It may run a run-scoped dependency
-    service as an ephemeral `docker run` or explicit Apple `container run`
-    container (a preset/image with the selected runtime), but it is not an image
-    registry/builder and the runner is always a host process.
+    service through bounded `docker create`, durable Created/name/full-ID
+    persistence, and foreground `docker start --attach`, or through explicit
+    Apple `container run` (a preset/image with the selected runtime), but it is
+    not an image registry/builder and the runner is always a host process.
 ```
 
 ## Deployment
@@ -705,6 +773,12 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement preserve_terminal_runner_outcome {
+      id: UT7
+      text: "Failure recording creates missing runner evidence or terminalizes only Running records; it never rewrites an already observed Exited/0 target when a later service cleanup, diagnostic, or persistence step fails."
+      risk: high
+      verifymethod: test
+    }
     test config_parse_tests {
       type: functional
       verifies: parse_config
@@ -725,6 +799,10 @@ requirementDiagram
       type: functional
       verifies: finalize_interrupted_groups_once
     }
+    test completed_runner_outcome_regression {
+      type: functional
+      verifies: preserve_terminal_runner_outcome
+    }
 ```
 
 ## E2E Test
@@ -742,7 +820,8 @@ e2e_tests:
     assertions:
       - "vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence."
       - "failed runner evidence remains inspectable."
-      - "An unconfirmed Docker or MicroVM cleanup forces a nonzero result and keeps the VAT evidence regardless of the normal keep policy."
+      - "Any unconfirmed runner/service cleanup forces a nonzero result and keeps VAT evidence regardless of the normal keep policy."
+      - "A target that completed Exited/0 remains recorded as Exited/0 when later VAT-owned service cleanup fails; the service and lifecycle carry the cleanup failure separately."
       - "An occupied command-backed native endpoint fails before service or runner spawn, reports the exact service/endpoint, and leaves the unrelated listener reachable."
       - "A child that exits before its reserved endpoint becomes ready is terminal and no dependent runner starts."
       - "Explicit external services retain attach-and-probe behavior without VAT lifecycle ownership."
@@ -760,6 +839,18 @@ e2e_tests:
       - "Terminal state is interrupted with the first signal/reason and no runner/service PID; a second cleanup is a no-op."
       - "Direct vat run -- <cmd> has the same real SIGINT/SIGTERM terminal-state and owned-descendant cleanup contract."
       - "vat gc --execute without --include-failed classifies interrupted evidence as retained and does not delete it."
+  - id: vat-compose-docker-identity-and-definitive-handoff
+    name: "Compose immutable Docker identity and definitive detached handoff"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-agent-test-runner-protocol
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "VAT_COMPOSE_REAL_DOCKER_E2E_REQUIRED=1 cargo test -p vat --test vat_compose -- --test-threads=1 --nocapture"
+    assertions:
+      - "Fake-runtime cases prove Created/name/full-ID persistence precedes start, only exact running acknowledgement advances state, and start failure performs one exact-ID cleanup without signalling a same-name replacement."
+      - "Cleanup query/kill/remove/final-proof helpers remain bounded by one lifecycle deadline and retain durable retry evidence on timeout, error, ambiguity, or replacement. Docker uses 15 seconds; MicroVM removal, helper finalization, and exact JSON absence share three seconds and require final absence even after successful rm."
+      - "A slow detached startup cannot return false success; its token-bound Starting registry can be stopped immediately through the VAT-owned request, leaving terminal service evidence, no PID/container ownership, and an imported unbound registry."
+      - "The required real-Docker full cycle proves create/start/readiness/logs/down behavior against Docker Desktop rather than only a fake command."
 ```
 
 ## Changes
@@ -904,11 +995,12 @@ changes:
   - path: apps/vat/tests/vat_signal_cleanup.rs
     action: add
     section: e2e-test
-    impl_mode: hand-written
+    impl_mode: codegen
     refs:
       - "apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#scenarios"
       - "apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#e2e-test"
-    summary: "Send real SIGINT/SIGTERM to direct and configured VAT runs and prove bounded owned-group cleanup, terminal state, port release, external survival, retention, and idempotency."
+      - "apps/vat/tech-design/semantic/source/projects-vat-tests-vat_signal_cleanup-rs.md#source"
+    summary: "Generate real SIGINT/SIGTERM direct/configured coverage that proves bounded owned-group cleanup, PGID absence, terminal state, port release, external survival, retention, and idempotency; the existing whole run.rs source mirror remains scheduled for atomic refresh in #2396."
   - path: apps/vat/Cargo.toml
     action: modify
     section: manifest

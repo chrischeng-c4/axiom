@@ -286,7 +286,14 @@ impl IvfPqIndex {
 
         // (1) Coarse quantizer over the (sampled) raw vectors.
         let coarse = if n_train == n {
-            kmeans(collection.data(), n, dim, nlist, config.kmeans_iters, config.seed)
+            kmeans(
+                collection.data(),
+                n,
+                dim,
+                nlist,
+                config.kmeans_iters,
+                config.seed,
+            )
         } else {
             let mut td = vec![0.0f32; n_train * dim];
             for (j, &i) in sample_idx.iter().enumerate() {
@@ -322,8 +329,7 @@ impl IvfPqIndex {
                 for s in 0..m {
                     for (j, &i) in sample_idx.iter().enumerate() {
                         let src = i * dim + s * dsub;
-                        sub[j * dsub..(j + 1) * dsub]
-                            .copy_from_slice(&residuals[src..src + dsub]);
+                        sub[j * dsub..(j + 1) * dsub].copy_from_slice(&residuals[src..src + dsub]);
                     }
                     // Distinct per-subspace seed so subspaces don't share init.
                     let cb = kmeans(
@@ -949,10 +955,13 @@ mod tests {
         let oracle = CpuFlatIndex::new(&c);
         let queries = crate::dataset::clustered_queries(6, dim, 12, 0.03, 3);
         for q in &queries {
-            let truth: HashSet<u32> =
-                oracle.search_knn(q, 10).iter().map(|n| n.row).collect();
+            let truth: HashSet<u32> = oracle.search_knn(q, 10).iter().map(|n| n.row).collect();
             let got = idx.search_cpu(q, 10, idx.nlist());
-            assert_eq!(recall_at(&got, &truth), 1.0, "full-probe Flat must be exact");
+            assert_eq!(
+                recall_at(&got, &truth),
+                1.0,
+                "full-probe Flat must be exact"
+            );
         }
     }
 
@@ -973,8 +982,7 @@ mod tests {
         let queries = crate::dataset::clustered_queries(6, dim, 16, 0.03, 4);
         let mut sum = 0.0;
         for q in &queries {
-            let truth: HashSet<u32> =
-                oracle.search_knn(q, 10).iter().map(|n| n.row).collect();
+            let truth: HashSet<u32> = oracle.search_knn(q, 10).iter().map(|n| n.row).collect();
             let got = idx.search_cpu(q, 10, idx.nlist());
             sum += recall_at(&got, &truth);
         }

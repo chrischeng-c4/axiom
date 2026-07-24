@@ -76,7 +76,14 @@ fn mean_recall(index: &HnswIndex, oracle: &CpuFlatIndex, queries: &[Vec<f32>]) -
 /// metric — well-separated neighbors, so recall@k-by-row is high and stable.
 fn low_rank_corpus(n: usize, metric: Metric) -> (Collection, Vec<Vec<f32>>) {
     let corpus = dataset::low_rank_collection(
-        "hnsw", n, DIM, metric, RANK, NUM_CLUSTERS, COEF_JITTER, CORPUS_SEED,
+        "hnsw",
+        n,
+        DIM,
+        metric,
+        RANK,
+        NUM_CLUSTERS,
+        COEF_JITTER,
+        CORPUS_SEED,
     );
     let queries =
         dataset::low_rank_queries(N_QUERIES, DIM, RANK, NUM_CLUSTERS, COEF_JITTER, QUERY_SEED);
@@ -94,8 +101,14 @@ fn recall_is_high_and_grows_with_ef_search() {
 
     // Headline recall at the recall config's generous ef_search.
     let recall = mean_recall(&index, &oracle, &queries);
-    eprintln!("  HNSW recall@{K} (L2, low-rank, ef_search={}): {recall:.4}", index.ef_search());
-    assert!(recall >= 0.90, "HNSW recall@{K} {recall} should clear 0.90 with margin");
+    eprintln!(
+        "  HNSW recall@{K} (L2, low-rank, ef_search={}): {recall:.4}",
+        index.ef_search()
+    );
+    assert!(
+        recall >= 0.90,
+        "HNSW recall@{K} {recall} should clear 0.90 with margin"
+    );
 
     // Sweep ef_search on the SAME graph — recall is non-decreasing-ish and a large
     // ef beats a small one (the recall/latency lever works). We assert the strong
@@ -113,7 +126,10 @@ fn recall_is_high_and_grows_with_ef_search() {
         hi >= lo - 1e-9,
         "raising ef_search must not lower recall: {recalls:?}"
     );
-    assert!(hi >= 0.90, "recall at the largest ef_search should clear 0.90, got {hi}");
+    assert!(
+        hi >= 0.90,
+        "recall at the largest ef_search should clear 0.90, got {hi}"
+    );
 }
 
 /// (4) Metrics: L2 AND Cosine both reach high recall on the low-rank corpus
@@ -136,8 +152,15 @@ fn l2_and_cosine_both_high_recall() {
 /// A clustered corpus with deterministic per-row payloads (`category = i % 8`,
 /// `row = i`) for the filter / tombstone invariant tests.
 fn payload_corpus(n: usize) -> Collection {
-    let mut c =
-        dataset::clustered_collection("hnsw-f", n, DIM, Metric::L2, NUM_CLUSTERS, JITTER, CORPUS_SEED);
+    let mut c = dataset::clustered_collection(
+        "hnsw-f",
+        n,
+        DIM,
+        Metric::L2,
+        NUM_CLUSTERS,
+        JITTER,
+        CORPUS_SEED,
+    );
     for i in 0..c.len() {
         c.set_payload(
             i,
@@ -223,7 +246,10 @@ fn filtered_results_satisfy_filter_and_are_subset() {
     }
     let recall = sum / N_QUERIES as f64;
     eprintln!("  HNSW filtered recall@{K} vs filtered flat oracle: {recall:.4}");
-    assert!(recall >= 0.70, "filtered HNSW recall {recall} should clear 0.70");
+    assert!(
+        recall >= 0.70,
+        "filtered HNSW recall {recall} should clear 0.70"
+    );
 }
 
 /// (2b) Selectivity edge: a filter matching fewer than k rows returns exactly the
@@ -237,8 +263,16 @@ fn filtered_selectivity_edges() {
     // `row in [0, 5]` matches exactly rows 0..=5 (six rows, < k).
     let few = Filter::new().int_range("row", 0, 5);
     let got = index.search_knn_filtered(q, K, &few);
-    assert_eq!(got.len(), 6, "a filter matching 6 rows must return exactly 6, not k={K}");
-    assert_eq!(row_set(&got), (0..=5).collect(), "must return exactly rows 0..=5");
+    assert_eq!(
+        got.len(),
+        6,
+        "a filter matching 6 rows must return exactly 6, not k={K}"
+    );
+    assert_eq!(
+        row_set(&got),
+        (0..=5).collect(),
+        "must return exactly rows 0..=5"
+    );
 
     // No row has category 42.
     let none = Filter::new().eq("category", 42i64);
@@ -253,10 +287,19 @@ fn filtered_selectivity_edges() {
 #[test]
 fn deleted_rows_never_returned() {
     let mut corpus = dataset::clustered_collection(
-        "hnsw-t", 6000, DIM, Metric::L2, NUM_CLUSTERS, JITTER, CORPUS_SEED,
+        "hnsw-t",
+        6000,
+        DIM,
+        Metric::L2,
+        NUM_CLUSTERS,
+        JITTER,
+        CORPUS_SEED,
     );
     // Deterministic delete set: every 7th id.
-    let deleted: HashSet<String> = (0..corpus.len()).step_by(7).map(|i| format!("id-{i}")).collect();
+    let deleted: HashSet<String> = (0..corpus.len())
+        .step_by(7)
+        .map(|i| format!("id-{i}"))
+        .collect();
     for id in &deleted {
         assert!(corpus.delete(id));
     }
@@ -275,7 +318,11 @@ fn deleted_rows_never_returned() {
                 "deleted id {} was returned",
                 nb.external_id
             );
-            assert!(corpus.is_live(nb.row), "tombstoned row {} was returned", nb.row);
+            assert!(
+                corpus.is_live(nb.row),
+                "tombstoned row {} was returned",
+                nb.row
+            );
         }
     }
 
@@ -293,7 +340,10 @@ fn deleted_rows_never_returned() {
             .map(|n| n.external_id.clone())
             .collect();
         let got = index.search_knn(q, K);
-        let hit = got.iter().filter(|nb| truth.contains(&nb.external_id)).count();
+        let hit = got
+            .iter()
+            .filter(|nb| truth.contains(&nb.external_id))
+            .count();
         sum += hit as f64 / got.len().max(1) as f64;
     }
     let recall = sum / queries.len() as f64;
@@ -301,5 +351,8 @@ fn deleted_rows_never_returned() {
         "  HNSW post-delete recall@{K} vs live oracle: {recall:.4} ({} deleted, none returned)",
         deleted.len()
     );
-    assert!(recall >= 0.60, "post-delete recall {recall} should clear 0.60 on tie-heavy clustered data");
+    assert!(
+        recall >= 0.60,
+        "post-delete recall {recall} should clear 0.60 on tie-heavy clustered data"
+    );
 }

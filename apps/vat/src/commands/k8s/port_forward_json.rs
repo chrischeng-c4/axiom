@@ -288,10 +288,8 @@ fn cap_to_json_string_value(text: String) -> Result<(String, bool)> {
         }
     }
     let suffix = text[boundaries[lower]..].to_string();
-    debug_assert!(
-        serialized_json_string_len(&suffix)
-            .is_ok_and(|length| length <= MAX_PORT_FORWARD_JSON_STREAM_VALUE_BYTES)
-    );
+    debug_assert!(serialized_json_string_len(&suffix)
+        .is_ok_and(|length| length <= MAX_PORT_FORWARD_JSON_STREAM_VALUE_BYTES));
     Ok((suffix, true))
 }
 

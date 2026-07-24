@@ -3,9 +3,10 @@
 //! Regression coverage for compose build artifacts.
 //!
 //! The test-local Docker and Apple Container executables each maintain a
-//! separate image list. Their run command refuses an image built by the other
-//! fake, which makes cross-store regressions observable without a real Docker
-//! daemon or Apple Container installation.
+//! separate image list. Docker's create command and Apple Container's run
+//! command refuse an image built by the other fake, which makes cross-store
+//! regressions observable without a real Docker daemon or Apple Container
+//! installation.
 
 use serde_json::Value;
 use std::ffi::OsString;
@@ -17,6 +18,8 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+const FAKE_DOCKER_ID: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 fn vat_bin() -> &'static str {
     env!("CARGO_BIN_EXE_vat")
@@ -122,6 +125,17 @@ fn write_executable(path: &Path, contents: &str) {
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).expect("make fake runtime executable");
+    let syntax = Command::new("/bin/sh")
+        .args(["-n"])
+        .arg(path)
+        .output()
+        .expect("validate fake runtime shell syntax");
+    assert!(
+        syntax.status.success(),
+        "fake runtime shell syntax is invalid for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&syntax.stderr)
+    );
 }
 
 fn path_with_fake_runtimes(bin_dir: &Path) -> OsString {
@@ -138,6 +152,10 @@ set -eu
 
 printf '%s\n' "$*" >> "$VAT_FAKE_DOCKER_LOG"
 images="$VAT_FAKE_RUNTIME_STATE/docker-images"
+owned_id=1111111111111111111111111111111111111111111111111111111111111111
+live_id="$VAT_FAKE_RUNTIME_STATE/docker-live-id"
+live_name="$VAT_FAKE_RUNTIME_STATE/docker-live-name"
+live_state="$VAT_FAKE_RUNTIME_STATE/docker-live-state"
 
 if [ "$#" -eq 0 ]; then
   exit 2
@@ -165,11 +183,26 @@ case "$1" in
     fi
     printf '%s\n' "$tag" >> "$images"
     ;;
-  run)
-    image=""
-    for arg in "$@"; do
-      image="$arg"
+  create)
+    shift
+    [ "${1:-}" = "--rm" ] || exit 60
+    shift
+    [ "${1:-}" = "--name" ] || exit 61
+    [ "$#" -ge 2 ] || exit 62
+    name="$2"
+    shift 2
+    [ "${1:-}" = "-p" ] || exit 63
+    [ "$#" -ge 2 ] || exit 64
+    port_mapping="$2"
+    shift 2
+    [ -n "$name" ] || exit 65
+    [ -n "$port_mapping" ] || exit 66
+    while [ "${1:-}" = "-e" ]; do
+      [ "$#" -ge 2 ] || exit 67
+      shift 2
     done
+    [ "$#" -eq 1 ] || exit 68
+    image="$1"
     found=0
     if [ -f "$images" ]; then
       while IFS= read -r known; do
@@ -183,16 +216,49 @@ case "$1" in
       echo "Docker fake has no image $image" >&2
       exit 73
     fi
+    printf '%s\n' "$owned_id" > "$live_id"
+    printf '%s\n' "$name" > "$live_name"
+    printf '%s\n' created > "$live_state"
+    printf '%s\n' "$owned_id"
+    ;;
+  start)
+    [ "$#" -eq 3 ] || exit 74
+    [ "${2:-}" = "--attach" ] || exit 75
+    [ "${3:-}" = "$owned_id" ] || exit 76
+    [ "$(cat "$live_id" 2>/dev/null || true)" = "$owned_id" ] || exit 77
+    [ "$(cat "$live_state" 2>/dev/null || true)" = "created" ] || exit 78
+    printf '%s\n' running > "$live_state"
     exec /bin/sleep 30
     ;;
-  rm)
-    exit 0
-    ;;
   container)
-    if [ "$#" -ge 2 ] && [ "$2" = "ls" ]; then
-      exit 0
+    name=$(cat "$live_name" 2>/dev/null || true)
+    escaped_name=$(printf '%s' "$name" | /usr/bin/sed 's/[.]/\\./g')
+    expected_filter="name=^/$escaped_name$"
+    expected_format=$(printf '{{.ID}}\t{{.Names}}\t{{.State}}')
+    [ "$#" -eq 8 ] || exit 79
+    [ "${2:-}" = "ls" ] || exit 80
+    [ "${3:-}" = "--all" ] || exit 81
+    [ "${4:-}" = "--no-trunc" ] || exit 82
+    [ "${5:-}" = "--filter" ] || exit 83
+    [ "${6:-}" = "$expected_filter" ] || exit 84
+    [ "${7:-}" = "--format" ] || exit 85
+    [ "${8:-}" = "$expected_format" ] || exit 86
+    id=$(cat "$live_id" 2>/dev/null || true)
+    state=$(cat "$live_state" 2>/dev/null || true)
+    if [ -n "$id" ] && [ -n "$name" ] && [ -n "$state" ]; then
+      printf '%s\t%s\t%s\n' "$id" "$name" "$state"
     fi
-    exit 2
+    ;;
+  kill)
+    [ "$#" -eq 2 ] || exit 87
+    [ "${2:-}" = "$(cat "$live_id" 2>/dev/null || true)" ] || exit 88
+    printf '%s\n' exited > "$live_state"
+    ;;
+  rm)
+    [ "$#" -eq 3 ] || exit 89
+    [ "${2:-}" = "-f" ] || exit 90
+    [ "${3:-}" = "$(cat "$live_id" 2>/dev/null || true)" ] || exit 91
+    /bin/rm -f "$live_id" "$live_state"
     ;;
   *)
     exit 2
@@ -415,6 +481,72 @@ fn assert_build_invocation(
     tag
 }
 
+fn assert_docker_create_and_start(calls: &str, image: &str) -> String {
+    let create_suffix = format!(" {image}");
+    let create = calls
+        .lines()
+        .find(|line| line.starts_with("create --rm --name ") && line.ends_with(&create_suffix))
+        .unwrap_or_else(|| panic!("Docker did not create its selected image `{image}`:\n{calls}"));
+    let words = create.split_whitespace().collect::<Vec<_>>();
+    assert!(
+        words.len() >= 7,
+        "Docker create argv is incomplete: {create}"
+    );
+    assert_eq!(&words[..3], &["create", "--rm", "--name"]);
+    assert_eq!(words[4], "-p", "Docker create must bind the service port");
+    let docker_name = words[3].to_string();
+    assert!(
+        calls
+            .lines()
+            .any(|line| line == format!("start --attach {FAKE_DOCKER_ID}")),
+        "Docker did not foreground-start the immutable created ID:\n{calls}"
+    );
+    docker_name
+}
+
+fn assert_docker_down_cleanup(fakes: &FakeRuntimes, calls: &str, docker_name: &str) {
+    let expected_query = format!(
+        "container ls --all --no-trunc --filter name=^/{}$ --format {{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.State}}}}",
+        docker_name.replace('.', "\\.")
+    );
+    let lines = calls.lines().collect::<Vec<_>>();
+    let kill = format!("kill {FAKE_DOCKER_ID}");
+    let remove = format!("rm -f {FAKE_DOCKER_ID}");
+    let kill_positions = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (*line == kill).then_some(index))
+        .collect::<Vec<_>>();
+    let remove_positions = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (*line == remove).then_some(index))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kill_positions.len(),
+        1,
+        "Docker down must signal the exact full ID exactly once:\n{calls}"
+    );
+    assert_eq!(
+        remove_positions.len(),
+        1,
+        "Docker down must remove the exact full ID exactly once:\n{calls}"
+    );
+    let final_query = lines
+        .iter()
+        .rposition(|line| *line == expected_query)
+        .unwrap_or_else(|| panic!("missing strict anchored identity query:\n{calls}"));
+    assert!(
+        kill_positions[0] < remove_positions[0] && remove_positions[0] < final_query,
+        "Docker cleanup must be kill -> remove -> final absence proof:\n{calls}"
+    );
+    assert!(
+        !fakes.state.path().join("docker-live-id").exists()
+            && !fakes.state.path().join("docker-live-state").exists(),
+        "fake Docker object remains after compose down"
+    );
+}
+
 fn wait_for_compose_ready(
     fakes: &FakeRuntimes,
     vat_home: &Path,
@@ -532,33 +664,38 @@ fn assert_runtime_local_build_and_run(store: FakeStore, runtime: &str) {
     );
 
     let selected_after_up = store.calls(&fakes);
-    assert!(
-        selected_after_up
-            .lines()
-            .any(|line| line.starts_with("run ") && line.ends_with(&tag)),
-        "selected {} runtime did not run its own built tag:\n{}",
-        store.label(),
-        selected_after_up
-    );
-    if matches!(store, FakeStore::MicroVm) {
-        assert!(
-            selected_after_up
-                .lines()
-                .any(|line| line == format!("image inspect {tag}")),
-            "Apple Container must inspect the just-built local image before running it:\n{selected_after_up}",
-        );
-        assert!(
-            !selected_after_up
-                .lines()
-                .any(|line| line == format!("image pull {tag}")),
-            "a just-built Apple Container image must not be pulled from a registry:\n{selected_after_up}",
-        );
-    }
+    let docker_name = match store {
+        FakeStore::Docker => Some(assert_docker_create_and_start(&selected_after_up, &tag)),
+        FakeStore::MicroVm => {
+            assert!(
+                selected_after_up
+                    .lines()
+                    .any(|line| line.starts_with("run ") && line.ends_with(&tag)),
+                "selected MicroVM runtime did not run its own built tag:\n{selected_after_up}"
+            );
+            assert!(
+                selected_after_up
+                    .lines()
+                    .any(|line| line == format!("image inspect {tag}")),
+                "Apple Container must inspect the just-built local image before running it:\n{selected_after_up}",
+            );
+            assert!(
+                !selected_after_up
+                    .lines()
+                    .any(|line| line == format!("image pull {tag}")),
+                "a just-built Apple Container image must not be pulled from a registry:\n{selected_after_up}",
+            );
+            None
+        }
+    };
     let other_after_up = store.other().calls(&fakes);
     assert!(
-        !other_after_up
-            .lines()
-            .any(|line| line.starts_with("build ") || line.starts_with("run ")),
+        !other_after_up.lines().any(|line| {
+            line.starts_with("build ")
+                || line.starts_with("run ")
+                || line.starts_with("create ")
+                || line.starts_with("start ")
+        }),
         "unselected {} runtime must not build or run this service:\n{}",
         store.other().label(),
         other_after_up
@@ -570,6 +707,9 @@ fn assert_runtime_local_build_and_run(store: FakeStore, runtime: &str) {
         .output()
         .expect("run compose down");
     assert_success(&down, "compose down");
+    if let Some(docker_name) = docker_name {
+        assert_docker_down_cleanup(&fakes, &fakes.docker_calls(), &docker_name);
+    }
     assert!(
         readiness_server.join().expect("join fake readiness server"),
         "VAT never probed the fake runtime endpoint"
@@ -892,8 +1032,8 @@ fn compose_up_rejects_stale_registry_before_starting_a_runtime() {
         !fakes
             .docker_calls()
             .lines()
-            .any(|line| line.starts_with("run ")),
-        "stale registry must be rejected before Docker run:\n{}",
+            .any(|line| line.starts_with("create ") || line.starts_with("start ")),
+        "stale registry must be rejected before Docker create/start:\n{}",
         fakes.docker_calls()
     );
     assert!(
@@ -934,8 +1074,8 @@ fn compose_up_rejects_missing_registry_before_starting_a_runtime() {
         !fakes
             .docker_calls()
             .lines()
-            .any(|line| line.starts_with("run ")),
-        "missing registry must be rejected before Docker run:\n{}",
+            .any(|line| line.starts_with("create ") || line.starts_with("start ")),
+        "missing registry must be rejected before Docker create/start:\n{}",
         fakes.docker_calls()
     );
 }
@@ -966,14 +1106,7 @@ fn compose_up_accepts_user_edited_config_when_registry_service_ids_match() {
         project,
         &fakes.docker_calls(),
     );
-    assert!(
-        fakes
-            .docker_calls()
-            .lines()
-            .any(|line| line.starts_with("run ") && line.ends_with("fake:replacement")),
-        "matching service ids must allow the user-edited config to start:\n{}",
-        fakes.docker_calls()
-    );
+    let docker_name = assert_docker_create_and_start(&fakes.docker_calls(), "fake:replacement");
 
     let down = fakes
         .command(vat_home.path(), caller.path())
@@ -981,6 +1114,7 @@ fn compose_up_accepts_user_edited_config_when_registry_service_ids_match() {
         .output()
         .expect("run compose down for user-edited config");
     assert_success(&down, "compose down with matching service ids");
+    assert_docker_down_cleanup(&fakes, &fakes.docker_calls(), &docker_name);
     assert!(
         readiness_server.join().expect("join fake readiness server"),
         "VAT never probed the user-edited service endpoint"
