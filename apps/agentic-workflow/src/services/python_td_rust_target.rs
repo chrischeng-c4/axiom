@@ -48,7 +48,10 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
             super::python_td::PythonTdRole::Interface => "interface",
             _ => "support",
         };
-        let mut body = String::from("// CODEGEN-BEGIN python-ir-rust-target\n");
+        let mut body = format!(
+            "// {}\n// CODEGEN-BEGIN python-ir-rust-target\n",
+            super::python_td::NATIVE_TARGET_OWNER
+        );
         body.push_str("pub trait GeneratedModuleContract {}\n");
         for d in &module.declarations {
             if !ident(&d.name) {
@@ -93,23 +96,36 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
         }
         files
             .entry(format!("src/{role}/mod.rs"))
-            .or_insert_with(String::new)
+            .or_insert_with(|| format!("// {}\n", super::python_td::NATIVE_TARGET_OWNER))
             .push_str(&format!("pub mod {name};\n"));
         roles.insert(role);
     }
     if files.is_empty() {
         bail!("Python TD IR has no src/* modules to lower to Rust");
     }
-    let lib = roles
-        .into_iter()
-        .map(|role| format!("pub mod {role};\n"))
-        .collect();
+    let lib = format!(
+        "// {}\n{}",
+        super::python_td::NATIVE_TARGET_OWNER,
+        roles
+            .into_iter()
+            .map(|role| format!("pub mod {role};\n"))
+            .collect::<String>()
+    );
     files.insert("src/lib.rs".into(), lib);
     files.insert(
         "tests/generated_inventory.rs".into(),
-        "#[test]\nfn generated_source_inventory_is_present() {\n    assert!(std::path::Path::new(\"src/lib.rs\").is_file());\n}\n".into(),
+        format!(
+            "// {}\n#[test]\nfn generated_source_inventory_is_present() {{\n    assert!(std::path::Path::new(\"src/lib.rs\").is_file());\n}}\n",
+            super::python_td::NATIVE_TARGET_OWNER
+        ),
     );
-    files.insert("Cargo.toml".into(), "[package]\nname=\"generated-python-td-rust-target\"\nversion=\"0.1.0\"\nedition=\"2021\"\n".into());
+    files.insert(
+        "Cargo.toml".into(),
+        format!(
+            "# {}\n[package]\nname=\"generated-python-td-rust-target\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+            super::python_td::NATIVE_TARGET_OWNER
+        ),
+    );
     let manifest = files
         .iter()
         .map(|(p, c)| RustTdTargetFile {
@@ -117,7 +133,7 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
             digest: digest(c.as_bytes()),
         })
         .collect::<Vec<_>>();
-    super::python_td::materialize_greenfield_target(root, "rust", &files)?;
+    super::python_td::materialize_owned_target(root, "rust", &files)?;
     Ok(RustTdTarget {
         digest: digest(&serde_json::to_vec(&manifest)?),
         files: manifest,

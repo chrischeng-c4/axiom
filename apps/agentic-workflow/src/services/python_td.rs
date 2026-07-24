@@ -17,16 +17,16 @@ use tree_sitter::{Node, Parser};
 use walkdir::WalkDir;
 
 pub const PYTHON_TD_IR_SCHEMA: &str = "aw.python-td-ir.v1";
+pub(crate) const NATIVE_TARGET_OWNER: &str = "aw.python-td-native-target.v1";
 
-/// Atomically materialize one target-native package into a new or empty root.
+/// Atomically materialize one target-native package into an owned root.
 ///
-/// Python-TD native emitters are greenfield package generators. They do not
-/// own preservation-aware edits to an existing project, so accepting a
-/// non-empty root would let a generated manifest or module replace product
-/// source. Renderers must build the complete candidate write set before
-/// calling this function; this preflight rejects unsafe roots before creating
-/// the staging directory or touching the output root.
-pub(crate) fn materialize_greenfield_target(
+/// Every candidate carries [`NATIVE_TARGET_OWNER`]. Existing files may change
+/// only when their bytes already carry the same owner; byte-identical files
+/// are also admitted. The complete collision set is checked before staging,
+/// then the existing tree is copied into a sibling stage and swapped with a
+/// rollback directory so unrelated files survive without partial mutation.
+pub(crate) fn materialize_owned_target(
     output_root: &Path,
     target: &str,
     files: &BTreeMap<String, String>,
@@ -47,6 +47,11 @@ pub(crate) fn materialize_greenfield_target(
         {
             bail!("unsafe {target} target candidate path `{relative}`");
         }
+        if !files[relative].contains(NATIVE_TARGET_OWNER) {
+            bail!(
+                "{target} target candidate `{relative}` is missing ownership sentinel `{NATIVE_TARGET_OWNER}`"
+            );
+        }
     }
 
     let output_existed = match fs::symlink_metadata(output_root) {
@@ -57,21 +62,38 @@ pub(crate) fn materialize_greenfield_target(
                     output_root.display()
                 );
             }
-            let mut entries = fs::read_dir(output_root)
-                .with_context(|| format!("inspect output root {}", output_root.display()))?
-                .map(|entry| {
-                    entry
-                        .map(|value| value.file_name().to_string_lossy().into_owned())
-                        .with_context(|| format!("inspect output root {}", output_root.display()))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            entries.sort();
-            if !entries.is_empty() {
+            let mut collisions = Vec::new();
+            for (relative, candidate) in files {
+                let existing_path = output_root.join(relative);
+                match fs::symlink_metadata(&existing_path) {
+                    Ok(existing_metadata)
+                        if existing_metadata.file_type().is_symlink()
+                            || !existing_metadata.is_file() =>
+                    {
+                        collisions.push(relative.clone());
+                    }
+                    Ok(_) => {
+                        let existing = fs::read_to_string(&existing_path).with_context(|| {
+                            format!("read existing target {}", existing_path.display())
+                        })?;
+                        if existing != *candidate && !existing.contains(NATIVE_TARGET_OWNER) {
+                            collisions.push(relative.clone());
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("inspect existing target {}", existing_path.display())
+                        });
+                    }
+                }
+            }
+            if !collisions.is_empty() {
                 let candidates = files.keys().cloned().collect::<Vec<_>>().join(", ");
                 bail!(
-                    "refusing to materialize greenfield {target} target into non-empty existing project `{}`; existing entries: {}; candidate write set: {candidates}. Existing-project materialization requires a bounded preservation-aware HANDWRITE or patch workflow",
+                    "refusing to overwrite unowned {target} target files in existing project `{}`; collisions: {}; candidate write set: {candidates}. Existing-project materialization requires byte-identical content or ownership sentinel `{NATIVE_TARGET_OWNER}`; otherwise use a bounded HANDWRITE or patch workflow",
                     output_root.display(),
-                    entries.join(", ")
+                    collisions.join(", ")
                 );
             }
             true
@@ -93,6 +115,9 @@ pub(crate) fn materialize_greenfield_target(
         .prefix(".aw-python-td-target-")
         .tempdir_in(parent)
         .with_context(|| format!("create {target} target staging directory"))?;
+    if output_existed {
+        copy_owned_target_tree(output_root, staging.path())?;
+    }
     for (relative, content) in files {
         let staged = staging.path().join(relative);
         fs::create_dir_all(staged.parent().expect("validated candidate has parent"))
@@ -102,19 +127,76 @@ pub(crate) fn materialize_greenfield_target(
     }
 
     if output_existed {
-        fs::remove_dir(output_root)
-            .with_context(|| format!("replace empty output root {}", output_root.display()))?;
-    }
-    if let Err(error) = fs::rename(staging.path(), output_root) {
-        if output_existed {
-            let _ = fs::create_dir(output_root);
+        let backup = tempfile::Builder::new()
+            .prefix(".aw-python-td-backup-")
+            .tempdir_in(parent)
+            .with_context(|| format!("create {target} target rollback directory"))?;
+        let backup_path = backup.path().to_path_buf();
+        fs::remove_dir(&backup_path)
+            .with_context(|| format!("prepare rollback path {}", backup_path.display()))?;
+        fs::rename(output_root, &backup_path).with_context(|| {
+            format!(
+                "move existing {target} target {} to rollback path",
+                output_root.display()
+            )
+        })?;
+        if let Err(error) = fs::rename(staging.path(), output_root) {
+            let rollback = fs::rename(&backup_path, output_root);
+            return match rollback {
+                Ok(()) => Err(error).with_context(|| {
+                    format!(
+                        "atomically install staged {target} target at {}",
+                        output_root.display()
+                    )
+                }),
+                Err(rollback_error) => bail!(
+                    "failed to install staged {target} target at {} ({error}); rollback from {} also failed ({rollback_error})",
+                    output_root.display(),
+                    backup_path.display()
+                ),
+            };
         }
+        fs::remove_dir_all(&backup_path)
+            .with_context(|| format!("remove {target} target rollback directory"))?;
+    } else if let Err(error) = fs::rename(staging.path(), output_root) {
         return Err(error).with_context(|| {
             format!(
                 "atomically install staged {target} target at {}",
                 output_root.display()
             )
         });
+    }
+    Ok(())
+}
+
+fn copy_owned_target_tree(source: &Path, destination: &Path) -> Result<()> {
+    for entry in walkdir::WalkDir::new(source).min_depth(1) {
+        let entry = entry.with_context(|| format!("walk existing target {}", source.display()))?;
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .expect("walk entry is below source");
+        let target = destination.join(relative);
+        if entry.file_type().is_symlink() {
+            bail!(
+                "refusing preservation-aware target update with symlink `{}`",
+                entry.path().display()
+            );
+        }
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target)
+                .with_context(|| format!("copy target directory {}", target.display()))?;
+        } else if entry.file_type().is_file() {
+            fs::create_dir_all(target.parent().expect("copied file has parent"))?;
+            fs::copy(entry.path(), &target).with_context(|| {
+                format!("copy existing target {} to staging", entry.path().display())
+            })?;
+        } else {
+            bail!(
+                "refusing preservation-aware target update with special file `{}`",
+                entry.path().display()
+            );
+        }
     }
     Ok(())
 }

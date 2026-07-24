@@ -44,7 +44,7 @@ pub fn emit_python_td_typescript_target(
         }
         files
             .entry(format!("src/{role}/index.ts"))
-            .or_insert_with(String::new)
+            .or_insert_with(|| format!("// {}\n", super::python_td::NATIVE_TARGET_OWNER))
             .push_str(&format!("export * from './{name}.js';\n"));
         roles.insert(role);
     }
@@ -53,10 +53,14 @@ pub fn emit_python_td_typescript_target(
     }
     files.insert(
         "src/index.ts".into(),
-        roles
-            .into_iter()
-            .map(|role| format!("export * from './{role}/index.js';\n"))
-            .collect(),
+        format!(
+            "// {}\n{}",
+            super::python_td::NATIVE_TARGET_OWNER,
+            roles
+                .into_iter()
+                .map(|role| format!("export * from './{role}/index.js';\n"))
+                .collect::<String>()
+        ),
     );
     files.insert("package.json".into(), package_json());
     files.insert("tsconfig.json".into(), tsconfig_json());
@@ -66,7 +70,7 @@ pub fn emit_python_td_typescript_target(
     );
 
     let manifest = manifest(&files);
-    super::python_td::materialize_greenfield_target(output_root, "typescript", &files)?;
+    super::python_td::materialize_owned_target(output_root, "typescript", &files)?;
     Ok(TypeScriptTdTarget {
         digest: digest(&serde_json::to_vec(&manifest)?),
         files: manifest,
@@ -100,7 +104,10 @@ fn ddd_role(role: &PythonTdRole) -> &'static str {
 }
 
 fn render_module(module: &PythonTdModule) -> Result<String> {
-    let mut output = String::from("// CODEGEN-BEGIN python-ir-typescript-target\n");
+    let mut output = format!(
+        "// {}\n// CODEGEN-BEGIN python-ir-typescript-target\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    );
     output.push_str("interface GeneratedModuleContract {}\n");
     output.push_str("class GeneratedError extends Error {}\n");
     for declaration in &module.declarations {
@@ -137,15 +144,24 @@ fn render_module(module: &PythonTdModule) -> Result<String> {
 }
 
 fn package_json() -> String {
-    "{\n  \"name\": \"generated-python-td-typescript-target\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --test tests/generated_inventory.test.mjs\",\n    \"typecheck\": \"tsc --noEmit\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.0.0\"\n  }\n}\n".into()
+    format!(
+        "{{\n  \"x-aw-codegen-owner\": \"{}\",\n  \"name\": \"generated-python-td-typescript-target\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {{\n    \"test\": \"node --test tests/generated_inventory.test.mjs\",\n    \"typecheck\": \"tsc --noEmit\"\n  }},\n  \"devDependencies\": {{\n    \"typescript\": \"^5.0.0\"\n  }}\n}}\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    )
 }
 
 fn tsconfig_json() -> String {
-    "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\"src/**/*.ts\"]\n}\n".into()
+    format!(
+        "// {}\n{{\n  \"compilerOptions\": {{\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"noEmit\": true\n  }},\n  \"include\": [\"src/**/*.ts\"]\n}}\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    )
 }
 
 fn inventory_test() -> String {
-    "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { existsSync } from 'node:fs';\n\ntest('generated TypeScript source inventory is present', () => {\n  assert.equal(existsSync(new URL('../src/index.ts', import.meta.url)), true);\n});\n".into()
+    format!(
+        "// {}\nimport assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {{ existsSync }} from 'node:fs';\n\ntest('generated TypeScript source inventory is present', () => {{\n  assert.equal(existsSync(new URL('../src/index.ts', import.meta.url)), true);\n}});\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    )
 }
 
 fn manifest(files: &BTreeMap<String, String>) -> Vec<TypeScriptTdTargetFile> {

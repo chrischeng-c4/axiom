@@ -44,7 +44,7 @@ pub fn emit_python_td_target(ir: &PythonTdIr, output_root: &Path) -> Result<Pyth
             digest: digest(content.as_bytes()),
         })
         .collect::<Vec<_>>();
-    super::python_td::materialize_greenfield_target(output_root, "python", &files)?;
+    super::python_td::materialize_owned_target(output_root, "python", &files)?;
     let digest = digest(&serde_json::to_vec(&manifest)?);
     Ok(PythonTdTarget {
         files: manifest,
@@ -60,18 +60,28 @@ fn add_package_markers(files: &mut BTreeMap<String, String>, module_path: &str) 
     parts.pop();
     for length in 1..=parts.len() {
         let marker = format!("src/{}/__init__.py", parts[..length].join("/"));
-        files
-            .entry(marker)
-            .or_insert_with(|| "\"\"\"Generated Python TD package.\"\"\"\n".to_string());
+        files.entry(marker).or_insert_with(|| {
+            format!(
+                "# {}\n\"\"\"Generated Python TD package.\"\"\"\n",
+                super::python_td::NATIVE_TARGET_OWNER
+            )
+        });
     }
 }
 
 fn render_pyproject() -> String {
-    "[build-system]\nrequires = [\"setuptools>=68\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"generated-python-td-target\"\nversion = \"0.1.0\"\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n".to_string()
+    format!(
+        "# {}\n[build-system]\nrequires = [\"setuptools>=68\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"generated-python-td-target\"\nversion = \"0.1.0\"\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    )
 }
 
 fn render_module(module: &super::python_td::PythonTdModule) -> String {
-    let mut output = format!("\"\"\"Generated from {}.\"\"\"\n\n", module.id);
+    let mut output = format!(
+        "# {}\n\"\"\"Generated from {}.\"\"\"\n\n",
+        super::python_td::NATIVE_TARGET_OWNER,
+        module.id
+    );
     for declaration in &module.declarations {
         match declaration.kind {
             PythonTdDeclarationKind::Class => {
@@ -93,7 +103,10 @@ fn render_module(module: &super::python_td::PythonTdModule) -> String {
 }
 
 fn render_unit_test(ir: &PythonTdIr) -> String {
-    let mut output = "import importlib\nimport sys\nimport unittest\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parents[2] / 'src'))\n\nclass GeneratedInventoryTest(unittest.TestCase):\n".to_string();
+    let mut output = format!(
+        "# {}\nimport importlib\nimport sys\nimport unittest\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parents[2] / 'src'))\n\nclass GeneratedInventoryTest(unittest.TestCase):\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    );
     let mut count = 0;
     for module in &ir.modules {
         if !module.path.starts_with("src/") || module.declarations.is_empty() {

@@ -98,7 +98,7 @@ fn native_targets_reject_existing_projects_before_any_write() {
     let python_error = emit_python_td_target(&ir, python.path()).unwrap_err();
     assert!(python_error
         .to_string()
-        .contains("non-empty existing project"));
+        .contains("refusing to overwrite unowned"));
     assert_eq!(snapshot(python.path()), python_before);
 
     let rust = tempfile::tempdir().unwrap();
@@ -107,7 +107,7 @@ fn native_targets_reject_existing_projects_before_any_write() {
     let rust_error = emit_python_td_rust_target(&ir, rust.path()).unwrap_err();
     assert!(rust_error
         .to_string()
-        .contains("non-empty existing project"));
+        .contains("refusing to overwrite unowned"));
     assert_eq!(snapshot(rust.path()), rust_before);
 
     let typescript = tempfile::tempdir().unwrap();
@@ -116,8 +116,70 @@ fn native_targets_reject_existing_projects_before_any_write() {
     let typescript_error = emit_python_td_typescript_target(&ir, typescript.path()).unwrap_err();
     assert!(typescript_error
         .to_string()
-        .contains("non-empty existing project"));
+        .contains("refusing to overwrite unowned"));
     assert_eq!(snapshot(typescript.path()), typescript_before);
+}
+
+#[test]
+fn native_targets_update_owned_files_and_preserve_unrelated_files() {
+    let ir = compile_python_td_project(&fixture("python_spec_typer")).unwrap();
+
+    let python = tempfile::tempdir().unwrap();
+    emit_python_td_target(&ir, python.path()).unwrap();
+    let python_manifest = fs::read_to_string(python.path().join("pyproject.toml")).unwrap();
+    fs::write(
+        python.path().join("pyproject.toml"),
+        format!("{python_manifest}# owned drift\n"),
+    )
+    .unwrap();
+    fs::write(python.path().join("README.md"), "preserve python\n").unwrap();
+    emit_python_td_target(&ir, python.path()).unwrap();
+    assert_eq!(
+        fs::read_to_string(python.path().join("pyproject.toml")).unwrap(),
+        python_manifest
+    );
+    assert_eq!(
+        fs::read_to_string(python.path().join("README.md")).unwrap(),
+        "preserve python\n"
+    );
+
+    let rust = tempfile::tempdir().unwrap();
+    emit_python_td_rust_target(&ir, rust.path()).unwrap();
+    let rust_manifest = fs::read_to_string(rust.path().join("Cargo.toml")).unwrap();
+    fs::write(
+        rust.path().join("Cargo.toml"),
+        format!("{rust_manifest}# owned drift\n"),
+    )
+    .unwrap();
+    fs::write(rust.path().join("README.md"), "preserve rust\n").unwrap();
+    emit_python_td_rust_target(&ir, rust.path()).unwrap();
+    assert_eq!(
+        fs::read_to_string(rust.path().join("Cargo.toml")).unwrap(),
+        rust_manifest
+    );
+    assert_eq!(
+        fs::read_to_string(rust.path().join("README.md")).unwrap(),
+        "preserve rust\n"
+    );
+
+    let typescript = tempfile::tempdir().unwrap();
+    emit_python_td_typescript_target(&ir, typescript.path()).unwrap();
+    let package_json = fs::read_to_string(typescript.path().join("package.json")).unwrap();
+    fs::write(
+        typescript.path().join("package.json"),
+        format!("{package_json} "),
+    )
+    .unwrap();
+    fs::write(typescript.path().join("README.md"), "preserve typescript\n").unwrap();
+    emit_python_td_typescript_target(&ir, typescript.path()).unwrap();
+    assert_eq!(
+        fs::read_to_string(typescript.path().join("package.json")).unwrap(),
+        package_json
+    );
+    assert_eq!(
+        fs::read_to_string(typescript.path().join("README.md")).unwrap(),
+        "preserve typescript\n"
+    );
 }
 
 #[test]
@@ -249,7 +311,7 @@ fn cb_gen_rust_target_refuses_existing_project_without_partial_output() {
         .unwrap();
     assert!(!result.status.success());
     assert!(
-        String::from_utf8_lossy(&result.stderr).contains("non-empty existing project"),
+        String::from_utf8_lossy(&result.stderr).contains("refusing to overwrite unowned"),
         "stderr={}",
         String::from_utf8_lossy(&result.stderr)
     );
