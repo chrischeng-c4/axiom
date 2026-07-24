@@ -48,7 +48,13 @@ fn repository_root() -> PathBuf {
 
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in production_journey.rs is hand-written pending codegen support">
 fn evidence_root() -> PathBuf {
-    repository_root().join("apps/workbench/evidence/production-journey/v1")
+    if std::env::var_os("WORKBENCH_REFRESH_EVIDENCE").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        repository_root().join("apps/workbench/evidence/production-journey/v1")
+    } else {
+        repository_root().join(".axiom-workbench/test-artifacts/production-journey/v1")
+    }
 }
 // </HANDWRITE>
 

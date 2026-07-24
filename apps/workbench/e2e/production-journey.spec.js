@@ -6,7 +6,9 @@ const projectRoot = process.cwd();
 const pageUrl = `file://${path.join(projectRoot, "apps/workbench/ui/index.html")}`;
 const evidenceDir = path.join(
   projectRoot,
-  "apps/workbench/evidence/production-journey/v1",
+  process.env.WORKBENCH_REFRESH_EVIDENCE === "1"
+    ? "apps/workbench/evidence/production-journey/v1"
+    : ".axiom-workbench/test-artifacts/production-journey/v1",
 );
 const manifestPath = path.join(evidenceDir, "manifest.json");
 const productionCommand =
