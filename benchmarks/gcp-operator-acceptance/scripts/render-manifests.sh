@@ -349,6 +349,12 @@ patches:
       - op: replace
         path: /spec/storage
         value: 1Gi
+      - op: add
+        path: /spec/topics
+        value:
+          - name: acceptance
+            subscriptions:
+              - acceptance-sub
 EOF
 
 kubectl kustomize "$MANIFEST_DIR/tape/operator" > "$MANIFEST_DIR/tape/operator.bundle.yaml"
