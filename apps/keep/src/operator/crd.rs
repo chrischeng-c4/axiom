@@ -68,6 +68,12 @@ pub struct KeepSpec {
     /// no backup CronJob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<KeepBackupSpec>,
+
+    /// Max request body size in bytes (#2556, `KEEP_BODY_LIMIT`). Bounds
+    /// claim-check blob writes. Defaults to 16 MiB if unset. Must be a positive
+    /// integer.
+    #[serde(default = "default_body_limit_bytes")]
+    pub body_limit_bytes: u64,
 }
 
 /// Declarative backup policy carried on a `Keep` CR (#776).
@@ -108,4 +114,7 @@ fn default_grace_secs() -> u64 {
 }
 fn default_storage() -> String {
     "10Gi".into()
+}
+fn default_body_limit_bytes() -> u64 {
+    16 * 1024 * 1024 // 16 MiB, matching keep::http::DEFAULT_BODY_LIMIT
 }

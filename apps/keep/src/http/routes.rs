@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::DefaultBodyLimit,
     middleware::from_fn_with_state,
     routing::{get, post},
     Router,
@@ -107,7 +106,7 @@ pub fn router(state: AppState) -> Router {
         // Per-route request metrics (counts + latency). route_layer => only for
         // matched data-plane routes, and MatchedPath is populated.
         .route_layer(from_fn_with_state(req_metrics, metrics::track))
-        .layer(DefaultBodyLimit::max(body_limit));
+        .layer(service_http::body_limit_layer(body_limit));
 
     // Standard probes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) come from the shared service shell so the operational surface

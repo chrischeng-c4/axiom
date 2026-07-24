@@ -146,6 +146,7 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
         "KEEP_PORT": CLIENT_PORT.to_string(),
         "KEEP_SHARDS": keep.spec.engine_shards.to_string(),
         "KEEP_LOG_LEVEL": keep.spec.log_level.clone().unwrap_or_else(|| "info".to_string()),
+        "KEEP_BODY_LIMIT": keep.spec.body_limit_bytes.to_string(),
     });
     json!({
         "apiVersion": "v1",
@@ -192,6 +193,7 @@ fn statefulset(keep: &Keep, cx: &RenderCtx, headless: &str) -> Value {
         from_cfg("KEEP_PORT"),
         from_cfg("KEEP_SHARDS"),
         from_cfg("KEEP_LOG_LEVEL"),
+        from_cfg("KEEP_BODY_LIMIT"),
     ];
 
     let mut sts = render::sharded_statefulset(ShardedStatefulSet {
