@@ -92,16 +92,44 @@ public struct TerminalPane: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The axis of a structural terminal-pane split. A pane is a presentation
+/// container; it never owns a PTY independently from the tab it references.
+public enum TerminalPaneAxis: String, Equatable, Sendable {
+    case horizontal
+    case vertical
+}
+
+/// Recursive project-local pane layout. Leaves have stable identities so a
+/// SwiftTerm host can remain mounted while focus and project presentation move.
+public indirect enum TerminalPaneTree: Equatable, Sendable {
+    case leaf(TerminalPane)
+    case split(id: String, axis: TerminalPaneAxis, first: TerminalPaneTree, second: TerminalPaneTree, ratio: Double)
+
+    public var panes: [TerminalPane] {
+        switch self {
+        case let .leaf(pane): [pane]
+        case let .split(_, _, first, second, _): first.panes + second.panes
+        }
+    }
+
+    public var firstPaneId: String {
+        switch self {
+        case let .leaf(pane): pane.id
+        case let .split(_, _, first, _, _): first.firstPaneId
+        }
+    }
+}
+
 private struct ProjectTerminalWorkspace: Equatable, Sendable {
     var tabs: [TerminalTab]
     var activeTabId: String
-    var panes: [TerminalPane]
+    var paneTree: TerminalPaneTree
     var activePaneId: String
 
-    init(tabs: [TerminalTab], activeTabId: String, panes: [TerminalPane], activePaneId: String) {
+    init(tabs: [TerminalTab], activeTabId: String, paneTree: TerminalPaneTree, activePaneId: String) {
         self.tabs = tabs
         self.activeTabId = activeTabId
-        self.panes = panes
+        self.paneTree = paneTree
         self.activePaneId = activePaneId
     }
 }
@@ -116,6 +144,7 @@ public final class WorkbenchModel: ObservableObject {
     @Published public private(set) var tabs: [TerminalTab]
     @Published public private(set) var activeTabId: String
     @Published public private(set) var panes: [TerminalPane]
+    @Published public private(set) var paneTree: TerminalPaneTree
     @Published public private(set) var activePaneId: String
     @Published public private(set) var projects: [RegisteredProject]
     @Published public private(set) var selectedWorkspace: SelectedProjectWorkspace?
@@ -138,6 +167,7 @@ public final class WorkbenchModel: ObservableObject {
         tabs = Self.defaultTabs
         activeTabId = ""
         let firstPane = TerminalPane()
+        paneTree = .leaf(firstPane)
         panes = [firstPane]
         activePaneId = firstPane.id
         selectedWorkspace = nil
@@ -182,7 +212,7 @@ public final class WorkbenchModel: ObservableObject {
         if !hadSelectedProject {
             projectTerminalWorkspaces[project.id] = ProjectTerminalWorkspace(
                 tabs: tabs,
-                activeTabId: activeTabId, panes: panes, activePaneId: activePaneId
+                activeTabId: activeTabId, paneTree: paneTree, activePaneId: activePaneId
             )
         }
         selectProject(project.id)
@@ -195,12 +225,13 @@ public final class WorkbenchModel: ObservableObject {
         saveSelectedProjectTerminalWorkspace()
         let firstPane = TerminalPane()
         let terminalWorkspace = projectTerminalWorkspaces[id] ?? ProjectTerminalWorkspace(
-            tabs: [], activeTabId: "", panes: [firstPane], activePaneId: firstPane.id
+            tabs: [], activeTabId: "", paneTree: .leaf(firstPane), activePaneId: firstPane.id
         )
         projectTerminalWorkspaces[id] = terminalWorkspace
         tabs = terminalWorkspace.tabs
         activeTabId = terminalWorkspace.activeTabId
-        panes = terminalWorkspace.panes
+        paneTree = terminalWorkspace.paneTree
+        panes = paneTree.panes
         activePaneId = terminalWorkspace.activePaneId
         let launchFolder = URL(fileURLWithPath: project.rootPath, isDirectory: true)
         selectedWorkspace = SelectedProjectWorkspace(
@@ -244,31 +275,43 @@ public final class WorkbenchModel: ObservableObject {
     }
 
     public func addTerminal(profile: TerminalProfile) {
-        guard let paneIndex = panes.firstIndex(where: { $0.id == activePaneId }) else { return }
-        if panes[paneIndex].tabId != nil, panes.count < 2 {
-            let pane = TerminalPane()
-            panes.append(pane)
-            activePaneId = pane.id
-        }
-        guard let targetIndex = panes.firstIndex(where: { $0.id == activePaneId }), panes[targetIndex].tabId == nil else {
-            statusMessage = "Close a pane before adding another terminal."
+        guard let pane = pane(with: activePaneId), pane.tabId == nil else {
+            statusMessage = "Choose Split Right or Split Down to add another terminal."
             return
         }
         let number = tabs.filter { $0.profile == profile }.count + 1
         let id = number == 1 ? profile.rawValue : "\(profile.rawValue)-\(number)"
         let title = number == 1 ? profile.label : "\(profile.label) \(number)"
         tabs.append(TerminalTab(id: id, profile: profile, title: title))
-        panes[targetIndex].tabId = id
+        paneTree = replacingPane(activePaneId, with: .leaf(TerminalPane(id: activePaneId, tabId: id)), in: paneTree)
+        refreshPanes()
         activeTabId = id
         statusMessage = "\(title) is ready. Press Start when you are ready."
     }
 
     public func splitActivePane() {
-        guard panes.count < 2 else { return }
-        let pane = TerminalPane()
-        panes.append(pane)
-        activePaneId = pane.id
-        activeTabId = ""
+        statusMessage = "Choose Split Right or Split Down to add another terminal."
+    }
+
+    public func splitActivePane(axis: TerminalPaneAxis, profile: TerminalProfile) {
+        guard let pane = pane(with: activePaneId), pane.tabId != nil else {
+            statusMessage = "Choose a terminal pane before splitting."
+            return
+        }
+        let number = tabs.filter { $0.profile == profile }.count + 1
+        let id = number == 1 ? profile.rawValue : "\(profile.rawValue)-\(number)"
+        let title = number == 1 ? profile.label : "\(profile.label) \(number)"
+        let newPane = TerminalPane(tabId: id)
+        tabs.append(TerminalTab(id: id, profile: profile, title: title))
+        paneTree = replacingPane(
+            activePaneId,
+            with: .split(id: UUID().uuidString, axis: axis, first: .leaf(pane), second: .leaf(newPane), ratio: 0.5),
+            in: paneTree
+        )
+        refreshPanes()
+        activePaneId = newPane.id
+        activeTabId = id
+        statusMessage = "\(title) is ready. Press Start when you are ready."
     }
 
     public func closeTab(_ id: String) async {
@@ -285,18 +328,10 @@ public final class WorkbenchModel: ObservableObject {
             }
         }
         tabs.remove(at: index)
-        if let paneIndex = panes.firstIndex(where: { $0.tabId == id }) {
-            if panes.count > 1 {
-                panes.remove(at: paneIndex)
-                let replacementIndex = min(paneIndex, panes.count - 1)
-                activePaneId = panes[replacementIndex].id
-                activeTabId = panes[replacementIndex].tabId ?? ""
-            } else {
-                panes[paneIndex].tabId = nil
-                activePaneId = panes[paneIndex].id
-                activeTabId = ""
-            }
-        }
+        paneTree = removingTab(id, from: paneTree) ?? .leaf(TerminalPane())
+        refreshPanes()
+        activePaneId = paneTree.firstPaneId
+        activeTabId = pane(with: activePaneId)?.tabId ?? ""
         statusMessage = "Closed \(tab.title)."
     }
 
@@ -462,9 +497,53 @@ public final class WorkbenchModel: ObservableObject {
         projectTerminalWorkspaces[selectedProjectId] = ProjectTerminalWorkspace(
             tabs: tabs,
             activeTabId: activeTabId,
-            panes: panes,
+            paneTree: paneTree,
             activePaneId: activePaneId
         )
+    }
+
+    private func refreshPanes() {
+        panes = paneTree.panes
+    }
+
+    private func pane(with id: String, in tree: TerminalPaneTree? = nil) -> TerminalPane? {
+        switch tree ?? paneTree {
+        case let .leaf(pane): return pane.id == id ? pane : nil
+        case let .split(_, _, first, second, _):
+            return pane(with: id, in: first) ?? pane(with: id, in: second)
+        }
+    }
+
+    private func replacingPane(_ paneId: String, with replacement: TerminalPaneTree, in tree: TerminalPaneTree) -> TerminalPaneTree {
+        switch tree {
+        case let .leaf(pane):
+            return pane.id == paneId ? replacement : tree
+        case let .split(id, axis, first, second, ratio):
+            return .split(
+                id: id,
+                axis: axis,
+                first: replacingPane(paneId, with: replacement, in: first),
+                second: replacingPane(paneId, with: replacement, in: second),
+                ratio: min(0.85, max(0.15, ratio))
+            )
+        }
+    }
+
+    private func removingTab(_ tabId: String, from tree: TerminalPaneTree) -> TerminalPaneTree? {
+        switch tree {
+        case let .leaf(pane):
+            return pane.tabId == tabId ? nil : tree
+        case let .split(id, axis, first, second, ratio):
+            let retainedFirst = removingTab(tabId, from: first)
+            let retainedSecond = removingTab(tabId, from: second)
+            switch (retainedFirst, retainedSecond) {
+            case let (.some(first), .some(second)):
+                return .split(id: id, axis: axis, first: first, second: second, ratio: min(0.85, max(0.15, ratio)))
+            case let (.some(first), nil): return first
+            case let (nil, .some(second)): return second
+            case (nil, nil): return nil
+            }
+        }
     }
 
     private func coreTabId(_ tabId: String) -> String {

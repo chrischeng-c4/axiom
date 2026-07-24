@@ -47,7 +47,7 @@ final class WorkbenchModelTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty, "choosing a profile must not launch a PTY")
     }
 
-    func testSecondProfileUsesRightPaneAndCloseRestoresOnePane() async {
+    func testProfileLaunchRequiresExplicitSplitForOccupiedLeaf() async {
         let client = MockCoreClient()
         let tempDir = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -57,6 +57,12 @@ final class WorkbenchModelTests: XCTestCase {
         model.addTerminal(profile: .claude)
         model.addTerminal(profile: .shell)
 
+        XCTAssertEqual(model.panes.count, 1)
+        XCTAssertEqual(model.panes.map(\.tabId), ["claude"])
+        XCTAssertEqual(model.activeTabId, "claude")
+        XCTAssertTrue(model.statusMessage.contains("Split Right or Split Down"))
+
+        model.splitActivePane(axis: .horizontal, profile: .shell)
         XCTAssertEqual(model.panes.count, 2)
         XCTAssertEqual(model.panes.map(\.tabId), ["claude", "shell"])
         XCTAssertEqual(model.activeTabId, "shell")
@@ -69,7 +75,50 @@ final class WorkbenchModelTests: XCTestCase {
         XCTAssertEqual(model.activeTabId, "claude")
     }
 
-    func testProjectSwitchRestoresIndependentPaneLayoutsAndSessions() async {
+    func testRecursivePaneTreeSupportsNestedSplits() async {
+        let client = MockCoreClient()
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let model = WorkbenchModel(client: client, projectStore: ProjectStore(storageDirectory: tempDir))
+        model.registerProject(tempDir)
+
+        model.addTerminal(profile: .claude)
+        model.splitActivePane(axis: .horizontal, profile: .shell)
+        model.splitActivePane(axis: .vertical, profile: .codex)
+
+        XCTAssertEqual(model.panes.map(\.tabId), ["claude", "shell", "codex"])
+        guard case let .split(_, outerAxis, _, second, _) = model.paneTree else {
+            return XCTFail("first explicit split must create a root split")
+        }
+        XCTAssertEqual(outerAxis, .horizontal)
+        guard case let .split(_, nestedAxis, _, _, _) = second else {
+            return XCTFail("second explicit split must nest under the focused leaf")
+        }
+        XCTAssertEqual(nestedAxis, .vertical)
+        let requests = await client.requests()
+        XCTAssertTrue(requests.isEmpty, "layout/profile preparation must not launch a PTY")
+    }
+
+    func testClosingPaneCollapsesTreeToEmptyRoot() async {
+        let client = MockCoreClient()
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let model = WorkbenchModel(client: client, projectStore: ProjectStore(storageDirectory: tempDir))
+        model.registerProject(tempDir)
+        model.addTerminal(profile: .claude)
+        model.splitActivePane(axis: .horizontal, profile: .shell)
+        model.splitActivePane(axis: .vertical, profile: .codex)
+
+        await model.closeTab("shell")
+        XCTAssertEqual(model.panes.map(\.tabId), ["claude", "codex"])
+        await model.closeTab("claude")
+        XCTAssertEqual(model.panes.map(\.tabId), ["codex"])
+        await model.closeTab("codex")
+        XCTAssertEqual(model.panes.count, 1)
+        XCTAssertNil(model.panes[0].tabId)
+    }
+
+    func testProjectsRetainIndependentRecursivePaneWorkspaces() async {
         let client = MockCoreClient()
         let tempDir = temporaryDirectory()
         let firstProject = tempDir.appendingPathComponent("first", isDirectory: true)
@@ -87,7 +136,7 @@ final class WorkbenchModelTests: XCTestCase {
         model.addTerminal(profile: .claude)
         await client.enqueue(response(tabId: "\(first.id).claude", profile: .claude, running: true, cwd: firstProject.path, sequence: 1))
         await model.startActiveTab()
-        model.addTerminal(profile: .shell)
+        model.splitActivePane(axis: .horizontal, profile: .shell)
 
         model.selectProject(second.id)
         XCTAssertEqual(model.selectedProjectId, second.id)
