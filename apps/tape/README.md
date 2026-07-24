@@ -319,7 +319,7 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape spec gen --lang ts|py|rust --out <dir>`, `tape serve`, `tape backup --url --dest --token --retention-secs` (feature `backup`); HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port, plus admin-gated `GET /admin/backup` streaming a whole-journal snapshot.
+Surfaces: CLI: `tape spec --format routes|openapi|openapi-yaml|json-schema`, `tape spec gen --lang ts|py|rust [--target <profile>] --out <dir>`, `tape serve`, `tape backup --url --dest --token --retention-secs` (feature `backup`); HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, topic append/replay/checkpoint routes served for real over h2c + HTTP/1.1 on one port, plus admin-gated `GET /admin/backup` streaming a whole-journal snapshot.
 EC Dimensions: behavior: `cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact` - offline route inventory; `cargo test -p tape --test http_transport` - real h2c+HTTP/1.1 transport, drain-aware readiness, and per-op metrics; `cargo test -p tape --features backup --test backup` - live admin-gated snapshot endpoint + `tape backup` fetch/ship/retention round trip
 Required Verification: smoke, conformance
 Promise:

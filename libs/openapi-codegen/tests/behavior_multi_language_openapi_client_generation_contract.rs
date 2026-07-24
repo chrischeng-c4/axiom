@@ -7,15 +7,15 @@
 // @contract multi-language-openapi-client-generation-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p cclab-openapi-codegen
+// @command cargo test -p openapi-codegen --test target_profile_matrix
 // AW-EC-END
 
-// Contract: Multi-Language OpenAPI Client Generation public Rust API behavior remains covered by the configured library test suite.
-// Contract: The library contract stays usable through its documented README capability surface.
+// Contract: The historical umbrella contract remains stable and executes all nine fail-closed target-profile matrix cases, so no profile-specific case may disappear unnoticed.
+// Contract: The full external matrix covers Python 3.11-3.14 model smoke, TypeScript strict consumer type-check, Rust edition consumers, legacy golden compatibility, and deterministic materialized sidecars.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn multi_language_openapi_client_generation_contract() {
-    let command = "cargo test -p cclab-openapi-codegen";
+    let command = "cargo test -p openapi-codegen --test target_profile_matrix";
     let id = "multi-language-openapi-client-generation-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

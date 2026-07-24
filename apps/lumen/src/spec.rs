@@ -746,7 +746,7 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 "#
     .to_string();
     out.push_str("\n## Shared generated-client primitive\n");
-    out.push_str(cclab_openapi_codegen::llm::topic().body);
+    out.push_str(openapi_codegen::llm::topic().body);
     out.push_str("\n## Shared h2c client primitive\n");
     out.push_str(transport_h2c::llm::topic().body);
     out

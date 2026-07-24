@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+use openapi_codegen::{generate, GenOptions, HttpClient, Lang};
 
 pub const EXAMPLE_TARGET_CONCURRENCY: usize = 128;
 pub const EXAMPLE_PARALLELISM: usize = 64;
@@ -29,6 +29,7 @@ pub fn h2_physical_connection_hint() -> usize {
 fn opts(lang: Lang) -> GenOptions {
     GenOptions {
         lang,
+        target: None,
         spec_path: PathBuf::new(),
         out_dir: PathBuf::new(),
         client_name: "createLumenClient".to_string(),
@@ -41,7 +42,7 @@ fn opts(lang: Lang) -> GenOptions {
 
 fn inspect_generated_client(
     language: &'static str,
-    output: cclab_openapi_codegen::GeneratedOutput,
+    output: openapi_codegen::GeneratedOutput,
 ) -> Result<ClientTransportSample> {
     let text = output
         .files
@@ -176,7 +177,7 @@ mod tests {
         ))
     }
 
-    fn write_output(dir: &Path, output: cclab_openapi_codegen::GeneratedOutput) {
+    fn write_output(dir: &Path, output: openapi_codegen::GeneratedOutput) {
         fs::create_dir_all(dir).expect("create generated output dir");
         for file in output.files {
             let path = dir.join(file.rel_path);
@@ -518,6 +519,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
             collapse: None,
             cursor: None,
             limit: Some(10),
+            offset: None,
             query: query.clone(),
             routing_key: None,
             sort: None,
@@ -540,6 +542,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
             collapse: None,
             cursor: None,
             limit: Some(10),
+            offset: None,
             query,
             routing_key: None,
             sort: None,

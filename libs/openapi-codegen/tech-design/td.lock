@@ -2,10 +2,16 @@ version = 2
 project = "openapi-codegen"
 ir_kind = "td"
 td_path = "libs/openapi-codegen/tech-design"
-generated_at = "2026-07-07T16:46:17.671248+00:00"
-digest = "sha256:b91845e5ff8f04be741de7f964496e15194c443fd17224d2638f8908f4f93cc0"
-source_digest = "sha256:b91845e5ff8f04be741de7f964496e15194c443fd17224d2638f8908f4f93cc0"
-ir_digest = "sha256:5ce2dbaad7bfa846524a021fb2f14c2f277f1c18d34bed49dc86196a8863775a"
+generated_at = "2026-07-24T10:22:18.693197+00:00"
+digest = "sha256:f4b75d7cafdd084c9d9d9ee523b3213fd3015e8874ce7bec59b35f965919d4e4"
+source_digest = "sha256:f4b75d7cafdd084c9d9d9ee523b3213fd3015e8874ce7bec59b35f965919d4e4"
+ir_digest = "sha256:79f0e9bcb78dc3a56d8bf99f7751ecf4955013cfbbccf066e3dc3646dc569be5"
+
+[[files]]
+path = "config/add-versioned-target-profiles-to-openapi-code-generation.md"
+digest = "sha256:64884b95ff32113c080498b2d81532fd46387e09f49b776cac1366dbfa7e8e17"
+ir_digest = "sha256:3f4072259f7238ee14ba599da5f15a48660097719c1c615a84ac4e1f83a03ab9"
+section_count = 2
 
 [[files]]
 path = "semantic/openapi-codegen-libs-openapi-codegen.md"
@@ -20,32 +26,32 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-py-client-emit-rs.md"
-digest = "sha256:cdef9d312507bd462009e59973ea16518ebcf5455bffe39368cd2d434f70a7c8"
-ir_digest = "sha256:533fccecab61a1e501adc606fed86ab0b57d086b0dc41fefc00ec899a5c2a91a"
+digest = "sha256:2b73fc1f9199f1aecd032175046ca405713b5c9ca824610a464799f3fe8ec472"
+ir_digest = "sha256:1e04184ccd40c0930e2bae46fee75998640a18246fe439fcfad849079837f0d3"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md"
-digest = "sha256:687d72b88814b3b799f682d31eff604a9cbb6032cf032bd6172825b09415dc90"
-ir_digest = "sha256:21a2a9d8bb786c090c102decb42bcd174010e07e824d871805774e33d99c56d2"
+digest = "sha256:5559ee8b9859a98442f8199fcfe1d7a840b2d793450251b9dd1a51e3e086bf45"
+ir_digest = "sha256:03095d1915771f7afc229051b75fb0f5404794a7f45d2bc5fbd81955a2f94fea"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md"
-digest = "sha256:db8d1119cc9c71b168b6c54831ebb598ccab76a8b7d9f91d72d1256bb3a29e6c"
-ir_digest = "sha256:9e73f9c568fea0ee5eccecf9d727b2d2c6bd6d4f0dca00fb302813d329dd2d91"
+digest = "sha256:42a2168b1a55ba255d3e03fcb67c7180ab3ac372920fc6aab5d17f1fc0bf4eb0"
+ir_digest = "sha256:3f1598e9204c782b8a5a6cdb4f4d07308e0b911f26252bf06f18b7e14f8c774a"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md"
-digest = "sha256:12361b2895921279620459276a200fa4be4fbc1bbd700abddde769153dd7c703"
-ir_digest = "sha256:9494fc2a866e8baa05d025a4d6fb8c1702280d52a4cef37389b8b5df8a93b91e"
+digest = "sha256:39b35a4b0af4c3002dd18c06e56ad0538806f60290bcd4cc6eddacce7e011533"
+ir_digest = "sha256:3f974c7b9bde4c46f5305ce12a2a1dc7d1d8ecd2b8cf6b8c19d95436ac6e53d5"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-py-runtime-emit-rs.md"
-digest = "sha256:1b0edde4e92579d968f6decdd71a38410f375b17ebba8f6803d2ec7eb88517b7"
-ir_digest = "sha256:035f52be04109a7da34eeb5688783a1f76e4ec28f85555fa1eaf861b8ad88dae"
+digest = "sha256:d3abc72edc510067314c14f943fb35189190dd60c848fd4463c2ea19f7de4811"
+ir_digest = "sha256:b15a441ec45b1245e94ecb642e0e88e054ad81ff2c0060f754a050aec27e82b3"
 section_count = 3
 
 [[files]]
@@ -56,8 +62,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md"
-digest = "sha256:4fa91f412376d6f590b4129ed66744d303d33616d836400a603c2cf3ddebcae3"
-ir_digest = "sha256:83edd1cfe79bc28c3949e887c3cd5eb1fb59b1721ed7af23c5355901e25b8ecc"
+digest = "sha256:ad400d59c76f3ac58f9eb0608cb15e0c0564caf935e249f785114e64b3c5cff4"
+ir_digest = "sha256:3b6b400ed2d791df27111dc640e1c0f0c92d67897c88960803ca098498881780"
 section_count = 3
 
 [[files]]
@@ -74,8 +80,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md"
-digest = "sha256:cad0d252f2402f8ad85d4f10d4b7d4a11b4eccc5d26e54841c19d82bc4ef1b17"
-ir_digest = "sha256:041bcac5ab7c4c7f81aa09825d7256e133b161253cddbc5ec01811a9a18da3c4"
+digest = "sha256:505451e4122654975411184295c26a312e9c71d9176409fe777462e999fb907f"
+ir_digest = "sha256:f8f1fe452bd846337e65131ceedbb5c1cb59b4e3ecc75915e410ac47da628a52"
 section_count = 3
 
 [[files]]
@@ -86,8 +92,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md"
-digest = "sha256:6fa7efd55d4a74e0890caf1ced4e5c2181b80d891ea4db259d18ec677193b144"
-ir_digest = "sha256:5845494defbd0e7d3f07576246a98c7408cbee8a6fa6a24d97ceee48589915aa"
+digest = "sha256:fd195a657c565d9ed4a663df0b71e2259521b41a57db27d9ed73b1c8e93040f8"
+ir_digest = "sha256:1199cf70188f342694d6472cc0102dc7e62760648c23ea37c1103f86c5076df8"
 section_count = 3
 
 [[files]]
@@ -140,8 +146,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-openapi-codegen-src-lib-rs.md"
-digest = "sha256:1c04e65067c0291faf8cd6ffba5f21b1477ede41fc6fe49d7c1af29c6ba5516d"
-ir_digest = "sha256:7f8ea80b85820634c1ed21f7aa5bd13d3c6a111ea342afd2c193b1c056c691e3"
+digest = "sha256:2213920d068fcf98149fa165ca56585b1db2ad3bb1636b1975cbf7585e0ec182"
+ir_digest = "sha256:1efc749a4885412e8d239a4a0babcbf7f3c5e1dcacada44d4ec89b2fdd7ce77b"
 section_count = 3
 
 [[files]]

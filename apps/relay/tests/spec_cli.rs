@@ -3,7 +3,7 @@
 //! (WI #1209, keep #777 pattern): every `--format` emits a parseable document
 //! that matches the served `/openapi.json` inventory (including the new
 //! `/admin/backup`), `spec gen` writes a non-empty typed client per language
-//! through the shared `cclab-openapi-codegen`, and the `llm` operations topic
+//! through the shared `openapi-codegen`, and the `llm` operations topic
 //! names the backup / peer-TLS / spec surfaces. No server, no network.
 
 use std::process::Command;
@@ -83,8 +83,8 @@ fn spec_prints_parseable_openapi_in_every_format() {
 }
 
 /// R1 / AC1: `relay spec gen --lang <l> --out <dir>` writes a non-empty
-/// client for every language via the shared codegen; the TypeScript client
-/// carries the well-known entry files.
+/// client and its pinned target manifest for every language via the shared
+/// codegen; the TypeScript client carries the well-known entry files.
 #[test]
 fn spec_gen_writes_a_client_for_every_language() {
     for lang in ["ts", "py", "rust"] {
@@ -104,6 +104,17 @@ fn spec_gen_writes_a_client_for_every_language() {
             .filter_map(|e| e.ok())
             .collect();
         assert!(!files.is_empty(), "{lang} client emitted files");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
+        )
+        .expect("valid target manifest");
+        let expected_target = match lang {
+            "ts" => "typescript-5.0",
+            "py" => "python-3.14",
+            "rust" => "rust-2024",
+            _ => unreachable!(),
+        };
+        assert_eq!(manifest["target"], expected_target, "{lang} policy target");
         for f in &files {
             assert!(
                 f.metadata().expect("metadata").len() > 0,
@@ -125,6 +136,29 @@ fn spec_gen_writes_a_client_for_every_language() {
     for f in ["types.ts", "client.ts", "index.ts"] {
         assert!(out.join(f).is_file(), "generated {f}");
     }
+}
+
+/// An explicit target is an auditable one-off override of relay's policy.
+#[test]
+fn spec_gen_target_override_writes_the_requested_contract() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("py311");
+    let _ = stdout(&[
+        "spec",
+        "gen",
+        "--lang",
+        "py",
+        "--target",
+        "python-3.11",
+        "--out",
+        out.to_str().expect("utf-8 path"),
+    ]);
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
+    )
+    .expect("valid target manifest");
+    assert_eq!(manifest["target"], "python-3.11");
+    assert_eq!(manifest["minimum_version"], "3.11");
 }
 
 /// R5: the `llm` operations topic documents the spec verbs, the backup verb +

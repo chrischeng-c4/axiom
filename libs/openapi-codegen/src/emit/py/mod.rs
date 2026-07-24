@@ -22,12 +22,29 @@ pub mod runtime_emit;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
 use anyhow::{Context, Result};
 
 /// Pure Python generation: spec JSON text → in-memory files. No filesystem access.
 /// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None)
+}
+
+/// Profile-aware Python generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: PythonTarget,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target))
+}
+
+fn generate_impl(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: Option<PythonTarget>,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let ops = operations::build(&spec);
@@ -36,24 +53,27 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "models.py".to_string(),
-            contents: models_emit::emit(&spec, &tm),
+            contents: models_emit::emit(&spec, &tm, target),
         });
     }
     if opts.emit_client {
         files.push(GeneratedFile {
             rel_path: "h2c_runtime.py".to_string(),
-            contents: runtime_emit::emit(),
+            contents: runtime_emit::emit(target),
         });
         files.push(GeneratedFile {
             rel_path: "client.py".to_string(),
-            contents: client_emit::emit(&ops, &tm),
+            contents: client_emit::emit(&ops, &tm, target),
         });
     }
     files.push(GeneratedFile {
         rel_path: "__init__.py".to_string(),
         contents: emit_init(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(match target {
+        Some(target) => GeneratedOutput::for_target(files, crate::TargetProfile::Python(target)),
+        None => GeneratedOutput::legacy(files),
+    })
 }
 
 fn emit_init(opts: &GenOptions) -> String {
@@ -187,6 +207,7 @@ mod tests {
     fn opts() -> GenOptions {
         GenOptions {
             lang: Lang::Py,
+            target: None,
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "Client".to_string(),

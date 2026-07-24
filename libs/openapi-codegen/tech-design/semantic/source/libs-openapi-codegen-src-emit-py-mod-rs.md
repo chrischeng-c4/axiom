@@ -32,12 +32,19 @@ Public API manifest for `libs/openapi-codegen/src/emit/py/mod.rs` captured durin
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! Python emitter: read an OpenAPI 3.0/3.1 document and emit pydantic v2 models
-//! plus a typed sync/async HTTP/2 client runtime.
+//! Python emitter: read an OpenAPI 3.0/3.1/3.2 document and emit pydantic v2
+//! models plus a typed sync/async HTTP/2 client runtime.
 //!
 //! Pipeline: parse → `models.py` (BaseModel per component schema) +
 //! `h2c_runtime.py` (generated h2c + TLS ALPN h2 runtime) + `client.py`
 //! (one sync and async `Client` method per operation) + `__init__.py`.
+//!
+//! OpenAPI 3.2 `query` operations (HTTP QUERY, RFC 10008) emit a client
+//! method that calls `self._client.request("QUERY", ..., json=...)` — the
+//! generated `h2c_runtime.py`/any httpx-like injected client accepts
+//! arbitrary method strings. `Client(..., use_post_fallback=True)` (also on
+//! `AsyncClient`) flips that call to `POST` against the operation's
+//! documented twin path at request time.
 
 pub mod client_emit;
 pub mod models_emit;
@@ -47,11 +54,29 @@ pub mod runtime_emit;
 use crate::ir::build_type_map;
 use crate::ir::openapi::Spec;
 use crate::ir::operations;
-use crate::{GenOptions, GeneratedFile, GeneratedOutput};
+use crate::{GenOptions, GeneratedFile, GeneratedOutput, PythonTarget};
 use anyhow::{Context, Result};
 
 /// Pure Python generation: spec JSON text → in-memory files. No filesystem access.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md#source
 pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, None)
+}
+
+/// Profile-aware Python generation used by the public target-profile API.
+pub fn generate_for_target(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: PythonTarget,
+) -> Result<GeneratedOutput> {
+    generate_impl(spec_json, opts, Some(target))
+}
+
+fn generate_impl(
+    spec_json: &str,
+    opts: &GenOptions,
+    target: Option<PythonTarget>,
+) -> Result<GeneratedOutput> {
     let spec: Spec = serde_json::from_str(spec_json).context("failed to parse OpenAPI spec")?;
     let tm = build_type_map(&spec);
     let ops = operations::build(&spec);
@@ -60,24 +85,27 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "models.py".to_string(),
-            contents: models_emit::emit(&spec, &tm),
+            contents: models_emit::emit(&spec, &tm, target),
         });
     }
     if opts.emit_client {
         files.push(GeneratedFile {
             rel_path: "h2c_runtime.py".to_string(),
-            contents: runtime_emit::emit(),
+            contents: runtime_emit::emit(target),
         });
         files.push(GeneratedFile {
             rel_path: "client.py".to_string(),
-            contents: client_emit::emit(&ops, &tm),
+            contents: client_emit::emit(&ops, &tm, target),
         });
     }
     files.push(GeneratedFile {
         rel_path: "__init__.py".to_string(),
         contents: emit_init(opts),
     });
-    Ok(GeneratedOutput { files })
+    Ok(match target {
+        Some(target) => GeneratedOutput::for_target(files, crate::TargetProfile::Python(target)),
+        None => GeneratedOutput::legacy(files),
+    })
 }
 
 fn emit_init(opts: &GenOptions) -> String {
@@ -183,9 +211,35 @@ mod tests {
       } }
     }"##;
 
+    /// OpenAPI 3.2 fixture: a `query` operation (RFC 10008 HTTP QUERY) with a
+    /// sibling `post` twin on the same path — the default POST-twin fallback
+    /// convention (epic #1296).
+    const SPEC_32_QUERY: &str = r##"{
+      "openapi": "3.2.0",
+      "info": { "title": "Mini", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "query": {
+            "operationId": "searchPets",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+            "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          },
+          "post": {
+            "operationId": "createPet",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+            "responses": { "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } }
+          }
+        }
+      },
+      "components": { "schemas": {
+        "Pet": { "type": "object", "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }, "required": ["id", "name"] }
+      } }
+    }"##;
+
     fn opts() -> GenOptions {
         GenOptions {
             lang: Lang::Py,
+            target: None,
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "Client".to_string(),
@@ -631,6 +685,40 @@ must_reject(conn._read_frame)
             Err(err) => panic!("failed to run python3: {err}"),
         };
         assert!(status.success(), "generated Python files failed py_compile");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generated_32_query_operation_client_compiles_when_python3_available() {
+        let out = generate(SPEC_32_QUERY, &opts()).unwrap();
+        let client = file(&out, "client.py");
+        assert!(client.contains("def search_pets(self, *, body:"));
+        assert!(client.contains("_method = \"QUERY\""));
+        assert!(client.contains("_method = \"POST\""));
+
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        for generated in &out.files {
+            fs::write(dir.join(&generated.rel_path), &generated.contents).unwrap();
+        }
+
+        let status = match Command::new("python3")
+            .arg("-m")
+            .arg("py_compile")
+            .arg(dir.join("models.py"))
+            .arg(dir.join("h2c_runtime.py"))
+            .arg(dir.join("client.py"))
+            .arg(dir.join("__init__.py"))
+            .status()
+        {
+            Ok(status) => status,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(err) => panic!("failed to run python3: {err}"),
+        };
+        assert!(
+            status.success(),
+            "generated OpenAPI 3.2 QUERY-operation Python files failed py_compile"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1462,6 +1550,7 @@ assert rest == b"ack:two\n"
         out.push(value as u8);
     }
 }
+
 ````
 
 ## Changes

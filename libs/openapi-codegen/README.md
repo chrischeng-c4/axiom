@@ -20,17 +20,51 @@ ID: multi-language-openapi-client-generation
 Type: DeveloperTool
 Root WI: -
 Status: verified
-Surfaces: Rust API: `cclab_openapi_codegen`.
-EC Dimensions: behavior: `cargo test -p cclab-openapi-codegen` - OpenAPI parser and emitter coverage
+Surfaces: Rust API: `openapi_codegen`.
+EC Dimensions: behavior: `cargo test -p openapi-codegen` - OpenAPI parser and emitter coverage
 Required Verification: smoke
 Promise:
 Projects can derive typed client code from OpenAPI documents without copying
 language-specific generation logic.
-Gate Inventory: `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/lib.rs
+Gate Inventory: `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-openapi-codegen`; libs/openapi-codegen/src/lib.rs |
+| multi-language-openapi-client-generation-contract | epic | - | implemented | verified | smoke | `cargo test -p openapi-codegen`; libs/openapi-codegen/src/lib.rs |
+
+## Versioned target profiles
+
+`GenOptions::target` is the explicit target contract. `target: None` keeps the
+pre-profile generated files byte-for-byte and emits no target manifest.
+`target: Some(profile)` (or `generate_for_target`) enables version-aware syntax;
+the returned `GeneratedOutput` carries the selected `target` and deterministic
+requirements: compiler/minimum version, language standard, module/strictness
+settings where applicable, transport, and ordered runtime dependencies.
+
+Projects pin their defaults in a `codegen.toml` `[targets]` table and may offer
+an explicit target override. When an output is materialized through
+`GeneratedOutput::write_to_dir`, explicitly targeted output includes
+`.openapi-codegen.json`, recording the complete target contract for
+downstream verification. Legacy `target: None` output does not add a sidecar.
+
+| Language | Profiles | Artifact effect |
+|---|---|---|
+| Python | 3.11, 3.12, 3.13, 3.14 | All use native `T \| None` and `Self`; 3.12+ also uses PEP 695 `type` aliases. |
+| TypeScript | 5.0 | Records the compiler floor. The current emitter has no safe version-specific syntax improvement, so the generated API stays identical. |
+| Rust | 2021, 2024 | Rust 2024 treats schema fields named `gen` as reserved and emits `gen_` plus `#[serde(rename = "gen")]`. |
+
+```rust
+use openapi_codegen::{
+    generate_for_target, GenOptions, PythonTarget, TargetProfile,
+};
+
+let output = generate_for_target(
+    spec_json,
+    &options,
+    TargetProfile::Python(PythonTarget::Py312),
+)?;
+assert_eq!(output.requirements.minimum_version, "3.12");
+```
 
 ## OpenAPI 3.2 and HTTP QUERY
 

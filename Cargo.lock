@@ -1374,8 +1374,8 @@ name = "axiom-client-transport-policy-example"
 version = "0.4.9"
 dependencies = [
  "anyhow",
- "cclab-openapi-codegen",
  "lumen",
+ "openapi-codegen",
  "reqwest 0.12.28",
  "service-http",
  "tokio",
@@ -2385,16 +2385,6 @@ dependencies = [
  "once_cell",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "cclab-openapi-codegen"
-version = "0.4.9"
-dependencies = [
- "anyhow",
- "cli-std",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3821,7 +3811,6 @@ dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "build-stamp",
- "cclab-openapi-codegen",
  "chrono",
  "clap",
  "cli-std",
@@ -3829,6 +3818,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "metrics-prometheus",
+ "openapi-codegen",
  "peer-tls",
  "raft-runtime",
  "rcgen",
@@ -6795,7 +6785,6 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "bincode",
- "cclab-openapi-codegen",
  "claim-token",
  "clap",
  "cli-std",
@@ -6805,6 +6794,7 @@ dependencies = [
  "futures",
  "k8s-openapi",
  "kube",
+ "openapi-codegen",
  "parking_lot",
  "raft-runtime",
  "redis",
@@ -7381,7 +7371,6 @@ dependencies = [
  "build-stamp",
  "bytemuck",
  "byteorder",
- "cclab-openapi-codegen",
  "chrono",
  "ciborium",
  "clap",
@@ -7399,6 +7388,7 @@ dependencies = [
  "memory-stats",
  "metrics-prometheus",
  "moka",
+ "openapi-codegen",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -8622,6 +8612,17 @@ dependencies = [
  "is-wsl",
  "libc",
  "pathdiff",
+]
+
+[[package]]
+name = "openapi-codegen"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "cli-std",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -10951,7 +10952,6 @@ dependencies = [
  "async-nats",
  "axum 0.8.9",
  "build-stamp",
- "cclab-openapi-codegen",
  "chrono",
  "ciborium",
  "clap",
@@ -10963,6 +10963,7 @@ dependencies = [
  "kube",
  "lapin",
  "metrics-prometheus",
+ "openapi-codegen",
  "peer-tls",
  "raft-core",
  "raft-runtime",
@@ -12355,7 +12356,6 @@ dependencies = [
  "base64 0.22.1",
  "build-stamp",
  "bytes",
- "cclab-openapi-codegen",
  "chrono",
  "clap",
  "cli-std",
@@ -12365,6 +12365,7 @@ dependencies = [
  "kube",
  "lumen",
  "metrics-prometheus",
+ "openapi-codegen",
  "peer-tls",
  "prost 0.13.5",
  "raft-core",
@@ -13130,7 +13131,6 @@ dependencies = [
  "async-nats",
  "axum 0.8.9",
  "build-stamp",
- "cclab-openapi-codegen",
  "chrono",
  "clap",
  "cli-std",
@@ -13139,6 +13139,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "metrics-prometheus",
+ "openapi-codegen",
  "peer-tls",
  "raft-runtime",
  "rcgen",

@@ -515,24 +515,25 @@ fn spec(args: SpecArgs) -> Result<()> {
     let json = defer::openapi::openapi().to_pretty_json()?;
     if let Some(SpecSubcommand::Gen(args)) = args.gen {
         let lang = match args.lang {
-            GenLang::Ts => cclab_openapi_codegen::Lang::Ts,
-            GenLang::Py => cclab_openapi_codegen::Lang::Py,
-            GenLang::Rust => cclab_openapi_codegen::Lang::Rust,
+            GenLang::Ts => openapi_codegen::Lang::Ts,
+            GenLang::Py => openapi_codegen::Lang::Py,
+            GenLang::Rust => openapi_codegen::Lang::Rust,
         };
-        let output = cclab_openapi_codegen::generate(
+        let output = openapi_codegen::generate(
             &json,
-            &cclab_openapi_codegen::GenOptions {
+            &openapi_codegen::GenOptions {
                 lang,
+                target: None,
                 spec_path: PathBuf::new(),
                 out_dir: args.out.clone(),
                 client_name: "createDeferClient".into(),
                 http_client: match args.http {
-                    GenHttp::Fetch => cclab_openapi_codegen::HttpClient::Fetch,
-                    GenHttp::Axios => cclab_openapi_codegen::HttpClient::Axios,
+                    GenHttp::Fetch => openapi_codegen::HttpClient::Fetch,
+                    GenHttp::Axios => openapi_codegen::HttpClient::Axios,
                 },
                 emit_types: true,
                 emit_client: true,
-                emit_hooks: matches!(lang, cclab_openapi_codegen::Lang::Ts),
+                emit_hooks: matches!(lang, openapi_codegen::Lang::Ts),
             },
         )?;
         std::fs::create_dir_all(&args.out)?;

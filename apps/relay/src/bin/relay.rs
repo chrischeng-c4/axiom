@@ -100,6 +100,10 @@ struct GenArgs {
     /// Target language for the generated client.
     #[arg(long, value_enum)]
     lang: GenLang,
+    /// Pinned generated-client contract, e.g. `python-3.14`. Defaults to
+    /// `clients/codegen.toml`; an explicit value overrides that policy once.
+    #[arg(long, value_name = "TARGET")]
+    target: Option<String>,
     /// Output directory for the generated files.
     #[arg(long)]
     out: PathBuf,
@@ -505,14 +509,21 @@ fn spec(args: SpecArgs) -> Result<()> {
 /// `libs/openapi-codegen`, written into `--out`. One codegen path, no
 /// external tool (keep's spec_gen verbatim).
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use openapi_codegen::{
+        generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+    };
+
+    const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
+
     let lang = match args.lang {
         GenLang::Ts => Lang::Ts,
         GenLang::Py => Lang::Py,
         GenLang::Rust => Lang::Rust,
     };
+    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
     let opts = GenOptions {
         lang,
+        target: Some(target),
         spec_path: PathBuf::new(),
         out_dir: args.out.clone(),
         client_name: "createClient".to_string(),
@@ -525,13 +536,20 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let output = generate(&relay::openapi::api_doc_json(), &opts)?;
-    std::fs::create_dir_all(&args.out)?;
+    let output = generate_for_target(&relay::openapi::api_doc_json(), &opts, target)?;
+    output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);
-        std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    println!("generated {}", args.out.join(MANIFEST_FILE).display());
+    let requirements = output.requirements.expect("explicit target requirements");
+    println!(
+        "target: {} (minimum {} {})",
+        requirements.target,
+        requirements.language.id(),
+        requirements.minimum_version
+    );
     println!("next: done");
     Ok(())
 }
@@ -1184,14 +1202,25 @@ mod tests {
             "--fields is keep-only"
         );
 
-        let cli = Cli::try_parse_from(["relay", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
-            .expect("spec gen should parse");
+        let cli = Cli::try_parse_from([
+            "relay",
+            "spec",
+            "gen",
+            "--lang",
+            "ts",
+            "--target",
+            "typescript-5.0",
+            "--out",
+            "/tmp/x",
+        ])
+        .expect("spec gen should parse");
         match cli.cmd {
             Some(Command::Spec(SpecArgs {
                 gen: Some(SpecSub::Gen(a)),
                 ..
             })) => {
                 assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.target.as_deref(), Some("typescript-5.0"));
                 assert_eq!(a.out, PathBuf::from("/tmp/x"));
             }
             other => panic!("expected spec gen, got {other:?}"),

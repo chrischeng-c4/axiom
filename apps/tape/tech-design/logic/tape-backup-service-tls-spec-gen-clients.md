@@ -10,11 +10,11 @@ summary: >
   --retention-secs` CLI subcommand behind a new `backup` cargo feature
   (`dep:reqwest` + `service-backup/s3`) that fetches the snapshot and ships it
   to a `libs/service-backup` destination sink (`file://` always, `s3://` with
-  the feature); `tape spec gen --lang ts|py|rust --out <dir>` generating a
+  the feature); `tape spec gen --lang ts|py|rust [--target <profile>] --out <dir>` generating a
   typed client from tape's existing offline OpenAPI document via the shared
   `libs/openapi-codegen` crate (already a workspace member, not yet wired
-  into tape's binary); and `apps/tape/clients/` (Makefile, README.md,
-  generated `openapi.json`) mirroring lumen's `clients/` scaffold. Peer-mTLS
+  into tape's binary); and `apps/tape/clients/` (README.md, codegen.toml,
+  generated `openapi.json`) as a direct CLI-backed scaffold. Peer-mTLS
   (`apps/tape/src/peer_tls.rs`) is UNCHANGED — WI #1327 already delivered the
   full config-surface + fail-fast validation scope for tape (the
   `TAPE_PEER_TLS_*` / `TAPE_PEER_MTLS=on|off` env contract), so this WI's TLS
@@ -67,16 +67,16 @@ nodes:
     label: "print BackupRunResult JSON"
   cli_spec_gen:
     kind: process
-    label: "tape spec gen --lang ts|py|rust --out DIR --http fetch|axios"
+    label: "tape spec gen --lang ts|py|rust [--target PROFILE] --out DIR --http fetch|axios"
   spec_gen_call:
     kind: process
-    label: "cclab_openapi_codegen::generate(tape::spec::openapi_json(), opts)"
+    label: "TargetPolicy::resolve + openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target)"
   spec_gen_done:
     kind: terminal
     label: "write generated files under --out; print each path"
   clients_dir:
     kind: terminal
-    label: "apps/tape/clients/: Makefile + README.md + openapi.json, mirrors lumen's clients/ layout"
+    label: "apps/tape/clients/: README.md + codegen.toml + openapi.json, driven directly by tape CLI"
   peer_tls_note:
     kind: terminal
     label: "apps/tape/src/peer_tls.rs UNCHANGED -- #1327 already delivered the config-surface + fail-fast validation scope; no new TLS code lands here"
@@ -106,10 +106,10 @@ flowchart TD
     cli_backup --> backup_fetch[backup::fetch_snapshot_bytes: reqwest GET url/admin/backup, optional Bearer, non-2xx bails with status+body]
     backup_fetch --> backup_ship[backup::run_backup: service_backup::sink_from_destination dest + run_backup_once sink, now, bytes, retention]
     backup_ship --> backup_done([print BackupRunResult JSON])
-    route -->|tape spec gen| cli_spec_gen[tape spec gen --lang ts py rust --out DIR --http fetch axios]
-    cli_spec_gen --> spec_gen_call[cclab_openapi_codegen::generate tape::spec::openapi_json, opts]
+    route -->|tape spec gen| cli_spec_gen[tape spec gen --lang ts py rust --target PROFILE --out DIR --http fetch axios]
+    cli_spec_gen --> spec_gen_call[TargetPolicy resolve + openapi_codegen::generate_for_target]
     spec_gen_call --> spec_gen_done([write generated files under --out; print each path])
-    route -->|clients scaffold| clients_dir[apps/tape/clients/: Makefile + README.md + openapi.json, mirrors lumen clients layout]
+    route -->|clients scaffold| clients_dir[apps/tape/clients/: README.md + codegen.toml + openapi.json, direct CLI]
     route -->|scope check #1327| peer_tls_note[apps/tape/src/peer_tls.rs UNCHANGED -- #1327 already delivered the config-surface + fail-fast validation scope; no new TLS code]
 ```
 ## Unit Test
@@ -139,10 +139,10 @@ requirements:
     verify: backup::tests::run_backup_ships_fetched_bytes_to_sink
   clients_scaffold_present:
     id: R5
-    text: "apps/tape/clients/ ships Makefile, README.md, and a generated openapi.json mirroring lumen's clients/ layout"
+    text: "apps/tape/clients/ ships README.md, codegen.toml, and a generated openapi.json for direct CLI generation"
     kind: regression
     risk: low
-    verify: manual: apps/tape/clients/{Makefile,README.md,openapi.json} exist
+    verify: manual: apps/tape/clients/{README.md,codegen.toml,openapi.json} exist
   peer_tls_unchanged:
     id: R6
     text: "peer_tls.rs config-surface + fail-fast validation from WI #1327 is left unchanged; no new TLS termination code is added"
@@ -151,7 +151,7 @@ requirements:
     verify: peer_tls::tests (existing, unmodified) still pass
   spec_gen_client_codegen:
     id: R4
-    text: "tape spec gen --lang ts|py|rust --out DIR writes a typed client from tape's own OpenAPI document via libs/openapi-codegen"
+    text: "tape spec gen --lang ts|py|rust [--target PROFILE] --out DIR writes a typed client plus its target manifest from tape's own OpenAPI document via libs/openapi-codegen"
     kind: functional
     risk: medium
     verify: bin/tape.rs::tests::spec_gen_verbs_parse_and_generate
@@ -161,7 +161,7 @@ flowchart TD
     r2[R2 backup cli snapshot fetch] --> backup_tests_run_backup_ships_fetched_bytes_to_sink[backup::tests::run_backup_ships_fetched_bytes_to_sink]
     r3[R3 backup cli parses] --> bin_tape_rs_tests_backup_verb_parses[bin/tape.rs::tests::backup_verb_parses]
     r4[R4 spec gen client codegen] --> bin_tape_rs_tests_spec_gen_verbs_parse_and_generate[bin/tape.rs::tests::spec_gen_verbs_parse_and_generate]
-    r5[R5 clients scaffold present] --> manual_apps_tape_clients_makefile_readme_md_openapi_json_exist[manual: apps/tape/clients/{Makefile,README.md,openapi.json} exist]
+    r5[R5 clients scaffold present] --> manual_apps_tape_clients_readme_md_codegen_toml_openapi_json_exist[manual: apps/tape/clients/{README.md,codegen.toml,openapi.json} exist]
     r6[R6 peer tls unchanged] --> peer_tls_tests_existing_unmodified_still_pass[peer_tls::tests (existing, unmodified) still pass]
 ```
 ## Changes
@@ -173,7 +173,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add unconditional cclab-openapi-codegen and service-backup deps (schema/local-sink types are cheap); add an optional reqwest dep for the backup feature's HTTP fetch (already a dev-dependency); add a `backup = [\"dep:reqwest\", \"service-backup/s3\"]` feature entry, mirroring relay's Cargo.toml block."
+    description: "Add unconditional openapi-codegen and service-backup deps (schema/local-sink types are cheap); add an optional reqwest dep for the backup feature's HTTP fetch (already a dev-dependency); add a `backup = [\"dep:reqwest\", \"service-backup/s3\"]` feature entry, mirroring relay's Cargo.toml block."
   - path: apps/tape/src/raft.rs
     action: modify
     section: logic
@@ -198,17 +198,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add Backup(BackupArgs) top-level subcommand (feature-gated dispatch, nonzero-exit rebuild hint without the feature, mirroring K8s operator run's pattern); add a Gen(GenArgs) subcommand under Spec (spec gen --lang ts|py|rust --out DIR --http fetch|axios) calling cclab_openapi_codegen::generate(tape::spec::openapi_json(), opts) and writing files to --out."
-  - path: apps/tape/clients/Makefile
-    action: create
-    section: logic
-    impl_mode: hand-written
-    description: "make gen-ts/gen-py/gen-rust targets wrapping `cargo run -p tape --features self-update -- spec gen --lang <lang> --out clients/<lang>`, plus a refresh-openapi target regenerating clients/openapi.json, mirroring lumen's apps/lumen/clients/Makefile layout."
+    description: "Add Backup(BackupArgs) top-level subcommand (feature-gated dispatch, nonzero-exit rebuild hint without the feature, mirroring K8s operator run's pattern); add a Gen(GenArgs) subcommand under Spec (spec gen --lang ts|py|rust [--target PROFILE] --out DIR --http fetch|axios) resolving the project target policy, calling openapi_codegen::generate_for_target(tape::spec::openapi_json(), opts, target), and writing files plus a target manifest to --out."
   - path: apps/tape/clients/README.md
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Usage doc for the clients/ scaffold: what openapi.json is, how to regenerate it and the per-language clients via the Makefile, mirroring lumen's clients/README.md."
+    description: "Usage doc for the direct CLI-backed clients scaffold: what openapi.json and codegen.toml are, and how to regenerate the snapshot and language clients without a Makefile wrapper."
   - path: apps/tape/clients/openapi.json
     action: create
     section: logic

@@ -25,9 +25,22 @@ fn gen_py_writes_pydantic_h2c_client() {
         .unwrap();
     assert!(status.success(), "spec gen --lang py failed");
 
-    for f in ["models.py", "h2c_runtime.py", "client.py", "__init__.py"] {
+    for f in [
+        "models.py",
+        "h2c_runtime.py",
+        "client.py",
+        "__init__.py",
+        ".openapi-codegen.json",
+    ] {
         assert!(dir.path().join(f).exists(), "missing {f}");
     }
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".openapi-codegen.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["target"], "python-3.14");
+    assert_eq!(manifest["language"], "python");
+    assert_eq!(manifest["minimum_version"], "3.14");
     let models = std::fs::read_to_string(dir.path().join("models.py")).unwrap();
     assert!(models.contains("BaseModel"), "models.py not pydantic");
     assert!(
@@ -114,6 +127,33 @@ fn gen_lang_selects_emitter() {
         assert!(status.success(), "spec gen --lang {lang} failed");
         assert!(dir.path().join(marker).exists(), "{lang}: missing {marker}");
     }
+}
+
+/// An explicit target remains an auditable override of the project policy.
+#[test]
+fn gen_target_override_writes_the_requested_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = lumen()
+        .args([
+            "spec",
+            "gen",
+            "--lang",
+            "py",
+            "--target",
+            "python-3.11",
+            "--out",
+        ])
+        .arg(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success(), "spec gen target override failed");
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".openapi-codegen.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["target"], "python-3.11");
+    assert_eq!(manifest["minimum_version"], "3.11");
 }
 
 /// R3: `lumen spec` (no subcommand) still prints the OpenAPI document unchanged.

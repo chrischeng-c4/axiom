@@ -792,6 +792,10 @@ struct GenArgs {
     /// Target language for the generated client.
     #[arg(long, value_enum)]
     lang: GenLang,
+    /// Pinned generated-client contract, e.g. `python-3.14`. Defaults to
+    /// `clients/codegen.toml`; an explicit value overrides that policy once.
+    #[arg(long, value_name = "TARGET")]
+    target: Option<String>,
     /// Output directory for the generated files.
     #[arg(long)]
     out: PathBuf,
@@ -1046,14 +1050,21 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// (offline; no engine or server) and write it into `--out`.
 /// @spec apps/lumen/tech-design/interfaces/cli/lumen-spec-gen-generate-a-typed-client-ts-py-rust-from-lumen-s-o.md
 fn spec_gen(args: GenArgs) -> Result<()> {
-    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    use openapi_codegen::{
+        generate_for_target, GenOptions, HttpClient, Lang, TargetPolicy, MANIFEST_FILE,
+    };
+
+    const TARGET_POLICY: &str = include_str!("../../clients/codegen.toml");
+
     let lang = match args.lang {
         GenLang::Ts => Lang::Ts,
         GenLang::Py => Lang::Py,
         GenLang::Rust => Lang::Rust,
     };
+    let target = TargetPolicy::from_toml(TARGET_POLICY)?.resolve(lang, args.target.as_deref())?;
     let opts = GenOptions {
         lang,
+        target: Some(target),
         spec_path: PathBuf::new(),
         out_dir: args.out.clone(),
         client_name: "createClient".to_string(),
@@ -1066,13 +1077,20 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         // TanStack Query hooks are a TypeScript-only concern.
         emit_hooks: matches!(lang, Lang::Ts),
     };
-    let output = generate(&lumen::spec::openapi_json(), &opts)?;
-    std::fs::create_dir_all(&args.out)?;
+    let output = generate_for_target(&lumen::spec::openapi_json(), &opts, target)?;
+    output.write_to_dir(&args.out)?;
     for file in &output.files {
         let path = args.out.join(&file.rel_path);
-        std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    println!("generated {}", args.out.join(MANIFEST_FILE).display());
+    let requirements = output.requirements.expect("explicit target requirements");
+    println!(
+        "target: {} (minimum {} {})",
+        requirements.target,
+        requirements.language.id(),
+        requirements.minimum_version
+    );
     // Chainable output (#963): point at the generated client's entrypoint
     // module — the one file every language always emits (unconditionally
     // pushed by each emitter regardless of `--emit-*` selection).

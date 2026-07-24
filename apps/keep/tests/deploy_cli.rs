@@ -62,8 +62,8 @@ fn spec_format_and_view_variants_render() {
     assert!(fields["value_types"].is_array());
 }
 
-/// R2 / AC2: `keep spec gen --lang <l> --out <dir>` writes a client for every
-/// language via the shared codegen.
+/// R2 / AC2: `keep spec gen --lang <l> --out <dir>` writes a client and its
+/// pinned target manifest for every language via the shared codegen.
 #[test]
 fn spec_gen_writes_a_client_for_every_language() {
     for lang in ["ts", "py", "rust"] {
@@ -82,6 +82,17 @@ fn spec_gen_writes_a_client_for_every_language() {
             .filter_map(|e| e.ok())
             .collect();
         assert!(!files.is_empty(), "{lang} client emitted files");
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
+        )
+        .expect("valid target manifest");
+        let expected_target = match lang {
+            "ts" => "typescript-5.0",
+            "py" => "python-3.14",
+            "rust" => "rust-2024",
+            _ => unreachable!(),
+        };
+        assert_eq!(manifest["target"], expected_target, "{lang} policy target");
     }
     // The TypeScript client carries the well-known entry files.
     let dir = tempfile::tempdir().expect("tempdir");
@@ -97,6 +108,29 @@ fn spec_gen_writes_a_client_for_every_language() {
     for f in ["types.ts", "client.ts", "index.ts"] {
         assert!(out.join(f).is_file(), "generated {f}");
     }
+}
+
+/// An explicit target is an auditable one-off override of keep's policy.
+#[test]
+fn spec_gen_target_override_writes_the_requested_contract() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("py311");
+    let _ = stdout(&[
+        "spec",
+        "gen",
+        "--lang",
+        "py",
+        "--target",
+        "python-3.11",
+        "--out",
+        out.to_str().expect("utf-8 path"),
+    ]);
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(".openapi-codegen.json")).expect("target manifest"),
+    )
+    .expect("valid target manifest");
+    assert_eq!(manifest["target"], "python-3.11");
+    assert_eq!(manifest["minimum_version"], "3.11");
 }
 
 /// R3 / AC3 (source): `keep dockerfile render --variant source` reproduces the

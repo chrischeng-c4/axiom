@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": "openapi-codegen",
+  "source_digest": "sha256:d4543757ced967676e1d6448cf5b661133cd16fe85034c19a86c5a5c5282fa82",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer",
+  "reviewed_at": "2026-07-24T13:49:30.996294+00:00",
+  "summary": "The final Python EC exercises every WI #2537 rename/version boundary through exact repository observations: six identity checks, a 57,142-file active-reference scan, nine exact target-matrix cases, and seven consumer compilation/test cases. Assertions are concrete, the oracle is independent of the implementation and aw ec, known-failure paths are absent, nested tracked .aw content remains scanned, and zero-test or empty-implementation behavior cannot satisfy the complete gate.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": []
+}

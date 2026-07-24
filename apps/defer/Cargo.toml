@@ -38,7 +38,7 @@ metrics-prometheus = { path = "../../libs/metrics-prometheus" }
 utoipa = { workspace = true }
 serde_yaml = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+openapi-codegen = { path = "../../libs/openapi-codegen", version = "0.5" }
 service-backup = { path = "../../libs/service-backup", features = ["http-client"] }
 service-executor = { path = "../../libs/service-executor" }
 kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }

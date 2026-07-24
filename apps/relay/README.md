@@ -27,7 +27,7 @@ rate limiting, and HTTP target dispatch remain Defer concerns.
 
 Relay ships as **one binary**: bare `relay` serves (h2c broker; raft-runtime
 auto-mode HA — see [`HA.md`](HA.md)), and the same bin carries the offline
-`spec`/`spec gen`, `backup`, `k8s crd|operator|instance`, `dockerfile render`,
+`spec`/`spec gen [--target <profile>]`, `backup`, `k8s crd|operator|instance`, `dockerfile render`,
 and shared `llm`/`upgrade`/`issue` verbs (WIs #1204-#1209, the
 service-archetype convergence).
 
