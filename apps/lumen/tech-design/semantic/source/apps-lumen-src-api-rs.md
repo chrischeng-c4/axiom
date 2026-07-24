@@ -2851,7 +2851,11 @@ impl From<anyhow::Error> for ApiErr {
         // stable `storage_full` code rather than falling through to the
         // generic 400 default.
         if e.downcast_ref::<StorageFullError>().is_some() {
-            return Self::new(StatusCode::INSUFFICIENT_STORAGE, "storage_full", e.to_string());
+            return Self::new(
+                StatusCode::INSUFFICIENT_STORAGE,
+                "storage_full",
+                e.to_string(),
+            );
         }
         if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
             return Self::new(
