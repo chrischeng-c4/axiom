@@ -111,6 +111,21 @@ impl LumenVerifier {
         )))
     }
 
+    /// #2475: same wiring as [`Self::new`], but the registry-reload sink
+    /// additionally counts failed/successful hot-reloads onto `engine`'s
+    /// `/metrics` surface (`crate::auth::LumenAuthEventSink`) so
+    /// `render::prometheus_rule`'s `LumenAuthRegistryReloadFailing` alert
+    /// has a real series to read. `AppState::with_components` is the only
+    /// production caller; test call sites keep using `Self::new`, which
+    /// has no metrics side effect.
+    pub fn with_metrics(cfg: Arc<AuthConfig>, engine: Arc<Engine>) -> Self {
+        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
+            cfg.required,
+            cfg.tokens.clone(),
+            Arc::new(LumenAuthEventSink::new(engine)),
+        )))
+    }
+
     /// The shared reloadable verifier owned by this service wrapper. The
     /// serving adapter passes this same instance to the Secret/CSI file
     /// watcher, while the HTTP middleware keeps using the wrapper itself.

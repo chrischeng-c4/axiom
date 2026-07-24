@@ -66,24 +66,6 @@ search_probe() {
     --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-${RUN_ID}\"}},\"limit\":10}"
 }
 
-wait_for_gcs_object() {
-  local prefix="gs://${BACKUP_BUCKET}/lumen"
-  local listing="$EVIDENCE_DIR/gcs/lumen-objects.txt"
-  local deadline=$((SECONDS + 180))
-  local first
-  while (( SECONDS < deadline )); do
-    gcloud storage ls --recursive "${prefix}/**" > "$listing" 2>/dev/null || true
-    first="$(rg -F "/lumen/${RUN_ID}-" "$listing" | sed -n '1p' || true)"
-    if [[ -n "$first" ]]; then
-      printf '%s\n' "$first"
-      return 0
-    fi
-    sleep 3
-  done
-  echo "no Lumen backup object for run $RUN_ID appeared below $prefix" >&2
-  return 1
-}
-
 wait_for_split() {
   local deadline=$((SECONDS + 900))
   local shard_count workflow_phase status_phase desired ready pvc_count map_version converged_map_version
@@ -108,7 +90,173 @@ wait_for_split() {
     sleep 5
   done
   echo "Lumen did not converge 1-to-2 split with two ready pods and two PVCs" >&2
-  kubectl -n lumen get lumen/lumen,statefulset/lumen,pvc -o yaml >&2 || true
+  # Two calls: kubectl rejects mixing resource/name form with a bare resource
+  # type in one argument list (the tape campaign hit this exact silent dump).
+  kubectl -n lumen get lumen/lumen statefulset/lumen -o yaml >&2 || true
+  kubectl -n lumen get pvc -o yaml >&2 || true
+  return 1
+}
+
+# The admission leg (#2477) patches the main CR, not the StatefulSet, so the
+# OPERATOR — not kubectl — propagates `LUMEN_ADMISSION_*` onto the pod spec.
+# A bare `rollout status` immediately after the patch races that propagation:
+# until the operator re-renders the StatefulSet it still reports the pre-patch
+# generation as fully rolled out, so the env read sees stale, admission-free
+# env (GKE run v4 0724045952 died here with observedGeneration lagging
+# metadata.generation). Waiting on `observedGeneration` is itself unreliable
+# here because the operator writes `spec.shardMap`/`spec.reshardPolicy.workflow`
+# back into spec, advancing `metadata.generation` out from under the poll, so
+# poll the actual observable — the rendered StatefulSet pod-template env — until
+# the admission grammar lands.
+wait_for_admission_env() {
+  local envfile="$EVIDENCE_DIR/kubernetes/lumen-admission-env.txt"
+  local deadline=$((SECONDS + 300))
+  while (( SECONDS < deadline )); do
+    kubectl -n lumen get statefulset/lumen \
+      -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+      > "$envfile" 2>/dev/null || true
+    if grep -qx 'LUMEN_ADMISSION_READ_CAPACITY=100' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_WRITE_CAPACITY=50' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_ADMIN_CAPACITY=10' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_REFILL_SECS=30' "$envfile" \
+      && grep -qx 'LUMEN_ADMISSION_MAX_KEYS=256' "$envfile"; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+# ---- lumen-restore: second instance for the cold-restore leg (#2492) ----
+start_restore_forward() {
+  stop_restore_forward
+  local deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if [[ -z "$restore_forward_pid" ]] || ! kill -0 "$restore_forward_pid" >/dev/null 2>&1; then
+      stop_restore_forward
+      kubectl -n lumen port-forward service/lumen-restore 17374:7373 \
+        >>"$EVIDENCE_DIR/kubernetes/lumen-restore-port-forward.log" 2>&1 &
+      restore_forward_pid="$!"
+      sleep 1
+    fi
+    if curl --max-time 5 --silent --show-error --fail \
+      http://127.0.0.1:17374/readyz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for lumen-restore service readiness through port-forward" >&2
+  return 1
+}
+
+restore_search_probe() {
+  curl --silent --show-error --fail-with-body -X POST \
+    http://127.0.0.1:17374/collections/acceptance/search \
+    -H 'content-type: application/json' \
+    --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-${RUN_ID}\"}},\"limit\":10}"
+}
+
+# Mirrors deploy.sh's wait_ready_cr, scoped to the lumen-restore CR.
+wait_ready_restore_cr() {
+  local expected_generation observed_generation phase
+  local deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    expected_generation="$(kubectl -n lumen get lumen/lumen-restore -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed_generation="$(kubectl -n lumen get lumen/lumen-restore -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    phase="$(kubectl -n lumen get lumen/lumen-restore -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    if [[ -n "$expected_generation" && "$observed_generation" == "$expected_generation" && "$phase" == "Ready" ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "timed out waiting for lumen/lumen-restore status generation and Ready phase" >&2
+  capture_restore_diagnostics
+  return 1
+}
+
+# Preserve the restore CR/StatefulSet/pod state before it gets torn down, so a
+# failure stays provable instead of silently disappearing with the instance.
+capture_restore_diagnostics() {
+  kubectl -n lumen get lumen/lumen-restore statefulset/lumen-restore -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-restore-failure.yaml" 2>&1 || true
+  kubectl -n lumen describe pods -l app.kubernetes.io/instance=lumen-restore \
+    > "$EVIDENCE_DIR/kubernetes/lumen-restore-pods-describe.txt" 2>&1 || true
+  kubectl -n lumen logs pod/lumen-restore-0 --all-containers --tail=200 --prefix \
+    >> "$EVIDENCE_DIR/kubernetes/lumen-restore-pods.log" 2>&1 || true
+}
+
+# ---- lumen-authcsi: Secret Manager + SecretProviderClass provider:gke auth+CSI
+# regression leg (#2457) helpers ----
+authcsi_forward_pid=""
+stop_authcsi_forward() {
+  if [[ -n "$authcsi_forward_pid" ]]; then
+    kill "$authcsi_forward_pid" >/dev/null 2>&1 || true
+    wait "$authcsi_forward_pid" >/dev/null 2>&1 || true
+    authcsi_forward_pid=""
+  fi
+}
+
+start_authcsi_forward() {
+  stop_authcsi_forward
+  local deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if [[ -z "$authcsi_forward_pid" ]] || ! kill -0 "$authcsi_forward_pid" >/dev/null 2>&1; then
+      stop_authcsi_forward
+      kubectl -n lumen port-forward service/lumen-authcsi 17375:7373 \
+        >>"$EVIDENCE_DIR/kubernetes/lumen-authcsi-port-forward.log" 2>&1 &
+      authcsi_forward_pid="$!"
+      sleep 1
+    fi
+    if curl --max-time 5 --silent --show-error --fail \
+      http://127.0.0.1:17375/readyz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for lumen-authcsi service readiness through port-forward" >&2
+  return 1
+}
+
+authcsi_search_authenticated() {
+  curl --silent --show-error --fail-with-body -X POST \
+    http://127.0.0.1:17375/collections/acceptance-authcsi/search \
+    -H 'content-type: application/json' \
+    -H "authorization: Bearer ${LUMEN_AUTHCSI_TOKEN}" \
+    --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-authcsi-${RUN_ID}\"}},\"limit\":10}"
+}
+
+# Preserve the authcsi CR/StatefulSet/pod/SecretProviderClass state before it
+# gets torn down, so a mount failure stays provable instead of silently
+# disappearing with the instance.
+capture_authcsi_diagnostics() {
+  kubectl -n lumen get lumen/lumen-authcsi statefulset/lumen-authcsi -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-failure.yaml" 2>&1 || true
+  kubectl -n lumen get secretproviderclass/lumen-authcsi-tokens -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-secretproviderclass.yaml" 2>&1 || true
+  kubectl -n lumen describe pods -l app.kubernetes.io/instance=lumen-authcsi \
+    > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pods-describe.txt" 2>&1 || true
+  kubectl -n lumen get events --field-selector involvedObject.name=lumen-authcsi-0 \
+    -o json > "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pod-events-failure.json" 2>&1 || true
+  kubectl -n lumen logs pod/lumen-authcsi-0 --all-containers --tail=200 --prefix \
+    >> "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pods.log" 2>&1 || true
+}
+
+# Mirrors deploy.sh's wait_ready_cr / wait_ready_restore_cr, scoped to the
+# lumen-authcsi CR.
+wait_ready_authcsi_cr() {
+  local expected_generation observed_generation phase
+  local deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    expected_generation="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed_generation="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    phase="$(kubectl -n lumen get lumen/lumen-authcsi -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    if [[ -n "$expected_generation" && "$observed_generation" == "$expected_generation" && "$phase" == "Ready" ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "timed out waiting for lumen/lumen-authcsi status generation and Ready phase — the #2456 fail-signature is FailedMount/0-ready" >&2
+  capture_authcsi_diagnostics
   return 1
 }
 

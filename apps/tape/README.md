@@ -386,7 +386,9 @@ ServiceMonitor and PrometheusRule component; Logs: structured
 `service-http` trace layer accepts a valid W3C version-00 `traceparent`
 (invalid input is treated as absent) and generates a fresh local root context
 otherwise, so every request span and log line carries
-`trace_id`/`span_id`/`parent_span_id`/`trace_flags`.
+`trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing
+response attribution — shared `service-http::server_timing` contract
+(`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
 offline manifest and metric-name conformance.
 Required Verification: conformance
@@ -397,7 +399,10 @@ latency series and pod restart loops. Every HTTP request is correlatable end
 to end: W3C `traceparent` is honored when present and a local root trace is
 created when absent, with the ids flowing into the structured stdout the sift
 collector ingests. OTLP export and service identity are provided by the
-shared observability/service HTTP libraries.
+shared observability/service HTTP libraries. Server-Timing per-response
+latency attribution (the shared `service-http::server_timing` contract) is
+wired into tape's HTTP stack: every response carries a
+`Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - apps/tape/src/metrics.rs
 - apps/tape/k8s/components/observability

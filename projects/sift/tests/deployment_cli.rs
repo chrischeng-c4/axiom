@@ -71,7 +71,7 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("kind: Sift"));
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("auth: \"off\""));
-    assert!(instance.contains("sift:0.1.0"));
+    assert!(instance.contains("sift:0.1.1"));
 
     let collector = sift(&[
         "k8s",

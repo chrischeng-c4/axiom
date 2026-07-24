@@ -97,12 +97,12 @@ fn jieba(text: &str) -> Vec<String> {
     // CJK runs emit overlapping 2-char bigrams (or a single unigram for length-1 runs).
     // Non-CJK runs are tokenized via the existing for_whitespace_lower path.
     // Output preserves scan order (CJK and non-CJK tokens interleaved as they appear).
-
+    
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return vec![];
     }
-
+    
     let mut tokens = Vec::new();
     let chars: Vec<char> = trimmed.chars().collect();
     let mut i = 0;
@@ -116,9 +116,9 @@ fn jieba(text: &str) -> Vec<String> {
         while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
             i += 1;
         }
-
+        
         let run: String = chars[run_start..i].iter().collect();
-
+        
         if is_cjk {
             // CJK run: emit overlapping bigrams (or unigram for length 1)
             let run_chars: Vec<char> = run.chars().collect();
@@ -135,7 +135,7 @@ fn jieba(text: &str) -> Vec<String> {
             for_whitespace_lower(&run, |tok| tokens.push(tok));
         }
     }
-
+    
     tokens
 }
 
@@ -206,7 +206,7 @@ mod tests {
         assert!(tokenize("a", Analyzer::Ngram).is_empty());
     }
 
-    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1975" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1975" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
     #[test]
     fn jieba_fallback_when_no_feature() {
         let tokens = tokenize("北京大學", Analyzer::Jieba);
@@ -254,6 +254,6 @@ mod tests {
         let tokens = tokenize("   ", Analyzer::Jieba);
         assert_eq!(tokens, Vec::<String>::new());
     }
-    // </HANDWRITE>
+// </HANDWRITE>
 }
 // CODEGEN-END

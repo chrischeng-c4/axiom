@@ -202,35 +202,6 @@ async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) 
 }
 // </HANDWRITE>
 
-/// Build the public router for a deployment whose Raft peer routes are owned
-/// by the dedicated mTLS listener. The underlying application composition is
-/// deliberately unchanged so data, probes, auth, admission, and metrics stay
-/// identical; a first middleware rejects the two peer route families before
-/// route dispatch can expose them on the public h2c listener.
-pub fn router_without_raft_routes(state: AppState) -> Router {
-    router_without_raft_routes_with_admission(state, None)
-}
-
-/// Build the secure-peer public router with optional shared request admission.
-/// Peer route isolation stays outermost, so the public listener rejects Raft
-/// routes before admission can account for them.
-pub fn router_without_raft_routes_with_admission(
-    state: AppState,
-    admission: Option<service_http::AdmissionController>,
-) -> Router {
-    router_with_admission(state, admission).layer(from_fn(reject_public_raft_routes))
-}
-
-async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) -> Response {
-    let path = request.uri().path();
-    if path == "/raftz" || path.starts_with("/raft/") {
-        StatusCode::NOT_FOUND.into_response()
-    } else {
-        next.run(request).await
-    }
-}
-// </HANDWRITE>
-
 /// Build Tape with optional shared request admission. Tape owns the
 /// read/write/admin route classes; `service-http` owns opaque-key retention,
 /// token buckets, eviction, observability, and the 429 wire response.

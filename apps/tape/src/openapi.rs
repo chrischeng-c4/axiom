@@ -73,9 +73,9 @@ mod tests {
             "/topics/{topic}/replay/stream",
             "/topics/{topic}/consumers/{consumer}/checkpoint",
             "/topics/{topic}/subscriptions",
-            "/topics/{topic}/subscriptions/{name}",
-            "/topics/{topic}/subscriptions/{name}/pull",
-            "/topics/{topic}/subscriptions/{name}/ack",
+            "/topics/{topic}/subscriptions/{subscription}",
+            "/topics/{topic}/subscriptions/{subscription}/pull",
+            "/topics/{topic}/subscriptions/{subscription}/ack",
             "/topics/{topic}/retention",
             "/admin/backup",
         ] {

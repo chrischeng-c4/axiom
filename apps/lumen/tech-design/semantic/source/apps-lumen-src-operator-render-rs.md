@@ -217,8 +217,14 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     let ns = namespace(lumen);
     let cx = ctx(lumen, &name, &ns);
     let headless = format!("{name}-headless");
-    let mut out = vec![
-        render::service_account(&cx, COMPONENT),
+    let mut out = Vec::new();
+    // Skip rendering the workload ServiceAccount entirely when the deployer
+    // points at a pre-existing, externally-managed one (#2497): the operator
+    // must never create, own, or delete an SA it doesn't render.
+    if lumen.spec.service_account_name.is_none() {
+        out.push(render::service_account(&cx, COMPONENT));
+    }
+    out.extend([
         backup_service_account(&cx),
         serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),

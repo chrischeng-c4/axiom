@@ -28,7 +28,7 @@ mod s3;
 mod sink;
 mod source;
 
-pub use destination::BackupDestination;
+pub use destination::{BackupDestination, SchemeInfo, SUPPORTED_SCHEMES};
 pub use gcs::GcsSink;
 #[cfg(feature = "http-client")]
 pub use http::{fetch_admin_snapshot, run_admin_snapshot_backup};

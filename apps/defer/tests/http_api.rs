@@ -105,6 +105,35 @@ fn assert_exact_domain_operations(spec: &serde_json::Value) {
     );
 }
 
+/// #2490: every response carries a `Server-Timing: app;dur=<ms>` baseline
+/// from the shared `service_http::server_timing_middleware` layer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_carry_server_timing_header() {
+    let (_dir, raft) = raft().await;
+    let (url, server) = start(raft, AuthConfig::open()).await;
+    let client = h2c_client();
+    let resp = client.get(format!("{url}/healthz")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let header = resp
+        .headers()
+        .get("server-timing")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.starts_with("app;dur="),
+        "Server-Timing header must start with app;dur=, got {header:?}"
+    );
+    let digit = header
+        .strip_prefix("app;dur=")
+        .and_then(|rest| rest.chars().next());
+    assert!(
+        digit.is_some_and(|c| c.is_ascii_digit()),
+        "app;dur= must be followed by a digit, got {header:?}"
+    );
+    server.abort();
+}
+
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2215" reason="Own the required-auth h2c oracle for tokenless operational routes, protected task/admin routes, queue-scoped RBAC, and cross-queue tenant denial.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {

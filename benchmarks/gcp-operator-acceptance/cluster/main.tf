@@ -71,11 +71,7 @@ resource "google_container_node_pool" "acceptance" {
 
   autoscaling {
     min_node_count = 1
-    # Tape's 3-replica acceptance needs one node per replica (the shared
-    # StatefulSet render uses pod anti-affinity); 2 nodes made a 3-replica
-    # topology unschedulable (run 0723080156). The autoscaler still idles
-    # back down to min_node_count after each run.
-    max_node_count = 3
+    max_node_count = 2
   }
   management {
     auto_repair  = true
