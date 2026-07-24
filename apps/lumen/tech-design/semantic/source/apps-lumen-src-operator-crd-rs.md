@@ -20,27 +20,27 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 154 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 368 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 507 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 345 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 559 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 162 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 376 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 515 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 353 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 567 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 531 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 312 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 211 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 246 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 482 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 463 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 395 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 183 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 356 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 383 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 322 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 331 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 636 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 721 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 617 | storage_pod_count(&self) -> i32 |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 539 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 320 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 219 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 254 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 490 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 471 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 403 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 191 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 364 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 391 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 330 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 339 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 644 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 729 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 625 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -167,6 +167,14 @@ pub struct LumenSpec {
     /// instances must set that value (#2456).
     #[serde(default)]
     pub tokens_secret_csi_driver: Option<String>,
+
+    /// Name of a pre-existing, externally-managed ServiceAccount for the
+    /// workload pods. When set, the operator uses this SA and never creates,
+    /// owns, updates, or deletes a ServiceAccount for the instance (the
+    /// deployer owns its lifecycle and any Workload Identity annotations).
+    /// When unset, the operator creates and owns `<instance>` as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_name: Option<String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]

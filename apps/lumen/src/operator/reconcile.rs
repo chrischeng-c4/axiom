@@ -721,6 +721,7 @@ mod tests {
             reshard_policy: Default::default(),
             observability: false,
             admission: None,
+            service_account_name: None,
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1105,6 +1106,7 @@ mod tests {
             reshard_policy: Default::default(),
             observability: false,
             admission: None,
+            service_account_name: None,
         }
     }
 

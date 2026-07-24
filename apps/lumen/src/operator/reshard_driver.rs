@@ -2511,6 +2511,7 @@ mod tests {
             },
             observability: false,
             admission: None,
+            service_account_name: None,
         }
     }
 

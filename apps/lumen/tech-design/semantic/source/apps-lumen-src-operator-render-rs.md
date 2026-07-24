@@ -217,8 +217,14 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     let ns = namespace(lumen);
     let cx = ctx(lumen, &name, &ns);
     let headless = format!("{name}-headless");
-    let mut out = vec![
-        render::service_account(&cx, COMPONENT),
+    let mut out = Vec::new();
+    // Skip rendering the workload ServiceAccount entirely when the deployer
+    // points at a pre-existing, externally-managed one (#2497): the operator
+    // must never create, own, or delete an SA it doesn't render.
+    if lumen.spec.service_account_name.is_none() {
+        out.push(render::service_account(&cx, COMPONENT));
+    }
+    out.extend([
         backup_service_account(&cx),
         serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
@@ -232,7 +238,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
             ],
         ),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
-    ];
+    ]);
     out.push(render::pdb(&cx, &name, COMPONENT, 1));
     if lumen.spec.observability {
         out.push(service_monitor(&cx));
@@ -386,7 +392,15 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         replicas_per_shard: lumen.spec.replicas_per_shard,
         voter_count: lumen.spec.voter_count,
         headless_env_key: HEADLESS_ENV_KEY,
-        service_account_name: Some(cx.name),
+        // External SA name wins when configured (#2497); default to the
+        // operator-owned per-instance SA when unset.
+        service_account_name: Some(
+            lumen
+                .spec
+                .service_account_name
+                .as_deref()
+                .unwrap_or(cx.name),
+        ),
         env: serving_env(lumen),
         env_from: vec![],
         resources: res,
