@@ -72,3 +72,42 @@ changes:
     impl_mode: hand-written
     description: Prove stable node identity, insertion-order traversal, id and semantic selectors, canonical serialization, and atomic rejection of invalid parent or duplicate stable id.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: surface-microdom-v1-verification
+requirements:
+  atomic_errors:
+    id: R4
+    text: "Duplicate semantic ids and invalid parent NodeId values return typed errors without partially mutating nodes, relationships, or selector indexes."
+    kind: functional
+    risk: high
+    verify: cargo test -p cclab-surface --test microdom_contract invalid_insertions_are_typed_and_atomic -- --nocapture
+  canonical_snapshot:
+    id: R3
+    text: "Identical MicroDOM inputs emit byte-identical schema-versioned canonical snapshots in arena order."
+    kind: regression
+    risk: medium
+    verify: cargo test -p cclab-surface --test microdom_contract canonical_snapshot_is_byte_stable -- --nocapture
+  compact_indexed_arena:
+    id: R1
+    text: "MicroDOM stores typed NodeId values in one compact node arena and preserves parent/child insertion order without one heap object per node."
+    kind: functional
+    risk: high
+    verify: cargo test -p cclab-surface --test microdom_contract compact_arena_preserves_typed_identity_and_child_order -- --nocapture
+  semantic_selectors:
+    id: R2
+    text: "Stable id, semantic role, and role-plus-accessible-name selectors return deterministic NodeId matches."
+    kind: functional
+    risk: high
+    verify: cargo test -p cclab-surface --test microdom_contract selectors_resolve_stable_id_role_and_name -- --nocapture
+---
+flowchart TD
+    r1[R1 compact indexed arena] --> cargo_test_p_cclab_surface_test_microdom_contract_compact_arena_preserves_typed_identity_and_child_order_nocapture[cargo test -p cclab-surface --test microdom_contract compact_arena_preserves_typed_identity_and_child_order -- --nocapture]
+    r2[R2 semantic selectors] --> cargo_test_p_cclab_surface_test_microdom_contract_selectors_resolve_stable_id_role_and_name_nocapture[cargo test -p cclab-surface --test microdom_contract selectors_resolve_stable_id_role_and_name -- --nocapture]
+    r3[R3 canonical snapshot] --> cargo_test_p_cclab_surface_test_microdom_contract_canonical_snapshot_is_byte_stable_nocapture[cargo test -p cclab-surface --test microdom_contract canonical_snapshot_is_byte_stable -- --nocapture]
+    r4[R4 atomic errors] --> cargo_test_p_cclab_surface_test_microdom_contract_invalid_insertions_are_typed_and_atomic_nocapture[cargo test -p cclab-surface --test microdom_contract invalid_insertions_are_typed_and_atomic -- --nocapture]
+```
