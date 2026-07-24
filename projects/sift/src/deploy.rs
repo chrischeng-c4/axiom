@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Result};
 
-pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.0";
+pub const DEFAULT_OPERATOR_IMAGE: &str = "ghcr.io/chrischeng-c4/axiom/sift:0.1.1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DockerfileVariant {

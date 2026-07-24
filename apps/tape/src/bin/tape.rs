@@ -1066,21 +1066,6 @@ fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
 }
 // </HANDWRITE>
 
-/// Reuse the public listener's host portion for the dedicated peer port.
-/// This preserves `0.0.0.0`, hostname, and bracketed IPv6 bindings without
-/// allowing a Raft port to silently replace the public data-plane port.
-fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
-    let (host, _) = bind.rsplit_once(':').ok_or_else(|| {
-        anyhow::anyhow!("cannot derive authenticated raft bind address from --bind {bind}")
-    })?;
-    anyhow::ensure!(
-        !host.is_empty(),
-        "--bind must include a host before its port"
-    );
-    Ok(format!("{host}:{raft_port}"))
-}
-// </HANDWRITE>
-
 fn spec(args: SpecArgs) -> Result<()> {
     // `spec gen` writes a typed client; everything else prints to stdout.
     if let Some(SpecSub::Gen(gen)) = args.gen {

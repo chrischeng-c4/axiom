@@ -97,9 +97,10 @@ deployment:
                   type: RuntimeDefault
               containers:
                 - name: operator
-                  # Local-development default. For a real cluster, render this manifest
-                  # with `lumen k8s operator render --image <registry-ref-or-digest>`.
-                  image: lumen:latest
+                  # Published GHCR release for this workspace's Lumen version. To
+                  # pin an immutable digest or point at a mirrored registry, render
+                  # this manifest with `lumen k8s operator render --image <ref>`.
+                  image: ghcr.io/chrischeng-c4/lumen:0.4.24
                   imagePullPolicy: IfNotPresent
                   command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]
                   env:

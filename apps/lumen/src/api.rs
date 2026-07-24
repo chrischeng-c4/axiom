@@ -480,7 +480,7 @@ impl AppState {
                 writer: writer.clone(),
             }),
             engine,
-            verifier: Arc::new(LumenVerifier::new(auth.clone())),
+            verifier: Arc::new(LumenVerifier::with_metrics(auth.clone(), metrics_engine)),
             auth,
             cluster: None,
             writer,

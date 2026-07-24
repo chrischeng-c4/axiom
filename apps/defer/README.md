@@ -245,7 +245,7 @@ ID: http2-api-list
 Type: RuntimeTool
 Root WI: #766
 Status: confirmed
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, queue/task/admin routes.
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`, queue/task/admin routes.; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer (`service_http::trace_layer()`) accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency) on every response.
 EC Dimensions: behavior: `cargo test -p defer --test http_api --test cli_contract` - live HTTP/1.1+h2c probes/metrics/OpenAPI, domain routes, offline spec twin, and client generation
 Required Verification: smoke, conformance
 Promise:

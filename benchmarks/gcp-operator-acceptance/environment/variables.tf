@@ -80,12 +80,8 @@ variable "image_tag" {
   type        = string
 }
 
-variable "project_number" {
-  description = "Numeric project number backing project_id; required for workload-identity-pool principal:// IAM members."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9]+$", var.project_number))
-    error_message = "project_number must be the numeric GCP project number."
-  }
+variable "lumen_only" {
+  description = "When true, provision only the Lumen backup workload-identity binding."
+  type        = bool
+  default     = false
 }

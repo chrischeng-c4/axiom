@@ -20,7 +20,7 @@ resource "google_storage_bucket" "backups" {
 resource "google_service_account" "backup" {
   project      = var.project_id
   account_id   = "${local.prefix}-backup"
-  display_name = "Disposable Lumen, Sift, and Tape backup writer"
+  display_name = "Disposable acceptance backup writer"
 }
 
 resource "google_storage_bucket_iam_member" "backup_writer" {
@@ -29,32 +29,34 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
   member = "serviceAccount:${google_service_account.backup.email}"
 }
 
-# Direct workload-identity-federation grant for Tape's SERVING pods: run
-# 0723110114 proved the GSA-impersonation path (KSA annotation +
-# workloadIdentityUser binding) can still yield a pool-identity token that GCS
-# 403s, so the bucket additionally trusts the pod's federated principal
-# directly — no annotation or impersonation moving parts involved. Read-only:
-# the serving pod only fetches the exact bootstrapSeedUri object.
-resource "google_storage_bucket_iam_member" "tape_serving_reader" {
-  bucket = google_storage_bucket.backups.name
-  role   = "roles/storage.objectViewer"
-  member = "principal://iam.googleapis.com/projects/${var.project_number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/tape/sa/tape"
-}
-
 resource "google_service_account_iam_member" "backup_workload_identity" {
-  for_each = toset([
-    "lumen/lumen-backup",
-    "sift/sift-backup",
-    "tape/tape-backup",
-    # Tape's SERVING pods also need GCS read: `bootstrapSeedUri` is fetched
-    # by the tape server itself before Raft catch-up, under the
-    # operator-rendered `tape` ServiceAccount (run 0723080156 failure 2).
-    "tape/tape",
-  ])
+  for_each = toset(concat(
+    ["lumen/lumen-backup"],
+    var.lumen_only ? [] : ["sift/sift-backup"],
+  ))
 
   service_account_id = google_service_account.backup.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[${each.value}]"
 
   depends_on = [data.google_container_cluster.acceptance]
+}
+
+# The cold-restore leg (#2492) seeds a fresh-PVC `lumen-restore` instance
+# straight from a backup object at pod startup (bootstrap seedUri). Unlike the
+# backup Job — which writes through the `lumen-backup` KSA bound to the backup
+# GSA above — the serving pod reads GCS through its OWN auto-created Workload
+# Identity KSA (ns/lumen/sa/lumen-restore), which carries no GSA binding and so
+# hits HTTP 403 without an explicit grant. Grant that federated principal read
+# on the backup bucket. This mirrors the deployer responsibility any real
+# cold-restore integrator carries: the serving ServiceAccount that seeds from
+# GCS needs objectViewer on the seed bucket.
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+resource "google_storage_bucket_iam_member" "lumen_restore_reader" {
+  bucket = google_storage_bucket.backups.name
+  role   = "roles/storage.objectViewer"
+  member = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/lumen/sa/lumen-restore"
 }
