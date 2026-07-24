@@ -46,9 +46,11 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in production_journey.rs is hand-written pending codegen support">
 fn evidence_root() -> PathBuf {
     repository_root().join("apps/workbench/evidence/production-journey/v1")
 }
+// </HANDWRITE>
 
 fn size() -> PtySize {
     PtySize {
