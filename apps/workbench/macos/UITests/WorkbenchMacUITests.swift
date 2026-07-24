@@ -28,6 +28,7 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["terminal.titlebar-tabs"].exists)
         XCTAssertGreaterThanOrEqual(toolbar.frame.minY, workspace.frame.minY)
         XCTAssertLessThanOrEqual(toolbar.frame.maxY, workspace.frame.minY + 44)
+        capture("pane-toolbar-in-content-chrome", app: app)
     }
 
     @MainActor
@@ -42,6 +43,7 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertTrue(toolbar.waitForExistence(timeout: 5))
         XCTAssertTrue(auxiliary.waitForExistence(timeout: 5))
         XCTAssertLessThan(toolbar.frame.midX, auxiliary.frame.minX)
+        capture("terminal-before-auxiliary-column", app: app)
     }
 
     @MainActor
@@ -56,6 +58,7 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["auxiliary.files.list"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("Sources").path)"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["auxiliary.file.\(fixtureFolder.appendingPathComponent("README.md").path)"].exists)
+        capture("auxiliary-files-fixture-entries", app: app)
     }
 
     @MainActor
@@ -80,6 +83,7 @@ final class WorkbenchMacUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Split Right"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.menuItems["Split Down"].exists)
         app.typeKey(.escape, modifierFlags: [])
+        capture("occupied-pane-split-actions", app: app)
     }
 
     @MainActor
@@ -96,6 +100,14 @@ final class WorkbenchMacUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         return app
+    }
+
+    @MainActor
+    private func capture(_ name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private var repositoryRoot: URL {
