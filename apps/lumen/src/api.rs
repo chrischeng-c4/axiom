@@ -783,12 +783,16 @@ pub fn router_with_admission(
         .route("/admin/checkpoint", post(admin_checkpoint))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
-        // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler. Shared with
+        // guard); 8MiB is the broker payload budget. Enforces the cap at the HTTP
+        // layer with a structured 413 envelope and streams/chunked bodies bounded
+        // mid-read, replacing the prior axum::extract::DefaultBodyLimit which only
+        // caught Content-Length headers. Shared with
         // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
         // reshard driver's oversize-batch detection can never drift from the
-        // limit actually enforced here.
-        .layer(axum::extract::DefaultBodyLimit::max(
+        // limit actually enforced here. Probe routes (/healthz, /readyz, /metrics,
+        // /version, /docs) are unaffected as they are merged separately and stay
+        // unbounded.
+        .layer(service_http::body_limit_layer(
             crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
         ));
     let data_plane = match admission {
