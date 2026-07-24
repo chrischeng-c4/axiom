@@ -19,11 +19,11 @@
           "--exclude-standard",
           "-z"
         ],
-        "scanned_text_files": 57142,
+        "scanned_text_files": 57151,
         "text_detection": "no NUL byte"
       },
       "id": "active-reference-sweep",
-      "observed_count": 57142,
+      "observed_count": 57151,
       "status": "passed"
     }
   ],

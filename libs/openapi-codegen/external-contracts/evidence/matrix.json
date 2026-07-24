@@ -17,7 +17,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest python_311_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.89s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest python_311_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.75s\n\n",
         "test_name": "python_311_generated_model_contract"
       },
       "id": "matrix-python-311",
@@ -40,7 +40,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest python_312_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.54s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest python_312_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.37s\n\n",
         "test_name": "python_312_generated_model_contract"
       },
       "id": "matrix-python-312",
@@ -63,7 +63,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest python_313_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.39s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest python_313_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.35s\n\n",
         "test_name": "python_313_generated_model_contract"
       },
       "id": "matrix-python-313",
@@ -86,7 +86,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest python_314_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.98s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest python_314_generated_model_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.92s\n\n",
         "test_name": "python_314_generated_model_contract"
       },
       "id": "matrix-python-314",
@@ -109,7 +109,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest typescript_50_strict_modern_module_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 1.20s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest typescript_50_strict_modern_module_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 1.26s\n\n",
         "test_name": "typescript_50_strict_modern_module_contract"
       },
       "id": "matrix-typescript-50",
@@ -132,7 +132,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest rust_2021_generated_client_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 13.46s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest rust_2021_generated_client_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 18.23s\n\n",
         "test_name": "rust_2021_generated_client_contract"
       },
       "id": "matrix-rust-2021",
@@ -155,7 +155,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest rust_2024_generated_client_gen_property_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 11.22s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest rust_2024_generated_client_gen_property_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 16.09s\n\n",
         "test_name": "rust_2024_generated_client_gen_property_contract"
       },
       "id": "matrix-rust-2024",
@@ -178,7 +178,7 @@
         "exit_code": 0,
         "filtered_count": 8,
         "passed_count": 1,
-        "stdout_tail": "\nrunning 1 test\ntest legacy_default_output_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s\n\n",
+        "stdout_tail": "\nrunning 1 test\ntest legacy_default_output_contract ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s\n\n",
         "test_name": "legacy_default_output_contract"
       },
       "id": "matrix-legacy-default",
