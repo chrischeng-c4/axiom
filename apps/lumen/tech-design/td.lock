@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-24T08:19:23.590778+00:00"
-digest = "sha256:9735f1fa22b141672605f2fed25bfbe75c86c6ca91ac91ab4a1425309536d577"
-source_digest = "sha256:9735f1fa22b141672605f2fed25bfbe75c86c6ca91ac91ab4a1425309536d577"
-ir_digest = "sha256:5ddcd8e7ae044dcd018c0d460b55b8c6f4080b9be4c0c3486125ec403999d37e"
+generated_at = "2026-07-24T08:57:38.788094+00:00"
+digest = "sha256:988d894bedcdf605f9660a3659d875aa7f8d59d9dba7bc7b2678e268b476db7b"
+source_digest = "sha256:988d894bedcdf605f9660a3659d875aa7f8d59d9dba7bc7b2678e268b476db7b"
+ir_digest = "sha256:e8fa08c849eb23ffb57a4a86a9c08ad95444cf79fb810c5fbc848b6219a5fd28"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -363,14 +363,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-api-rs.md"
-digest = "sha256:bea8308a87b93f7ec3f5c800a7a1d72dc0ca6a9a3c3a62b51891ae5e9f993aeb"
-ir_digest = "sha256:4a73abf64a429f714d21af9e33b594d389cf7f337d4ed6f69f913bda08f5b48f"
+digest = "sha256:99ba2c1fbeb4ecfee56c590281997221f6f162dd14aa5eeccb21616e1853330c"
+ir_digest = "sha256:d8800b0753cc37801154be393c72b0edfe18f85b5ce7f0ae0cdff26f73da2a1b"
 section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-auth-rs.md"
-digest = "sha256:8e777f47edef2e2e413a5e7f81b78d711b59f773473e69e9c09f1420d26759cf"
-ir_digest = "sha256:268c9b3693a03edd05e439e7276a0543cfe156ba83a8ee0e1224bf422580ecf0"
+digest = "sha256:6835cd18968189476f288cc745e6101245adae74d915988409b79c15abb11912"
+ir_digest = "sha256:8b3bae6a45bdd3bdbcd87c4a062b8923f33c6ce1fd7d3223593bd9d74667001b"
 section_count = 3
 
 [[files]]
@@ -393,8 +393,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-bin-lumen-rs.md"
-digest = "sha256:0fbdffca6cabd059ed22a90e51ac3984274eb36381cb3f55a5249ffa5fcd5a8c"
-ir_digest = "sha256:f7791ca9c445f6321e5080412fce33ff13d0146a940c625ae24263aa5448f7b2"
+digest = "sha256:49d24b70a0abfb12a15275dcecd6e2bb7b4d7cc654b256674021bb5f0da60bc1"
+ir_digest = "sha256:701ad5e2f4d059c1ddedff14c10586e4e480adefaa54311ca5780b6db6893054"
 section_count = 3
 
 [[files]]
@@ -429,8 +429,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-metrics-rs.md"
-digest = "sha256:1582749077668fdf1b221b0d6bce575dfcf76eab198bc5549e0d2d03a3a5a16a"
-ir_digest = "sha256:74e1fe70a30214922496273bbc36542a600c96c712f74501a50f4540fb307536"
+digest = "sha256:ad9ee87d405f8ee5dd980c275a3d46cba96ec685d76585f2a4bcdb327e76544f"
+ir_digest = "sha256:fb9991d1dc4cbdf67d9105c060d17f0214cdd31cf8fbe5a6f696339d3d422a39"
 section_count = 3
 
 [[files]]
@@ -441,8 +441,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-operator-crd-rs.md"
-digest = "sha256:864bdf7346e578489096896c114af5515272f176a8213581dab6464ea4bffcc0"
-ir_digest = "sha256:9506c1cbc1d581a40abd7f673eedbc7574ad221382c61fdfa10a99d061f1fefc"
+digest = "sha256:bdc5097c4486f81a3c91d926814ddfc75c7529733389ec3257b9313a67a80959"
+ir_digest = "sha256:32b456ca39d22ca238b98e7ba7bbe11c4b47c722d5eb9d2853ca22034df15209"
 section_count = 3
 
 [[files]]
@@ -465,8 +465,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-operator-render-rs.md"
-digest = "sha256:c7161894893954e7170514c8806c6ce4053aa1ab32942ec340c9edc38918b93f"
-ir_digest = "sha256:4d2b072a7470fbd38c33deae6ea72e78916600bddd5847d0ca9a3b890d1e25b8"
+digest = "sha256:8275cd89418add829ca06d9d0bbcb80b99988df9a26f13e19d4ed8f7068534af"
+ir_digest = "sha256:1b2762b06d92cd0b28b7a7eefe6137f0d9ba72efcefa62603eec082be034d3ad"
 section_count = 3
 
 [[files]]
@@ -537,8 +537,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-storage-rs.md"
-digest = "sha256:23a4541ce6fdab2f4737cbf888dd9445aec397f20b7534551852c32c6f04b960"
-ir_digest = "sha256:0e9453f33e6eee327abb7218dec994f46d2f844d58eb6d8d86e8097ae8562222"
+digest = "sha256:ef40df76e961c7ecf645f4e4861c8f28a2584261cb2fbfaeb442ef59d1c5c37f"
+ir_digest = "sha256:7598a9805422d5ae108778be79bc41523f71c05ce798a7a1f3657dab037de3f7"
 section_count = 3
 
 [[files]]

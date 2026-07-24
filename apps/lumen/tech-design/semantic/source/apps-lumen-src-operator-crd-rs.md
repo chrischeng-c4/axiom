@@ -519,7 +519,11 @@ impl Default for ServingSpec {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub struct ServingBootstrapSpec {
     /// SnapshotV1 JSON seed URI. Use an exact `file://` path or
-    /// `s3://bucket/key` object, not a backup prefix.
+    /// `s3://bucket/key` object, not a backup prefix. Note (#2514): the
+    /// serving pod reads the seed object through its own (Workload-Identity)
+    /// ServiceAccount, which needs storage read (e.g. roles/storage.objectViewer
+    /// on GCS) on the seed bucket; see the README "Deployer note
+    /// (seed-bucket IAM)".
     pub seed_uri: String,
     /// Optional read throttle advertised to operators/status. The current
     /// source primitive reads one object per bootstrap; transfer shaping can be
