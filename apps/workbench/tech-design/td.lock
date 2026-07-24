@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-24T04:58:07.176702+00:00"
-digest = "sha256:e7a7c5f26841c79cfd4fdb9bc36c6c7f57a8874f741f1ad09bf258989e54b5ad"
-source_digest = "sha256:e7a7c5f26841c79cfd4fdb9bc36c6c7f57a8874f741f1ad09bf258989e54b5ad"
-ir_digest = "sha256:2f0965596d077fb2eba373e7fef9f589c5c0d79b31e408f10ad497ba95cd9b61"
+generated_at = "2026-07-24T06:27:16.431771+00:00"
+digest = "sha256:12a03071f7d259907932b460c9747ed4efea6ad7e83918a91d0502e054c01975"
+source_digest = "sha256:12a03071f7d259907932b460c9747ed4efea6ad7e83918a91d0502e054c01975"
+ir_digest = "sha256:c281974497d271fd2e68af4ab6f7f1877fd2b894dc17cd8b44b0e3c19bab97ea"
 
 [[files]]
 path = "interfaces/cli/expose-local-snapshot-and-diagnostics-cli.md"
@@ -41,6 +41,12 @@ section_count = 3
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
 digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
 ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
+section_count = 3
+
+[[files]]
+path = "logic/add-a-trustworthy-native-xcui-evidence-runner.md"
+digest = "sha256:8b1df23aea8abed60de2c13f66ea69c8ab01133dac1b4f9b876d86ea4f92ae33"
+ir_digest = "sha256:0733fb7ce341056fb6faabc2458d363875e55fd7074abb43e7fde863db98ece2"
 section_count = 3
 
 [[files]]
