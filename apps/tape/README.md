@@ -393,20 +393,23 @@ EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
 offline manifest and metric-name conformance.
 Required Verification: conformance
 Promise:
-Tape exports bounded pull metrics and provides an optional Prometheus Operator
-bundle that preserves `app`/`role` labels and alerts on actual append/replay
-latency series and pod restart loops. Every HTTP request is correlatable end
-to end: W3C `traceparent` is honored when present and a local root trace is
-created when absent, with the ids flowing into the structured stdout the sift
-collector ingests. OTLP export and service identity are provided by the
-shared observability/service HTTP libraries. Server-Timing per-response
-latency attribution (the shared `service-http::server_timing` contract) is
-wired into tape's HTTP stack: every response carries a
-`Server-Timing: app;dur=<ms>` baseline (#2490).
+Tape exports bounded pull metrics (per-op request counts/latency) plus operational
+gauges (topic latest offset and subscription lag computed at scrape time, with
+label escaping) and provides an optional Prometheus Operator bundle that preserves
+`app`/`role` labels and alerts on actual append/replay latency series, subscription
+lag growth, and pod restart loops with seed-failure diagnostics (#2485). Every HTTP
+request is correlatable end to end: W3C `traceparent` is honored when present and a
+local root trace is created when absent, with the ids flowing into the structured
+stdout the sift collector ingests. OTLP export and service identity are provided by
+the shared observability/service HTTP libraries. Server-Timing per-response latency
+attribution (the shared `service-http::server_timing` contract) is wired into tape's
+HTTP stack: every response carries a `Server-Timing: app;dur=<ms>` baseline (#2490).
 Gate Inventory:
 - apps/tape/src/metrics.rs
+- apps/tape/src/server.rs (MetricsProvider::render_metrics)
 - apps/tape/k8s/components/observability
 - apps/tape/tests/observability_assets.rs
+- apps/tape/tests/http_transport.rs (metrics_expose_topic_and_subscription_lag_gauges)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

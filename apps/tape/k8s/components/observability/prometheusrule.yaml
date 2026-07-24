@@ -36,5 +36,13 @@ spec:
           labels: { severity: warning, app: tape, role: server }
           annotations:
             summary: "tape pod restarting repeatedly"
-            runbook: "#2468: spec.bootstrapSeedUri left set on the CR after a cold restore is bootstrap-if-empty and no longer a crash-loop cause by itself — a pod restarting onto its own already-populated PVC detects existing state and skips the seed (look for decision=\"skipped_existing_state\" in the pod log). If a pod IS crash-looping with bootstrapSeedUri set, suspect its PVC was actually deleted/reprovisioned (genuinely empty again) and the seed is being re-applied against a stale backup object, or check other causes generically (probe failures, image pull, resource limits) — this alert cannot distinguish the cause (#2485). See docs/deployment-handoff.md Cold restore runbook."
+            runbook: "#2485: Differentiate seed-failure restarts by checking if `spec.bootstrapSeedUri` is set on the CR and examining the pod log for structured decision fields: (1) `decision=\"seeded\"` = seed succeeded, look for other causes (probe failures, image pull, resource limits); (2) `decision=\"skipped_existing_state\"` = seed was skipped (PVC already had data), pod is healthy; (3) NEITHER line present before a crash = seed fetch/decode failed (bad URI, IAM, corrupt object) — restore logs show which. #2468: the one-shot seed cleared bit is separate. See docs/deployment-handoff.md Cold restore runbook."
+        - alert: TapeSubscriptionLagGrowing
+          expr: |
+            increase(tape_subscription_lag{app="tape",role="server"}[15m]) > 0
+          for: 15m
+          labels: { severity: warning, app: tape, role: server }
+          annotations:
+            summary: "tape subscription lag growing over 15m"
+            runbook: "#2485: Check if the consumer bound to the subscription is alive and actively pulling. If the consumer has stopped or stalled, verify it has not crashed or exhausted resources. If the consumer is healthy, check the append rate to the topic — a rapid append rate combined with a slow consumer will naturally grow lag. No action needed if this is expected; adjust retention policy if needed to protect the subscription's checkpoint from expiry."
 # HANDWRITE-END
