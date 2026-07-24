@@ -468,9 +468,18 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 }
 
 // Brief mode (default): enumerate markers, emit dispatch envelope.
-async fn run_brief(args: CbFillArgs) -> Result<()> {
+async fn run_brief(mut args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let slug = args.slug.clone();
+    let requested_slug = args.slug.clone();
+    let issue = match crate::cli::td::bootstrap_td_issue(&project_root, &requested_slug).await {
+        Ok(issue) => issue,
+        Err(error) => {
+            emit_error(&requested_slug, &error.to_string())?;
+            std::process::exit(2);
+        }
+    };
+    let slug = crate::cli::td::workflow_slug_for_issue(&issue, &requested_slug);
+    args.slug = slug.clone();
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -484,7 +493,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     // the unique TD spec touched by this branch. If none is available, preserve
     // the legacy all-marker behavior.
     let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend.get(&slug).await.ok().flatten();
+    let issue = Some(issue);
     let (markers, change_paths, spec_path) =
         match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
             Ok(queue) => queue,
