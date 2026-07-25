@@ -127,6 +127,20 @@ pub struct TapeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topics: Option<Vec<TapeTopicSpec>>,
 
+    /// Emit a `ServiceMonitor` + `PrometheusRule` alongside the workload
+    /// (#2575), carrying the same four SLO alerts the hand-maintained
+    /// `k8s/components/observability` kustomize component ships — including
+    /// #2485's seed-failure and consumer-liveness runbooks.
+    ///
+    /// Opt-in, and default-off on purpose: both are `monitoring.coreos.com/v1`
+    /// kinds, so a cluster without the Prometheus Operator CRDs installed
+    /// would reject them. Leaving it off keeps a vanilla cluster installable;
+    /// turning it on there is a reconcile error the operator reports, not a
+    /// surprise the CR author meets at install time. Same shape and default as
+    /// lumen's `spec.observability`.
+    #[serde(default)]
+    pub observability: bool,
+
     /// Optional scheduled backup. When set, the operator renders a CronJob
     /// that runs `tape backup` against this instance's client Service on the
     /// declared schedule (#2574). Unset renders no CronJob — the previous

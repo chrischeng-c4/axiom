@@ -46,6 +46,14 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The opt-in observability pair rendered from spec.observability (#2575).
+  # Granted unconditionally: RBAC rules name API groups, not installed CRDs, so
+  # this is harmless on a cluster without the Prometheus Operator — the CR
+  # simply never sets the flag. Withholding it instead would turn the flag into
+  # a Forbidden at reconcile time.
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "prometheusrules"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Leader-election Lease (HA: only the holder reconciles).
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

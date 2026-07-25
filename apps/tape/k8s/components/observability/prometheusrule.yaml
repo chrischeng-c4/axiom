@@ -1,4 +1,12 @@
 # HANDWRITE-BEGIN gap="missing-generator:logic:4449c2ec" tracker="#1588" reason="Alert on real Tape append/replay average-latency series and Kubernetes restart loops without inventing domain lag metrics. generator gap: missing-generator:prometheus-rule (#1588)."
+#
+# Editing an alert here? The operator renders a twin of this rule from
+# `spec.observability` (#2575, src/operator/render.rs::prometheus_rule), and
+# tests/operator.rs fails if the alert set, `for`, severity, summary, runbook
+# text, metric names, or thresholds drift apart. The label SELECTORS are
+# expected to differ — this file targets the static base's `app`/`role` labels,
+# the operator targets the `app.kubernetes.io/*` set it stamps — so change both
+# files together, and never copy an expr verbatim between them.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

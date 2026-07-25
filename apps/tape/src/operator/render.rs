@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="#1809" reason="Pure render (no I/O), composing shared service_k8s::render::ServiceStatefulSet with Tape-owned image, ports, journal PVC, TAPE_* environment names, auth Secret policy, and typed workload defaults; ServiceAccount, headless/client Services, PDB, and the opt-in spec.backup CronJob remain shared helper outputs; the always-rendered <name>-backup identity is hand-rolled JSON."
+// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="#1809" reason="Pure render (no I/O), composing shared service_k8s::render::ServiceStatefulSet with Tape-owned image, ports, journal PVC, TAPE_* environment names, auth Secret policy, and typed workload defaults; ServiceAccount, headless/client Services, PDB, and the opt-in spec.backup CronJob remain shared helper outputs; the always-rendered <name>-backup identity and the opt-in spec.observability ServiceMonitor/PrometheusRule pair are hand-rolled JSON."
 //! Pure rendering: a [`Tape`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
@@ -100,7 +100,8 @@ fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>>
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
 /// Render every child object for `tape`, in dependency order (identity first,
-/// then the workload + its Services + PDB, then the optional backup CronJob).
+/// then the workload + its Services + PDB, then the opt-in observability pair
+/// and the optional backup CronJob).
 pub fn render(tape: &Tape) -> Vec<Value> {
     let name = instance(tape);
     let ns = namespace(tape);
@@ -125,11 +126,187 @@ pub fn render(tape: &Tape) -> Vec<Value> {
         render::pdb(&cx, &name, COMPONENT, 1),
         backup_service_account(&cx),
     ];
+    if tape.spec.observability {
+        objects.push(service_monitor(&cx));
+        objects.push(prometheus_rule(&cx));
+    }
     if let Some(cron) = backup_cron_job(tape, &cx) {
         objects.push(cron);
     }
     objects
 }
+
+/// Prometheus label-selector fragment scoping a *self-scraped tape* series to
+/// this instance, the operator-path replacement for the static component's
+/// `{app="tape",role="server"}`.
+///
+/// Those two labels are not intrinsic to the metric: they exist on the series
+/// only because the component's ServiceMonitor grafts the Service's `app` /
+/// `role` labels on via `targetLabels`. The operator labels its children with
+/// the `app.kubernetes.io/*` recommended set instead, so the same trick needs
+/// the same names — [`service_monitor`] grafts
+/// `app.kubernetes.io/{instance,component}`, Prometheus sanitizes those to
+/// `app_kubernetes_io_{instance,component}`, and the exprs select on the
+/// sanitized form. Lifting the component's exprs verbatim would render, apply,
+/// and evaluate cleanly while matching nothing — a permanently silent alert,
+/// which is the precise failure #2575 exists to prevent.
+fn series_selector(cx: &RenderCtx<'_>) -> String {
+    format!(
+        "namespace=\"{}\",app_kubernetes_io_instance=\"{}\",app_kubernetes_io_component=\"{}\"",
+        cx.ns, cx.name, COMPONENT
+    )
+}
+
+/// Static labels stamped on every alert this rule fires.
+///
+/// `sum(...)` without a `by` clause discards every series label, so the two
+/// latency alerts would otherwise reach Alertmanager with nothing but their
+/// name — the static component re-adds `app`/`role` for exactly that reason.
+/// Only `[a-zA-Z_][a-zA-Z0-9_]*` is a legal Prometheus label name, so the
+/// operator's dotted/slashed label keys appear here in their sanitized form,
+/// matching what the un-aggregated series carry.
+fn alert_labels(cx: &RenderCtx<'_>) -> Value {
+    json!({
+        "severity": "warning",
+        "namespace": cx.ns,
+        "app_kubernetes_io_instance": cx.name,
+    })
+}
+
+/// Selector label kube-prometheus-stack's default `serviceMonitorSelector` /
+/// `ruleSelector` matches on (`release: <helm release name>`). Both static
+/// observability objects already carry it; without it the stack's default
+/// install silently ignores the rendered pair, so it is reproduced verbatim
+/// rather than left to the CR author.
+const PROMETHEUS_RELEASE_LABEL: &str = "prometheus";
+
+/// Scrape config for this instance's `/metrics` (#2575), the operator-rendered
+/// twin of `k8s/components/observability/servicemonitor.yaml`.
+///
+/// The selector matches this instance's *serving* Services — both the headless
+/// and the client Service carry the component labels, so, exactly as with the
+/// static component's `{app: tape, role: server}` selector against
+/// `k8s/base/service.yaml`'s two Services, each pod is discovered twice. It is
+/// deliberately not "fixed" here: the latency alerts divide two equally
+/// doubled aggregates and are immune, and changing it would diverge the
+/// operator path from the deployed static one for no alerting benefit.
+fn service_monitor(cx: &RenderCtx<'_>) -> Value {
+    let mut meta = cx.meta(cx.name, COMPONENT);
+    meta["labels"]["release"] = json!(PROMETHEUS_RELEASE_LABEL);
+    json!({
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "ServiceMonitor",
+        "metadata": meta,
+        "spec": {
+            "selector": { "matchLabels": cx.selector(COMPONENT) },
+            // Graft the instance identity onto every scraped series; the alert
+            // exprs below select on the sanitized form (see [`series_selector`]).
+            "targetLabels": ["app.kubernetes.io/instance", "app.kubernetes.io/component"],
+            "endpoints": [{
+                "port": "http",
+                "path": "/metrics",
+                "interval": "15s",
+                "scrapeTimeout": "10s",
+                "honorLabels": true,
+            }],
+        },
+    })
+}
+
+/// tape's four SLO alerts (#2575), the operator-rendered twin of
+/// `k8s/components/observability/prometheusrule.yaml`.
+///
+/// Every alert reads a series tape actually publishes today.
+/// `TapeAppendLatencyHigh` / `TapeReplayLatencyHigh` divide the
+/// `tape_{append,replay}_latency_ms_sum` / `_count` pair `src/metrics.rs`
+/// records per request, `clamp_min(..., 1)` guarding the idle-window
+/// zero-denominator. `TapeSubscriptionLagGrowing` reads the
+/// `tape_subscription_lag{topic,subscription}` gauge `src/server.rs` publishes
+/// per subscription (#2485). `TapePodRestarting` is the one kube-state-metrics
+/// series in the set, so it scopes by pod name and container instead — and the
+/// container name is the one substantive difference from the static file,
+/// which filters `container="tape"`: the shared StatefulSet helper names the
+/// container after the *component*, so on this path it is `server`.
+///
+/// Thresholds, `for` windows, severities, summaries, and both #2485 runbooks
+/// are reproduced from the static component verbatim; `tests/operator.rs`
+/// holds the two documents to that.
+fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
+    let s = series_selector(cx);
+    let mut meta = cx.meta(cx.name, COMPONENT);
+    meta["labels"]["release"] = json!(PROMETHEUS_RELEASE_LABEL);
+    json!({
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "PrometheusRule",
+        "metadata": meta,
+        "spec": {
+            "groups": [{
+                "name": "tape.slo",
+                "interval": "30s",
+                "rules": [
+                    {
+                        "alert": "TapeAppendLatencyHigh",
+                        "expr": format!(
+                            "sum(rate(tape_append_latency_ms_sum{{{s}}}[5m])) \
+                             / clamp_min(sum(rate(tape_append_latency_ms_count{{{s}}}[5m])), 1) > 500"
+                        ),
+                        "for": "10m",
+                        "labels": alert_labels(cx),
+                        "annotations": {
+                            "summary": "tape append average latency above 500ms",
+                        },
+                    },
+                    {
+                        "alert": "TapeReplayLatencyHigh",
+                        "expr": format!(
+                            "sum(rate(tape_replay_latency_ms_sum{{{s}}}[5m])) \
+                             / clamp_min(sum(rate(tape_replay_latency_ms_count{{{s}}}[5m])), 1) > 2000"
+                        ),
+                        "for": "10m",
+                        "labels": alert_labels(cx),
+                        "annotations": {
+                            "summary": "tape replay average latency above 2s",
+                        },
+                    },
+                    {
+                        "alert": "TapePodRestarting",
+                        "expr": format!(
+                            "increase(kube_pod_container_status_restarts_total{{namespace=\"{}\",pod=~\"^{}-[0-9]+$\",container=\"{}\"}}[15m]) > 2",
+                            cx.ns, cx.name, COMPONENT
+                        ),
+                        "for": "5m",
+                        "labels": alert_labels(cx),
+                        "annotations": {
+                            "summary": "tape pod restarting repeatedly",
+                            "runbook": POD_RESTARTING_RUNBOOK,
+                        },
+                    },
+                    {
+                        "alert": "TapeSubscriptionLagGrowing",
+                        "expr": format!("increase(tape_subscription_lag{{{s}}}[15m]) > 0"),
+                        "for": "15m",
+                        "labels": alert_labels(cx),
+                        "annotations": {
+                            "summary": "tape subscription lag growing over 15m",
+                            "runbook": SUBSCRIPTION_LAG_RUNBOOK,
+                        },
+                    },
+                ],
+            }],
+        },
+    })
+}
+
+/// #2485's seed-failure triage, verbatim from the static component. A restart
+/// loop on a CR carrying `spec.bootstrapSeedUri` is ambiguous until the log
+/// decision field is read, so the runbook's job is to make the three outcomes
+/// distinguishable rather than to describe the symptom.
+const POD_RESTARTING_RUNBOOK: &str = "#2485: Differentiate seed-failure restarts by checking if `spec.bootstrapSeedUri` is set on the CR and examining the pod log for structured decision fields: (1) `decision=\"seeded\"` = seed succeeded, look for other causes (probe failures, image pull, resource limits); (2) `decision=\"skipped_existing_state\"` = seed was skipped (PVC already had data), pod is healthy; (3) NEITHER line present before a crash = seed fetch/decode failed (bad URI, IAM, corrupt object) — restore logs show which. #2468: the one-shot seed cleared bit is separate. See docs/deployment-handoff.md Cold restore runbook.";
+
+/// #2485's consumer-liveness triage, verbatim from the static component.
+/// Growing lag is only sometimes a fault — the runbook exists to separate a
+/// dead consumer from a fast producer.
+const SUBSCRIPTION_LAG_RUNBOOK: &str = "#2485: Check if the consumer bound to the subscription is alive and actively pulling. If the consumer has stopped or stalled, verify it has not crashed or exhausted resources. If the consumer is healthy, check the append rate to the topic — a rapid append rate combined with a slow consumer will naturally grow lag. No action needed if this is expected; adjust retention policy if needed to protect the subscription's checkpoint from expiry.";
 
 /// A stable, per-instance identity for scheduled backup jobs (lumen's #808
 /// pattern, adopted for #2574).

@@ -37,6 +37,7 @@ fn spec(replicas: u32) -> TapeSpec {
         bootstrap_seed_uri: None,
         body_limit_bytes: None,
         topics: None,
+        observability: false,
         backup: None,
     }
 }
@@ -599,6 +600,278 @@ fn generated_crd_carries_the_backup_properties() {
          regenerate it with `cargo run -p tape --bin tape --features operator \
          -- k8s crd render --out apps/tape/k8s/operator/crd.yaml`"
     );
+}
+
+/// The hand-maintained observability component the operator pair mirrors.
+const STATIC_COMPONENT: &str =
+    include_str!("../k8s/components/observability/prometheusrule.yaml");
+
+/// `spec.observability` renders both objects, `spec.observability` unset
+/// renders neither.
+///
+/// Default-off is load-bearing, not a taste call: `monitoring.coreos.com/v1`
+/// is not a built-in API group, so a cluster without the Prometheus Operator
+/// CRDs would reject the pair and take the whole reconcile down with it. A
+/// vanilla cluster must install cleanly.
+#[test]
+fn observability_pair_is_opt_in() {
+    let kinds = |objs: &[Value]| -> Vec<String> {
+        objs.iter()
+            .map(|o| o["kind"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let off = kinds(&render(&Tape::new("tape", spec(3))));
+    assert!(
+        !off.contains(&"ServiceMonitor".to_string()) && !off.contains(&"PrometheusRule".to_string()),
+        "a CR that never asked for observability must not require the \
+         Prometheus Operator CRDs, got {off:?}"
+    );
+
+    let mut watched = spec(3);
+    watched.observability = true;
+    let objects = render(&Tape::new("tape", watched));
+    let on = kinds(&objects);
+    assert!(
+        on.contains(&"ServiceMonitor".to_string()) && on.contains(&"PrometheusRule".to_string()),
+        "spec.observability must render both halves, got {on:?}"
+    );
+
+    // kube-prometheus-stack's default `serviceMonitorSelector`/`ruleSelector`
+    // is `release: <helm release>`; without it the stack silently ignores both
+    // objects and every alert below is dead on arrival.
+    for kind in ["ServiceMonitor", "PrometheusRule"] {
+        assert_eq!(
+            of_kind(&objects, kind)["metadata"]["labels"]["release"], "prometheus",
+            "{kind} must carry the selector label the Prometheus Operator matches on"
+        );
+    }
+}
+
+/// #2575 — every alert the static component ships is reproduced by the
+/// operator with its `for`, severity, summary, and runbook text intact.
+///
+/// The runbooks are the point: #2485's seed-failure triage is the only thing
+/// that distinguishes a bad `bootstrapSeedUri` from an unrelated crash loop,
+/// and losing it during the relocation would leave an alert that fires with no
+/// way to act on it. Comparing the whole contract map (not a name list) also
+/// catches a rule silently dropped or added on either side.
+#[test]
+fn prometheus_rule_reproduces_the_static_component_alert_contract() {
+    use std::collections::BTreeMap;
+
+    /// alert name -> the operator-independent half of its definition.
+    fn contract(doc: &Value) -> BTreeMap<String, Value> {
+        doc["spec"]["groups"][0]["rules"]
+            .as_array()
+            .expect("rules array")
+            .iter()
+            .map(|r| {
+                let name = r["alert"].as_str().expect("alert name").to_string();
+                let fields = serde_json::json!({
+                    "for": r["for"],
+                    "severity": r["labels"]["severity"],
+                    "summary": r["annotations"]["summary"],
+                    "runbook": r["annotations"]["runbook"],
+                });
+                (name, fields)
+            })
+            .collect()
+    }
+
+    let file: Value =
+        serde_yaml::from_str(STATIC_COMPONENT).expect("static observability component parses");
+    let mut watched = spec(3);
+    watched.observability = true;
+    let objects = render(&Tape::new("tape", watched));
+    let rendered = of_kind(&objects, "PrometheusRule");
+
+    assert_eq!(
+        contract(rendered),
+        contract(&file),
+        "the operator-rendered PrometheusRule has drifted from \
+         apps/tape/k8s/components/observability/prometheusrule.yaml — keep the two in step \
+         (alert names, `for`, severity, summary, and runbook text)"
+    );
+
+    let group = |doc: &Value| {
+        (
+            doc["spec"]["groups"][0]["name"].clone(),
+            doc["spec"]["groups"][0]["interval"].clone(),
+        )
+    };
+    assert_eq!(group(rendered), group(&file), "group name/interval drifted");
+}
+
+/// #2575 — the exprs read the same metrics at the same thresholds as the
+/// static component, and differ only where the operator's own naming forces
+/// it.
+///
+/// Byte-equality is impossible here and asserting it would be wrong: the
+/// static component selects `{app="tape",role="server"}`, labels that exist
+/// only because its ServiceMonitor grafts them from the Service, and the
+/// operator labels children with the `app.kubernetes.io/*` set instead. So
+/// this pins what must not change — metric names and thresholds — and names
+/// the two substitutions that must.
+#[test]
+fn prometheus_rule_exprs_keep_the_metrics_and_thresholds() {
+    use std::collections::BTreeMap;
+
+    /// Every `metric{` head in an expr.
+    fn metrics(expr: &str) -> Vec<String> {
+        let mut out: Vec<String> = expr
+            .match_indices('{')
+            .filter_map(|(i, _)| {
+                let head = &expr[..i];
+                let start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |p| p + 1);
+                (start < i).then(|| head[start..].to_string())
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Every literal a comparison operator is tested against.
+    fn thresholds(expr: &str) -> Vec<String> {
+        expr.split('>')
+            .skip(1)
+            .map(|tail| {
+                tail.trim_start()
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+            })
+            .filter(|n| !n.is_empty())
+            .collect()
+    }
+
+    fn exprs(doc: &Value) -> BTreeMap<String, String> {
+        doc["spec"]["groups"][0]["rules"]
+            .as_array()
+            .expect("rules array")
+            .iter()
+            .map(|r| {
+                (
+                    r["alert"].as_str().unwrap().to_string(),
+                    r["expr"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    let file: Value =
+        serde_yaml::from_str(STATIC_COMPONENT).expect("static observability component parses");
+    let mut watched = spec(3);
+    watched.observability = true;
+    let objects = render(&Tape::new("tape", watched));
+
+    let static_exprs = exprs(&file);
+    let rendered_exprs = exprs(of_kind(&objects, "PrometheusRule"));
+
+    for (alert, static_expr) in &static_exprs {
+        let rendered = rendered_exprs
+            .get(alert)
+            .unwrap_or_else(|| panic!("operator dropped alert {alert}"));
+        assert_eq!(
+            metrics(rendered),
+            metrics(static_expr),
+            "{alert} reads different series than the static component"
+        );
+        assert_eq!(
+            thresholds(rendered),
+            thresholds(static_expr),
+            "{alert} fires at a different threshold than the static component"
+        );
+    }
+
+    // Substitution 1: the tape-scraped series are scoped by the operator's own
+    // labels, never by `app`/`role` — those simply do not exist on this path,
+    // so a verbatim copy would evaluate cleanly and match nothing forever.
+    for (alert, expr) in &rendered_exprs {
+        assert!(
+            !expr.contains("app=\"") && !expr.contains("role=\""),
+            "{alert} still selects on the static component's labels: {expr}"
+        );
+    }
+
+    // Substitution 2: the shared StatefulSet helper names the container after
+    // the component, so the kube-state-metrics alert filters `server`, not the
+    // static component's `tape`.
+    let restarting = &rendered_exprs["TapePodRestarting"];
+    assert!(
+        restarting.contains("container=\"server\""),
+        "TapePodRestarting must filter the container the operator actually \
+         creates: {restarting}"
+    );
+    assert!(
+        static_exprs["TapePodRestarting"].contains("container=\"tape\""),
+        "the static component's container name changed — recheck the substitution"
+    );
+}
+
+/// #2575 — every `app_kubernetes_io_*` label the exprs select on is one the
+/// ServiceMonitor actually grafts onto the scraped series.
+///
+/// This is the joint the whole relocation turns on. Prometheus does not
+/// publish a service's labels on its metrics by itself; `targetLabels` is what
+/// puts them there, sanitized (`.`/`/` -> `_`). Add a selector without adding
+/// the graft and the alert is silent — no error, no missing-object, just
+/// nothing. So assert the two halves agree rather than trusting them to.
+#[test]
+fn service_monitor_grafts_every_label_the_exprs_select_on() {
+    fn labels_used(expr: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = expr;
+        while let Some(p) = rest.find("app_kubernetes_io_") {
+            let tail = &rest[p..];
+            let end = tail
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(tail.len());
+            out.push(tail[..end].to_string());
+            rest = &tail[end..];
+        }
+        out
+    }
+
+    let mut watched = spec(3);
+    watched.observability = true;
+    let objects = render(&Tape::new("tape", watched));
+
+    let sm = of_kind(&objects, "ServiceMonitor");
+    let grafted: Vec<String> = sm["spec"]["targetLabels"]
+        .as_array()
+        .expect("targetLabels must be declared, or no k8s label reaches the series")
+        .iter()
+        .map(|l| l.as_str().unwrap().replace(['.', '/'], "_"))
+        .collect();
+
+    // The graft only works if the ServiceMonitor selects a Service that
+    // carries those labels in the first place.
+    let selector = &sm["spec"]["selector"]["matchLabels"];
+    for label in sm["spec"]["targetLabels"].as_array().unwrap() {
+        assert!(
+            !selector[label.as_str().unwrap()].is_null(),
+            "{label} is grafted onto the series but is not part of the Service selector"
+        );
+    }
+    assert_eq!(sm["spec"]["endpoints"][0]["port"], "http");
+    assert_eq!(sm["spec"]["endpoints"][0]["path"], "/metrics");
+
+    let rule = of_kind(&objects, "PrometheusRule");
+    for r in rule["spec"]["groups"][0]["rules"].as_array().unwrap() {
+        let expr = r["expr"].as_str().unwrap();
+        for label in labels_used(expr) {
+            assert!(
+                grafted.contains(&label),
+                "{} selects on `{label}`, which the ServiceMonitor never grafts \
+                 onto the series — the alert would never fire",
+                r["alert"]
+            );
+        }
+    }
 }
 
 /// R7 — readiness target + status phases (Pending / Reconciling / Ready).

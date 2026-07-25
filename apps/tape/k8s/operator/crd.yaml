@@ -84,6 +84,13 @@ spec:
                 description: Log level (`trace|debug|info|warn|error`), injected as `RUST_LOG`. Unset means the server default (`info`).
                 nullable: true
                 type: string
+              observability:
+                default: false
+                description: |-
+                  Emit a `ServiceMonitor` + `PrometheusRule` alongside the workload (#2575), carrying the same four SLO alerts the hand-maintained `k8s/components/observability` kustomize component ships — including #2485's seed-failure and consumer-liveness runbooks.
+
+                  Opt-in, and default-off on purpose: both are `monitoring.coreos.com/v1` kinds, so a cluster without the Prometheus Operator CRDs installed would reject them. Leaving it off keeps a vanilla cluster installable; turning it on there is a reconcile error the operator reports, not a surprise the CR author meets at install time. Same shape and default as lumen's `spec.observability`.
+                type: boolean
               replicasPerShard:
                 default: 1
                 description: Starting/minimum members per shard. With startup-static raft-runtime membership this is also the fixed desired value; a future membership controller may plan whole replica layers above this floor.
