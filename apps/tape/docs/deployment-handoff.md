@@ -20,6 +20,7 @@ prove a build is release-ready.
 |------|-----|--------------|
 | `Dockerfile.release` | **Production-like.** Fetches the published release binary — no Rust toolchain, smallest attack surface. | distroless |
 | `Dockerfile` | Dev/CI build from source (`cargo build --release -p tape`). | distroless |
+| `Dockerfile.test` | **Internal only (#2576).** Same runtime stage as `Dockerfile.release`, but COPYs a locally built binary — the only way to get an *unreleased* commit into a cluster. | distroless |
 
 ```bash
 tape dockerfile render --variant release --version 0.1.0 --out /tmp/tape-image
@@ -30,6 +31,23 @@ docker run --rm -p 7137:7137 tape:0.1.0 serve
 `tape dockerfile render --variant source` renders the source-build Dockerfile
 for local/CI images. Raft peer RPCs share the same h2c HTTP port as the
 serving API (no separate peer port).
+
+### Two published image lines
+
+| Line | Tag | Produced by | Audience |
+|------|-----|-------------|----------|
+| release | `ghcr.io/chrischeng-c4/tape:<semver>` + `latest` | `.github/workflows/tape-release.yml` | integrators — the only line to hand a user |
+| dev/test | `ghcr.io/chrischeng-c4/tape:sha-<git12>` | `.github/workflows/tape-test-image.yml` | acceptance harnesses only |
+
+The dev/test line exists so that verifying a commit in a real cluster does
+not require cutting a release first — that is how tape went 0.4.5 → 0.4.11
+during the acceptance campaign, seven version bumps carrying no user-facing
+change. Dispatch `tape-test-image` (optionally naming a `ref`); its run
+summary prints the pushed tag already pinned by digest, ready to paste into
+the acceptance harness's `TAPE_IMAGE`. Both lines land on the same GHCR
+package, so `sha-*` tags inherit its public visibility and GKE pulls them
+without a pull secret. `tape-test-image.yml` must never add `latest` or a
+semver tag.
 
 ---
 

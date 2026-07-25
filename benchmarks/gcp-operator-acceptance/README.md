@@ -139,6 +139,41 @@ benchmarks/gcp-operator-acceptance/scripts/run.sh
 proof, including the #2468 bootstrap-if-empty restart assertion and
 subscription lag gauge instrumentation.
 
+### Proving an unreleased commit: the `sha-*` dev/test line
+
+`TAPE_IMAGE` does not have to name a release. Both Lumen (#2513) and Tape
+(#2576) publish a second, internal-only image line keyed by commit rather
+than version:
+
+| line | tag | produced by | audience |
+|------|-----|-------------|----------|
+| release | `ghcr.io/chrischeng-c4/<app>:<semver>` + `latest` | `<app>-release.yml` | integrators |
+| dev/test | `ghcr.io/chrischeng-c4/<app>:sha-<git12>` | `<app>-test-image.yml` | this harness only |
+
+Dispatch `tape-test-image` (Actions → `tape-test-image` → *Run workflow*,
+optionally naming a `ref`) and it builds both musl legs from that commit and
+pushes a multi-arch `sha-<git12>` image. The run summary prints the tag
+already pinned by digest; feed that to `TAPE_IMAGE` verbatim:
+
+```bash
+PROJECT_ID=axiom-502607 \
+ACCEPTANCE_APPS=tape \
+TAPE_IMAGE=ghcr.io/chrischeng-c4/tape:sha-<git12>@sha256:<digest> \
+benchmarks/gcp-operator-acceptance/scripts/run.sh
+```
+
+The harness needs no flag for this — a caller-supplied image is already
+required to be an immutable `@sha256:` reference, and any such reference is
+recorded as `image_provenance: prebuilt` regardless of which registry or tag
+line it came from. The `sha-*` tags land on the same GHCR package as the
+release line, so they inherit its public visibility and GKE pulls them
+without a pull secret.
+
+Never hand a `sha-*` tag to a user, and never let `<app>-test-image.yml` add
+`latest` or a semver tag: the release line stays the only thing integrators
+consume. Cutting a version bump purely to get an image into a cluster — how
+tape reached 0.4.11 — is exactly what this line exists to stop.
+
 For routine acceptance of both Lumen and Sift, pass the immutable GitHub-release-derived image
 digests and no Cloud Build or staged source archive is used. A candidate can
 replace just one service; the harness builds only the missing service target.
