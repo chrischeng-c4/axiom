@@ -106,9 +106,43 @@ fn json(output: &Output, command: &str) -> Value {
 }
 
 fn publish_reviewed_graph(root: &Path) -> Value {
-    let plan = run_aw(root, &["wi", "plan", "--project", "demo", "--json"]);
+    let plan = run_aw(
+        root,
+        &[
+            "wi",
+            "plan",
+            "--project",
+            "demo",
+            "--stage",
+            "atomize",
+            "--json",
+        ],
+    );
     let plan = json(&plan, "aw wi plan");
-    let payload_path = PathBuf::from(plan["payload_path"].as_str().unwrap());
+    if plan["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage verify"))
+    {
+        let root_id = plan["root"]["id"].as_str().unwrap();
+        let verified = run_aw(
+            root,
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "verify",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        );
+        let verified = json(&verified, "aw wi plan --stage verify");
+        assert_eq!(verified["completion"]["workflow_complete"], true);
+        return verified;
+    }
+    let payload_path = PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
     let mut payload: Value =
         serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
     payload["decision"] = Value::String("accepted".to_string());
@@ -134,13 +168,62 @@ fn publish_reviewed_graph(root: &Path) -> Value {
     )
     .unwrap();
     let evidence = payload_path.to_string_lossy().to_string();
-    let applied = run_aw(
+    let reviewed = run_aw(
         root,
         &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
     );
-    let applied = json(&applied, "aw wi plan-review");
-    assert_eq!(applied["transaction"]["status"], "complete");
-    applied
+    let reviewed = json(&reviewed, "aw wi plan-review");
+    assert_eq!(reviewed["action"], "reviewed");
+    assert_eq!(reviewed["status"], "blocked");
+    assert_eq!(reviewed["requires_hitl"], true);
+    let decision_path = reviewed["next"]["payload_path"].as_str().unwrap();
+    let question_id = reviewed["hitl_question"]["id"].as_str().unwrap();
+    let answered = run_aw(
+        root,
+        &[
+            "wi",
+            "plan-answer",
+            "--payload",
+            decision_path,
+            "--question",
+            question_id,
+            "--choice",
+            "approve",
+            "--json",
+        ],
+    );
+    let answered = json(&answered, "aw wi plan-answer");
+    let approved_path = answered["next"]["payload_path"].as_str().unwrap();
+    let applied = run_aw(
+        root,
+        &[
+            "wi",
+            "plan-apply",
+            "--evidence-file",
+            approved_path,
+            "--json",
+        ],
+    );
+    let applied = json(&applied, "aw wi plan-apply");
+    assert_eq!(applied["action"], "applied");
+    let root_id = applied["root"]["id"].as_str().unwrap();
+    let verified = run_aw(
+        root,
+        &[
+            "wi",
+            "plan",
+            "--project",
+            "demo",
+            "--stage",
+            "verify",
+            "--root",
+            root_id,
+            "--json",
+        ],
+    );
+    let verified = json(&verified, "aw wi plan --stage verify");
+    assert_eq!(verified["completion"]["workflow_complete"], true);
+    verified
 }
 
 fn write_priority_fixture(root: &Path) {

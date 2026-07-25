@@ -7,10 +7,12 @@ capability_refs:
     gap: epic-to-change-atomization
     claim: digest-bound-project-planning-transaction
     coverage: full
-    rationale: "One accepted project-plan digest must authorize one coherent issue-platform transaction."
+    rationale: "Review, human decisions, and the sole apply command must remain distinct while one root advances."
 command_refs:
   - command: aw wi plan
   - command: aw wi plan-review
+  - command: aw wi plan-answer
+  - command: aw wi plan-apply
   - command: aw wi graph
 ---
 
@@ -19,16 +21,31 @@ command_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-An accepted `aw.wi.project-plan.v1` is published through one
-`aw.wi.project-plan-transaction.v1` manifest. The manifest binds the plan,
+An eligible `aw.wi.project-plan.v2` stage is published through one
+`aw.wi.project-plan-transaction.v2` manifest. The manifest binds the plan,
 the exact project tracker snapshot, every ordered mutation, the executable
 apply command, and the terminal graph command into the review digest.
+
+`aw wi plan-review` records review evidence only and never touches tracker
+state. `aw wi plan-answer` records digest-bound human decisions only.
+`aw wi plan-apply` is the sole tracker mutation verb. Each returns the same
+`aw.cli.v1` project-plan root envelope and its next current node.
 
 The transaction never deletes work items. Duplicate and supersession decisions
 are recorded as reviewed labels and body evidence so tracker history remains
 available. Every create/update has a stable idempotency key stored on the issue;
 a local checkpoint is audit evidence, while tracker markers are the recovery
 authority after an ambiguous transport failure.
+
+Normalize is the only stage that can apply without review or HITL. Its apply
+path recompiles the complete plan and manifest from the live configured
+project inventory and requires exact structural equality with the supplied
+artifacts; self-declared `deterministic` metadata is never authorization.
+
+Every checkpoint filename includes the exact plan/manifest source digest.
+Retries of one authorization unit reuse its checkpoint, while a later
+iteration of the same stage receives a distinct checkpoint and cannot deadlock
+on stale digest evidence.
 
 The transaction does not write a provenance-only update to an already clean
 issue. A post-publication plan therefore converges to an empty mutation set;
@@ -47,6 +64,14 @@ The transaction marker also makes the generated `## Requirements` section
 authoritative on subsequent planning reads. Scope and acceptance list items are
 evidence, not additional backlog leaves, which keeps an unchanged replan at
 zero mutations.
+
+Every proposed change may use a compact tracker title, but its generated Scope
+contains the complete authoritative parent Requirement text for every covered
+Requirement id. Capability Alignment inherits the parent epic's declared
+Capability value; neither title truncation nor a planner-default capability may
+weaken the published child contract. Requirement-specific gates and oracles
+from the epic Verification Inventory are rendered into a distinct
+`## Verification` section.
 
 ## Requirements
 <!-- type: requirements lang: yaml -->
@@ -69,6 +94,22 @@ requirements:
     text: Retry reconciles tracker idempotency markers and converges without duplicate issues or conflicting labels.
   - id: R8
     text: A clean post-publication inventory produces no provenance-only mutation, no duplicate proposal, and the same digest on unchanged reread.
+  - id: R9
+    text: Stage allowlists reject create or close outside atomize and reject mutations whose required review or HITL evidence is incomplete.
+  - id: R10
+    text: Review and answer commands never mutate tracker state; only plan-apply owns issue-platform writes.
+  - id: R11
+    text: Unreviewed normalize apply recompiles the canonical live-inventory plan and manifest and rejects any artifact mismatch before tracker mutation.
+  - id: R12
+    text: Checkpoints are keyed by stage and exact source digest so later iterations never collide with stale completed evidence.
+  - id: R13
+    text: Explicit human-only review records its native approve or revise verdict through an executable plan-review command and accepted human evidence may authorize the same digest.
+  - id: R14
+    text: Every proposed change mutation covers at least one authoritative Requirement id; generic empty-coverage replacement responsibility is forbidden.
+  - id: R15
+    text: Proposed change bodies preserve complete parent Requirement text and inherit the parent epic Capability even when their tracker titles are compacted.
+  - id: R16
+    text: Proposed change bodies preserve every requirement-specific runnable gate and observable oracle from the epic Verification Inventory.
 ```
 
 ## Behavior
@@ -80,7 +121,8 @@ Feature: publish one reviewed project planning transaction
   Scenario: accepted review applies its exact manifest
     Given aw wi plan wrote one project plan and transaction manifest
     And an independent reviewer accepted the exact source digest
-    When aw wi plan-review applies the evidence
+    When aw wi plan-review records the evidence
+    And aw wi plan-apply applies the eligible manifest
     Then tracker snapshot preflight completes before the first write
     And proposed epics are created before proposed changes
     And canonical epic and change graph labels are updated afterward
@@ -88,7 +130,7 @@ Feature: publish one reviewed project planning transaction
 
   Scenario: tracker drift aborts before mutation
     Given a project issue changed after the review digest was authored
-    When aw wi plan-review preflights the tracker
+    When aw wi plan-apply preflights the tracker
     Then it fails before the first mutation
     And the diagnostic names the changed issue
 
@@ -103,6 +145,26 @@ Feature: publish one reviewed project planning transaction
     Given every reviewed mutation is already present on the tracker
     When the same accepted review is applied again
     Then the result is complete with no_op true and applied_count zero
+
+  Scenario: forged deterministic normalize evidence is rejected
+    Given a normalize manifest was edited to add a self-declared deterministic update
+    When aw wi plan-apply receives the edited manifest without review evidence
+    Then it recompiles normalize from the configured live inventory
+    And it rejects the structural mismatch before the first tracker write
+
+  Scenario: later stage iteration receives a fresh checkpoint
+    Given one reconcile digest already has a completed checkpoint
+    When a later reconcile iteration produces a different source digest
+    Then its checkpoint path differs from the completed iteration
+    And retry remains scoped to the exact digest
+
+  Scenario: explicit human-only atomize review completes
+    Given planning_review_backing is human
+    And atomize emits a native user question for the exact source digest
+    When the human runs its approve resume command
+    Then plan-review records accepted human evidence and no tracker writes
+    And plan-answer records the final publication confirmation
+    And plan-apply accepts the same policy-compliant digest
 
   Scenario: local publication converges before draft promotion
     Given a local backend stores a created plan change as draft
@@ -171,10 +233,14 @@ producer:
   command: aw wi plan --project <project> --json
   manifest: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.manifest.json
   evidence: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.review-payload.json
-apply:
+review:
   command: aw wi plan-review --evidence-file <evidence> --json
-  checkpoint: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.transaction.json
-  terminal_next: aw wi graph --project <project> --json
+answer:
+  command: aw wi plan-answer --payload <payload> --question <id> --choice <id> --json
+apply:
+  command: aw wi plan-apply --evidence-file <evidence> --json
+  checkpoint: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.<stage>.<source-digest>.transaction.json
+  terminal_next: aw wi plan --project <project> --stage verify --json
 mutation_order:
   - create_epic
   - create_change
@@ -199,6 +265,7 @@ proof:
     create is resolved
   - a reparent update removes stale legacy body parents before strict graph
     verification
+  - checkpoint paths differ for different source digests in the same stage
 ```
 
 ## E2E Test
@@ -213,6 +280,14 @@ proof:
   - a post-publication local plan has zero mutations and preserves its digest on an unchanged rerun
   - published mixed-horizon siblings reparent existing source changes, leave a valid strict graph, and prevent duplicate split-epic creation on replan
   - post-review tracker drift names the issue and writes nothing
+  - plan-review and plan-answer leave tracker bytes unchanged
+  - every apply result returns the next project-plan root envelope
+  - a forged normalize mutation with self-declared deterministic metadata is
+    rejected before tracker mutation
+  - explicit human-only review records approve, proceeds through plan-answer
+    and plan-apply, and reaches verify
+  - no create mutation is emitted for a proposed change with empty Requirement
+    coverage
 ```
 
 ## Changes

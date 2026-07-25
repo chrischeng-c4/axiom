@@ -33,8 +33,10 @@ The emit registry includes both explicit-file and directory
 `td create --from-source` handoffs, so their generated `td gen-source` or
 `td check` commands are parsed against the real clap tree. `td.gen-source` is
 classified as lifecycle-mutating because exact replay can write its one target.
-It also includes the `aw wi run` open-epic atomize handoff, whose project value
-must be resolved from a canonical tracker label before the command is emitted.
+It also includes the canonical staged project-plan handoffs plus
+`plan-answer` and `plan-apply`, so every emitted resume command is parsed
+against the real clap tree. Review and answer remain non-mutating evidence
+leaves; only plan-apply mutates the tracker.
 
 ### Symbols
 
@@ -449,6 +451,21 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                the emitted command consumes reviewer evidence before any bounded tracker WI is \
                published",
     },
+    EmitSite {
+        source: "issues.rs:planning_stage_command",
+        sample: "aw wi plan --project agentic-workflow --stage reconcile --root project-plan:agentic-workflow:abc123 --json",
+        note: "project-plan root envelopes advance one bounded stage without asking the agent to choose the next stage",
+    },
+    EmitSite {
+        source: "issues.rs:project_plan_answer_command",
+        sample: "aw wi plan-answer --payload /tmp/aw/project-plan.decision.json --question project-plan:demo:abc:reconcile:decision --choice approve --json",
+        note: "HITL choices carry an executable command that records the selected digest-bound decision",
+    },
+    EmitSite {
+        source: "issues.rs:run_plan_apply",
+        sample: "aw wi plan-apply --evidence-file /tmp/aw/project-plan.decision.json --json",
+        note: "the sole project-plan tracker writer consumes eligible stage evidence and returns to the same root",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -726,6 +743,18 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.plan-review",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.plan-answer",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "wi.plan-apply",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
         sunset_criterion: "",
@@ -2101,6 +2130,7 @@ mod tests {
     }
 }
 // CODEGEN-END
+
 ~~~~~
 
 ## Changes
@@ -2109,7 +2139,7 @@ mod tests {
 ```yaml
 changes:
   - path: apps/agentic-workflow/src/cli/chain.rs
-    action: add
+    action: modify
     impl_mode: codegen
     section: source
     description: |
@@ -2280,4 +2310,12 @@ changes:
       command `wi_run_command` builds elsewhere; a blocked/HITL candidate is
       parked (its `next.command` never emitted) and the drain advances to
       the next open WI.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Project-plan v2 registers staged plan, plan-answer, and plan-apply
+      resume commands. Lifecycle classification keeps plan-review and
+      plan-answer non-mutating and makes plan-apply the sole mutating leaf.
 ```

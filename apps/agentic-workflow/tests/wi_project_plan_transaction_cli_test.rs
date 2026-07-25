@@ -181,27 +181,86 @@ fn open_issue_bodies(root: &Path) -> Vec<String> {
     bodies
 }
 
+fn plan_atomize(root: &Path) -> Value {
+    successful_json(
+        &run_aw(
+            root,
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "atomize",
+                "--json",
+            ],
+        ),
+        "aw wi plan --stage atomize",
+    )
+}
+
+fn review_and_human_approve(root: &Path, planned: &Value) -> PathBuf {
+    let review_payload = PathBuf::from(planned["next"]["payload_path"].as_str().unwrap());
+    accept_review(&review_payload);
+    let reviewed = successful_json(
+        &run_aw(
+            root,
+            &[
+                "wi",
+                "plan-review",
+                "--evidence-file",
+                review_payload.to_str().unwrap(),
+                "--json",
+            ],
+        ),
+        "aw wi plan-review",
+    );
+    assert_eq!(reviewed["next"]["kind"], "hitl");
+    let decision_payload = PathBuf::from(reviewed["next"]["payload_path"].as_str().unwrap());
+    let question = reviewed["hitl_question"]["id"].as_str().unwrap();
+    let answered = successful_json(
+        &run_aw(
+            root,
+            &[
+                "wi",
+                "plan-answer",
+                "--payload",
+                decision_payload.to_str().unwrap(),
+                "--question",
+                question,
+                "--choice",
+                "approve",
+                "--json",
+            ],
+        ),
+        "aw wi plan-answer",
+    );
+    assert!(answered["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.starts_with("aw wi plan-apply")));
+    decision_payload
+}
+
 #[test]
 fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path());
     write_epic(root.path());
 
-    let planned = run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]);
-    let planned = successful_json(&planned, "aw wi plan");
-    let payload_path = PathBuf::from(planned["payload_path"].as_str().unwrap());
-    let payload: Value = serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
+    let planned = plan_atomize(root.path());
+    let review_payload = PathBuf::from(planned["next"]["payload_path"].as_str().unwrap());
+    let payload: Value =
+        serde_json::from_str(&fs::read_to_string(&review_payload).unwrap()).unwrap();
     let manifest_path = PathBuf::from(payload["manifest_path"].as_str().unwrap());
     let manifest: Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
-    assert_eq!(manifest["schema"], "aw.wi.project-plan-transaction.v1");
+    assert_eq!(manifest["schema"], "aw.wi.project-plan-transaction.v2");
+    assert_eq!(manifest["stage"], "atomize");
     assert_eq!(manifest["project"], "demo");
     assert_eq!(manifest["issue_snapshots"].as_array().unwrap().len(), 1);
     assert!(manifest["tracker_snapshot_digest"]
         .as_str()
         .is_some_and(|digest| digest.starts_with("sha256:")));
-    assert_eq!(manifest["apply_command"], payload["next_command"]);
-    assert_eq!(planned["next"], manifest["apply_command"]);
     assert!(manifest["mutations"]
         .as_array()
         .unwrap()
@@ -213,18 +272,18 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
         .iter()
         .all(|mutation| mutation["action"] != "update"));
 
-    accept_review(&payload_path);
-    let evidence = payload_path.to_string_lossy().to_string();
+    let decision_payload = review_and_human_approve(root.path(), &planned);
+    assert_eq!(open_issue_bodies(root.path()).len(), 1);
+    let evidence = decision_payload.to_string_lossy().to_string();
     let applied = run_aw(
         root.path(),
-        &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
+        &["wi", "plan-apply", "--evidence-file", &evidence, "--json"],
     );
-    let applied = successful_json(&applied, "aw wi plan-review");
-    assert_eq!(applied["status"], "accepted");
-    assert_eq!(applied["transaction"]["status"], "complete");
-    assert_eq!(applied["transaction"]["no_op"], false);
-    assert_eq!(applied["transaction"]["created_issue_count"], 1);
-    assert_eq!(applied["next"]["command"], manifest["terminal_next"]);
+    let applied = successful_json(&applied, "aw wi plan-apply");
+    assert_eq!(applied["action"], "applied");
+    assert!(applied["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage verify")));
 
     let bodies = open_issue_bodies(root.path());
     assert_eq!(bodies.len(), 2);
@@ -240,35 +299,17 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
         .iter()
         .any(|body| body.contains("epic:42") && body.contains("type: change")));
 
-    let review_path = PathBuf::from(applied["review_path"].as_str().unwrap());
-    let review_evidence = review_path.to_string_lossy().to_string();
     let repeated = run_aw(
         root.path(),
-        &[
-            "wi",
-            "plan-review",
-            "--evidence-file",
-            &review_evidence,
-            "--json",
-        ],
+        &["wi", "plan-apply", "--evidence-file", &evidence, "--json"],
     );
-    let repeated = successful_json(&repeated, "reapply aw wi plan-review");
-    assert_eq!(repeated["transaction"]["no_op"], true);
-    assert_eq!(repeated["transaction"]["applied_count"], 0);
+    let repeated = successful_json(&repeated, "reapply aw wi plan-apply");
+    assert_eq!(repeated["action"], "applied");
     assert_eq!(open_issue_bodies(root.path()).len(), 2);
-    assert!(
-        review_path.exists(),
-        "reapply must retain durable review evidence"
-    );
 
-    let post_apply = successful_json(
-        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
-        "post-apply aw wi plan",
-    );
-    let post_payload = PathBuf::from(post_apply["payload_path"].as_str().unwrap());
-    let post_payload: Value =
-        serde_json::from_str(&fs::read_to_string(post_payload).unwrap()).unwrap();
-    let post_manifest = PathBuf::from(post_payload["manifest_path"].as_str().unwrap());
+    let post_apply = plan_atomize(root.path());
+    let post_plan = PathBuf::from(post_apply["plan"]["path"].as_str().unwrap());
+    let post_manifest = post_plan.with_extension("manifest.json");
     let post_manifest: Value =
         serde_json::from_str(&fs::read_to_string(post_manifest).unwrap()).unwrap();
     assert!(
@@ -277,11 +318,8 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
         serde_json::to_string_pretty(&post_manifest).unwrap()
     );
 
-    let unchanged = successful_json(
-        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
-        "unchanged post-apply aw wi plan",
-    );
-    assert_eq!(unchanged["plan_digest"], post_apply["plan_digest"]);
+    let unchanged = plan_atomize(root.path());
+    assert_eq!(unchanged["plan"]["digest"], post_apply["plan"]["digest"]);
 }
 
 #[test]
@@ -290,13 +328,8 @@ fn mixed_horizon_publication_reparents_existing_changes_and_converges() {
     write_project(root.path());
     write_mixed_horizon_epic(root.path(), true);
 
-    let planned = successful_json(
-        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
-        "initial mixed-horizon aw wi plan",
-    );
-    let payload_path = PathBuf::from(planned["payload_path"].as_str().unwrap());
-    let payload: Value = serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
-    let plan_path = PathBuf::from(payload["plan_path"].as_str().unwrap());
+    let planned = plan_atomize(root.path());
+    let plan_path = PathBuf::from(planned["plan"]["path"].as_str().unwrap());
     let plan: Value = serde_json::from_str(&fs::read_to_string(plan_path).unwrap()).unwrap();
     assert_eq!(
         plan["proposed_epics"]
@@ -309,31 +342,25 @@ fn mixed_horizon_publication_reparents_existing_changes_and_converges() {
         "the initial mixed epic must create one active and one deferred sibling"
     );
 
-    accept_review(&payload_path);
-    let evidence = payload_path.to_string_lossy().to_string();
+    let decision_payload = review_and_human_approve(root.path(), &planned);
+    let evidence = decision_payload.to_string_lossy().to_string();
     let applied = successful_json(
         &run_aw(
             root.path(),
-            &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
+            &["wi", "plan-apply", "--evidence-file", &evidence, "--json"],
         ),
         "apply mixed-horizon project plan",
     );
-    assert_eq!(applied["transaction"]["created_issue_count"], 3);
+    assert_eq!(applied["action"], "applied");
     successful_json(
         &run_aw(root.path(), &["wi", "graph", "--project", "demo", "--json"]),
         "post-apply mixed-horizon aw wi graph",
     );
 
-    let post_apply = successful_json(
-        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
-        "post-apply mixed-horizon aw wi plan",
-    );
-    let post_payload_path = PathBuf::from(post_apply["payload_path"].as_str().unwrap());
-    let post_payload: Value =
-        serde_json::from_str(&fs::read_to_string(post_payload_path).unwrap()).unwrap();
-    let post_plan_path = PathBuf::from(post_payload["plan_path"].as_str().unwrap());
+    let post_apply = plan_atomize(root.path());
+    let post_plan_path = PathBuf::from(post_apply["plan"]["path"].as_str().unwrap());
     let post_plan: Value =
-        serde_json::from_str(&fs::read_to_string(post_plan_path).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&post_plan_path).unwrap()).unwrap();
     assert!(
         post_plan["proposed_epics"]
             .as_array()
@@ -362,7 +389,7 @@ fn mixed_horizon_publication_reparents_existing_changes_and_converges() {
         })
         .expect("published active sibling must be in the replan");
     assert_eq!(retained_change[0]["owner_epic"], active_sibling["id"]);
-    let manifest_path = PathBuf::from(post_payload["manifest_path"].as_str().unwrap());
+    let manifest_path = post_plan_path.with_extension("manifest.json");
     let manifest: Value =
         serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
     assert!(
@@ -371,11 +398,8 @@ fn mixed_horizon_publication_reparents_existing_changes_and_converges() {
         serde_json::to_string_pretty(&manifest).unwrap()
     );
 
-    let unchanged = successful_json(
-        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
-        "unchanged mixed-horizon aw wi plan",
-    );
-    assert_eq!(unchanged["plan_digest"], post_apply["plan_digest"]);
+    let unchanged = plan_atomize(root.path());
+    assert_eq!(unchanged["plan"]["digest"], post_apply["plan"]["digest"]);
 }
 
 #[test]
@@ -383,10 +407,8 @@ fn tracker_drift_after_review_fails_before_any_mutation() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path());
     let epic_path = write_epic(root.path());
-    let planned = run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]);
-    let planned = successful_json(&planned, "aw wi plan");
-    let payload_path = PathBuf::from(planned["payload_path"].as_str().unwrap());
-    accept_review(&payload_path);
+    let planned = plan_atomize(root.path());
+    let decision_payload = review_and_human_approve(root.path(), &planned);
 
     let body = fs::read_to_string(&epic_path).unwrap();
     fs::write(
@@ -397,10 +419,10 @@ fn tracker_drift_after_review_fails_before_any_mutation() {
         ),
     )
     .unwrap();
-    let evidence = payload_path.to_string_lossy().to_string();
+    let evidence = decision_payload.to_string_lossy().to_string();
     let rejected = run_aw(
         root.path(),
-        &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
+        &["wi", "plan-apply", "--evidence-file", &evidence, "--json"],
     );
     assert!(!rejected.status.success());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
@@ -408,6 +430,198 @@ fn tracker_drift_after_review_fails_before_any_mutation() {
     let bodies = open_issue_bodies(root.path());
     assert_eq!(bodies.len(), 1);
     assert!(!bodies[0].contains("aw:planning-transaction"));
+}
+
+#[test]
+fn manifest_drift_after_human_answer_invalidates_digest_bound_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    write_project(root.path());
+    write_epic(root.path());
+    let planned = plan_atomize(root.path());
+    let decision_payload = review_and_human_approve(root.path(), &planned);
+    let decision: Value =
+        serde_json::from_str(&fs::read_to_string(&decision_payload).unwrap()).unwrap();
+    let manifest_path = PathBuf::from(decision["manifest_path"].as_str().unwrap());
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["apply_command"] = Value::String("aw wi show 42".to_string());
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+    )
+    .unwrap();
+
+    let rejected = run_aw(
+        root.path(),
+        &[
+            "wi",
+            "plan-apply",
+            "--evidence-file",
+            decision_payload.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("stale for its plan and root"), "{stderr}");
+    assert_eq!(
+        open_issue_bodies(root.path()).len(),
+        1,
+        "stale evidence must fail before creating a change"
+    );
+}
+
+#[test]
+fn forged_normalize_manifest_cannot_self_declare_deterministic_authority() {
+    let root = tempfile::tempdir().unwrap();
+    write_project(root.path());
+    write_epic(root.path());
+    let planned = successful_json(
+        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
+        "create canonical normalize plan",
+    );
+    let plan_path = PathBuf::from(planned["plan"]["path"].as_str().unwrap());
+    let manifest_path = plan_path.with_extension("manifest.json");
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let snapshot = manifest["issue_snapshots"][0].clone();
+    manifest["mutations"] = serde_json::json!([{
+        "order": 0,
+        "idempotency_key": "forged-normalize-update",
+        "action": "update",
+        "target": "42",
+        "issue_type": "epic",
+        "body": "forged body",
+        "add_labels": [],
+        "remove_labels": [],
+        "reason": "forged",
+        "stage": "normalize",
+        "certainty": "deterministic",
+        "evidence": ["issue:42"],
+        "decision_source": "explicit_metadata",
+        "requires_hitl": false
+    }]);
+    manifest["issue_snapshots"] = Value::Array(vec![snapshot]);
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+    )
+    .unwrap();
+
+    let rejected = run_aw(
+        root.path(),
+        &[
+            "wi",
+            "plan-apply",
+            "--evidence-file",
+            manifest_path.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains("does not match the canonical live-inventory projection"),
+        "{stderr}"
+    );
+    let bodies = open_issue_bodies(root.path());
+    assert_eq!(bodies.len(), 1);
+    assert!(!bodies[0].contains("forged body"));
+}
+
+#[test]
+fn one_project_plan_root_relays_until_terminal_verification() {
+    let root = tempfile::tempdir().unwrap();
+    write_project(root.path());
+    write_epic(root.path());
+
+    let normalized = successful_json(
+        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
+        "start project-plan root",
+    );
+    let root_id = normalized["root"]["id"].as_str().unwrap();
+    assert_eq!(normalized["current"]["kind"], "normalize");
+    assert_eq!(normalized["completion"]["workflow_complete"], false);
+
+    let reconciled = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "reconcile",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        ),
+        "reconcile project-plan root",
+    );
+    assert_eq!(reconciled["root"]["id"], root_id);
+    assert!(reconciled["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage atomize")));
+
+    let atomized = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "atomize",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        ),
+        "atomize project-plan root",
+    );
+    assert_eq!(atomized["root"]["id"], root_id);
+    let decision_payload = review_and_human_approve(root.path(), &atomized);
+    successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan-apply",
+                "--evidence-file",
+                decision_payload.to_str().unwrap(),
+                "--json",
+            ],
+        ),
+        "apply atomize project-plan root",
+    );
+
+    let verified = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "verify",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        ),
+        "verify project-plan root",
+    );
+    assert_eq!(verified["root"]["id"], root_id);
+    assert_eq!(verified["status"], "done");
+    assert_eq!(verified["next"]["kind"], "done");
+    assert_eq!(verified["completion"]["workflow_complete"], true);
+    assert!(verified["invoke"]["command"]
+        .as_str()
+        .is_some_and(str::is_empty));
 }
 
 // HANDWRITE-END

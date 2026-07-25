@@ -48,7 +48,7 @@ Public API manifest for `apps/agentic-workflow/src/issues/mod.rs` generated from
 //!   format (also the local issue `{open,closed}/*.md` frontmatter schema)
 //! - [`IssueBackend`] — storage trait implemented by each backend
 //! - [`graph`] — deterministic epic/change ownership and relation projection
-//! - [`planner`] — canonical two-stage epic/change planning projection
+//! - [`planner`] — canonical staged epic/change planning projection
 //! - [`planning_transaction`] — digest-bound retry-safe plan publication
 //! - [`ready_graph`] — shared epic/backlog ready-leaf selection policy
 //! - [`backends::LocalBackend`] — reads/writes issue files under a chosen root

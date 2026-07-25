@@ -204,8 +204,44 @@ fn run_json(aw_bin: &str, root: &Path, args: &[&str]) -> serde_json::Value {
 }
 
 fn publish_reviewed_graph(aw_bin: &str, root: &Path) {
-    let plan = run_json(aw_bin, root, &["wi", "plan", "--project", "demo", "--json"]);
-    let payload_path = std::path::PathBuf::from(plan["payload_path"].as_str().unwrap());
+    let plan = run_json(
+        aw_bin,
+        root,
+        &[
+            "wi",
+            "plan",
+            "--project",
+            "demo",
+            "--stage",
+            "atomize",
+            "--json",
+        ],
+    );
+    let root_id = plan["root"]["id"].as_str().unwrap();
+    if plan["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage verify"))
+    {
+        let verified = run_json(
+            aw_bin,
+            root,
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "verify",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        );
+        assert_eq!(verified["completion"]["workflow_complete"], true);
+        return;
+    }
+
+    let payload_path = std::path::PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
     let mut payload: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&payload_path).unwrap()).unwrap();
     payload["decision"] = serde_json::Value::String("accepted".to_string());
@@ -235,7 +271,54 @@ fn publish_reviewed_graph(aw_bin: &str, root: &Path) {
         root,
         &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
     );
-    assert_eq!(applied["transaction"]["status"], "complete");
+    assert_eq!(applied["action"], "reviewed");
+    assert_eq!(applied["requires_hitl"], true);
+    let decision_path = applied["next"]["payload_path"].as_str().unwrap();
+    let question_id = applied["hitl_question"]["id"].as_str().unwrap();
+    let answered = run_json(
+        aw_bin,
+        root,
+        &[
+            "wi",
+            "plan-answer",
+            "--payload",
+            decision_path,
+            "--question",
+            question_id,
+            "--choice",
+            "approve",
+            "--json",
+        ],
+    );
+    let approved_path = answered["next"]["payload_path"].as_str().unwrap();
+    let applied = run_json(
+        aw_bin,
+        root,
+        &[
+            "wi",
+            "plan-apply",
+            "--evidence-file",
+            approved_path,
+            "--json",
+        ],
+    );
+    assert_eq!(applied["action"], "applied");
+    let verified = run_json(
+        aw_bin,
+        root,
+        &[
+            "wi",
+            "plan",
+            "--project",
+            "demo",
+            "--stage",
+            "verify",
+            "--root",
+            root_id,
+            "--json",
+        ],
+    );
+    assert_eq!(verified["completion"]["workflow_complete"], true);
 }
 
 #[tokio::test]

@@ -136,61 +136,42 @@ fn request_revision_payload(path: &Path, reviewer: &str) {
 fn planning_verbs_delegate_to_one_agent_first_digest_bound_project_plan() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path(), None);
-    let mut authoritative_path = None;
-    let mut authoritative_digest = None;
-    let mut authoritative_bytes = None;
-    let mut authoritative_payload = None;
+    let root_plan = successful_json(
+        &run_aw(root.path(), &["wi", "plan", "--project", "demo", "--json"]),
+        "aw wi plan",
+    );
+    assert_eq!(root_plan["root"]["kind"], "project_plan");
+    assert_eq!(root_plan["current"]["kind"], "normalize");
+    assert_eq!(root_plan["completion"]["workflow_complete"], false);
+    assert!(root_plan["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage reconcile")));
 
-    for verb in ["plan", "epicize", "atomize", "prioritize"] {
-        let output = run_aw(root.path(), &["wi", verb, "--project", "demo", "--json"]);
-        let plan = successful_json(&output, &format!("aw wi {verb}"));
-        assert_eq!(plan["kind"], "project_plan", "{verb}: {plan:#}");
-        assert_eq!(plan["invoked_as"], verb, "{verb}: {plan:#}");
-        assert_eq!(plan["requires_hitl"], false, "{verb}: {plan:#}");
-        assert_eq!(plan["hitl_status"], "pending_agent_review");
-        assert_eq!(plan["review_backing"], "either");
-        assert!(plan["agent_review_prompt"]
-            .as_str()
-            .is_some_and(|prompt| prompt.contains("Independently review")));
-        assert!(plan["next"]
-            .as_str()
-            .is_some_and(|command| command.starts_with("aw wi plan-review")));
+    let atomized = successful_json(
+        &run_aw(
+            root.path(),
+            &["wi", "atomize", "--project", "demo", "--json"],
+        ),
+        "aw wi atomize",
+    );
+    let epicized = successful_json(
+        &run_aw(
+            root.path(),
+            &["wi", "epicize", "--project", "demo", "--json"],
+        ),
+        "aw wi epicize",
+    );
+    assert_eq!(atomized["current"]["kind"], "atomize");
+    assert_eq!(atomized["plan"]["digest"], epicized["plan"]["digest"]);
+    assert!(atomized["agent_prompt"]
+        .as_str()
+        .is_some_and(|prompt| prompt.contains("Independently review")));
+    let payload_path = PathBuf::from(atomized["next"]["payload_path"].as_str().unwrap());
+    let original: Value =
+        serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
+    assert_eq!(original["kind"], "project_plan");
+    assert_eq!(original["decision"], "pending");
 
-        let payload_path = PathBuf::from(plan["payload_path"].as_str().unwrap());
-        let plan_path = PathBuf::from(plan["path"].as_str().unwrap());
-        let plan_bytes = fs::read(&plan_path).unwrap();
-        match (
-            &authoritative_path,
-            &authoritative_digest,
-            &authoritative_bytes,
-        ) {
-            (Some(path), Some(digest), Some(bytes)) => {
-                assert_eq!(path, &plan_path, "{verb} created a competing artifact");
-                assert_eq!(digest, plan["plan_digest"].as_str().unwrap());
-                assert_eq!(bytes, &plan_bytes, "{verb} changed canonical plan bytes");
-            }
-            _ => {
-                authoritative_path = Some(plan_path);
-                authoritative_digest = Some(plan["plan_digest"].as_str().unwrap().to_string());
-                authoritative_bytes = Some(plan_bytes);
-                authoritative_payload = Some(payload_path.clone());
-            }
-        }
-        assert_eq!(
-            authoritative_payload.as_ref().unwrap(),
-            &payload_path,
-            "{verb} created a competing review payload"
-        );
-        let original: Value =
-            serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
-        assert_eq!(original["kind"], "project_plan");
-        assert_eq!(original["decision"], "pending");
-        assert!(original["next_command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with("aw ")));
-    }
-
-    let payload_path = authoritative_payload.unwrap();
     accept_review_payload(&payload_path, "reviewer-agent");
     let evidence = payload_path.to_string_lossy().to_string();
     let review = run_aw(
@@ -198,13 +179,12 @@ fn planning_verbs_delegate_to_one_agent_first_digest_bound_project_plan() {
         &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
     );
     let reviewed = successful_json(&review, "aw wi plan-review");
-    assert_eq!(reviewed["action"], "project_plan_review");
-    assert_eq!(reviewed["status"], "accepted");
-    assert_eq!(reviewed["requires_hitl"], false);
-    assert_eq!(reviewed["transaction"]["status"], "complete");
-    assert!(reviewed["next"]["command"]
+    assert_eq!(reviewed["action"], "reviewed");
+    assert_eq!(reviewed["next"]["kind"], "hitl");
+    assert_eq!(reviewed["completion"]["requires_hitl"], true);
+    assert!(reviewed["hitl_question"]["choices"][0]["resume_command"]
         .as_str()
-        .is_some_and(|command| command.starts_with("aw ")));
+        .is_some_and(|command| command.starts_with("aw wi plan-answer")));
 
     let local = LocalBackend::from_project_root(root.path());
     let _ = fs::remove_dir_all(local.issues_dir());
@@ -219,7 +199,7 @@ fn inventory_plan_rejects_same_agent_review() {
         &["wi", "atomize", "--project", "demo", "--json"],
     );
     let plan = successful_json(&output, "aw wi atomize");
-    let payload_path = PathBuf::from(plan["payload_path"].as_str().unwrap());
+    let payload_path = PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
     accept_review_payload(&payload_path, "author-agent");
     let evidence = payload_path.to_string_lossy().to_string();
 
@@ -247,7 +227,7 @@ fn inventory_plan_needs_revision_returns_to_its_producer() {
         &["wi", "atomize", "--project", "demo", "--json"],
     );
     let plan = successful_json(&output, "aw wi atomize");
-    let payload_path = PathBuf::from(plan["payload_path"].as_str().unwrap());
+    let payload_path = PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
     request_revision_payload(&payload_path, "reviewer-agent");
     let evidence = payload_path.to_string_lossy().to_string();
 
@@ -256,9 +236,11 @@ fn inventory_plan_needs_revision_returns_to_its_producer() {
         &["wi", "plan-review", "--evidence-file", &evidence, "--json"],
     );
     let reviewed = successful_json(&review, "aw wi plan-review");
-    assert_eq!(reviewed["status"], "needs_revision");
-    assert_eq!(reviewed["published_issue_count"], 0);
-    assert_eq!(reviewed["next"]["command"], "aw wi plan --project demo");
+    assert_eq!(reviewed["action"], "reviewed");
+    assert_eq!(reviewed["status"], "continue");
+    assert!(reviewed["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage atomize")));
 
     let local = LocalBackend::from_project_root(root.path());
     let _ = fs::remove_dir_all(local.issues_dir());
@@ -273,7 +255,7 @@ fn inventory_plan_rejects_next_command_not_bound_by_manifest() {
         &["wi", "epicize", "--project", "demo", "--json"],
     );
     let plan = successful_json(&output, "aw wi epicize");
-    let payload_path = PathBuf::from(plan["payload_path"].as_str().unwrap());
+    let payload_path = PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
     accept_review_payload(&payload_path, "reviewer-agent");
     let mut payload: Value =
         serde_json::from_str(&fs::read_to_string(&payload_path).unwrap()).unwrap();
@@ -301,19 +283,100 @@ fn inventory_plan_rejects_next_command_not_bound_by_manifest() {
 }
 
 #[test]
-fn explicit_human_only_inventory_policy_remains_blocking() {
+fn explicit_human_only_inventory_policy_reaches_apply_and_verify() {
     let root = tempfile::tempdir().unwrap();
     write_project(root.path(), Some("human"));
     let output = run_aw(
         root.path(),
-        &["wi", "prioritize", "--project", "demo", "--json"],
+        &["wi", "atomize", "--project", "demo", "--json"],
     );
-    let plan = successful_json(&output, "aw wi prioritize");
+    let plan = successful_json(&output, "aw wi atomize");
 
-    assert_eq!(plan["requires_hitl"], true);
-    assert_eq!(plan["hitl_status"], "pending_human");
-    assert_eq!(plan["review_backing"], "human");
-    assert!(plan["agent_review_prompt"].is_null());
+    assert_eq!(plan["completion"]["requires_hitl"], true);
+    assert_eq!(plan["next"]["kind"], "hitl");
+    assert_eq!(
+        plan["hitl_question"]["interaction"]["kind"],
+        "user_question"
+    );
+    let approve_review_command = plan["hitl_question"]["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|choice| choice["id"] == "approve")
+        .and_then(|choice| choice["resume_command"].as_str())
+        .unwrap();
+    assert!(approve_review_command.contains("--human-choice approve"));
+    let review_payload = PathBuf::from(plan["next"]["payload_path"].as_str().unwrap());
+    let reviewed = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan-review",
+                "--evidence-file",
+                review_payload.to_str().unwrap(),
+                "--human-choice",
+                "approve",
+                "--json",
+            ],
+        ),
+        "human aw wi plan-review",
+    );
+    assert_eq!(reviewed["next"]["kind"], "hitl");
+    let decision_payload = PathBuf::from(reviewed["next"]["payload_path"].as_str().unwrap());
+    let question = reviewed["hitl_question"]["id"].as_str().unwrap();
+    successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan-answer",
+                "--payload",
+                decision_payload.to_str().unwrap(),
+                "--question",
+                question,
+                "--choice",
+                "approve",
+                "--json",
+            ],
+        ),
+        "human-confirmed aw wi plan-answer",
+    );
+    let applied = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan-apply",
+                "--evidence-file",
+                decision_payload.to_str().unwrap(),
+                "--json",
+            ],
+        ),
+        "human-reviewed aw wi plan-apply",
+    );
+    assert!(applied["invoke"]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("--stage verify")));
+    let root_id = plan["root"]["id"].as_str().unwrap();
+    let verified = successful_json(
+        &run_aw(
+            root.path(),
+            &[
+                "wi",
+                "plan",
+                "--project",
+                "demo",
+                "--stage",
+                "verify",
+                "--root",
+                root_id,
+                "--json",
+            ],
+        ),
+        "verify human-only project-plan root",
+    );
+    assert_eq!(verified["completion"]["workflow_complete"], true);
 
     let local = LocalBackend::from_project_root(root.path());
     let _ = fs::remove_dir_all(local.issues_dir());

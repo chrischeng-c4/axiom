@@ -60,6 +60,8 @@ capability_refs:
 command_refs:
   - command: aw goal wi
   - command: aw wi plan
+  - command: aw wi plan-answer
+  - command: aw wi plan-apply
   - command: aw wi plan-review
   - command: aw capability
   - command: aw capability apply-draft
@@ -105,11 +107,13 @@ scenarios:
       - "aw wi plan produces one canonical project plan under /tmp/aw/workspaces/<workspace>/workitems/{project}/project-plan/project-plan.json"
 
   - id: S3
-    title: "project plan jointly atomizes and prioritizes"
+    title: "one project-plan root separates certainty and relays to verification"
     given: ["open issues include bounded work, dependency-blocked work, roadmap-sized work, and triage gaps"]
     when: ["aw wi plan --project P runs"]
     then:
-      - "stage one atomizes and prioritizes epics before stage two reconciles and prioritizes owned changes"
+      - "the root relays normalize -> reconcile -> atomize -> verify with one stable root id"
+      - "normalize applies only deterministic allowlisted updates; reconcile records explicit human choices; atomize requires independent review plus human confirmation before creates"
+      - "verify is terminal only after strict graph validation and a zero-diff plan set completion.workflow_complete=true"
       - "artifact records ready_now, blocked_by_dependency, needs_atomize, needs_triage, duplicate, and deferred lanes"
       - "readiness is based on bounded sections, dependencies, and roadmap-size signals"
 
@@ -119,7 +123,7 @@ scenarios:
     when: ["aw goal capability --project P runs"]
     then:
       - "the project root consumes canonical project-plan readiness and selects the next ready_now WI"
-      - "if no ready_now work exists, the project root routes to aw wi plan or its pending review"
+      - "if no ready_now work exists, the project root routes to the canonical aw wi plan envelope and follows its emitted next.command"
       - "cron-style sprint batches are not part of the public workflow"
 
   - id: S5
@@ -128,7 +132,7 @@ scenarios:
     when: ["the capability alignment workflow is installed or refreshed"]
     then:
       - "aw-capability is installed as a Claude Code skill"
-      - "aw-wi skill documents the canonical two-stage project plan and bounded WI gates"
+      - "aw-wi skill documents the canonical staged project-plan envelope and bounded WI gates"
       - "aw-standardize is the single human-facing standardization skill"
 
   - id: S6
@@ -222,12 +226,13 @@ scenarios:
       - "legacy human-only capability-plan artifacts without a manifest do not resurrect as blockers; rerunning the capability sweep WI-plan producer produces the current review protocol"
   - id: S11
     title: "project planning review is agent-first, digest-bound, and singular"
-    given: ["aw wi plan, epicize, atomize, or prioritize has read the same project inventory"]
+    given: ["aw wi plan or one of epicize, atomize, and prioritize has read the same project inventory"]
     when: ["the canonical project-plan producer prepares its review sidecars and emits JSON"]
     then:
       - "all four verbs delegate to one project_plan artifact, model digest, review digest, and payload path"
-      - "the producer defaults to pending_agent_review with requires_hitl=false, an exact source_digest, a payload_path, an independent reviewer prompt, and an executable aw wi plan-review next command"
-      - "planning_review_backing=human remains an explicit blocking opt-in, while the legacy capability policy is accepted as a fallback"
+      - "atomize emits pending_agent_review with requires_hitl=false only when create mutations exist, preserving an exact source_digest, payload_path, independent reviewer prompt, and executable aw wi plan-review next command"
+      - "plan-review records semantic evidence but never mutates the tracker; plan-answer records the human decision; plan-apply is the sole tracker writer"
+      - "planning_review_backing=human remains an explicit native-HITL opt-in whose approve/revise resume command records human review evidence and can proceed through plan-answer, plan-apply, and verify; the legacy capability policy is accepted as a fallback"
       - "accepted evidence rejects same-agent review and stale plan or manifest bytes, requires the inventory checklist, and binds the exact tracker snapshot, ordered mutation manifest, apply command, and terminal graph command into one reviewed digest"
       - "accepted review preflights the complete project tracker before its first write, applies create_epic, create_change, update_epic, and update_change mutations in dependency-safe order, and names the drifted issue when preflight fails"
       - "every mutation carries a stable tracker idempotency marker, so retry after an ambiguous transport failure reconciles completed writes, reapplies only missing mutations, and converges to a no-op without duplicate issues"
@@ -266,7 +271,7 @@ stateDiagram-v2
     plan_transaction --> crrr_ready : retry-safe ordered apply complete
     crrr_ready --> td_ready : aw wi validate passes
     td_ready --> [*] : /aw:td
-    project_planned --> project_planned : compatibility epicize/atomize/prioritize delegate
+    project_planned --> project_planned : compatibility epicize/atomize/prioritize enter the same staged root
 ```
 
 ## Logic
@@ -283,7 +288,7 @@ nodes:
   write_cap_path: { kind: process, label: "write confirmed Markdown capability sections and contract/work-root tables to cap_path" }
   capability_command: { kind: process, label: "aw capability report/next/check evaluates capability/gap/claim graph" }
   root_run: { kind: process, label: "aw goal wi / capability / backlog selects a workflow root and emits invoke.command" }
-  project_plan: { kind: process, label: "aw wi plan atomizes and prioritizes epics, then reconciles and prioritizes their changes" }
+  project_plan: { kind: process, label: "aw wi plan relays normalize, reconcile, atomize, and verify under one root id" }
   plan_review: { kind: decision, label: "independent digest-bound project plan review accepted?" }
   validate: { kind: decision, label: "non-epic WI bounded and aligned?" }
   td_ready: { kind: terminal, label: "aw:td may start" }
@@ -479,7 +484,11 @@ commands:
     args:
       - name: evidence-file
         meaning: "independent agent or human review record bound to the exact plan plus manifest digest"
-    behavior: "validate capability or inventory review policy, reviewer independence, digest, kind-specific checklist, findings, and executable next command; accepted capability review publishes deduplicated bounded candidates, accepted inventory review authorizes only its recorded next command, and needs_revision publishes nothing"
+    behavior: "validate capability or inventory review policy, reviewer independence, digest, kind-specific checklist, findings, and executable next command; accepted capability review keeps its existing publisher contract, while accepted project-plan review records evidence and hands off to plan-answer without tracker mutation"
+  - path: [wi, plan-answer]
+    behavior: "record one exact digest-bound HITL answer and emit the same project-plan root's plan-apply or revision command without tracker mutation"
+  - path: [wi, plan-apply]
+    behavior: "preflight and apply only stage-eligible digest-bound mutations idempotently, then emit the same root's next stage command"
     mutates_tracker: true
   - path: [wi, epicize]
     behavior: "group roadmap direction into epic or phase candidates and emit an agent-first digest-bound review payload"
@@ -542,7 +551,7 @@ id: aw-capability-alignment-wi-planning-tests
 requirements:
   plan_help:
     id: AW-CAP-WI-1
-    text: "aw wi plan --help exposes the canonical two-stage planning operator"
+    text: "aw wi plan --help exposes the canonical staged project-plan operator"
     risk: medium
     verifymethod: test
   planning_aliases:

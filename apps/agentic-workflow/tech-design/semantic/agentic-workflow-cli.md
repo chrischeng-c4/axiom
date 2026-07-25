@@ -4555,12 +4555,13 @@ changes:
       set: WI id -> park reason, so a HITL/hard-blocked WI is not re-probed
       every tick. Issue #2389 replaces the flat open-issue ordering with
       `load_reviewed_project_graph` plus `select_ready_change_leaf`: both
-      backlog and epic WI roots load the exact accepted project-plan review,
-      completed publication checkpoint, current issue-platform inventory,
-      and canonical graph. Epic priority chooses project direction first;
+      backlog and epic WI roots load the completed project-plan v2 verify
+      artifact, digest-bound zero-mutation checkpoint, current issue-platform
+      inventory, and canonical graph (with legacy accepted-review compatibility).
+      Epic priority chooses project direction first;
       dependency readiness and explicit/inherited child priority choose a
       change only within that epic. Invalid ownership/parent metadata,
-      unresolved dependencies, stale graph labels, or review/publication
+      unresolved dependencies, stale graph labels, or verification/publication
       provenance drift fail closed with an executable inspection or replanning
       command. Lifecycle state and non-graph metadata may advance normally.
       `probe_wi_root_envelope` builds the same `ResolvedRunRoot::Wi`
@@ -4687,5 +4688,51 @@ changes:
       complete possible write surface for the selected Rust, Python, or
       TypeScript emitter, including its package manifest, source tree, and
       generated unit-test inventory.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/issues.rs"
+    action: modify
+    section: schema
+    description: |
+      Project-plan v2 makes `aw wi plan` one stable `aw.cli.v1` root that
+      relays normalize, reconcile, atomize, and verify. `plan-review` records
+      independent semantic evidence without tracker writes, `plan-answer`
+      records exact HITL decisions, and `plan-apply` is the sole idempotent
+      tracker writer. Every nonterminal envelope carries an executable
+      `invoke.command`; only strict zero-diff verify emits
+      `completion.workflow_complete=true`.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/issues/planner.rs"
+    action: modify
+    section: schema
+    description: |
+      Project-plan v2 classifies planning work by certainty and forbids
+      invented bootstrap epics or Scope/Acceptance-Criteria atomization.
+      Atomization requirements come only from authoritative Requirements,
+      with closed changes retained as coverage evidence.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/issues/planning_transaction.rs"
+    action: modify
+    section: schema
+    description: |
+      Stage-bound mutation manifests carry certainty, evidence, decision
+      source, and HITL requirements. Normalize admits deterministic updates
+      only, reconcile admits approved updates only, atomize create operations
+      require review plus human confirmation, and verify forbids mutations.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Epic and backlog goal roots consume the completed v2 verify-stage plan
+      and its digest-bound zero-mutation checkpoint as scheduling authority,
+      while retaining legacy reviewed publication compatibility.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/chain.rs"
+    action: modify
+    section: schema
+    description: |
+      Register staged plan, plan-answer, and plan-apply emit sites and classify
+      review/answer as evidence producers while plan-apply remains the only
+      mutating project-plan leaf.
     impl_mode: hand-written
 ```

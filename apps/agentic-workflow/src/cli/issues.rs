@@ -9,11 +9,12 @@
 //! machine-parseable JSON; `--human` keeps legacy prose where available.
 
 use crate::issues::{
-    apply_planning_transaction, build_planning_transaction_manifest, build_project_plan,
+    apply_planning_transaction, build_planning_transaction_manifest, build_project_plan_for_stage,
     build_work_item_graph, looks_too_large_for_atomic_wi, make_backend,
-    planning_transaction_source_digest, remote_read_cache_backend, resolve_default_backend, Issue,
-    IssueBackend, IssueErrorCode, IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend,
-    PlanningTransactionManifest, PlanningTransactionResult, ProjectPlan, ShipStatus, WorkItemGraph,
+    planning_transaction_checkpoint_path, planning_transaction_source_digest,
+    remote_read_cache_backend, resolve_default_backend, Issue, IssueBackend, IssueErrorCode,
+    IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend, PlanningStage,
+    PlanningTransactionManifest, ProjectPlan, ShipStatus, WorkItemGraph,
 };
 use crate::parser::frontmatter::parse_document;
 use crate::services::issue_parser::{validate_structured_issue, ValidationError};
@@ -21,6 +22,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -57,15 +59,19 @@ pub enum IssuesCommand {
     Close(CloseArgs),
     /// Search work-items by text query.
     Find(FindArgs),
-    /// Build the canonical two-stage epic/change project plan.
+    /// Drive the canonical staged epic/change project-plan root.
     Plan(PlanArgs),
-    /// Submit independent review evidence for a capability WI plan.
+    /// Submit independent review evidence for a planning artifact.
     PlanReview(PlanReviewArgs),
-    /// Compatibility alias for the canonical two-stage project plan.
+    /// Record one digest-bound human project-plan decision.
+    PlanAnswer(PlanAnswerArgs),
+    /// Apply one eligible digest-bound project-plan stage.
+    PlanApply(PlanApplyArgs),
+    /// Compatibility entrypoint into the canonical staged project plan.
     Epicize(EpicizeArgs),
-    /// Compatibility alias for the canonical two-stage project plan.
+    /// Compatibility entrypoint into the canonical staged project plan.
     Atomize(AtomizeArgs),
-    /// Compatibility alias for the canonical two-stage project plan.
+    /// Compatibility entrypoint into the canonical staged project plan.
     Prioritize(PrioritizeArgs),
     /// Fill the Reference Context section via agent exploration.
     Enrich(EnrichArgs),
@@ -421,6 +427,14 @@ pub struct PlanArgs {
     #[arg(long)]
     pub project: Option<String>,
 
+    /// Bounded planning stage. Omit to start the complete root at normalize.
+    #[arg(long, value_enum, default_value_t = PlanStageArg::Normalize)]
+    pub stage: PlanStageArg,
+
+    /// Stable root id emitted by a previous project-plan envelope.
+    #[arg(long)]
+    pub root: Option<String>,
+
     /// Optional planning title.
     #[arg(long)]
     pub title: Option<String>,
@@ -446,6 +460,65 @@ pub struct PlanArgs {
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md#cli
 pub struct PlanReviewArgs {
     /// Agent- or human-backed digest-bound capability or inventory-plan review payload.
+    #[arg(long = "evidence-file")]
+    pub evidence_file: PathBuf,
+
+    /// Record the native HITL verdict for a configured human-only project plan.
+    #[arg(long = "human-choice")]
+    pub human_choice: Option<HumanReviewChoice>,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum HumanReviewChoice {
+    Approve,
+    Revise,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PlanStageArg {
+    Normalize,
+    Reconcile,
+    Atomize,
+    Verify,
+}
+
+impl From<PlanStageArg> for PlanningStage {
+    fn from(value: PlanStageArg) -> Self {
+        match value {
+            PlanStageArg::Normalize => Self::Normalize,
+            PlanStageArg::Reconcile => Self::Reconcile,
+            PlanStageArg::Atomize => Self::Atomize,
+            PlanStageArg::Verify => Self::Verify,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct PlanAnswerArgs {
+    /// HITL decision payload emitted by the current project-plan envelope.
+    #[arg(long)]
+    pub payload: PathBuf,
+
+    /// Exact question id from the emitted HITL question.
+    #[arg(long)]
+    pub question: String,
+
+    /// Exact choice id from the emitted HITL choices.
+    #[arg(long)]
+    pub choice: String,
+
+    /// Output machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PlanApplyArgs {
+    /// Stage manifest or accepted review/decision evidence.
     #[arg(long = "evidence-file")]
     pub evidence_file: PathBuf,
 
@@ -1006,6 +1079,8 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Find(a) => run_find(a).await,
         IssuesCommand::Plan(a) => run_plan(a).await,
         IssuesCommand::PlanReview(a) => run_plan_review(a).await,
+        IssuesCommand::PlanAnswer(a) => run_plan_answer(a).await,
+        IssuesCommand::PlanApply(a) => run_plan_apply(a).await,
         IssuesCommand::Epicize(a) => run_epicize(a).await,
         IssuesCommand::Atomize(a) => run_atomize(a).await,
         IssuesCommand::Prioritize(a) => run_prioritize(a).await,
@@ -3530,6 +3605,22 @@ struct CapabilityPlanReviewRecord {
     next_command: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProjectPlanDecisionRecord {
+    version: u8,
+    project: String,
+    root_id: String,
+    stage: PlanningStage,
+    plan_path: String,
+    manifest_path: String,
+    source_digest: String,
+    question_id: String,
+    #[serde(default)]
+    choice: String,
+    #[serde(default)]
+    review_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 struct InventoryPlanReviewState {
     status: String,
@@ -3607,13 +3698,12 @@ async fn load_project_open_issues_with_backend(
 
 #[derive(Debug)]
 struct ProjectPlanInvocation {
-    invoked_as: &'static str,
     project: Option<String>,
-    title: Option<String>,
+    stage: PlanningStage,
+    root: Option<String>,
     output: Option<PathBuf>,
     json: bool,
     repo: Option<String>,
-    compatibility_note: Option<String>,
 }
 
 // @spec apps/agentic-workflow/tech-design/core/logic/issues/two-stage-project-plan.md#cli
@@ -3630,30 +3720,35 @@ async fn run_project_plan(args: ProjectPlanInvocation) -> Result<()> {
     // missing-parent, and cross-project references remain distinguishable.
     let mut inventory = backend.list(&IssueFilter::default()).await?;
     sort_work_items_for_planning(&mut inventory);
-    let plan = build_project_plan(&project, &project_label, &inventory);
+    let mut plan = build_project_plan_for_stage(&project, &project_label, &inventory, args.stage);
+    if let Some(root) = args.root.as_ref() {
+        plan.root_id = root.clone();
+        plan.digest = project_plan_cli_digest(&plan)?;
+    }
     let path = write_project_plan_artifact(&project_root, &project, args.output.as_deref(), &plan)?;
 
     if !plan.valid {
-        let output = serde_json::json!({
-            "schema_version": "aw.cli.v1",
-            "action": "blocked",
-            "kind": "project_plan",
-            "invoked_as": args.invoked_as,
-            "project": project,
-            "backend": backend.name(),
-            "path": path,
-            "plan_digest": plan.digest,
-            "diagnostics": plan.diagnostics,
-            "next": plan.next,
-        });
-        if args.json {
-            println!("{}", serde_json::to_string_pretty(&output)?);
-        } else {
-            println!("{}", serde_json::to_string(&output)?);
-        }
-        anyhow::bail!(
-            "project plan is blocked by invalid epic/change graph; inspect {}",
-            path.display()
+        let command = plan.next.as_ref().map_or_else(
+            || {
+                format!(
+                    "aw wi plan --project {} --stage normalize --root {} --json",
+                    project, plan.root_id
+                )
+            },
+            |next| next.command.clone(),
+        );
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            "blocked",
+            "blocked",
+            &command,
+            "project plan is blocked by an invalid epic/change graph",
+            Some(path.clone()),
+            None,
+            false,
+            false,
         );
     }
 
@@ -3662,46 +3757,375 @@ async fn run_project_plan(args: ProjectPlanInvocation) -> Result<()> {
         .filter(|issue| issue.labels.iter().any(|label| label == &project_label))
         .cloned()
         .collect::<Vec<_>>();
+    let next_stage = next_planning_stage(plan.stage);
+    let next_stage_command = planning_stage_command(&project, next_stage, &plan.root_id);
+    let apply_command_placeholder = "aw wi plan-apply --evidence-file PLACEHOLDER --json";
+    let manifest = build_planning_transaction_manifest(
+        &plan,
+        &project_issues,
+        apply_command_placeholder,
+        &next_stage_command,
+    );
+    let manifest_path = capability_plan_sidecar_path(&path, "manifest.json");
+    write_file_atomically(
+        &manifest_path,
+        &format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )?;
+
+    if plan.stage == PlanningStage::Reconcile
+        && plan
+            .changes
+            .iter()
+            .any(|change| change.owner_epic.starts_with("proposal:epic:bootstrap:"))
+    {
+        let plan_body = std::fs::read_to_string(&path)?;
+        let manifest_body = std::fs::read_to_string(&manifest_path)?;
+        let source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+        let decision_path = write_project_plan_decision_payload(
+            &plan,
+            &path,
+            &manifest_path,
+            &source_digest,
+            None,
+        )?;
+        let question_id = format!("{}:{}:decision", plan.root_id, plan.stage.as_str());
+        let command = project_plan_answer_command(&decision_path, &question_id, "revise");
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            "planned",
+            "blocked",
+            &command,
+            "select an explicit epic owner for the next unowned change",
+            Some(decision_path),
+            None,
+            false,
+            true,
+        );
+    }
+
+    if plan.stage == PlanningStage::Verify {
+        let complete = plan.proposed_epics.is_empty()
+            && plan.proposed_changes.is_empty()
+            && manifest.mutations.is_empty()
+            && plan.diagnostics.is_empty();
+        let plan_body = std::fs::read_to_string(&path)?;
+        let manifest_body = std::fs::read_to_string(&manifest_path)?;
+        let source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+        let checkpoint_path =
+            planning_transaction_checkpoint_path(&path, plan.stage, &source_digest);
+        if complete {
+            apply_planning_transaction(
+                backend.as_ref(),
+                &manifest,
+                &source_digest,
+                &checkpoint_path,
+            )
+            .await?;
+        }
+        let command = if complete {
+            String::new()
+        } else {
+            planning_stage_command(&project, PlanningStage::Normalize, &plan.root_id)
+        };
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            if complete { "done" } else { "blocked" },
+            if complete { "done" } else { "blocked" },
+            &command,
+            if complete {
+                "strict graph and zero-diff planning verification passed"
+            } else {
+                "verification found pending planning work; restart at normalize"
+            },
+            Some(if complete {
+                checkpoint_path
+            } else {
+                path.clone()
+            }),
+            None,
+            complete,
+            false,
+        );
+    }
+
+    if manifest.mutations.is_empty() {
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            "planned",
+            "continue",
+            &next_stage_command,
+            "current planning stage has no eligible mutations",
+            Some(path.clone()),
+            None,
+            false,
+            false,
+        );
+    }
+
+    if plan.stage == PlanningStage::Normalize {
+        let apply_command = format!(
+            "aw wi plan-apply --evidence-file {} --json",
+            shell_quote(&manifest_path.display().to_string())
+        );
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            "planned",
+            "continue",
+            &apply_command,
+            "deterministic normalize manifest passed stage allowlist validation",
+            Some(manifest_path),
+            None,
+            false,
+            false,
+        );
+    }
+
+    if plan.stage == PlanningStage::Reconcile {
+        let plan_body = std::fs::read_to_string(&path)?;
+        let manifest_body = std::fs::read_to_string(&manifest_path)?;
+        let source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+        let decision_path = write_project_plan_decision_payload(
+            &plan,
+            &path,
+            &manifest_path,
+            &source_digest,
+            None,
+        )?;
+        let question_id = format!("{}:{}:decision", plan.root_id, plan.stage.as_str());
+        let command = project_plan_answer_command(&decision_path, &question_id, "revise");
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &path,
+            "planned",
+            "blocked",
+            &command,
+            "reconcile mutations require explicit human decisions",
+            Some(decision_path),
+            None,
+            false,
+            true,
+        );
+    }
+
     let review = prepare_inventory_plan_review(
         &project_root,
         &project,
         "project_plan",
         &path,
         &project_issues,
-        &format!("aw wi graph --project {project} --json"),
+        &next_stage_command,
     )?;
-    let output = serde_json::json!({
+    print_project_plan_envelope(
+        args.json,
+        &plan,
+        &path,
+        "planned",
+        if review.requires_hitl {
+            "blocked"
+        } else {
+            "continue"
+        },
+        &review.next,
+        if plan.stage == PlanningStage::Reconcile {
+            "reconcile mutations require explicit human decisions"
+        } else {
+            "atomize candidates require independent agent review"
+        },
+        Some(review.payload_path.clone()),
+        review.agent_review_prompt,
+        false,
+        review.requires_hitl || plan.stage == PlanningStage::Reconcile,
+    )
+}
+
+fn project_plan_cli_digest(plan: &ProjectPlan) -> Result<String> {
+    let mut canonical = plan.clone();
+    canonical.digest.clear();
+    let body = serde_json::to_vec(&canonical)?;
+    Ok(format!("{:x}", Sha256::digest(body)))
+}
+
+fn next_planning_stage(stage: PlanningStage) -> PlanningStage {
+    match stage {
+        PlanningStage::Normalize => PlanningStage::Reconcile,
+        PlanningStage::Reconcile => PlanningStage::Atomize,
+        PlanningStage::Atomize | PlanningStage::Verify => PlanningStage::Verify,
+    }
+}
+
+fn planning_stage_command(project: &str, stage: PlanningStage, root_id: &str) -> String {
+    format!(
+        "aw wi plan --project {project} --stage {} --root {root_id} --json",
+        stage.as_str()
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_project_plan_envelope(
+    pretty: bool,
+    plan: &ProjectPlan,
+    plan_path: &Path,
+    action: &str,
+    status: &str,
+    command: &str,
+    reason: &str,
+    payload_path: Option<PathBuf>,
+    agent_prompt: Option<String>,
+    workflow_complete: bool,
+    requires_hitl: bool,
+) -> Result<()> {
+    let next_kind = if workflow_complete {
+        "done"
+    } else if requires_hitl {
+        "hitl"
+    } else if status == "blocked" {
+        "blocked"
+    } else {
+        "run_command"
+    };
+    let payload = payload_path.as_ref().map(|path| path.display().to_string());
+    let artifact_path = plan_path.display().to_string();
+    let mut output = serde_json::json!({
         "schema_version": "aw.cli.v1",
-        "action": "planned",
-        "kind": "project_plan",
-        "invoked_as": args.invoked_as,
-        "compatibility_delegated": args.invoked_as != "plan",
-        "compatibility_note": args.compatibility_note,
-        "project": project,
-        "backend": backend.name(),
-        "path": path,
-        "title": args.title,
-        "plan_schema": plan.schema,
-        "plan_digest": plan.digest,
-        "source_graph_digest": plan.source_graph_digest,
-        "epic_count": plan.epics.len(),
-        "proposed_epic_count": plan.proposed_epics.len(),
-        "change_count": plan.changes.len(),
-        "proposed_change_count": plan.proposed_changes.len(),
-        "status": review.status,
-        "requires_hitl": review.requires_hitl,
-        "hitl_status": review.hitl_status,
-        "review_backing": review.review_backing,
-        "source_digest": review.source_digest,
-        "review_path": review.review_path,
-        "payload_path": review.payload_path,
-        "next": review.next,
-        "agent_review_prompt": review.agent_review_prompt,
+        "status": status,
+        "action": action,
+        "root": {
+            "kind": "project_plan",
+            "id": plan.root_id,
+        },
+        "current": {
+            "kind": plan.stage.as_str(),
+            "id": format!("{}:{}", plan.root_id, plan.stage.as_str()),
+        },
+        "completion": {
+            "root_complete": workflow_complete,
+            "workflow_complete": workflow_complete,
+            "requires_hitl": requires_hitl,
+            "criteria": [
+                "strict graph is valid",
+                "normalize, reconcile, and atomize have no pending mutations",
+                "all required review and human decisions are recorded"
+            ],
+            "missing": if workflow_complete { Vec::<String>::new() } else { vec![reason.to_string()] },
+        },
+        "next": {
+            "kind": next_kind,
+            "command": if command.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(command.to_string()) },
+            "reason": reason,
+            "payload_path": payload,
+        },
+        "invoke": {
+            "command": command,
+        },
+        "agent_prompt": agent_prompt.unwrap_or_else(|| {
+            if workflow_complete {
+                "The project-plan root is complete; report completion to the user.".to_string()
+            } else if requires_hitl {
+                "Surface the emitted HITL question, record the human answer, then run its resume command.".to_string()
+            } else {
+                format!("Run `{command}` and continue until completion.workflow_complete=true.")
+            }
+        }),
+        "requires_hitl": requires_hitl,
+        "persistence": {
+            "status": if workflow_complete { "complete" } else { "pending" },
+            "reason": reason,
+        },
+        "plan": {
+            "schema": plan.schema,
+            "stage": plan.stage,
+            "path": artifact_path,
+            "digest": plan.digest,
+            "source_graph_digest": plan.source_graph_digest,
+            "proposed_epic_count": plan.proposed_epics.len(),
+            "proposed_change_count": plan.proposed_changes.len(),
+        }
     });
-    if args.json {
+    if requires_hitl {
+        let approve_command = command
+            .replace("--choice 'revise'", "--choice 'approve'")
+            .replace("--choice revise", "--choice approve")
+            .replace("--human-choice 'revise'", "--human-choice 'approve'")
+            .replace("--human-choice revise", "--human-choice approve");
+        let unresolved_owner = plan
+            .changes
+            .iter()
+            .find(|change| change.owner_epic.starts_with("proposal:epic:bootstrap:"));
+        let choices = if let Some(change) = unresolved_owner {
+            let mut choices = plan
+                .epics
+                .iter()
+                .filter(|epic| !epic.id.starts_with("proposal:"))
+                .map(|epic| {
+                    serde_json::json!({
+                        "id": epic.id,
+                        "label": epic.title,
+                        "description": format!("Assign change #{} to this explicit epic.", change.id),
+                        "resume_command": command
+                            .replace(
+                                "--choice 'revise'",
+                                &format!("--choice {}", shell_quote(&epic.id))
+                            )
+                            .replace(
+                                "--choice revise",
+                                &format!("--choice {}", shell_quote(&epic.id))
+                            )
+                    })
+                })
+                .collect::<Vec<_>>();
+            choices.push(serde_json::json!({
+                "id": "revise",
+                "label": "Revise",
+                "description": "Leave the issue unowned and revise the tracker contract first.",
+                "resume_command": command
+            }));
+            choices
+        } else {
+            vec![
+                serde_json::json!({
+                    "id": "approve",
+                    "label": "Approve",
+                    "description": "Record approval for the exact digest-bound candidate set.",
+                    "resume_command": approve_command
+                }),
+                serde_json::json!({
+                    "id": "revise",
+                    "label": "Revise",
+                    "description": "Reject this candidate set and return to its planning stage.",
+                    "resume_command": command
+                }),
+            ]
+        };
+        output["hitl_question"] = serde_json::json!({
+            "id": format!("{}:{}:decision", plan.root_id, plan.stage.as_str()),
+            "question": if plan.stage == PlanningStage::Reconcile {
+                "Approve the inferred reconciliation mutations for existing work items?"
+            } else if command.contains("--human-choice") {
+                "After reviewing the exact digest-bound atomization plan, confirm scope coverage, bounded candidates, tracker reconciliation, priority consistency, duplicate safety, and publication safety?"
+            } else {
+                "Approve the independently reviewed atomization candidates for publication?"
+            },
+            "target": plan.project,
+            "resume_command": command,
+            "interaction": { "kind": "user_question" },
+            "choices": choices,
+            "default_choice": "revise",
+            "freeform_prompt": reason,
+        });
+    }
+    if pretty {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("{}", path.display());
+        println!("{}", serde_json::to_string(&output)?);
     }
     Ok(())
 }
@@ -3733,16 +4157,12 @@ fn write_project_plan_artifact(
 
 async fn run_plan(args: PlanArgs) -> Result<()> {
     run_project_plan(ProjectPlanInvocation {
-        invoked_as: "plan",
         project: args.project,
-        title: args.title,
+        stage: args.stage.into(),
+        root: args.root,
         output: args.output,
         json: args.json,
         repo: args.repo,
-        compatibility_note: args.cap_path.map(|_| {
-            "--cap-path is retained for compatibility; the canonical project plan reads the complete epic/change inventory"
-                .to_string()
-        }),
     })
     .await
 }
@@ -4026,11 +4446,103 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
                 args.evidence_file.display()
             )
         })?;
+    if let Some(choice) = args.human_choice {
+        if record.kind != "project_plan"
+            || inventory_plan_review_backing(&project_root, &record.project) != "human"
+            || record.reviewer_kind != "human"
+            || record.decision != CapabilityPlanReviewDecision::Pending
+        {
+            anyhow::bail!(
+                "--human-choice is valid only for a pending human-only project-plan review"
+            );
+        }
+        record.reviewed_by = "human:hitl".to_string();
+        record.summary = match choice {
+            HumanReviewChoice::Approve => {
+                "Human reviewed and accepted the exact digest-bound project plan, mutation manifest, boundedness, reconciliation, priority, duplication, and publication-safety checks."
+                    .to_string()
+            }
+            HumanReviewChoice::Revise => {
+                "Human reviewed the exact digest-bound project plan and requested revision."
+                    .to_string()
+            }
+        };
+        match choice {
+            HumanReviewChoice::Approve => {
+                record.decision = CapabilityPlanReviewDecision::Accepted;
+                record.checklist = CapabilityPlanReviewChecklist {
+                    capability_claim_coverage: true,
+                    scope_coverage: true,
+                    bounded_candidates: true,
+                    tracker_reconciliation: true,
+                    verification_specific: true,
+                    priority_consistent: true,
+                    no_duplicate_wis: true,
+                    publication_safe: true,
+                };
+                record.findings.clear();
+            }
+            HumanReviewChoice::Revise => {
+                record.decision = CapabilityPlanReviewDecision::NeedsRevision;
+                record.findings = vec![
+                    "Human requested revision through the project-plan HITL gate.".to_string(),
+                ];
+            }
+        }
+    }
     validate_capability_plan_review_record(&project_root, &record)?;
     let plan_path = PathBuf::from(&record.plan_path);
     let review_path = capability_plan_sidecar_path(&plan_path, "review.json");
     record.reviewed_at = chrono::Utc::now().to_rfc3339();
-    let mut transaction_result: Option<PlanningTransactionResult> = None;
+
+    if record.kind == "project_plan" {
+        write_file_atomically(
+            &review_path,
+            &format!("{}\n", serde_json::to_string_pretty(&record)?),
+        )?;
+        if args.evidence_file != review_path {
+            let _ = std::fs::remove_file(&args.evidence_file);
+        }
+        let plan: ProjectPlan = serde_json::from_str(&std::fs::read_to_string(&plan_path)?)?;
+        if record.decision == CapabilityPlanReviewDecision::NeedsRevision {
+            let command = planning_stage_command(&plan.project, plan.stage, &plan.root_id);
+            return print_project_plan_envelope(
+                args.json,
+                &plan,
+                &plan_path,
+                "reviewed",
+                "continue",
+                &command,
+                "independent review requested revision",
+                Some(review_path),
+                None,
+                false,
+                false,
+            );
+        }
+        let decision_path = write_project_plan_decision_payload(
+            &plan,
+            &plan_path,
+            Path::new(&record.manifest_path),
+            &record.source_digest,
+            Some(&review_path),
+        )?;
+        let question_id = format!("{}:{}:decision", plan.root_id, plan.stage.as_str());
+        let command = project_plan_answer_command(&decision_path, &question_id, "revise");
+        return print_project_plan_envelope(
+            args.json,
+            &plan,
+            &plan_path,
+            "reviewed",
+            "blocked",
+            &command,
+            "independent review accepted; explicit human confirmation is still required",
+            Some(decision_path),
+            None,
+            false,
+            true,
+        );
+    }
 
     let (status, next, published_issue_count) = match record.decision {
         CapabilityPlanReviewDecision::Accepted => {
@@ -4047,24 +4559,6 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
                     ),
                     published,
                 )
-            } else if record.kind == "project_plan" {
-                let manifest_body = std::fs::read_to_string(&record.manifest_path)?;
-                let manifest: PlanningTransactionManifest = serde_json::from_str(&manifest_body)?;
-                let (backend_kind, repo, host) = resolve_backend(None, &project_root)?;
-                let backend = make_backend(&backend_kind, &project_root, repo, host)
-                    .context("create issue backend for reviewed planning transaction")?;
-                let checkpoint_path = capability_plan_sidecar_path(&plan_path, "transaction.json");
-                let result = apply_planning_transaction(
-                    backend.as_ref(),
-                    &manifest,
-                    &record.source_digest,
-                    &checkpoint_path,
-                )
-                .await?;
-                let published = result.created_issue_count;
-                let next = result.next.clone();
-                transaction_result = Some(result);
-                ("accepted", next, published)
             } else {
                 ("accepted", record.next_command.clone(), 0)
             }
@@ -4099,7 +4593,6 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
         "backing": record.reviewer_kind,
         "findings": record.findings,
         "published_issue_count": published_issue_count,
-        "transaction": transaction_result,
         "next": { "kind": "run_command", "command": next },
     });
     if args.json {
@@ -4108,6 +4601,288 @@ async fn run_plan_review(args: PlanReviewArgs) -> Result<()> {
         println!("{}", serde_json::to_string(&output)?);
     }
     Ok(())
+}
+
+async fn run_plan_answer(args: PlanAnswerArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let body = std::fs::read_to_string(&args.payload)
+        .with_context(|| format!("failed to read {}", args.payload.display()))?;
+    let mut decision: ProjectPlanDecisionRecord = serde_json::from_str(&body)
+        .with_context(|| format!("invalid project-plan decision {}", args.payload.display()))?;
+    if decision.version != 1 || decision.question_id != args.question {
+        anyhow::bail!("project-plan answer does not match the emitted question");
+    }
+    let plan_path = PathBuf::from(&decision.plan_path);
+    let mut plan: ProjectPlan = serde_json::from_str(&std::fs::read_to_string(&plan_path)?)?;
+    let manifest_path = PathBuf::from(&decision.manifest_path);
+    let current_plan_body = std::fs::read_to_string(&plan_path)?;
+    let current_manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let current_source_digest =
+        planning_transaction_source_digest(&current_plan_body, &current_manifest_body);
+    if plan.root_id != decision.root_id
+        || plan.stage != decision.stage
+        || plan.project != decision.project
+        || manifest_path != capability_plan_sidecar_path(&plan_path, "manifest.json")
+        || current_source_digest != decision.source_digest
+    {
+        anyhow::bail!("project-plan decision is stale for its plan root");
+    }
+    let owner_choice = plan.stage == PlanningStage::Reconcile
+        && plan
+            .epics
+            .iter()
+            .any(|epic| epic.id == args.choice && !epic.id.starts_with("proposal:"));
+    if !matches!(args.choice.as_str(), "approve" | "revise") && !owner_choice {
+        anyhow::bail!(
+            "project-plan choice must be `approve`, `revise`, or one emitted epic owner id"
+        );
+    }
+    if owner_choice {
+        let selected = plan
+            .epics
+            .iter()
+            .find(|epic| epic.id == args.choice)
+            .cloned()
+            .expect("owner choice checked above");
+        let change = plan
+            .changes
+            .iter_mut()
+            .find(|change| change.owner_epic.starts_with("proposal:epic:bootstrap:"))
+            .ok_or_else(|| anyhow::anyhow!("project-plan has no unresolved owner decision"))?;
+        change.owner_epic = selected.id;
+        change.priority = selected.priority;
+        change.priority_source = "human_decision".to_string();
+        plan.digest = project_plan_cli_digest(&plan)?;
+        write_file_atomically(
+            &plan_path,
+            &format!("{}\n", serde_json::to_string_pretty(&plan)?),
+        )?;
+        let (backend_kind, repo, host) = resolve_backend(None, &project_root)?;
+        let backend = make_backend(&backend_kind, &project_root, repo, host)?;
+        let mut inventory = backend.list(&IssueFilter::default()).await?;
+        sort_work_items_for_planning(&mut inventory);
+        let project_label = resolve_project_label(&project_root, &plan.project)
+            .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+        let project_issues = inventory
+            .into_iter()
+            .filter(|issue| issue.labels.iter().any(|label| label == &project_label))
+            .collect::<Vec<_>>();
+        let apply_command = format!(
+            "aw wi plan-apply --evidence-file {} --json",
+            shell_quote(&args.payload.display().to_string())
+        );
+        let terminal_next =
+            planning_stage_command(&plan.project, PlanningStage::Reconcile, &plan.root_id);
+        let manifest = build_planning_transaction_manifest(
+            &plan,
+            &project_issues,
+            &apply_command,
+            &terminal_next,
+        );
+        let manifest_body = format!("{}\n", serde_json::to_string_pretty(&manifest)?);
+        write_file_atomically(&manifest_path, &manifest_body)?;
+        let plan_body = std::fs::read_to_string(&plan_path)?;
+        decision.source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+        decision.choice = "approve".to_string();
+    } else {
+        decision.choice = args.choice.clone();
+    }
+    write_file_atomically(
+        &args.payload,
+        &format!("{}\n", serde_json::to_string_pretty(&decision)?),
+    )?;
+    let approved = decision.choice == "approve";
+    let (command, reason) = if approved {
+        (
+            format!(
+                "aw wi plan-apply --evidence-file {} --json",
+                shell_quote(&args.payload.display().to_string())
+            ),
+            "human approved the exact digest-bound stage manifest",
+        )
+    } else {
+        (
+            planning_stage_command(&plan.project, plan.stage, &plan.root_id),
+            "human requested a revised planning stage",
+        )
+    };
+    print_project_plan_envelope(
+        args.json,
+        &plan,
+        &plan_path,
+        "answered",
+        "continue",
+        &command,
+        reason,
+        Some(args.payload),
+        None,
+        false,
+        false,
+    )
+}
+
+async fn run_plan_apply(args: PlanApplyArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let evidence_body = std::fs::read_to_string(&args.evidence_file)
+        .with_context(|| format!("failed to read {}", args.evidence_file.display()))?;
+
+    let (manifest_path, plan_path, source_digest, decision) = if let Ok(decision) =
+        serde_json::from_str::<ProjectPlanDecisionRecord>(&evidence_body)
+    {
+        if decision.version != 1 || decision.choice != "approve" {
+            anyhow::bail!("project-plan apply requires an approved human decision");
+        }
+        (
+            PathBuf::from(&decision.manifest_path),
+            PathBuf::from(&decision.plan_path),
+            decision.source_digest.clone(),
+            Some(decision),
+        )
+    } else {
+        let manifest: PlanningTransactionManifest = serde_json::from_str(&evidence_body)
+            .with_context(|| {
+                format!(
+                    "project-plan apply evidence {} is neither a decision nor manifest",
+                    args.evidence_file.display()
+                )
+            })?;
+        if manifest.stage != PlanningStage::Normalize {
+            anyhow::bail!("only deterministic normalize may apply without human decision evidence");
+        }
+        let plan_path = plan_path_for_manifest(&args.evidence_file)?;
+        let plan_body = std::fs::read_to_string(&plan_path)?;
+        (
+            args.evidence_file.clone(),
+            plan_path,
+            planning_transaction_source_digest(&plan_body, &evidence_body),
+            None,
+        )
+    };
+    let manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let manifest: PlanningTransactionManifest = serde_json::from_str(&manifest_body)?;
+    let plan_body = std::fs::read_to_string(&plan_path)?;
+    let plan: ProjectPlan = serde_json::from_str(&plan_body)?;
+    let actual_source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+    if manifest.plan_digest != plan.digest
+        || manifest.root_id != plan.root_id
+        || manifest.stage != plan.stage
+        || actual_source_digest != source_digest
+    {
+        anyhow::bail!("project-plan apply evidence is stale for its plan and root");
+    }
+    if let Some(decision) = decision.as_ref() {
+        let expected_question = format!("{}:{}:decision", plan.root_id, plan.stage.as_str());
+        if decision.project != plan.project
+            || decision.root_id != plan.root_id
+            || decision.stage != plan.stage
+            || Path::new(&decision.plan_path) != plan_path
+            || Path::new(&decision.manifest_path) != manifest_path
+            || decision.question_id != expected_question
+        {
+            anyhow::bail!("project-plan decision evidence does not match the current root");
+        }
+        if decision.stage == PlanningStage::Atomize {
+            let review_path = decision
+                .review_path
+                .as_ref()
+                .map(PathBuf::from)
+                .ok_or_else(|| anyhow::anyhow!("atomize apply requires agent review evidence"))?;
+            let review: CapabilityPlanReviewRecord =
+                serde_json::from_str(&std::fs::read_to_string(review_path)?)?;
+            validate_capability_plan_review_record(&project_root, &review)?;
+            if review.decision != CapabilityPlanReviewDecision::Accepted
+                || review.source_digest != decision.source_digest
+                || !matches!(review.reviewer_kind.as_str(), "agent" | "human")
+            {
+                anyhow::bail!(
+                    "atomize apply requires accepted policy-compliant review for the same digest"
+                );
+            }
+        }
+    }
+    let (backend_kind, repo, host) = resolve_backend(None, &project_root)?;
+    let backend = make_backend(&backend_kind, &project_root, repo, host)
+        .context("create issue backend for project-plan apply")?;
+    if decision.is_none() {
+        if manifest.stage != PlanningStage::Normalize
+            || manifest_path != capability_plan_sidecar_path(&plan_path, "manifest.json")
+        {
+            anyhow::bail!(
+                "unreviewed project-plan apply is restricted to the canonical normalize artifact"
+            );
+        }
+        let canonical_project_label = resolve_project_label(&project_root, &plan.project)
+            .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+        if plan.project_label != canonical_project_label {
+            anyhow::bail!(
+                "normalize apply evidence does not match the configured project identity"
+            );
+        }
+        let mut inventory = backend.list(&IssueFilter::default()).await?;
+        sort_work_items_for_planning(&mut inventory);
+        let mut canonical_plan = build_project_plan_for_stage(
+            &plan.project,
+            &plan.project_label,
+            &inventory,
+            PlanningStage::Normalize,
+        );
+        canonical_plan.root_id = plan.root_id.clone();
+        canonical_plan.digest = project_plan_cli_digest(&canonical_plan)?;
+        let project_issues = inventory
+            .iter()
+            .filter(|issue| {
+                issue
+                    .labels
+                    .iter()
+                    .any(|label| label == &plan.project_label)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let canonical_manifest = build_planning_transaction_manifest(
+            &canonical_plan,
+            &project_issues,
+            "aw wi plan-apply --evidence-file PLACEHOLDER --json",
+            &planning_stage_command(&plan.project, PlanningStage::Reconcile, &plan.root_id),
+        );
+        if plan != canonical_plan || manifest != canonical_manifest {
+            anyhow::bail!(
+                "normalize apply evidence does not match the canonical live-inventory projection"
+            );
+        }
+    }
+    let checkpoint_path =
+        planning_transaction_checkpoint_path(&plan_path, manifest.stage, &source_digest);
+    let result = apply_planning_transaction(
+        backend.as_ref(),
+        &manifest,
+        &source_digest,
+        &checkpoint_path,
+    )
+    .await?;
+    print_project_plan_envelope(
+        args.json,
+        &plan,
+        &plan_path,
+        "applied",
+        "continue",
+        &result.next,
+        "eligible stage manifest applied; continue the same project-plan root",
+        Some(checkpoint_path),
+        None,
+        false,
+        false,
+    )
+}
+
+fn plan_path_for_manifest(manifest_path: &Path) -> Result<PathBuf> {
+    let name = manifest_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow::anyhow!("planning manifest path has no UTF-8 filename"))?;
+    let stem = name
+        .strip_suffix(".manifest.json")
+        .ok_or_else(|| anyhow::anyhow!("planning manifest must end with `.manifest.json`"))?;
+    Ok(manifest_path.with_file_name(format!("{stem}.json")))
 }
 
 fn validate_capability_plan_review_record(
@@ -4444,7 +5219,13 @@ fn prepare_inventory_plan_review(
     let plan_body = std::fs::read_to_string(plan_path)
         .with_context(|| format!("failed to read planning artifact {}", plan_path.display()))?;
     let stable_payload_path = capability_plan_sidecar_path(plan_path, "review-payload.json");
-    let apply_command = capability_plan_review_command(&stable_payload_path);
+    let review_backing = inventory_plan_review_backing(project_root, project);
+    let review_command = if review_backing == "human" && kind == "project_plan" {
+        project_plan_human_review_command(&stable_payload_path, HumanReviewChoice::Revise)
+    } else {
+        capability_plan_review_command(&stable_payload_path)
+    };
+    let apply_command = review_command.clone();
     let manifest_path = capability_plan_sidecar_path(plan_path, "manifest.json");
     let manifest_body = if kind == "project_plan" {
         let plan: ProjectPlan = serde_json::from_str(&plan_body)
@@ -4488,8 +5269,11 @@ fn prepare_inventory_plan_review(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let review_command = capability_plan_review_command(&payload_path);
-    let review_backing = inventory_plan_review_backing(project_root, project);
+    let review_command = if kind == "project_plan" {
+        review_command
+    } else {
+        capability_plan_review_command(&payload_path)
+    };
     let pending_record = CapabilityPlanReviewRecord {
         version: CAPABILITY_PLAN_REVIEW_VERSION,
         kind: kind.to_string(),
@@ -4585,6 +5369,43 @@ fn capability_plan_sidecar_path(plan_path: &Path, extension: &str) -> PathBuf {
     plan_path.with_extension(extension)
 }
 
+fn write_project_plan_decision_payload(
+    plan: &ProjectPlan,
+    plan_path: &Path,
+    manifest_path: &Path,
+    source_digest: &str,
+    review_path: Option<&Path>,
+) -> Result<PathBuf> {
+    let question_id = format!("{}:{}:decision", plan.root_id, plan.stage.as_str());
+    let payload_path = capability_plan_sidecar_path(plan_path, "decision.json");
+    let record = ProjectPlanDecisionRecord {
+        version: 1,
+        project: plan.project.clone(),
+        root_id: plan.root_id.clone(),
+        stage: plan.stage,
+        plan_path: plan_path.display().to_string(),
+        manifest_path: manifest_path.display().to_string(),
+        source_digest: source_digest.to_string(),
+        question_id,
+        choice: String::new(),
+        review_path: review_path.map(|path| path.display().to_string()),
+    };
+    write_file_atomically(
+        &payload_path,
+        &format!("{}\n", serde_json::to_string_pretty(&record)?),
+    )?;
+    Ok(payload_path)
+}
+
+fn project_plan_answer_command(payload_path: &Path, question_id: &str, choice: &str) -> String {
+    format!(
+        "aw wi plan-answer --payload {} --question {} --choice {} --json",
+        shell_quote(&payload_path.display().to_string()),
+        shell_quote(question_id),
+        shell_quote(choice)
+    )
+}
+
 fn capability_plan_review_payload_path(
     project_root: &Path,
     project: &str,
@@ -4600,6 +5421,17 @@ fn capability_plan_review_payload_path(
 fn capability_plan_review_command(payload_path: &Path) -> String {
     format!(
         "aw wi plan-review --evidence-file {}",
+        shell_quote(&payload_path.display().to_string())
+    )
+}
+
+fn project_plan_human_review_command(payload_path: &Path, choice: HumanReviewChoice) -> String {
+    let choice = match choice {
+        HumanReviewChoice::Approve => "approve",
+        HumanReviewChoice::Revise => "revise",
+    };
+    format!(
+        "aw wi plan-review --evidence-file {} --human-choice {choice} --json",
         shell_quote(&payload_path.display().to_string())
     )
 }
@@ -4641,15 +5473,12 @@ fn shell_quote(value: &str) -> String {
 
 async fn run_epicize(args: EpicizeArgs) -> Result<()> {
     run_project_plan(ProjectPlanInvocation {
-        invoked_as: "epicize",
         project: args.project,
-        title: args.title,
+        stage: PlanningStage::Atomize,
+        root: None,
         output: args.output,
         json: args.json,
         repo: args.repo,
-        compatibility_note: Some(
-            "epicize delegates to the canonical two-stage project plan".to_string(),
-        ),
     })
     .await
 }
@@ -4671,30 +5500,24 @@ fn load_markdown_capability_document(
 
 async fn run_atomize(args: AtomizeArgs) -> Result<()> {
     run_project_plan(ProjectPlanInvocation {
-        invoked_as: "atomize",
         project: args.project,
-        title: args.title,
+        stage: PlanningStage::Atomize,
+        root: None,
         output: args.output,
         json: args.json,
         repo: args.repo,
-        compatibility_note: Some(
-            "atomize delegates to the canonical two-stage project plan".to_string(),
-        ),
     })
     .await
 }
 
 async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
     run_project_plan(ProjectPlanInvocation {
-        invoked_as: "prioritize",
         project: args.project,
-        title: args.title,
+        stage: PlanningStage::Reconcile,
+        root: None,
         output: args.output,
         json: args.json,
         repo: args.repo,
-        compatibility_note: Some(
-            "prioritize delegates to the canonical two-stage project plan".to_string(),
-        ),
     })
     .await
 }
@@ -9541,5 +10364,4 @@ label = "app:agentic-workflow"
         assert_eq!(PriorityFilter::P3.as_label_suffix(), "p3");
     }
 }
-
 // CODEGEN-END
