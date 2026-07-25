@@ -37,6 +37,7 @@ fn spec(replicas: u32) -> TapeSpec {
         bootstrap_seed_uri: None,
         body_limit_bytes: None,
         topics: None,
+        backup: None,
     }
 }
 
@@ -393,6 +394,211 @@ fn bootstrap_seed_uri_wiring_is_opt_in() {
         .expect("bootstrap seed env when CR requests one")
         .1;
     assert_eq!(seed["value"], "s3://tape-backups/orders/snapshot-42.json");
+}
+
+/// #2574 — `spec.backup` is the declarative way to schedule `tape backup`.
+///
+/// Unset renders no CronJob, so adding the field changes nothing about the
+/// workload for CRs that do not ask for a backup. Set, it renders a CronJob
+/// that invokes the same CLI verb an operator would run by hand — with the
+/// instance's own image and client Service URL, which is the whole reason to
+/// render it rather than hand-author one alongside the CR.
+#[test]
+fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
+    use tape::operator::TapeBackupSpec;
+
+    let plain = render(&Tape::new("tape", spec(3)));
+    assert!(
+        plain.iter().all(|o| o["kind"] != "CronJob"),
+        "no backup policy must render no CronJob"
+    );
+
+    let mut configured = spec(3);
+    configured.backup = Some(TapeBackupSpec {
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "17 3 * * *".into(),
+            destination: "gs://tape-backups/orders".into(),
+            retention_secs: Some(604_800),
+        },
+        admin_token_secret: Some("tape-backup-token".into()),
+    });
+    let objects = render(&Tape::new("tape", configured));
+
+    let cj = of_kind(&objects, "CronJob");
+    assert_eq!(cj["metadata"]["name"], "tape-backup");
+    assert_eq!(cj["spec"]["schedule"], "17 3 * * *");
+
+    let pod = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+    let container = &pod["containers"][0];
+    assert_eq!(container["command"][0], "tape");
+    assert_eq!(
+        container["image"], "tape:test",
+        "the runner uses the instance's image, so it cannot drift from it"
+    );
+
+    let args: Vec<&str> = container["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(args[0], "backup");
+    assert!(args.contains(&"--dest"));
+    assert!(args.contains(&"gs://tape-backups/orders"));
+    assert!(args.contains(&"--retention-secs"));
+    assert!(args.contains(&"604800"));
+    // The URL must address this instance's client Service on the client port,
+    // not the headless Service and not the raft port.
+    assert!(
+        args.contains(&"http://tape.default.svc.cluster.local:7137"),
+        "backup pulls from the instance's own client Service; args were {args:?}"
+    );
+
+    // Runs under the dedicated backup identity, not the serving one: only this
+    // pod needs cloud object-store credentials.
+    assert_eq!(pod["serviceAccountName"], "tape-backup");
+
+    // The admin token is projected as the env var `tape backup --token`
+    // already falls back to; `/admin/backup` needs `admin` on `*`.
+    let token = container["env"]
+        .as_array()
+        .expect("env array")
+        .iter()
+        .find(|e| e["name"] == "TAPE_BACKUP_TOKEN")
+        .expect("admin token env when the CR names a secret");
+    assert_eq!(token["valueFrom"]["secretKeyRef"]["name"], "tape-backup-token");
+    assert_eq!(token["valueFrom"]["secretKeyRef"]["key"], "token");
+}
+
+/// #2574 — the `<name>-backup` ServiceAccount is rendered whether or not a
+/// backup is currently scheduled (lumen's #808 pattern).
+///
+/// It is the binding target for cloud IAM — GKE Workload Identity annotates
+/// it — so an identity whose lifecycle followed the schedule would drop that
+/// binding every time the policy was toggled off. The workload ServiceAccount
+/// must still come first in the render order: `of_kind` takes the first match,
+/// and the pre-existing identity assertion resolves through it.
+#[test]
+fn backup_service_account_exists_independently_of_the_schedule() {
+    use tape::operator::TapeBackupSpec;
+
+    let names = |objs: &[Value]| -> Vec<String> {
+        objs.iter()
+            .filter(|o| o["kind"] == "ServiceAccount")
+            .map(|o| o["metadata"]["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    assert_eq!(
+        names(&render(&Tape::new("tape", spec(3)))),
+        vec!["tape".to_string(), "tape-backup".to_string()],
+        "the backup identity is rendered even with no schedule configured"
+    );
+
+    let mut configured = spec(3);
+    configured.backup = Some(TapeBackupSpec {
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "0 4 * * *".into(),
+            destination: "gs://tape-backups/orders".into(),
+            retention_secs: None,
+        },
+        admin_token_secret: None,
+    });
+    let objects = render(&Tape::new("tape", configured));
+    assert_eq!(
+        names(&objects),
+        vec!["tape".to_string(), "tape-backup".to_string()],
+        "configuring a schedule must not render a second copy of the identity"
+    );
+
+    let sa = objects
+        .iter()
+        .find(|o| o["kind"] == "ServiceAccount" && o["metadata"]["name"] == "tape-backup")
+        .expect("backup ServiceAccount");
+    assert_eq!(
+        sa["metadata"]["labels"]["app.kubernetes.io/component"], "backup",
+        "the backup identity must not be labelled as a serving pod"
+    );
+}
+
+/// #2574 — `retentionSecs` and `adminTokenSecret` are both optional, and
+/// omitting them must not emit an empty flag or an unresolvable env var.
+#[test]
+fn backup_cron_job_omits_unset_retention_and_token() {
+    use tape::operator::TapeBackupSpec;
+
+    let mut minimal = spec(1);
+    minimal.backup = Some(TapeBackupSpec {
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "0 * * * *".into(),
+            destination: "file:///var/backups/tape".into(),
+            retention_secs: None,
+        },
+        admin_token_secret: None,
+    });
+    let objects = render(&Tape::new("tape", minimal));
+    let container =
+        &of_kind(&objects, "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+            ["containers"][0];
+
+    let args: Vec<&str> = container["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(
+        !args.contains(&"--retention-secs"),
+        "omitted retention must keep every object, not pass an empty flag"
+    );
+    assert!(
+        container["env"].as_array().expect("env array").is_empty(),
+        "an auth:off instance needs no admin token"
+    );
+}
+
+/// #2574 — the committed CRD carries the `backup` properties, and has not
+/// drifted from the generator at all.
+///
+/// Asserting on the generator alone would pass while the checked-in
+/// `k8s/operator/crd.yaml` still pruned `spec.backup` in-cluster — a
+/// structural schema drops properties it does not declare. That is not
+/// hypothetical: this test's byte-equality half caught the committed file
+/// still missing `spec.topics` from #2557, which had never been regenerated.
+/// The acceptance harness renders the CRD from the binary
+/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`), so the
+/// stale file went unnoticed there.
+#[test]
+fn generated_crd_carries_the_backup_properties() {
+    let yaml = crd_yaml();
+    let committed = include_str!("../k8s/operator/crd.yaml");
+
+    for field in [
+        "backup",
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+    ] {
+        assert!(
+            yaml.contains(field),
+            "generated CRD schema is missing `{field}`"
+        );
+        assert!(
+            committed.contains(field),
+            "committed CRD is missing `{field}` — the API server would prune it"
+        );
+    }
+
+    // Deliberately `assert!`, not `assert_eq!`: the two documents are ~8 KB
+    // each and dumping both escaped into the failure output buries the one
+    // line that matters.
+    assert!(
+        committed.trim_end() == yaml.trim_end(),
+        "apps/tape/k8s/operator/crd.yaml has drifted from the generator — \
+         regenerate it with `cargo run -p tape --bin tape --features operator \
+         -- k8s crd render --out apps/tape/k8s/operator/crd.yaml`"
+    );
 }
 
 /// R7 — readiness target + status phases (Pending / Reconciling / Ready).

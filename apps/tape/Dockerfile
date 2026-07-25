@@ -6,10 +6,17 @@
 # Keep the compiler and runtime on the same Debian ABI baseline. The floating
 # `rust:1` tag moved ahead of bookworm and produced a binary the bookworm
 # runtime could not load (GLIBC_2.38+).
+#
+# `backup` is enabled for the same reason as `operator` (#2574): the operator
+# renders a CronJob that runs `tape backup` from THIS image, and a build
+# without the feature answers that with the "compiled without backup support"
+# bail. The release image already carried it (the published binary is built
+# with `operator backup self-update issue`) — this is the from-source build
+# catching up, and matches defer's `--features operator,backup`.
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY --chown=root:root . .
-RUN cargo build --release -p tape --bin tape --features operator
+RUN cargo build --release -p tape --bin tape --features operator,backup
 
 FROM debian:bookworm-slim
 # Debian already reserves the `tape` group. Reuse it explicitly rather than

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="#1809" reason="Pure render (no I/O), composing shared service_k8s::render::ServiceStatefulSet with Tape-owned image, ports, journal PVC, TAPE_* environment names, auth Secret policy, and typed workload defaults; ServiceAccount, headless/client Services, and PDB remain shared helper outputs."
+// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="#1809" reason="Pure render (no I/O), composing shared service_k8s::render::ServiceStatefulSet with Tape-owned image, ports, journal PVC, TAPE_* environment names, auth Secret policy, and typed workload defaults; ServiceAccount, headless/client Services, PDB, and the opt-in spec.backup CronJob remain shared helper outputs; the always-rendered <name>-backup identity is hand-rolled JSON."
 //! Pure rendering: a [`Tape`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
@@ -29,6 +29,10 @@ const KIND: &str = "Tape";
 const CLIENT_PORT: i32 = 7137;
 const RAFT_PORT: i32 = 7138;
 const COMPONENT: &str = "server";
+/// Component label for the scheduled-backup CronJob (#2574), kept distinct
+/// from `server` so its pods are never selected by the serving Services nor
+/// counted against the PDB.
+const BACKUP_COMPONENT: &str = "backup";
 const TOKEN_REGISTRY_VOLUME: &str = "tape-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/tape";
@@ -96,14 +100,14 @@ fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>>
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
 /// Render every child object for `tape`, in dependency order (identity first,
-/// then the workload + its Services + PDB).
+/// then the workload + its Services + PDB, then the optional backup CronJob).
 pub fn render(tape: &Tape) -> Vec<Value> {
     let name = instance(tape);
     let ns = namespace(tape);
     let cx = ctx(tape, &name, &ns);
     let headless = format!("{name}-headless");
 
-    vec![
+    let mut objects = vec![
         render::service_account(&cx, COMPONENT),
         statefulset(tape, &cx, &headless),
         render::headless_service_with_ports(
@@ -119,7 +123,107 @@ pub fn render(tape: &Tape) -> Vec<Value> {
         // Keep a raft quorum during voluntary disruptions: at most one tape
         // pod may be unavailable at a time.
         render::pdb(&cx, &name, COMPONENT, 1),
-    ]
+        backup_service_account(&cx),
+    ];
+    if let Some(cron) = backup_cron_job(tape, &cx) {
+        objects.push(cron);
+    }
+    objects
+}
+
+/// A stable, per-instance identity for scheduled backup jobs (lumen's #808
+/// pattern, adopted for #2574).
+///
+/// Rendered even when `spec.backup` is unset. The backup runner writes to a
+/// cloud object store, so its ServiceAccount is the binding target for cloud
+/// IAM — GKE Workload Identity annotates it, and the GCP acceptance harness
+/// already pre-creates `<name>-backup` for exactly that
+/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`). An
+/// identity that blinked in and out with the schedule would drop that binding
+/// every time the policy was toggled off, so its lifecycle is deliberately
+/// decoupled from the policy's. Like every other child it is owned by the
+/// `Tape` CR and garbage collected with it; the cloud annotation is set by a
+/// different field manager and survives reconcile.
+///
+/// It is emitted after the PDB so the workload ServiceAccount stays the first
+/// `ServiceAccount` in the render order.
+fn backup_service_account(cx: &RenderCtx) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": cx.meta(&format!("{}-backup", cx.name), BACKUP_COMPONENT),
+    })
+}
+
+/// The optional scheduled-backup CronJob (#2574): `tape backup` run on the
+/// CR's schedule against this instance's own client Service.
+///
+/// Returns `None` when `spec.backup` is unset, which is the default — a CR
+/// that declares no backup renders exactly the object set it rendered before
+/// this field existed.
+///
+/// The container reuses the instance's image so the backup runner tracks the
+/// CR rather than drifting from it, which is the whole reason to render this
+/// instead of hand-authoring a CronJob alongside. It runs under the dedicated
+/// [`backup_service_account`], not the serving one: only this pod needs cloud
+/// object-store credentials.
+///
+/// Auth: when `adminTokenSecret` is set the token is projected as
+/// `TAPE_BACKUP_TOKEN`, the env var `tape backup --token` already falls back
+/// to. `/admin/backup` requires `admin` on `*`, so an instance running
+/// `auth: required` without this field will render a CronJob whose runs fail
+/// 401 — the CR is accepted either way because `auth: off` instances
+/// legitimately need no token.
+fn backup_cron_job(tape: &Tape, cx: &RenderCtx) -> Option<Value> {
+    let backup = tape.spec.backup.as_ref()?;
+    let cron_name = format!("{}-backup", cx.name);
+
+    let mut args = vec![
+        "backup".to_string(),
+        "--url".to_string(),
+        format!(
+            "http://{}.{}.svc.cluster.local:{CLIENT_PORT}",
+            cx.name, cx.ns
+        ),
+        "--dest".to_string(),
+        backup.destination.clone(),
+    ];
+    if let Some(seconds) = backup.retention_secs {
+        args.extend(["--retention-secs".to_string(), seconds.to_string()]);
+    }
+
+    let env = match &backup.admin_token_secret {
+        Some(secret) => vec![json!({
+            "name": "TAPE_BACKUP_TOKEN",
+            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+        })],
+        None => vec![],
+    };
+
+    Some(render::cron_job(render::CronJob {
+        cx,
+        name: &cron_name,
+        component: BACKUP_COMPONENT,
+        schedule: &backup.schedule,
+        image: &tape.spec.cluster.image,
+        image_pull_policy: tape
+            .spec
+            .cluster
+            .image_pull_policy
+            .as_deref()
+            .unwrap_or("IfNotPresent"),
+        command: vec!["tape".to_string()],
+        args,
+        env,
+        env_from: vec![],
+        volumes: vec![],
+        volume_mounts: vec![],
+        service_account_name: Some(&cron_name),
+        cpu: "100m",
+        memory: "128Mi",
+        successful_jobs_history_limit: 3,
+        failed_jobs_history_limit: 3,
+    }))
 }
 // </HANDWRITE>
 

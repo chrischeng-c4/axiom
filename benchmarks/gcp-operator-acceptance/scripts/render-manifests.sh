@@ -283,11 +283,21 @@ metadata:
     iam.gke.io/gcp-service-account: ${BACKUP_GSA_EMAIL}
 EOF
 
-# Unlike Lumen/Sift, the Tape CRD has no CR-native `backup` field for the
-# operator to reconcile into a CronJob (apps/tape/src/operator/crd.rs — run
-# 0724154839 proved it: a /spec/backup patch is rejected by strict decoding).
-# Hand-roll the same disposable-run shape directly against the verified
-# `tape backup --url ... --dest ... --retention-secs ...` CLI verb.
+# The Tape CRD DOES now carry a CR-native `backup` field (#2574), matching
+# Lumen/Sift — the earlier note here ("run 0724154839: a /spec/backup patch is
+# rejected by strict decoding") described the pre-#2574 CRD and is no longer
+# true. The `tape-backup` ServiceAccount below is now also rendered by the
+# operator; it stays here because this copy carries the Workload Identity
+# annotation, which survives reconcile (a different field manager owns it).
+#
+# The CronJob itself is still hand-rolled, for one reason: the shared
+# `service_k8s::render::cron_job` helper has no `suspend` knob, so a
+# CR-native CronJob would be UNSUSPENDED. An unsuspended `*/5` schedule kept
+# firing against the torn-down 1x1 instance during the cold-restore rebuild
+# (run 0723080156) — see the `suspend: true` note below. Switching this to
+# `/spec/backup` needs that knob first and a GKE run to re-prove the
+# cold-restore phase; it is deliberately not a drive-by edit.
+#
 # ENTRYPOINT is already the `tape` binary (images/Dockerfile.tape), so
 # `args` alone selects the subcommand — no `command` override.
 cat > "$MANIFEST_DIR/tape/instance/backup-cronjob.yaml" <<EOF

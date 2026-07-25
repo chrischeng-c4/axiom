@@ -34,6 +34,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The optional scheduled-backup CronJob rendered from spec.backup (#2574).
+  # Without this the operator renders the object and then fails to apply it.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Serving Service/ServiceAccount.
   - apiGroups: [""]
     resources: ["services", "serviceaccounts"]

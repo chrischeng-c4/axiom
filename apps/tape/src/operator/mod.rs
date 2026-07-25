@@ -16,7 +16,7 @@ pub mod crd;
 pub mod reconcile;
 pub mod render;
 
-pub use crd::{Tape, TapeSpec, TapeStatus};
+pub use crd::{Tape, TapeBackupSpec, TapeSpec, TapeStatus};
 pub use reconcile::run;
 
 /// The `Tape` CustomResourceDefinition as YAML, for `kubectl apply`.

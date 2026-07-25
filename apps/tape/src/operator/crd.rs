@@ -126,6 +126,51 @@ pub struct TapeSpec {
     /// anything (deletion lifecycle is #2549's decision). Cross-ref: #2557.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topics: Option<Vec<TapeTopicSpec>>,
+
+    /// Optional scheduled backup. When set, the operator renders a CronJob
+    /// that runs `tape backup` against this instance's client Service on the
+    /// declared schedule (#2574). Unset renders no CronJob — the previous
+    /// behavior, and still the default.
+    ///
+    /// The `tape backup` CLI verb and the `/admin/backup` endpoint it pulls
+    /// from both already existed (#1329); what was missing was any
+    /// declarative way to schedule them, so the only route was running the
+    /// verb by hand or hand-authoring a CronJob outside the operator — which
+    /// then did not track the CR's image, ServiceAccount, or auth wiring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<TapeBackupSpec>,
+}
+
+/// Scheduled-backup projection: the shared
+/// [`service_backup::ScheduledBackupPolicy`] (`schedule`, `destination`,
+/// `retentionSecs`) plus tape's own admin-token wiring.
+///
+/// The policy is `#[serde(flatten)]`ed rather than nested so the CRD carries
+/// the shared fields directly and every service operator that schedules a
+/// backup keeps one schema for them — defer's `DeferBackupSpec` is the same
+/// shape. A structural CRD schema cannot represent the runtime
+/// `BackupDestination` enum, which is why the flat `destination` URI string
+/// is the projected form.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TapeBackupSpec {
+    /// `schedule` (cron expression), `destination` (`file://` / `s3://` /
+    /// `gs://` URI), and optional `retentionSecs`.
+    #[serde(flatten)]
+    pub policy: service_backup::ScheduledBackupPolicy,
+
+    /// Name of a Secret holding a bearer token with `admin` on `*`, projected
+    /// into the CronJob as `TAPE_BACKUP_TOKEN` (key `token`). Required when
+    /// the instance runs `auth: required`; omit for `auth: off`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_token_secret: Option<String>,
+}
+
+impl std::ops::Deref for TapeBackupSpec {
+    type Target = service_backup::ScheduledBackupPolicy;
+    fn deref(&self) -> &Self::Target {
+        &self.policy
+    }
 }
 
 /// Topic declaration with optional subscriptions.
