@@ -45,6 +45,18 @@ spec:
           annotations:
             summary: "tape pod restarting repeatedly"
             runbook: "#2485: Differentiate seed-failure restarts by checking if `spec.bootstrapSeedUri` is set on the CR and examining the pod log for structured decision fields: (1) `decision=\"seeded\"` = seed succeeded, look for other causes (probe failures, image pull, resource limits); (2) `decision=\"skipped_existing_state\"` = seed was skipped (PVC already had data), pod is healthy; (3) NEITHER line present before a crash = seed fetch/decode failed (bad URI, IAM, corrupt object) — restore logs show which. #2468: the one-shot seed cleared bit is separate. See docs/deployment-handoff.md Cold restore runbook."
+        - alert: TapeStorageDegraded
+          # `max_over_time` on purpose: the node re-probes every 30s and clears
+          # the gauge itself, so a volume that keeps filling and draining can
+          # read 0 at every scrape while rejecting writes between them. The
+          # window trades a ~5m tail after real recovery for not missing that.
+          expr: |
+            max_over_time(tape_storage_degraded{app="tape",role="server"}[5m]) > 0
+          for: 2m
+          labels: { severity: critical, app: tape, role: server }
+          annotations:
+            summary: "tape node in ENOSPC degraded read-only mode"
+            runbook: "#2573: The node hit ENOSPC on its journal persist path and latched degraded read-only mode — mutating requests answer 507 `storage_full`, reads keep serving. Check `tape_storage_full_errors_total`: a rising counter with the gauge back at 0 means the volume is flapping in and out of full, not that it recovered. Remedy is capacity — free objects via retention or expand the PVC on a resizable StorageClass. No restart is needed: the pod re-probes the store directory every `TAPE_STORAGE_FULL_REPROBE_SECS` (default 30s) and clears the flag itself. If the gauge stays 1 after the volume has room, read the pod log for the re-probe warning — the store directory can be unwritable for reasons other than capacity (read-only remount, permissions)."
         - alert: TapeSubscriptionLagGrowing
           expr: |
             increase(tape_subscription_lag{app="tape",role="server"}[15m]) > 0

@@ -964,7 +964,12 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
+    let probe_dir = store
+        .as_deref()
+        .and_then(|path| path.parent())
+        .map(std::path::Path::to_path_buf);
     let mut state = tape::server::AppState::with_auth(journal, store, auth, args.body_limit_bytes);
+    spawn_storage_full_reprobe(state.metrics(), probe_dir);
     if let Some(path) = args.token_registry_file.as_deref() {
         // `AppState` owns this exact verifier instance, so a Secret/CSI file
         // replacement becomes visible to the live data-plane middleware
@@ -1143,6 +1148,63 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         serve.await.context("raft peer listener task panicked")??;
     }
     Ok(())
+}
+
+/// #2573: periodic ENOSPC re-probe — the automatic exit from degraded
+/// read-only mode.
+///
+/// While this node is degraded (`TapeMetrics::is_storage_degraded`, set by
+/// `AppState::persist` when the journal write reported
+/// `io::ErrorKind::StorageFull`), try a tiny write into the journal store's
+/// directory every `TAPE_STORAGE_FULL_REPROBE_SECS` (default 30s) and clear
+/// the sticky flag the first time one succeeds. That is what lets a PVC that
+/// was expanded or freed up recover the node WITHOUT a pod restart — an
+/// operator can of course still restart it, since the flag is process-local
+/// and a fresh process starts clear.
+///
+/// Only probes while degraded, so a healthy node pays nothing beyond one
+/// timer wakeup. `probe_dir` is `None` when there is no journal store at all
+/// (replica mode, or a `--store`-less process): with no durable write path
+/// there is nothing to degrade, so the task is simply never spawned.
+fn spawn_storage_full_reprobe(
+    metrics: std::sync::Arc<tape::metrics::TapeMetrics>,
+    probe_dir: Option<PathBuf>,
+) {
+    let Some(dir) = probe_dir else {
+        return;
+    };
+    let reprobe_secs: u64 = std::env::var("TAPE_STORAGE_FULL_REPROBE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(30);
+    let probe_path = dir.join(".storage_full_probe");
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(reprobe_secs));
+        ticker.tick().await; // discard the immediate first fire
+        loop {
+            ticker.tick().await;
+            if !metrics.is_storage_degraded() {
+                continue;
+            }
+            match tokio::fs::write(&probe_path, b"ok").await {
+                Ok(()) => {
+                    metrics.clear_storage_degraded();
+                    tracing::info!(
+                        path = %probe_path.display(),
+                        "storage re-probe write succeeded; leaving degraded read-only mode"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        path = %probe_path.display(),
+                        "storage re-probe still failing; staying in degraded read-only mode"
+                    );
+                }
+            }
+        }
+    });
 }
 
 // <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">

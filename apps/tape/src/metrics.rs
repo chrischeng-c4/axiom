@@ -15,7 +15,7 @@ use std::time::Instant;
 use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use metrics_prometheus::{Latency, Sample};
+use metrics_prometheus::{Counter, Gauge, Latency, Sample};
 
 /// Per-op request metrics for the tape data plane. One [`Latency`]
 /// (count + latency-ms sum) per op family; `count` doubles as the request
@@ -28,11 +28,52 @@ pub struct TapeMetrics {
     pub checkpoint_put: Latency,
     /// Everything else on the data plane.
     pub other: Latency,
+    /// #2573: `1` while this node is in ENOSPC degraded read-only mode (the
+    /// journal persist path hit `io::ErrorKind::StorageFull`), `0` otherwise.
+    /// Sticky: stays `1` until the periodic re-probe
+    /// (`TAPE_STORAGE_FULL_REPROBE_SECS`, see `src/bin/tape.rs`) confirms the
+    /// store directory accepts a write again, or the process restarts.
+    /// `crate::server::enforce_storage_writable` reads this to fast-fail
+    /// mutating handlers without touching the durable path;
+    /// `operator::render::prometheus_rule`'s `TapeStorageDegraded` alert reads
+    /// the published `tape_storage_degraded` series.
+    pub storage_degraded: Gauge,
+    /// #2573: total genuine ENOSPC hits observed on the journal persist path,
+    /// monotonic across the process lifetime (never reset when
+    /// `storage_degraded` clears) — see [`TapeMetrics::mark_storage_degraded`].
+    /// A node that flaps in and out of degraded mode is invisible in the gauge
+    /// alone; this counter is what makes that visible.
+    pub storage_full_errors_total: Counter,
 }
 
 impl TapeMetrics {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// #2573: flip into ENOSPC degraded read-only mode and count the hit.
+    ///
+    /// Called by [`crate::server::AppState::persist`] — the single durable
+    /// write path a serving tape node has — when and only when the failure
+    /// reports `io::ErrorKind::StorageFull`. Any other persist failure stays a
+    /// plain `500`: retrying a transient I/O error can succeed, retrying
+    /// against a full disk cannot, and conflating the two is what makes
+    /// clients back off against a condition backoff never clears.
+    pub fn mark_storage_degraded(&self) {
+        self.storage_degraded.set(1);
+        self.storage_full_errors_total.incr();
+    }
+
+    /// #2573: leave degraded read-only mode after a re-probe write succeeded.
+    /// Deliberately does NOT touch `storage_full_errors_total` — the counter
+    /// records that the node was once full, which stays true.
+    pub fn clear_storage_degraded(&self) {
+        self.storage_degraded.set(0);
+    }
+
+    /// #2573: `true` while this node is in ENOSPC degraded read-only mode.
+    pub fn is_storage_degraded(&self) -> bool {
+        self.storage_degraded.get() == 1
     }
 
     /// Map a matched axum route pattern to its op family. Unknown routes
@@ -159,6 +200,19 @@ impl TapeMetrics {
                 "Count of other data-plane latency observations.",
                 self.other.count.get(),
             ),
+            Sample::new(
+                "tape_storage_degraded",
+                "gauge",
+                "1 while this node is in ENOSPC degraded read-only mode (the journal persist \
+                 path hit disk-full); mutating requests are fast-failed with 507.",
+                self.storage_degraded.get(),
+            ),
+            Sample::new(
+                "tape_storage_full_errors_total",
+                "counter",
+                "Total genuine ENOSPC hits observed on the journal persist path.",
+                self.storage_full_errors_total.get(),
+            ),
         ])
     }
 }
@@ -218,5 +272,52 @@ mod tests {
         assert!(out.contains("tape_append_requests_total 1"));
         assert!(out.contains("tape_append_latency_ms_sum 7"));
         assert!(out.contains("tape_replay_requests_total 0"));
+    }
+
+    /// #2573 — the degraded gauge is sticky across `mark`, clears only on
+    /// `clear`, and the error counter is monotonic across a full flap cycle.
+    /// The counter surviving `clear_storage_degraded` is the point: a node
+    /// that fills up and re-probes clean every 30s looks healthy in the gauge
+    /// at every scrape, and only the counter shows it.
+    #[test]
+    fn storage_degraded_is_sticky_and_the_error_counter_is_monotonic() {
+        let m = TapeMetrics::new();
+        assert!(!m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 0);
+
+        m.mark_storage_degraded();
+        assert!(m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 1);
+
+        // Sticky: a second hit while already degraded stays degraded and
+        // counts again.
+        m.mark_storage_degraded();
+        assert!(m.is_storage_degraded());
+        assert_eq!(m.storage_full_errors_total.get(), 2);
+
+        m.clear_storage_degraded();
+        assert!(!m.is_storage_degraded());
+        assert_eq!(
+            m.storage_full_errors_total.get(),
+            2,
+            "clearing the gauge must not rewrite history: the node WAS full twice"
+        );
+    }
+
+    /// #2573 — both series are exposed so the `TapeStorageDegraded` alert and
+    /// the flap counter have something to select on.
+    #[test]
+    fn render_exposes_the_storage_degraded_series() {
+        let m = TapeMetrics::new();
+        let clean = m.render();
+        assert!(clean.contains("# TYPE tape_storage_degraded gauge"));
+        assert!(clean.contains("tape_storage_degraded 0"));
+        assert!(clean.contains("# TYPE tape_storage_full_errors_total counter"));
+        assert!(clean.contains("tape_storage_full_errors_total 0"));
+
+        m.mark_storage_degraded();
+        let degraded = m.render();
+        assert!(degraded.contains("tape_storage_degraded 1"));
+        assert!(degraded.contains("tape_storage_full_errors_total 1"));
     }
 }

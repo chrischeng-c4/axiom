@@ -142,6 +142,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       }
@@ -285,6 +288,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       },
@@ -383,6 +389,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       }
@@ -477,6 +486,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       }
@@ -559,6 +571,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       }
@@ -623,6 +638,9 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); reads keep serving and the node re-probes its store to recover itself"
           }
         }
       }

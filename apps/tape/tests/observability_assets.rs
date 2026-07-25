@@ -28,6 +28,8 @@ fn alert_rules_only_reference_existing_tape_latency_series() {
         "tape_append_latency_ms_count",
         "tape_replay_latency_ms_sum",
         "tape_replay_latency_ms_count",
+        // #2573 — the degraded-mode gauge `TapeMetrics::render` publishes.
+        "tape_storage_degraded",
     ] {
         assert!(rule.contains(metric), "missing real Tape metric {metric}");
     }

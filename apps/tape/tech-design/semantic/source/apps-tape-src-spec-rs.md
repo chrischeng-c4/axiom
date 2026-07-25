@@ -130,4 +130,9 @@ changes:
     section: schema
     impl_mode: hand-written
     description: "Add LLM_BACKUP_TOPICS/llm_backup_sectioned_topic(): Tape's first cli_std::llm::SectionedTopic, composing service_backup::llm::SECTIONED_TOPICS (service_backup::SUPPORTED_SCHEMES-backed) as a TopicSection::Generated section rendered via cli_std::llm::render_sectioned at call time. Kills the #2483 stale-scheme-list drift class permanently; not yet reachable from `tape llm` because that dispatch lives in src/bin/tape.rs (#2483, #2494)."
+  - path: apps/tape/src/spec.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: "Every operation that writes through the journal persist path (append, subscription create/delete, ack, checkpoint advance, retention set) declares a 507 response via mutating_schema() for the ENOSPC degraded read-only mode. 4xx stays undeclared as before: 507 is the one status whose correct client behavior differs from a generic 5xx retry, so a generated client that does not know it exists would hammer a full disk (#2573)."
 ```

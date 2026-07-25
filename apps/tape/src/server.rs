@@ -58,6 +58,15 @@ pub struct AppState {
     verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<TapeRaft>>,
     body_limit_bytes: usize,
+    /// #2573: test-only ENOSPC fault injection, armed via
+    /// [`AppState::set_inject_storage_full`]. Scoped to THIS state instance
+    /// (not a process-global flag) so parallel `cargo test` threads sharing
+    /// the same test binary never cross-contaminate — each test builds its own
+    /// `AppState` over its own tempdir. `Arc` because `AppState` is `Clone` and
+    /// the router hands a clone to every handler: arming the flag on the state
+    /// a test holds has to be visible to the state the request runs against.
+    #[cfg(test)]
+    inject_storage_full: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -75,7 +84,25 @@ impl AppState {
             verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
             body_limit_bytes,
+            #[cfg(test)]
+            inject_storage_full: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// #2573: arm/disarm the next [`AppState::persist`] call on THIS state to
+    /// fail with a synthetic `io::ErrorKind::StorageFull` instead of touching
+    /// the real file — the fault-injection seam that exercises the REAL
+    /// production path (`persist` -> [`TapeMetrics::mark_storage_degraded`] ->
+    /// [`enforce_storage_writable`] -> the `507`/`storage_full` envelope) end
+    /// to end without needing a genuinely full disk.
+    ///
+    /// A degraded mode that cannot be exercised in CI is one that will be
+    /// wrong the first time it runs for real, so the seam is deliberate rather
+    /// than a testing convenience. It is `#[cfg(test)]`, so it does not exist
+    /// in a release binary and cannot be reached from a request.
+    #[cfg(test)]
+    pub fn set_inject_storage_full(&self, on: bool) {
+        self.inject_storage_full.store(on, Ordering::SeqCst);
     }
 
     /// Build state with a resolved auth config (`--auth` /
@@ -151,16 +178,104 @@ impl AppState {
     /// re-serialized in full on every mutation, so the fsync is not the term
     /// that dominates this write.
     ///
-    /// Failures are still reported to the caller and surfaced as a 500; only
-    /// the on-disk consequence of a failure has changed.
+    /// Failures are reported to the caller. A failure that reports
+    /// [`std::io::ErrorKind::StorageFull`] additionally flips this node into
+    /// sticky degraded read-only mode (#2573) before returning, so the *next*
+    /// mutating request is fast-failed by [`enforce_storage_writable`] instead
+    /// of re-attempting a write the disk cannot accept. This is the only place
+    /// degraded mode is entered: a serving tape node has exactly one durable
+    /// write path, and it is this function.
     fn persist(&self, journal: &TapeJournal) -> std::io::Result<()> {
         let Some(path) = &self.store else {
             return Ok(());
         };
+        #[cfg(test)]
+        if self.inject_storage_full.load(Ordering::SeqCst) {
+            let injected = std::io::Error::from(std::io::ErrorKind::StorageFull);
+            self.metrics.mark_storage_degraded();
+            return Err(injected);
+        }
         let bytes = serde_json::to_vec_pretty(journal)?;
-        storage_durable::atomic_write(path, &bytes, storage_durable::FsyncPolicy::Always)
-            .map_err(flatten_atomic_write_error)
+        let result =
+            storage_durable::atomic_write(path, &bytes, storage_durable::FsyncPolicy::Always)
+                .map_err(flatten_atomic_write_error);
+        if let Err(error) = &result {
+            // #2572 preserved the ErrorKind through `atomic_write`'s context
+            // chain precisely so this discrimination is possible: a full disk
+            // is a durable condition retrying cannot clear, every other I/O
+            // failure may well be transient.
+            if error.kind() == std::io::ErrorKind::StorageFull {
+                tracing::error!(
+                    error = %error,
+                    path = %path.display(),
+                    "journal persist hit ENOSPC — entering degraded read-only mode; \
+                     mutating requests will be fast-failed with 507 until a re-probe succeeds"
+                );
+                self.metrics.mark_storage_degraded();
+            }
+        }
+        result
     }
+}
+
+/// #2573: sticky ENOSPC degraded read-only mode. Called by every mutating
+/// handler right after it has authorized the caller, and before it touches the
+/// journal — so a node that has already taken a genuine ENOSPC hit on its
+/// persist path (see [`AppState::persist`]) fast-fails each subsequent
+/// mutating request with `507 Insufficient Storage` and the machine-readable
+/// `storage_full` code, instead of re-running (and re-failing) the same write.
+/// A full disk then costs one status code per request, not one failed write.
+///
+/// Ordering is deliberate: authorization runs FIRST. Node storage state is
+/// operational information, and an unauthenticated caller has no business
+/// learning it — a caller who cannot write must see `401`/`403` whether the
+/// disk is full or not.
+///
+/// Reads are exempt by construction (they never call this) and keep serving
+/// while degraded, which is the whole point of "degraded read-only" rather
+/// than "unready": a node that cannot accept appends can still answer every
+/// replay and checkpoint read from the journal it already holds. `/readyz`
+/// stays green for the same reason.
+///
+/// In replica/HA mode this is a no-op: `store` is `None`, so `persist`
+/// no-ops, the gauge is never set, and raft-runtime owns the durable write
+/// path (and any ENOSPC handling on it) instead.
+fn enforce_storage_writable(state: &AppState) -> Result<(), ApiErr> {
+    if state.metrics.is_storage_degraded() {
+        return Err(ApiErr::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            "node is in degraded read-only mode: the journal store reported ENOSPC on its \
+             durable write path; reads keep serving. Retry once the periodic re-probe \
+             (TAPE_STORAGE_FULL_REPROBE_SECS, default 30s) clears it, or restart the pod \
+             after freeing or expanding the volume",
+        ));
+    }
+    Ok(())
+}
+
+/// #2573: render a failed [`AppState::persist`] as a response, discriminating
+/// a full disk from every other I/O failure.
+///
+/// `507 Insufficient Storage` + `storage_full` for ENOSPC — the same envelope
+/// [`enforce_storage_writable`] returns, so the request that FIRST hits a full
+/// disk and every request after it are indistinguishable to a client. `500` +
+/// `internal` for anything else, unchanged from before #2573.
+fn persist_failure(error: std::io::Error) -> Response {
+    if error.kind() == std::io::ErrorKind::StorageFull {
+        return ApiErr::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            format!("journal persist failed: local storage is full (ENOSPC): {error}"),
+        )
+        .into_response();
+    }
+    ApiErr::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal",
+        error.to_string(),
+    )
+    .into_response()
 }
 
 /// Collapse `storage_durable::atomic_write`'s `anyhow::Error` back into an
@@ -501,7 +616,10 @@ pub struct RetentionGetResponse {
     path = "/topics/{topic}/append",
     params(("topic" = String, Path, description = "Topic name")),
     request_body = AppendRequest,
-    responses((status = 200, description = "The appended event", body = TapeEvent))
+    responses(
+        (status = 200, description = "The appended event", body = TapeEvent),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
+    )
 )]
 pub async fn append(
     State(st): State<AppState>,
@@ -511,6 +629,9 @@ pub async fn append(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
         return deny.into_response();
+    }
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     let req: AppendRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -560,8 +681,7 @@ pub async fn append(
     let mut journal = st.journal.lock().expect("journal mutex poisoned");
     let event = journal.append(topic, req.key, req.payload, Some(timestamp_ms));
     if let Err(e) = st.persist(&journal) {
-        return ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
-            .into_response();
+        return persist_failure(e);
     }
     (StatusCode::OK, Json(event)).into_response()
 }
@@ -675,7 +795,8 @@ pub async fn checkpoint_get(
     request_body = CheckpointPutRequest,
     responses(
         (status = 200, description = "The advanced checkpoint", body = ConsumerCheckpoint),
-        (status = 409, description = "Stale or beyond-end checkpoint offset")
+        (status = 409, description = "Stale or beyond-end checkpoint offset"),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
     )
 )]
 pub async fn checkpoint_put(
@@ -686,6 +807,9 @@ pub async fn checkpoint_put(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
         return deny.into_response();
+    }
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     let req: CheckpointPutRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -736,8 +860,7 @@ pub async fn checkpoint_put(
     match journal.put_checkpoint(topic, consumer, req.offset) {
         Ok(checkpoint) => {
             if let Err(e) = st.persist(&journal) {
-                return ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
-                    .into_response();
+                return persist_failure(e);
             }
             (StatusCode::OK, Json(checkpoint)).into_response()
         }
@@ -755,7 +878,10 @@ pub async fn checkpoint_put(
     path = "/topics/{topic}/subscriptions",
     params(("topic" = String, Path, description = "Topic name")),
     request_body = SubscriptionCreateRequest,
-    responses((status = 201, description = "Created subscription", body = Subscription))
+    responses(
+        (status = 201, description = "Created subscription", body = Subscription),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
+    )
 )]
 pub async fn subscription_create(
     State(st): State<AppState>,
@@ -765,6 +891,9 @@ pub async fn subscription_create(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
         return deny.into_response();
+    }
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     let req: SubscriptionCreateRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -790,12 +919,7 @@ pub async fn subscription_create(
     match journal.create_subscription(topic, req.name) {
         Ok(subscription) => {
             if let Err(error) = st.persist(&journal) {
-                return ApiErr::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    error.to_string(),
-                )
-                .into_response();
+                return persist_failure(error);
             }
             (StatusCode::CREATED, Json(subscription)).into_response()
         }
@@ -865,7 +989,10 @@ pub async fn subscription_get(
         ("topic" = String, Path, description = "Topic name"),
         ("subscription" = String, Path, description = "Subscription name")
     ),
-    responses((status = 200, description = "Deleted subscription", body = Subscription))
+    responses(
+        (status = 200, description = "Deleted subscription", body = Subscription),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
+    )
 )]
 pub async fn subscription_delete(
     State(st): State<AppState>,
@@ -874,6 +1001,13 @@ pub async fn subscription_delete(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
         return deny.into_response();
+    }
+    // A delete shrinks the journal, so it is tempting to exempt it — but the
+    // persist that follows still rewrites the WHOLE journal through a temp
+    // file, which needs room for a second copy before the old one is unlinked.
+    // On a full disk a delete fails exactly like an append.
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     if let Some(raft) = st.raft() {
         return match raft.propose_subscription_delete(topic, name).await {
@@ -892,12 +1026,7 @@ pub async fn subscription_delete(
     match journal.delete_subscription(&topic, &name) {
         Ok(subscription) => {
             if let Err(error) = st.persist(&journal) {
-                return ApiErr::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    error.to_string(),
-                )
-                .into_response();
+                return persist_failure(error);
             }
             (StatusCode::OK, Json(subscription)).into_response()
         }
@@ -954,7 +1083,10 @@ pub async fn subscription_pull(
         ("subscription" = String, Path, description = "Subscription name")
     ),
     request_body = SubscriptionAckRequest,
-    responses((status = 200, description = "Explicitly advanced checkpoint", body = ConsumerCheckpoint))
+    responses(
+        (status = 200, description = "Explicitly advanced checkpoint", body = ConsumerCheckpoint),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
+    )
 )]
 pub async fn subscription_ack(
     State(st): State<AppState>,
@@ -964,6 +1096,9 @@ pub async fn subscription_ack(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
         return deny.into_response();
+    }
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     let req: SubscriptionAckRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -992,12 +1127,7 @@ pub async fn subscription_ack(
     match journal.ack_subscription(&topic, &name, req.offset) {
         Ok(checkpoint) => {
             if let Err(error) = st.persist(&journal) {
-                return ApiErr::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    error.to_string(),
-                )
-                .into_response();
+                return persist_failure(error);
             }
             (StatusCode::OK, Json(checkpoint)).into_response()
         }
@@ -1078,7 +1208,10 @@ pub async fn retention_get(
     path = "/topics/{topic}/retention",
     params(("topic" = String, Path, description = "Topic name")),
     request_body = RetentionPolicy,
-    responses((status = 200, description = "Applied policy and compaction result", body = RetentionOutcome))
+    responses(
+        (status = 200, description = "Applied policy and compaction result", body = RetentionOutcome),
+        (status = 507, description = "Node is in ENOSPC degraded read-only mode (storage_full)")
+    )
 )]
 pub async fn retention_put(
     State(st): State<AppState>,
@@ -1088,6 +1221,12 @@ pub async fn retention_put(
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Write) {
         return deny.into_response();
+    }
+    // Same reasoning as `subscription_delete`: applying retention compacts the
+    // journal, but the persist that records it still stages a full second copy
+    // first. Freeing space is not a way around a disk that is already full.
+    if let Err(full) = enforce_storage_writable(&st) {
+        return full.into_response();
     }
     let policy: RetentionPolicy = match serde_json::from_slice(&body) {
         Ok(policy) => policy,
@@ -1110,12 +1249,7 @@ pub async fn retention_put(
     let mut journal = st.journal.lock().expect("journal mutex poisoned");
     let outcome = journal.put_retention(topic, policy, now_ms);
     if let Err(error) = st.persist(&journal) {
-        return ApiErr::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            error.to_string(),
-        )
-        .into_response();
+        return persist_failure(error);
     }
     (StatusCode::OK, Json(outcome)).into_response()
 }
@@ -1531,5 +1665,171 @@ mod tests {
         );
         let reloaded: TapeJournal = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(reloaded.replay("orders", None, None, None).len(), 1);
+    }
+
+    /// #2573 AC1-AC3 — the whole degraded-mode contract in one journey: the
+    /// first ENOSPC answers a typed 507 and latches degraded mode, every
+    /// later mutation is fast-failed *before* the journal is touched, and
+    /// reads keep serving throughout.
+    ///
+    /// The ENOSPC itself comes from the `#[cfg(test)]` injection seam rather
+    /// than a real full disk: filling a tmpfs from a unit test is neither
+    /// hermetic nor portable, and what is under test is the reaction to
+    /// `io::ErrorKind::StorageFull`, not the kernel's ability to produce it.
+    /// #2572 is what makes the seam faithful — it preserves the ErrorKind
+    /// through `atomic_write`'s context chain, so the real path reaches this
+    /// same branch with the same kind.
+    #[tokio::test]
+    async fn enospc_latches_degraded_mode_fast_fails_mutations_and_keeps_reads_serving() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.json");
+        let state = state_with_store(&path, "orders");
+        let app = router(state.clone());
+
+        // Baseline: a healthy node appends and is not degraded.
+        let healthy = post_json(
+            app.clone(),
+            "/topics/orders/append",
+            &serde_json::json!({ "payload": { "n": 2 } }),
+        )
+        .await;
+        assert_eq!(healthy.0, StatusCode::OK);
+        assert!(!state.metrics.is_storage_degraded());
+
+        // AC1: the persist that hits ENOSPC answers 507 with the typed
+        // `storage_full` kind — not a generic 500 a client would retry into.
+        state.set_inject_storage_full(true);
+        let first = post_json(
+            app.clone(),
+            "/topics/orders/append",
+            &serde_json::json!({ "payload": { "n": 3 } }),
+        )
+        .await;
+        assert_eq!(first.0, StatusCode::INSUFFICIENT_STORAGE);
+        assert!(
+            first.1.contains("storage_full"),
+            "the error kind must be typed, got: {}",
+            first.1
+        );
+        assert!(state.metrics.is_storage_degraded(), "the flag is sticky");
+        assert_eq!(state.metrics.storage_full_errors_total.get(), 1);
+
+        // AC2: further mutations short-circuit at the gate. The event count
+        // staying put is the proof they never reached the journal — a gate
+        // that ran after the mutation would leave the in-memory journal
+        // drifting ahead of the durable one on every rejected request.
+        let events_after_first_failure = state
+            .journal
+            .lock()
+            .unwrap()
+            .replay("orders", None, None, None)
+            .len();
+        for (label, response) in [
+            (
+                "append",
+                post_json(
+                    app.clone(),
+                    "/topics/orders/append",
+                    &serde_json::json!({ "payload": { "n": 4 } }),
+                )
+                .await,
+            ),
+            (
+                "checkpoint advance",
+                put_json(
+                    app.clone(),
+                    "/topics/orders/consumers/c1/checkpoint",
+                    &serde_json::json!({ "offset": 1 }),
+                )
+                .await,
+            ),
+            (
+                "subscription create",
+                post_json(
+                    app.clone(),
+                    "/topics/orders/subscriptions",
+                    &serde_json::json!({ "name": "audit" }),
+                )
+                .await,
+            ),
+            (
+                "retention set",
+                put_json(
+                    app.clone(),
+                    "/topics/orders/retention",
+                    &serde_json::json!({ "max_events": 10 }),
+                )
+                .await,
+            ),
+        ] {
+            assert_eq!(
+                response.0,
+                StatusCode::INSUFFICIENT_STORAGE,
+                "{label} must be fast-failed while degraded, got: {}",
+                response.1
+            );
+        }
+        assert_eq!(
+            state
+                .journal
+                .lock()
+                .unwrap()
+                .replay("orders", None, None, None)
+                .len(),
+            events_after_first_failure,
+            "fast-failed mutations must not touch the journal"
+        );
+        assert_eq!(
+            state.metrics.storage_full_errors_total.get(),
+            1,
+            "the gate never reaches the durable path, so it counts no new ENOSPC hits"
+        );
+
+        // AC3: degraded is read-ONLY, not down. Replay keeps answering — a
+        // full disk is precisely when an operator most needs to read what is
+        // already journalled.
+        let replay = get(app, "/topics/orders/replay").await;
+        assert_eq!(replay.0, StatusCode::OK);
+    }
+
+    /// #2573 AC4 (unit half) — clearing degraded mode returns the node to
+    /// normal service with no restart. This drives `clear_storage_degraded`
+    /// directly, which is exactly what the periodic re-probe task in
+    /// `src/bin/tape.rs` (`spawn_storage_full_reprobe`) calls once a probe
+    /// write into the store directory succeeds; the timer itself is not worth
+    /// a 30s unit test.
+    #[tokio::test]
+    async fn leaving_degraded_mode_restores_mutations_without_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.json");
+        let state = state_with_store(&path, "orders");
+        let app = router(state.clone());
+
+        state.set_inject_storage_full(true);
+        let blocked = post_json(
+            app.clone(),
+            "/topics/orders/append",
+            &serde_json::json!({ "payload": { "n": 2 } }),
+        )
+        .await;
+        assert_eq!(blocked.0, StatusCode::INSUFFICIENT_STORAGE);
+
+        // The disk got bigger / something got freed; the re-probe succeeds.
+        state.set_inject_storage_full(false);
+        state.metrics.clear_storage_degraded();
+
+        let recovered = post_json(
+            app,
+            "/topics/orders/append",
+            &serde_json::json!({ "payload": { "n": 3 } }),
+        )
+        .await;
+        assert_eq!(recovered.0, StatusCode::OK, "same process, no restart");
+        assert!(path.exists(), "and the journal is durable again");
+        assert_eq!(
+            state.metrics.storage_full_errors_total.get(),
+            1,
+            "recovery does not erase the record that this node was once full"
+        );
     }
 }

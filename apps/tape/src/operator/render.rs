@@ -165,9 +165,9 @@ fn series_selector(cx: &RenderCtx<'_>) -> String {
 /// Only `[a-zA-Z_][a-zA-Z0-9_]*` is a legal Prometheus label name, so the
 /// operator's dotted/slashed label keys appear here in their sanitized form,
 /// matching what the un-aggregated series carry.
-fn alert_labels(cx: &RenderCtx<'_>) -> Value {
+fn alert_labels(cx: &RenderCtx<'_>, severity: &str) -> Value {
     json!({
-        "severity": "warning",
+        "severity": severity,
         "namespace": cx.ns,
         "app_kubernetes_io_instance": cx.name,
     })
@@ -251,7 +251,7 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                              / clamp_min(sum(rate(tape_append_latency_ms_count{{{s}}}[5m])), 1) > 500"
                         ),
                         "for": "10m",
-                        "labels": alert_labels(cx),
+                        "labels": alert_labels(cx, "warning"),
                         "annotations": {
                             "summary": "tape append average latency above 500ms",
                         },
@@ -263,7 +263,7 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                              / clamp_min(sum(rate(tape_replay_latency_ms_count{{{s}}}[5m])), 1) > 2000"
                         ),
                         "for": "10m",
-                        "labels": alert_labels(cx),
+                        "labels": alert_labels(cx, "warning"),
                         "annotations": {
                             "summary": "tape replay average latency above 2s",
                         },
@@ -275,17 +275,35 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                             cx.ns, cx.name, COMPONENT
                         ),
                         "for": "5m",
-                        "labels": alert_labels(cx),
+                        "labels": alert_labels(cx, "warning"),
                         "annotations": {
                             "summary": "tape pod restarting repeatedly",
                             "runbook": POD_RESTARTING_RUNBOOK,
                         },
                     },
                     {
+                        // #2573. `max_over_time` on purpose: the node
+                        // re-probes every 30s and clears the gauge itself, so
+                        // a volume that keeps filling and draining can read 0
+                        // at every scrape while rejecting writes between them.
+                        // The window trades a ~5m tail after real recovery for
+                        // not missing that. `critical`, not `warning`: unlike
+                        // the latency alerts this one means writes are already
+                        // being refused.
+                        "alert": "TapeStorageDegraded",
+                        "expr": format!("max_over_time(tape_storage_degraded{{{s}}}[5m]) > 0"),
+                        "for": "2m",
+                        "labels": alert_labels(cx, "critical"),
+                        "annotations": {
+                            "summary": "tape node in ENOSPC degraded read-only mode",
+                            "runbook": STORAGE_DEGRADED_RUNBOOK,
+                        },
+                    },
+                    {
                         "alert": "TapeSubscriptionLagGrowing",
                         "expr": format!("increase(tape_subscription_lag{{{s}}}[15m]) > 0"),
                         "for": "15m",
-                        "labels": alert_labels(cx),
+                        "labels": alert_labels(cx, "warning"),
                         "annotations": {
                             "summary": "tape subscription lag growing over 15m",
                             "runbook": SUBSCRIPTION_LAG_RUNBOOK,
@@ -307,6 +325,13 @@ const POD_RESTARTING_RUNBOOK: &str = "#2485: Differentiate seed-failure restarts
 /// Growing lag is only sometimes a fault — the runbook exists to separate a
 /// dead consumer from a fast producer.
 const SUBSCRIPTION_LAG_RUNBOOK: &str = "#2485: Check if the consumer bound to the subscription is alive and actively pulling. If the consumer has stopped or stalled, verify it has not crashed or exhausted resources. If the consumer is healthy, check the append rate to the topic — a rapid append rate combined with a slow consumer will naturally grow lag. No action needed if this is expected; adjust retention policy if needed to protect the subscription's checkpoint from expiry.";
+
+/// #2573's ENOSPC triage, verbatim from the static component. The alert on its
+/// own tells an operator writes are being refused but not that the node will
+/// recover itself — the runbook's job is to stop a reflexive pod restart and
+/// point at the two things that actually decide the outcome: capacity, and the
+/// flap counter that distinguishes "recovered" from "recovering every 30s".
+const STORAGE_DEGRADED_RUNBOOK: &str = "#2573: The node hit ENOSPC on its journal persist path and latched degraded read-only mode — mutating requests answer 507 `storage_full`, reads keep serving. Check `tape_storage_full_errors_total`: a rising counter with the gauge back at 0 means the volume is flapping in and out of full, not that it recovered. Remedy is capacity — free objects via retention or expand the PVC on a resizable StorageClass. No restart is needed: the pod re-probes the store directory every `TAPE_STORAGE_FULL_REPROBE_SECS` (default 30s) and clears the flag itself. If the gauge stays 1 after the volume has room, read the pod log for the re-probe warning — the store directory can be unwritable for reasons other than capacity (read-only remount, permissions).";
 
 /// A stable, per-instance identity for scheduled backup jobs (lumen's #808
 /// pattern, adopted for #2574).

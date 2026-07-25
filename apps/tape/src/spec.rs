@@ -209,7 +209,7 @@ fn openapi() -> Value {
                     "summary": "Append an event envelope to a topic journal",
                     "parameters": [topic_param()],
                     "requestBody": json_body("AppendEventRequest"),
-                    "responses": ok_schema("TapeEvent")
+                    "responses": mutating_schema("TapeEvent")
                 }
             },
             "/topics/{topic}/replay": {
@@ -250,7 +250,7 @@ fn openapi() -> Value {
                     "summary": "Create a topic delivery resource",
                     "parameters": [topic_param()],
                     "requestBody": json_body("SubscriptionCreateRequest"),
-                    "responses": ok_schema("Subscription")
+                    "responses": mutating_schema("Subscription")
                 },
                 "get": {
                     "summary": "List topic delivery resources",
@@ -267,7 +267,7 @@ fn openapi() -> Value {
                 "delete": {
                     "summary": "Delete topic delivery resource metadata",
                     "parameters": [topic_param(), subscription_param()],
-                    "responses": ok_schema("Subscription")
+                    "responses": mutating_schema("Subscription")
                 }
             },
             "/topics/{topic}/subscriptions/{subscription}/pull": {
@@ -283,7 +283,7 @@ fn openapi() -> Value {
                     "summary": "Advance a pull subscription cursor",
                     "parameters": [topic_param(), subscription_param()],
                     "requestBody": json_body("PullSubscriptionAckRequest"),
-                    "responses": ok_schema("ConsumerCheckpoint")
+                    "responses": mutating_schema("ConsumerCheckpoint")
                 }
             },
             "/topics/{topic}/consumers/{consumer}/checkpoint": {
@@ -296,7 +296,7 @@ fn openapi() -> Value {
                     "summary": "Advance a consumer replay checkpoint",
                     "parameters": [topic_param(), consumer_param()],
                     "requestBody": json_body("CheckpointRequest"),
-                    "responses": ok_schema("ConsumerCheckpoint")
+                    "responses": mutating_schema("ConsumerCheckpoint")
                 }
             },
             "/topics/{topic}/retention": {
@@ -309,7 +309,7 @@ fn openapi() -> Value {
                     "summary": "Configure a topic retention window",
                     "parameters": [topic_param()],
                     "requestBody": json_body("RetentionPolicy"),
-                    "responses": ok_schema("RetentionPolicy")
+                    "responses": mutating_schema("RetentionPolicy")
                 }
             }
         },
@@ -477,6 +477,25 @@ fn ok_schema(schema: &str) -> Value {
             }
         }
     })
+}
+
+/// #2573: the response set for an operation that writes through the journal
+/// persist path.
+///
+/// This document otherwise lists only success responses, and 4xx stays out of
+/// it deliberately — a client already handles those by status class. `507` is
+/// different in kind: it is the one status where the correct client behavior
+/// (stop, surface the condition, retry on a human timescale) differs from what
+/// a generic retry policy would do with a 5xx, so a generated client that does
+/// not know it exists will hammer a full disk. Read-only operations never
+/// reach the persist path and so never carry it.
+fn mutating_schema(schema: &str) -> Value {
+    let mut responses = ok_schema(schema);
+    responses["507"] = json!({
+        "description": "Node is in ENOSPC degraded read-only mode (error kind `storage_full`); \
+                        reads keep serving and the node re-probes its store to recover itself"
+    });
+    responses
 }
 
 fn ok_json() -> Value {

@@ -63,6 +63,8 @@ flowchart TD
     pull_identity --> pull_window["pull --limit reads a bounded checkpoint window; ack advances it explicitly"]
     cli --> spec["spec: print routes/openapi/schema"]
     cli --> std["llm/upgrade/issue: delegate to cli-std"]
+    cli --> serve["serve: resolve journal store -> build AppState -> spawn background tasks"]
+    serve --> reprobe["spawn_storage_full_reprobe: while degraded, write a probe file into the store dir every TAPE_STORAGE_FULL_REPROBE_SECS (default 30s); first success clears degraded read-only mode with no restart; skipped entirely when there is no journal store"]
 ```
 
 ## Unit Test
@@ -117,4 +119,9 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "save_journal writes through storage_durable::atomic_write with FsyncPolicy::Always (temp -> fsync -> rename -> parent fsync) instead of fs::write, so an interrupted or failed journal write leaves the previous journal intact and loadable rather than truncated (#2572)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "serve spawns spawn_storage_full_reprobe: while the node is in ENOSPC degraded read-only mode it writes a probe file into the journal store's directory every TAPE_STORAGE_FULL_REPROBE_SECS (default 30s) and clears the sticky flag on the first success, so an expanded or freed PVC recovers the node without a pod restart; never spawned when there is no journal store (replica mode owns durability through raft) and idle while healthy (#2573)."
 ```
