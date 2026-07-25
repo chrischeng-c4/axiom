@@ -55,6 +55,7 @@ id: tape-td-flow
 ---
 flowchart TD
     cli["tape CLI"] --> append["append: load store -> append event -> save -> print next replay"]
+    append --> save_durable["save: atomic_write temp -> fsync -> rename -> fsync parent; a failed write leaves the previous journal intact"]
     cli --> replay["replay: load store -> print events -> next: done"]
     cli --> checkpoint["checkpoint get|put: read or advance durable cursor"]
     cli --> subscription["subscription create|list|show|delete: persist named pull cursor metadata"]
@@ -111,4 +112,9 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Route the sectioned backup llm topic through cli_std render_sectioned so scheme facts render at call time from SUPPORTED_SCHEMES; operations topic gains the discoverability pointer (#2483)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "save_journal writes through storage_durable::atomic_write with FsyncPolicy::Always (temp -> fsync -> rename -> parent fsync) instead of fs::write, so an interrupted or failed journal write leaves the previous journal intact and loadable rather than truncated (#2572)."
 ```

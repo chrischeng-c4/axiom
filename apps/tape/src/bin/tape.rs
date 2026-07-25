@@ -1368,15 +1368,20 @@ fn load_journal(path: &Path) -> Result<TapeJournal> {
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
 }
 
+/// Write the journal to `path` durably (#2572).
+///
+/// Goes through [`storage_durable::atomic_write`] — temp file, fsync, rename,
+/// parent directory fsync — so an interrupted or failed write leaves the
+/// previous journal intact and loadable. The plain `fs::write` this replaces
+/// truncated the file before writing and never fsynced, so a crash or a full
+/// disk destroyed the journal it was trying to update.
+///
+/// [`FsyncPolicy::Always`] matches `AppState::persist`: this file is the only
+/// durability guarantee the single-node path has.
 fn save_journal(path: &Path, journal: &TapeJournal) -> Result<()> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
     let bytes = serde_json::to_vec_pretty(journal)?;
-    fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
+    storage_durable::atomic_write(path, &bytes, storage_durable::FsyncPolicy::Always)
+        .with_context(|| format!("write {}", path.display()))
 }
 
 fn parse_payload(input: &str) -> Value {
