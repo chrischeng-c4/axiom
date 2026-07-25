@@ -467,7 +467,10 @@ fn backup_cron_job_is_opt_in_and_invokes_the_backup_verb() {
         .iter()
         .find(|e| e["name"] == "TAPE_BACKUP_TOKEN")
         .expect("admin token env when the CR names a secret");
-    assert_eq!(token["valueFrom"]["secretKeyRef"]["name"], "tape-backup-token");
+    assert_eq!(
+        token["valueFrom"]["secretKeyRef"]["name"],
+        "tape-backup-token"
+    );
     assert_eq!(token["valueFrom"]["secretKeyRef"]["key"], "token");
 }
 
@@ -538,9 +541,8 @@ fn backup_cron_job_omits_unset_retention_and_token() {
         admin_token_secret: None,
     });
     let objects = render(&Tape::new("tape", minimal));
-    let container =
-        &of_kind(&objects, "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-            ["containers"][0];
+    let container = &of_kind(&objects, "CronJob")["spec"]["jobTemplate"]["spec"]["template"]
+        ["spec"]["containers"][0];
 
     let args: Vec<&str> = container["args"]
         .as_array()
@@ -603,8 +605,7 @@ fn generated_crd_carries_the_backup_properties() {
 }
 
 /// The hand-maintained observability component the operator pair mirrors.
-const STATIC_COMPONENT: &str =
-    include_str!("../k8s/components/observability/prometheusrule.yaml");
+const STATIC_COMPONENT: &str = include_str!("../k8s/components/observability/prometheusrule.yaml");
 
 /// `spec.observability` renders both objects, `spec.observability` unset
 /// renders neither.
@@ -623,7 +624,8 @@ fn observability_pair_is_opt_in() {
 
     let off = kinds(&render(&Tape::new("tape", spec(3))));
     assert!(
-        !off.contains(&"ServiceMonitor".to_string()) && !off.contains(&"PrometheusRule".to_string()),
+        !off.contains(&"ServiceMonitor".to_string())
+            && !off.contains(&"PrometheusRule".to_string()),
         "a CR that never asked for observability must not require the \
          Prometheus Operator CRDs, got {off:?}"
     );
@@ -642,7 +644,8 @@ fn observability_pair_is_opt_in() {
     // objects and every alert below is dead on arrival.
     for kind in ["ServiceMonitor", "PrometheusRule"] {
         assert_eq!(
-            of_kind(&objects, kind)["metadata"]["labels"]["release"], "prometheus",
+            of_kind(&objects, kind)["metadata"]["labels"]["release"],
+            "prometheus",
             "{kind} must carry the selector label the Prometheus Operator matches on"
         );
     }

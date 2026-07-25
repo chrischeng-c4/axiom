@@ -30,8 +30,7 @@ spec:
     - name: telemetry
 "#;
 
-        let tape: tape::operator::Tape =
-            serde_yaml::from_str(tape_yaml).expect("parse tape CR");
+        let tape: tape::operator::Tape = serde_yaml::from_str(tape_yaml).expect("parse tape CR");
         let rendered = render::render(&tape);
 
         // Find the StatefulSet in the rendered objects
@@ -73,10 +72,7 @@ spec:
 
         // First topic: orders with billing and audit subscriptions
         let orders = &topics[0];
-        assert_eq!(
-            orders.get("name").and_then(|n| n.as_str()),
-            Some("orders")
-        );
+        assert_eq!(orders.get("name").and_then(|n| n.as_str()), Some("orders"));
         let subs = orders
             .get("subscriptions")
             .and_then(|s| s.as_array())
@@ -115,8 +111,7 @@ spec:
   storage: 1Gi
 "#;
 
-        let tape: tape::operator::Tape =
-            serde_yaml::from_str(tape_yaml).expect("parse tape CR");
+        let tape: tape::operator::Tape = serde_yaml::from_str(tape_yaml).expect("parse tape CR");
         let rendered = render::render(&tape);
 
         // Find the StatefulSet in the rendered objects

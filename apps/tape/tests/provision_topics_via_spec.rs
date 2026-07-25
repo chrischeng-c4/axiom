@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tape::{TapeJournal, SubscriptionError};
+    use tape::{SubscriptionError, TapeJournal};
 
     #[test]
     fn provision_topics_single_subscription() {
@@ -41,11 +41,9 @@ mod tests {
         // Verify all subscriptions exist
         let subscriptions = journal.subscriptions("orders");
         assert_eq!(subscriptions.len(), 3);
-        assert!(
-            subscriptions
-                .iter()
-                .all(|s| s.topic == "orders" && subs.contains(&s.name.as_str()))
-        );
+        assert!(subscriptions
+            .iter()
+            .all(|s| s.topic == "orders" && subs.contains(&s.name.as_str())));
     }
 
     #[test]
@@ -117,7 +115,9 @@ mod tests {
         journal.create_subscription("orders", "consumer-a").unwrap();
 
         // Pull should work immediately from offset 0
-        let batch = journal.pull_subscription("orders", "consumer-a", None).unwrap();
+        let batch = journal
+            .pull_subscription("orders", "consumer-a", None)
+            .unwrap();
         assert_eq!(batch.cursor, 0);
         assert_eq!(batch.events.len(), 2);
         assert_eq!(batch.next_offset, 2);
@@ -133,14 +133,18 @@ mod tests {
         journal.create_subscription("orders", "consumer-a").unwrap();
 
         // Pull and ack as consumer-a
-        let batch = journal.pull_subscription("orders", "consumer-a", None).unwrap();
+        let batch = journal
+            .pull_subscription("orders", "consumer-a", None)
+            .unwrap();
         journal
             .ack_subscription("orders", "consumer-a", batch.next_offset)
             .unwrap();
 
         // Create a second subscription - it should start from offset 0 independently
         journal.create_subscription("orders", "consumer-b").unwrap();
-        let batch_b = journal.pull_subscription("orders", "consumer-b", None).unwrap();
+        let batch_b = journal
+            .pull_subscription("orders", "consumer-b", None)
+            .unwrap();
         assert_eq!(batch_b.cursor, 0);
         assert_eq!(batch_b.events.len(), 2);
     }
