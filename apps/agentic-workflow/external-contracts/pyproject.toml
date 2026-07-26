@@ -137,8 +137,8 @@ applicability = "td"
 test_path = "src/cases/artifact-preflight-health-rollup.py"
 promise = "missing hard evidence appears in production_blockers; missing advisory evidence appears in quality warnings; passing evidence keeps production_ready true when no other blockers exist"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-preflight-health-rollup -- cargo test -p agentic-workflow --test cli_tests preflight_ -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-preflight-health-rollup"
 evidence_paths = ["evidence/artifact-preflight-health-rollup.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -165,8 +165,8 @@ applicability = "td"
 test_path = "src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
 promise = "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap -- cargo test -p agentic-workflow --test cli_tests authoritative_regenerability_gaps_block_project_health -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap"
 evidence_paths = ["evidence/authoritative-fixture-blocks-on-regenerability-gap.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -403,8 +403,8 @@ applicability = "td"
 test_path = "src/cases/aw-health-default-full-verification-smoke.py"
 promise = "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke -- cargo test -p agentic-workflow --test cli_tests health_verbose_stdout_streams_progress_before_result -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke"
 evidence_paths = ["evidence/aw-health-default-full-verification-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -515,8 +515,8 @@ applicability = "td"
 test_path = "src/cases/existing-project-standardization-brownfield-takeover-surface.py"
 promise = "standardize command surface is registered for brownfield takeover"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-brownfield-takeover-surface -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-brownfield-takeover-surface"
 evidence_paths = ["evidence/existing-project-standardization-brownfield-takeover-surface.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -529,8 +529,8 @@ applicability = "td"
 test_path = "src/cases/existing-project-standardization-cb-and-cold-verification-gates.py"
 promise = "CB cold rebuild targets include codegen changes"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-cb-and-cold-verification-gates -- cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-cb-and-cold-verification-gates"
 evidence_paths = ["evidence/existing-project-standardization-cb-and-cold-verification-gates.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -543,8 +543,8 @@ applicability = "td"
 test_path = "src/cases/existing-project-standardization-managed-and-semantic-production-gates.py"
 promise = "semantic coverage prioritizes missing TD before generator gaps"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-managed-and-semantic-production-gates -- cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-managed-and-semantic-production-gates"
 evidence_paths = ["evidence/existing-project-standardization-managed-and-semantic-production-gates.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -627,8 +627,8 @@ applicability = "td"
 test_path = "src/cases/existing-project-standardization-traceability-closure-gate.py"
 promise = "traceability tests cover command, TD, source, and CB closure behavior"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-traceability-closure-gate -- cargo test -p agentic-workflow --lib traceability -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-traceability-closure-gate"
 evidence_paths = ["evidence/existing-project-standardization-traceability-closure-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -641,8 +641,8 @@ applicability = "td"
 test_path = "src/cases/external-fixture-reports-advisory-gap.py"
 promise = "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap -- cargo test -p agentic-workflow --test cli_tests regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap"
 evidence_paths = ["evidence/external-fixture-reports-advisory-gap.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -979,8 +979,8 @@ applicability = "td"
 test_path = "src/cases/standardize-audit-first-contract-test.py"
 promise = "audit_required is true without a preservation baseline; audit_required is false when a baseline exists; route and command surfaces are included in the fixture baseline"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test -- cargo test -p agentic-workflow --lib standardize_audit -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
 evidence_paths = ["evidence/standardize-audit-first-contract-test.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1147,8 +1147,8 @@ applicability = "td"
 test_path = "src/cases/td-gen-source-source-snapshot-projection-real-cli.py"
 promise = "a const changes from before to after in the exact requested target; a uniquely named generated Rust test is present in exact target bytes; cargo test with that unique filter reports running 1 test and 1 passed; siblings and an unmatched existing target remain byte-identical; a second replay reports summary.wrote_files=false; the unmatched target error names the snapshot target and runnable --target remediation"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-gen-source-source-snapshot-projection-real-cli -- cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-gen-source-source-snapshot-projection-real-cli"
 evidence_paths = ["evidence/td-gen-source-source-snapshot-projection-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
