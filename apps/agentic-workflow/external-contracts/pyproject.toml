@@ -16,6 +16,62 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
+id = "work-item-four-type-taxonomy"
+artifact_id = "artifact:agentic-workflow/work-item-four-type-taxonomy"
+capability_id = "work-item-planning"
+use_case_id = "canonical-four-type-wi-taxonomy"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-four-type-taxonomy.py"
+promise = "epic, change, spike, and report round-trip through the public CLI while only change enters the executable project graph"
+oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated local-backend project and asserts public envelopes and graph projection without importing production source."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
+evidence_paths = ["evidence/work-item-four-type-taxonomy.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-type-templates"
+artifact_id = "artifact:agentic-workflow/work-item-type-templates"
+capability_id = "work-item-planning"
+use_case_id = "typed-work-item-authoring-profiles"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-type-templates.py"
+promise = "Spike and Report use exact hard authoring profiles, Report intake omits Capability Alignment, and cross-profile sections fail closed"
+oracle = "The hand-authored Python EC drives real aw create/show commands and independently checks the emitted work-item bodies and invalid-profile failure."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
+evidence_paths = ["evidence/work-item-type-templates.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-spike-terminal"
+artifact_id = "artifact:agentic-workflow/work-item-spike-terminal"
+capability_id = "work-item-planning"
+use_case_id = "spike-terminal-convergence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-spike-terminal.py"
+promise = "Spike cannot enter product source work and terminates only as decided with linked/no-action evidence or gave_up after expiry"
+oracle = "The hand-authored Python EC runs the real goal and spike commands, inspects persisted terminal records, and rejects a decision without an exit disposition."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
+evidence_paths = ["evidence/work-item-spike-terminal.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-report-triage"
+artifact_id = "artifact:agentic-workflow/work-item-report-triage"
+capability_id = "work-item-planning"
+use_case_id = "report-terminal-triage"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-report-triage.py"
+promise = "Report type is immutable and typed triage either spawns linked delivery work for accepted or closes with a non-delivery verdict"
+oracle = "The hand-authored Python EC executes the real aw triage surface, reads persisted Report and spawned Change state, and proves type-label immutability."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
+evidence_paths = ["evidence/work-item-report-triage.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "api-contract-source-passes"
 artifact_id = "artifact:agentic-workflow/api-contract-source-passes"
 capability_id = "td-cb-lifecycle-automation"

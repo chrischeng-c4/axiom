@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -30,8 +31,6 @@ def _arguments() -> tuple[str, str, float, list[str]]:
     command = list(parsed.command)
     if command[:1] == ["--"]:
         command = command[1:]
-    if not command:
-        parser.error("the external oracle command is required after --")
     return parsed.case, parsed.mode, parsed.threshold_seconds, command
 
 
@@ -51,6 +50,53 @@ def _run(command: list[str]) -> tuple[subprocess.CompletedProcess[str], float]:
     return completed, time.monotonic() - started
 
 
+def _run_case_implementation(case_id: str) -> int:
+    source_path = EC_ROOT / "src" / "cases" / f"{case_id}.py"
+    spec = importlib.util.spec_from_file_location(
+        f"aw_external_contract_{case_id.replace('-', '_')}",
+        source_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load Python EC implementation: {source_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    verifier = getattr(module, "verify", None)
+    if not callable(verifier):
+        raise RuntimeError(f"Python EC implementation has no verify(): {source_path}")
+    started = time.monotonic()
+    assertions = verifier()
+    if (
+        not isinstance(assertions, list)
+        or not assertions
+        or not all(isinstance(assertion, str) and assertion for assertion in assertions)
+    ):
+        raise RuntimeError(
+            f"Python EC verify() must return a non-empty list of assertions: {source_path}"
+        )
+    evidence = {
+        "protocol": "aw.python-ec.evidence.v1",
+        "case_id": case_id,
+        "mode": "behavior",
+        "implementation": str(source_path.relative_to(REPOSITORY_ROOT)),
+        "exit_code": 0,
+        "assertions": assertions,
+        "attempts": [
+            {
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+                "exit_code": 0,
+            }
+        ],
+    }
+    evidence_path = EC_ROOT / "evidence" / f"{case_id}.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(evidence, sort_keys=True))
+    return 0
+
+
 def _test_summary(output: str) -> tuple[int, int]:
     results = re.findall(
         r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed;",
@@ -67,6 +113,8 @@ def main() -> int:
     source_path = EC_ROOT / "src" / "cases" / f"{case_id}.py"
     if not source_path.is_file():
         raise SystemExit(f"unknown EC case: {case_id}")
+    if not command:
+        return _run_case_implementation(case_id)
 
     attempt_count = 2 if mode == "stability" else 1
     attempts = [_run(command) for _ in range(attempt_count)]

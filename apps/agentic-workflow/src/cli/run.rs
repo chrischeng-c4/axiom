@@ -2144,6 +2144,19 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             false,
         );
     }
+    if issue.issue_type == IssueType::Report {
+        return blocked_envelope(
+            root.clone(),
+            WorkflowNode {
+                kind: "report".to_string(),
+                id: issue_ref(&issue),
+            },
+            format!("aw wi triage {} --verdict accepted", issue_cli_ref(&issue)),
+            "Report roots are intake-only and must be triaged before delivery work is created"
+                .to_string(),
+            false,
+        );
+    }
 
     // EC-first child commands persist their next transition on the local
     // lifecycle ledger. A GitHub/GitLab WI may be visible to the configured

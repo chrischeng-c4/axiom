@@ -59,6 +59,8 @@ pub enum IssuesCommand {
     Close(CloseArgs),
     /// Converge a timeboxed Spike to its typed terminal record.
     Spike(SpikeArgs),
+    /// Triage a Report to a typed verdict, optionally spawning delivery work.
+    Triage(TriageArgs),
     /// Search work-items by text query.
     Find(FindArgs),
     /// Drive the canonical staged epic/change project-plan root.
@@ -446,6 +448,64 @@ pub struct SpikeExpireArgs {
     /// Optional evidence explaining why the timebox expired.
     #[arg(long)]
     pub reason: Option<String>,
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TriageVerdict {
+    Accepted,
+    Duplicate,
+    Invalid,
+    ByDesign,
+}
+
+impl TriageVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Duplicate => "duplicate",
+            Self::Invalid => "invalid",
+            Self::ByDesign => "by-design",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TriageSpawnType {
+    Change,
+    Epic,
+}
+
+impl From<TriageSpawnType> for IssueType {
+    fn from(value: TriageSpawnType) -> Self {
+        match value {
+            TriageSpawnType::Change => IssueType::Change,
+            TriageSpawnType::Epic => IssueType::Epic,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct TriageArgs {
+    /// Report identifier.
+    pub id: String,
+    /// Typed terminal verdict.
+    #[arg(long)]
+    pub verdict: TriageVerdict,
+    /// Reason or supporting evidence for the verdict.
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// Type of delivery WI spawned by an accepted verdict.
+    #[arg(long, value_enum, default_value = "change")]
+    pub spawn_type: TriageSpawnType,
+    /// Override the spawned WI title.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Epic owner for an accepted spawned Change.
+    #[arg(long)]
+    pub epic: Option<String>,
     /// GitHub/GitLab repo override.
     #[arg(long)]
     pub repo: Option<String>,
@@ -1148,6 +1208,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
         IssuesCommand::Spike(a) => run_spike(a).await,
+        IssuesCommand::Triage(a) => run_triage(a).await,
         IssuesCommand::Find(a) => run_find(a).await,
         IssuesCommand::Plan(a) => run_plan(a).await,
         IssuesCommand::PlanReview(a) => run_plan_review(a).await,
@@ -1986,6 +2047,12 @@ fn validate_type_template_profile(issue: &Issue) -> Vec<String> {
             "## Evidence Plan",
             "## Exit Criteria",
             "## Timebox",
+        ],
+        (IssueType::Report, IssueState::Closed) => &[
+            "## Repro",
+            "## Diagnostics",
+            "## Expected vs Actual",
+            "## Triage",
         ],
         (IssueType::Report, _) => &["## Repro", "## Diagnostics", "## Expected vs Actual"],
         _ => return Vec::new(),
@@ -3324,6 +3391,23 @@ fn build_update_patch(
         .iter()
         .map(|label| canonicalize_type_label_for_write(label))
         .collect::<Result<Vec<_>>>()?;
+    if let Some(current) = current {
+        let current_type_label = format!("type:{}", current.issue_type.as_str());
+        if add_labels
+            .iter()
+            .any(|label| label.starts_with("type:") && label != &current_type_label)
+            || args.remove_labels.iter().any(|label| {
+                canonicalize_type_label_for_write(label)
+                    .is_ok_and(|label| label == current_type_label)
+            })
+        {
+            anyhow::bail!(
+                "work-item type is immutable; `{}` cannot be changed from type:{}",
+                current.slug,
+                current.issue_type.as_str()
+            );
+        }
+    }
     let mut patch = IssuePatch {
         title: args.title.clone(),
         state: args.state.map(Into::into),
@@ -3823,6 +3907,177 @@ async fn run_spike_expire(args: SpikeExpireArgs) -> Result<()> {
         .unwrap_or_else(|| "The timebox expired before a decision was reached.".to_string());
     let body = spike_decision_body(&issue, "gave_up", &reason, &[], true);
     close_spike_with_body(backend.as_ref(), &issue, body, "gave_up").await
+}
+
+async fn run_triage(args: TriageArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(args.repo, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)
+        .context("Failed to create Report backend")?;
+    let report = backend
+        .get(&args.id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Report `{}` was not found", args.id))?;
+    if report.issue_type != IssueType::Report {
+        anyhow::bail!(
+            "work-item `{}` has immutable type `{}`; `aw wi triage` accepts only type:report",
+            args.id,
+            report.issue_type.as_str()
+        );
+    }
+    if report.state == IssueState::Closed {
+        anyhow::bail!("Report `{}` is already terminal", args.id);
+    }
+
+    let spawned = if matches!(args.verdict, TriageVerdict::Accepted) {
+        Some(
+            spawn_triaged_work_item(
+                backend.as_ref(),
+                &report,
+                args.spawn_type,
+                args.title.as_deref(),
+                args.epic.as_deref(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let reason = args
+        .reason
+        .unwrap_or_else(|| format!("Report triaged as {}.", args.verdict.as_str()));
+    let mut body = report.body.trim_end().to_string();
+    body.push_str("\n\n## Triage\n\n");
+    body.push_str(&format!("Verdict: {}\n", args.verdict.as_str()));
+    body.push_str(&format!("Reason: {}\n", reason.trim()));
+    if let Some(spawned) = &spawned {
+        body.push_str(&format!("Spawned Work Item: {}\n", spawned.slug));
+    } else {
+        body.push_str("Spawned Work Item: none\n");
+    }
+    backend
+        .update(
+            &report.slug,
+            &IssuePatch {
+                body: Some(body),
+                ..Default::default()
+            },
+        )
+        .await?;
+    backend
+        .close(
+            &report.slug,
+            Some(&format!("Report verdict: {}", args.verdict.as_str())),
+        )
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "done",
+            "type": "report",
+            "id": report.slug,
+            "terminal_state": args.verdict.as_str(),
+            "spawned": spawned.as_ref().map(|issue| serde_json::json!({
+                "id": issue.slug,
+                "type": issue.issue_type.as_str(),
+            })),
+            "completion": {
+                "workflow_complete": true
+            },
+            "next": {
+                "terminal": true,
+                "reason": "Report reached a typed triage verdict"
+            }
+        }))?
+    );
+    Ok(())
+}
+
+async fn spawn_triaged_work_item(
+    backend: &dyn IssueBackend,
+    report: &Issue,
+    spawn_type: TriageSpawnType,
+    title: Option<&str>,
+    epic: Option<&str>,
+) -> Result<Issue> {
+    let issue_type: IssueType = spawn_type.into();
+    let inherited_epics = report
+        .labels
+        .iter()
+        .filter(|label| label.starts_with("epic:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let epic_label = epic
+        .map(|id| format!("epic:{}", id.trim().trim_start_matches('#')))
+        .or_else(|| (inherited_epics.len() == 1).then(|| inherited_epics[0].clone()));
+    if issue_type == IssueType::Change && epic_label.is_none() {
+        anyhow::bail!(
+            "accepted Report spawning a Change requires --epic <id> or one inherited epic:<id> label"
+        );
+    }
+
+    let title = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Follow up: {}", report.title));
+    let mut labels = report
+        .labels
+        .iter()
+        .filter(|label| !label.starts_with("type:") && !label.starts_with("epic:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    labels.push(format!("type:{}", issue_type.as_str()));
+    if let Some(epic_label) = epic_label.filter(|_| issue_type == IssueType::Change) {
+        labels.push(epic_label);
+    }
+    let mut body = default_structured_issue_body(issue_type, &title);
+    body.push_str(&format!(
+        "\nSource Report: {}\n",
+        report
+            .github_id
+            .map(|id| format!("#{id}"))
+            .unwrap_or_else(|| report.slug.clone())
+    ));
+    let now = chrono::Utc::now().to_rfc3339();
+    let spawned = Issue {
+        issue_type,
+        title,
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels,
+        created_at: Some(now.clone()),
+        updated_at: Some(now),
+        slug: String::new(),
+        body,
+        related: vec![report.slug.clone()],
+        implements: vec![],
+        phase: (issue_type == IssueType::Change)
+            .then(|| crate::issues::IssuePhase::Created.as_str().to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: vec![],
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&spawned).await
 }
 
 // ---------------------------------------------------------------------------
