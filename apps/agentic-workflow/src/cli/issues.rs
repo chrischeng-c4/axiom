@@ -57,6 +57,8 @@ pub enum IssuesCommand {
     Update(UpdateArgs),
     /// Close a work-item, optionally with a reason.
     Close(CloseArgs),
+    /// Converge a timeboxed Spike to its typed terminal record.
+    Spike(SpikeArgs),
     /// Search work-items by text query.
     Find(FindArgs),
     /// Drive the canonical staged epic/change project-plan root.
@@ -400,6 +402,50 @@ pub struct CloseArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeArgs {
+    #[command(subcommand)]
+    pub command: SpikeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpikeCommand {
+    /// Record an ADR-style decision and close the Spike.
+    Resolve(SpikeResolveArgs),
+    /// Close an expired Spike with terminal state `gave_up`.
+    Expire(SpikeExpireArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeResolveArgs {
+    /// Spike identifier.
+    pub id: String,
+    /// ADR-style decision reached from the evidence.
+    #[arg(long)]
+    pub decision: String,
+    /// Spawned follow-up work-item reference; repeat for multiple WIs.
+    #[arg(long = "spawned-wi")]
+    pub spawned_wis: Vec<String>,
+    /// Explicitly record that the decision requires no follow-up work.
+    #[arg(long, conflicts_with = "spawned_wis")]
+    pub no_action: bool,
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeExpireArgs {
+    /// Spike identifier.
+    pub id: String,
+    /// Optional evidence explaining why the timebox expired.
+    #[arg(long)]
+    pub reason: Option<String>,
     /// GitHub/GitLab repo override.
     #[arg(long)]
     pub repo: Option<String>,
@@ -1101,6 +1147,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Create(a) => run_create(a).await,
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
+        IssuesCommand::Spike(a) => run_spike(a).await,
         IssuesCommand::Find(a) => run_find(a).await,
         IssuesCommand::Plan(a) => run_plan(a).await,
         IssuesCommand::PlanReview(a) => run_plan_review(a).await,
@@ -1926,14 +1973,21 @@ fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
 }
 
 fn validate_type_template_profile(issue: &Issue) -> Vec<String> {
-    let required: &[&str] = match issue.issue_type {
-        IssueType::Spike => &[
+    let required: &[&str] = match (issue.issue_type, issue.state) {
+        (IssueType::Spike, IssueState::Closed) => &[
+            "## Question",
+            "## Evidence Plan",
+            "## Exit Criteria",
+            "## Timebox",
+            "## Decision",
+        ],
+        (IssueType::Spike, _) => &[
             "## Question",
             "## Evidence Plan",
             "## Exit Criteria",
             "## Timebox",
         ],
-        IssueType::Report => &["## Repro", "## Diagnostics", "## Expected vs Actual"],
+        (IssueType::Report, _) => &["## Repro", "## Diagnostics", "## Expected vs Actual"],
         _ => return Vec::new(),
     };
     let headings = split_body_by_h2(&issue.body)
@@ -3589,6 +3643,186 @@ async fn run_close(args: CloseArgs) -> Result<()> {
         println!("Closed {}", args.id);
     }
     Ok(())
+}
+
+async fn run_spike(args: SpikeArgs) -> Result<()> {
+    match args.command {
+        SpikeCommand::Resolve(args) => run_spike_resolve(args).await,
+        SpikeCommand::Expire(args) => run_spike_expire(args).await,
+    }
+}
+
+async fn load_spike_backend(
+    id: &str,
+    repo: Option<String>,
+) -> Result<(Box<dyn IssueBackend>, Issue)> {
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(repo, &project_root)?;
+    let backend =
+        make_backend(&kind, &project_root, repo, host).context("Failed to create Spike backend")?;
+    let issue = backend
+        .get(id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Spike `{id}` was not found"))?;
+    if issue.issue_type != IssueType::Spike {
+        anyhow::bail!(
+            "work-item `{id}` has immutable type `{}`; `aw wi spike` accepts only type:spike",
+            issue.issue_type.as_str()
+        );
+    }
+    if issue.state == IssueState::Closed {
+        anyhow::bail!("Spike `{id}` is already terminal");
+    }
+    Ok((backend, issue))
+}
+
+fn spike_decision_body(
+    issue: &Issue,
+    status: &str,
+    decision: &str,
+    spawned_wis: &[String],
+    no_action: bool,
+) -> String {
+    let mut body = issue.body.trim_end().to_string();
+    body.push_str("\n\n## Decision\n\n");
+    body.push_str(&format!("Status: {status}\n"));
+    body.push_str(&format!("Decision: {}\n", decision.trim()));
+    if no_action {
+        body.push_str("Follow-up: no-action\n");
+    } else {
+        body.push_str("Spawned Work Items:\n");
+        for wi in spawned_wis {
+            body.push_str(&format!("- {}\n", wi.trim()));
+        }
+    }
+    body.push_str(&format!("Closed At: {}\n", chrono::Utc::now().to_rfc3339()));
+    body
+}
+
+async fn close_spike_with_body(
+    backend: &dyn IssueBackend,
+    issue: &Issue,
+    body: String,
+    terminal_state: &str,
+) -> Result<()> {
+    backend
+        .update(
+            &issue.slug,
+            &IssuePatch {
+                body: Some(body),
+                ..Default::default()
+            },
+        )
+        .await?;
+    backend
+        .close(
+            &issue.slug,
+            Some(&format!("Spike terminal state: {terminal_state}")),
+        )
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "done",
+            "type": "spike",
+            "id": issue.slug,
+            "terminal_state": terminal_state,
+            "completion": {
+                "workflow_complete": true
+            },
+            "next": {
+                "terminal": true,
+                "reason": "Spike reached a typed terminal state"
+            }
+        }))?
+    );
+    Ok(())
+}
+
+async fn run_spike_resolve(args: SpikeResolveArgs) -> Result<()> {
+    if !is_real_planning_value(&args.decision) {
+        anyhow::bail!("--decision must contain a real ADR-style decision");
+    }
+    if !args.no_action && args.spawned_wis.is_empty() {
+        anyhow::bail!(
+            "resolved Spike must provide at least one --spawned-wi or explicit --no-action"
+        );
+    }
+    if args
+        .spawned_wis
+        .iter()
+        .any(|reference| !is_real_planning_value(reference))
+    {
+        anyhow::bail!("--spawned-wi values must be real work-item references");
+    }
+    let (backend, issue) = load_spike_backend(&args.id, args.repo).await?;
+    let body = spike_decision_body(
+        &issue,
+        "decided",
+        &args.decision,
+        &args.spawned_wis,
+        args.no_action,
+    );
+    close_spike_with_body(backend.as_ref(), &issue, body, "decided").await
+}
+
+fn spike_expiry(issue: &Issue) -> Result<chrono::DateTime<chrono::Utc>> {
+    let timebox = section_content(&issue.body, "## Timebox")
+        .ok_or_else(|| anyhow::anyhow!("Spike `{}` has no ## Timebox", issue.slug))?;
+    if let Some(raw) = timebox
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Expires At:"))
+    {
+        return chrono::DateTime::parse_from_rfc3339(raw.trim())
+            .map(|value| value.with_timezone(&chrono::Utc))
+            .context("Spike `Expires At:` must be RFC3339");
+    }
+    let budget = timebox
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Budget:"))
+        .map(str::trim)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Spike `{}` Timebox must contain `Expires At:` or `Budget:`",
+                issue.slug
+            )
+        })?;
+    let (amount, unit) = budget.split_at(budget.len().saturating_sub(1));
+    let amount = amount
+        .trim()
+        .parse::<i64>()
+        .context("Spike Budget must be an integer followed by m, h, or d")?;
+    let duration = match unit {
+        "m" => chrono::Duration::minutes(amount),
+        "h" => chrono::Duration::hours(amount),
+        "d" => chrono::Duration::days(amount),
+        _ => anyhow::bail!("Spike Budget unit must be m, h, or d"),
+    };
+    let created_at = issue
+        .created_at
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Spike `{}` has no creation time", issue.slug))?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+        .context("Spike creation time must be RFC3339")?
+        .with_timezone(&chrono::Utc);
+    Ok(created_at + duration)
+}
+
+async fn run_spike_expire(args: SpikeExpireArgs) -> Result<()> {
+    let (backend, issue) = load_spike_backend(&args.id, args.repo).await?;
+    let expires_at = spike_expiry(&issue)?;
+    if chrono::Utc::now() < expires_at {
+        anyhow::bail!(
+            "Spike `{}` has not expired; expires at {}",
+            issue.slug,
+            expires_at.to_rfc3339()
+        );
+    }
+    let reason = args
+        .reason
+        .unwrap_or_else(|| "The timebox expired before a decision was reached.".to_string());
+    let body = spike_decision_body(&issue, "gave_up", &reason, &[], true);
+    close_spike_with_body(backend.as_ref(), &issue, body, "gave_up").await
 }
 
 // ---------------------------------------------------------------------------

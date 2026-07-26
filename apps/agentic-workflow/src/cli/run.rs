@@ -1877,7 +1877,10 @@ fn agent_hitl_question(question: Option<HitlQuestion>) -> Option<HitlQuestion> {
 }
 
 fn apply_artifact_quality_gate(envelope: &mut WorkflowEnvelope) {
-    if envelope.action == "done" || envelope.next.command.trim().is_empty() {
+    if envelope.action == "done"
+        || envelope.next.command.trim().is_empty()
+        || matches!(envelope.current.kind.as_str(), "spike" | "report")
+    {
         return;
     }
 
@@ -2119,9 +2122,27 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             )
         }
     };
+    let root = WorkflowNode {
+        kind: issue.issue_type.as_str().to_string(),
+        id: issue_ref(&issue),
+    };
 
     if issue.state == IssueState::Closed {
         return closed_wi_envelope(&issue);
+    }
+
+    if issue.issue_type == IssueType::Spike {
+        return blocked_envelope(
+            root.clone(),
+            WorkflowNode {
+                kind: "spike".to_string(),
+                id: issue_ref(&issue),
+            },
+            format!("aw wi spike resolve {}", issue_cli_ref(&issue)),
+            "Spike roots are investigation-only and cannot enter EC/TD/CB product source work"
+                .to_string(),
+            false,
+        );
     }
 
     // EC-first child commands persist their next transition on the local
