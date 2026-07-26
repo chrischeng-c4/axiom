@@ -2795,9 +2795,9 @@ fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Re
         if issue_type == IssueType::Epic {
             template.push_str(concat!(
                 "## Verification Inventory\n\n",
-                "| Requirement | Gate | Oracle |\n",
-                "|-------------|------|--------|\n",
-                "| R1 | (fill) | (fill) |\n\n",
+                "| Requirement | Gate | Oracle | Depends On |\n",
+                "|-------------|------|--------|------------|\n",
+                "| R1 | (fill) | (fill) | - |\n\n",
             ));
         }
         template.push_str(concat!(
@@ -2951,7 +2951,7 @@ async fn run_fill_section_brief(
             println!("- Acceptance Criteria MUST contain at least one real list item.");
             if issue.issue_type == IssueType::Epic {
                 println!(
-                    "- Verification Inventory MUST map every Requirement to a runnable Gate and observable Oracle."
+                    "- Verification Inventory MUST map every Requirement to a runnable Gate and observable Oracle; use the optional Depends On column for requirement ordering."
                 );
             }
             println!(
@@ -10827,8 +10827,8 @@ labels:\n\
         let template = fill_section_payload_template(IssueType::Epic, "all").unwrap();
         for fragment in [
             "## Verification Inventory",
-            "| Requirement | Gate | Oracle |",
-            "| R1 | (fill) | (fill) |",
+            "| Requirement | Gate | Oracle | Depends On |",
+            "| R1 | (fill) | (fill) | - |",
         ] {
             assert!(
                 template.contains(fragment),
@@ -10838,7 +10838,7 @@ labels:\n\
         validate_wi_fill_payload_scope(IssueType::Epic, "all", &template, &[]).unwrap();
 
         let without_inventory = template.replace(
-            "## Verification Inventory\n\n| Requirement | Gate | Oracle |\n|-------------|------|--------|\n| R1 | (fill) | (fill) |\n\n",
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | (fill) | (fill) | - |\n\n",
             "",
         );
         let error = validate_wi_fill_payload_scope(IssueType::Epic, "all", &without_inventory, &[])
@@ -10921,6 +10921,36 @@ labels:\n\
         assert!(validate_publishable_issue_body(&publish_candidate)
             .iter()
             .any(|error| error.contains("map R1")));
+    }
+
+    #[test]
+    fn epic_publish_validation_rejects_invalid_requirement_dependencies() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            21,
+        );
+        epic.body = epic.body.replace(
+            "- R1: Deliver Retire app-level Rust EC tests.",
+            "- R1: Inventory delegated EC cases.\n- R2: Delete the legacy test tree.",
+        );
+        epic.body = epic.body.replace(
+            "## Reference Context",
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | `python3 inventory.py` | Inventory is complete. | R2 |\n| R2 | `test ! -d apps/agentic-workflow/tests` | Legacy tree is absent. | R1, R3 |\n\n## Reference Context",
+        );
+
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("R2 depends on unknown R3")),
+            "unknown dependency must fail: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("must be acyclic")),
+            "dependency cycle must fail: {errors:?}"
+        );
     }
 
     #[test]

@@ -76,9 +76,12 @@ Requirement ids. Missing authoritative requirements produce a diagnostic
 rather than an inferred change.
 
 An epic may declare `## Verification Inventory` as a Markdown table with
-`Requirement | Gate | Oracle` columns. The planner binds each row to the named
-Requirement id and carries its complete runnable gate and observable oracle
-into every proposed child mutation for independent review.
+`Requirement | Gate | Oracle | Depends On` columns. `Depends On` is optional
+per row and contains same-epic Requirement ids. The planner binds each row to
+the named Requirement id, rejects unknown, self, and cyclic dependency
+declarations before publication, and carries the complete runnable gate,
+observable oracle, and dependency edges into every proposed child mutation for
+independent review.
 
 All vectors and maps are sorted before serialization. The plan digest is
 SHA-256 over the complete model with only its `digest` field cleared. The
@@ -138,6 +141,8 @@ only the CLI report and never the canonical model or digest. An explicit
 - Multi-line Requirements retain their complete normalized text.
 - Requirement-specific Verification Inventory gates and oracles survive in the
   proposed child body without being shortened to its compact title.
+- Requirement-specific Depends On declarations become dependency-safe proposed
+  change order and symbolic dependency edges for the publishing transaction.
 - Closed/delivered coverage suppresses duplicate candidates.
 - A complete explicit Child Work Items plan suppresses duplicate candidates,
   while a partially completed plan covers only Requirement ids explicitly

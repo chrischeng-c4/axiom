@@ -73,6 +73,11 @@ weaken the published child contract. Requirement-specific gates and oracles
 from the epic Verification Inventory are rendered into a distinct
 `## Verification` section.
 
+Requirement dependencies from that same inventory are rendered as symbolic
+`depends-on:<proposal-id>` labels in the reviewed manifest. Create mutations
+are ordered by dependency depth, and the apply transaction resolves each
+symbolic proposal id to the real tracker id before creating a dependent issue.
+
 ## Requirements
 <!-- type: requirements lang: yaml -->
 
@@ -110,6 +115,8 @@ requirements:
     text: Proposed change bodies preserve complete parent Requirement text and inherit the parent epic Capability even when their tracker titles are compacted.
   - id: R16
     text: Proposed change bodies preserve every requirement-specific runnable gate and observable oracle from the epic Verification Inventory.
+  - id: R17
+    text: Proposed change mutations preserve requirement dependency edges, create prerequisites first, and resolve symbolic proposal ids to real tracker labels.
 ```
 
 ## Behavior

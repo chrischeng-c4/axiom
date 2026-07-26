@@ -26,6 +26,8 @@ Epic authoring additionally owns the planner's requirement-level verification
 contract. Its full-section fill template includes a `## Verification
 Inventory` table, and terminal WI validation requires every `R<n>` requirement
 to map to at least one non-placeholder runnable Gate and observable Oracle.
+The optional `Depends On` column declares same-epic requirement ordering and
+rejects unknown ids, self-dependencies, and cycles.
 This keeps `aw wi plan` reviewable by construction instead of producing
 children whose verification must be invented after atomization.
 
@@ -53,6 +55,7 @@ draft_authoring_contract:
     - "Validation errors list the exact section/format problems."
     - "Epic full-section fills include a Verification Inventory table."
     - "Every epic Requirement maps to a runnable Gate and observable Oracle before draft promotion."
+    - "Epic requirement dependencies are same-epic, known, non-self, and acyclic."
   normalized_shapes:
     free_text_body: "wrap as ## Problem inside the structured template"
     unnumbered_requirement_list: "rewrite each item as - R<n>: ..."
@@ -109,6 +112,7 @@ scenarios:
       - "the payload schema admits exactly one Verification Inventory H2 alongside the normal epic sections"
       - "validation rejects a missing or placeholder Gate or Oracle for either R1 or R2"
       - "validation passes only after both requirement ids have runnable gates and observable oracles"
+      - "the optional Depends On column may declare an acyclic dependency on another Requirement id"
       - "aw wi plan receives requirement-specific verification without an out-of-schema workaround"
 ```
 

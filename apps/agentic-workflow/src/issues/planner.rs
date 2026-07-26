@@ -92,6 +92,8 @@ pub struct PlanRequirement {
     pub covered_by: Vec<String>,
     pub status: String,
     pub verification: Vec<RequirementVerification>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +125,8 @@ pub struct ProposedChange {
     pub priority: String,
     pub priority_source: String,
     pub lane: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
     pub covers: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_change: Option<String>,
@@ -141,6 +145,7 @@ struct EpicSeed {
     completed_child_plan_ids: Vec<String>,
     explicit_requirement_coverage: BTreeMap<usize, Vec<String>>,
     requirement_verification: BTreeMap<usize, Vec<RequirementVerification>>,
+    requirement_dependencies: BTreeMap<usize, Vec<usize>>,
     split_into: Vec<String>,
 }
 
@@ -327,6 +332,7 @@ fn build_full_project_plan(
             let explicit_child_ids = explicit_child_work_item_ids(source);
             let explicit_requirement_coverage = explicit_child_requirement_coverage(source);
             let requirement_verification = explicit_requirement_verification(source);
+            let requirement_dependencies = explicit_requirement_dependencies(source);
             let completed_child_plan_ids = if !explicit_child_ids.is_empty()
                 && explicit_child_ids.iter().all(|id| {
                     issue_by_id
@@ -386,6 +392,7 @@ fn build_full_project_plan(
                 completed_child_plan_ids,
                 explicit_requirement_coverage,
                 requirement_verification,
+                requirement_dependencies,
                 split_into,
             })
         })
@@ -458,6 +465,7 @@ fn build_full_project_plan(
             completed_child_plan_ids: Vec::new(),
             explicit_requirement_coverage: BTreeMap::new(),
             requirement_verification: BTreeMap::new(),
+            requirement_dependencies: BTreeMap::new(),
             split_into: Vec::new(),
         });
     }
@@ -635,6 +643,7 @@ fn build_full_project_plan(
                             .unwrap_or_else(|| seed.priority.clone()),
                         priority_source: "replacement_inherits_source".to_string(),
                         lane: "proposed".to_string(),
+                        dependencies: Vec::new(),
                         covers: proposal_covers,
                         source_change: Some(change_id.clone()),
                         reason: "oversized_change_replacement".to_string(),
@@ -659,12 +668,52 @@ fn build_full_project_plan(
             });
         }
 
+        let requirement_coverage = coverage.clone();
         let requirements = seed
             .requirements
             .iter()
             .enumerate()
             .map(|(index, (text, horizon))| {
                 let id = requirement_id(&seed.id, index);
+                let dependency_ids = seed
+                    .requirement_dependencies
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|dependency_index| requirement_id(&seed.id, dependency_index))
+                    .collect::<Vec<_>>();
+                let change_dependencies = seed
+                    .requirement_dependencies
+                    .get(&index)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|dependency_index| {
+                        let dependency_id = requirement_id(&seed.id, *dependency_index);
+                        let mut references = requirement_coverage
+                            .get(&dependency_id)
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|reference| {
+                                reference.starts_with("proposal:")
+                                    || issue_by_id
+                                        .get(reference)
+                                        .is_some_and(|issue| issue.state != IssueState::Closed)
+                            })
+                            .collect::<Vec<_>>();
+                        if references.is_empty() {
+                            references.push(format!(
+                                "proposal:change:{}:requirement-{}",
+                                seed.id,
+                                dependency_index + 1
+                            ));
+                        }
+                        references
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
                 let mut covered_by = coverage.remove(&id).unwrap_or_default();
                 covered_by.sort_by(|left, right| {
                     reference_sort_key(left).cmp(&reference_sort_key(right))
@@ -688,6 +737,7 @@ fn build_full_project_plan(
                             "proposed"
                         }
                         .to_string(),
+                        dependencies: change_dependencies,
                         covers: vec![id.clone()],
                         source_change: None,
                         reason: "missing_requirement_coverage".to_string(),
@@ -715,6 +765,7 @@ fn build_full_project_plan(
                         .get(&index)
                         .cloned()
                         .unwrap_or_default(),
+                    dependencies: dependency_ids,
                 }
             })
             .collect::<Vec<_>>();
@@ -1150,7 +1201,7 @@ pub(crate) fn validate_requirement_verification_inventory(issue: &Issue) -> Vec<
         return Vec::new();
     }
     let verification = explicit_requirement_verification(issue);
-    requirements
+    let mut errors = requirements
         .iter()
         .enumerate()
         .filter_map(|(index, _)| {
@@ -1161,7 +1212,112 @@ pub(crate) fn validate_requirement_verification_inventory(issue: &Issue) -> Vec<
                 )
             })
         })
+        .collect::<Vec<_>>();
+    errors.extend(validate_requirement_dependencies(issue, requirements.len()));
+    errors
+}
+
+fn explicit_requirement_dependencies(issue: &Issue) -> BTreeMap<usize, Vec<usize>> {
+    let mut in_inventory = false;
+    let mut dependencies = BTreeMap::<usize, BTreeSet<usize>>::new();
+    for line in issue.body.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            in_inventory = heading
+                .trim()
+                .eq_ignore_ascii_case("verification inventory");
+            continue;
+        }
+        if !in_inventory || !trimmed.starts_with('|') {
+            continue;
+        }
+        let cells = trimmed
+            .split('|')
+            .map(str::trim)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>();
+        if cells.len() < 4 {
+            continue;
+        }
+        let requirements = numeric_references(cells[0], 'r');
+        let dependency_refs = numeric_references(cells[3], 'r');
+        for requirement in requirements {
+            let Some(index) = requirement
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1))
+            else {
+                continue;
+            };
+            for dependency in &dependency_refs {
+                let Some(dependency_index) = dependency
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|number| number.checked_sub(1))
+                else {
+                    continue;
+                };
+                dependencies
+                    .entry(index)
+                    .or_default()
+                    .insert(dependency_index);
+            }
+        }
+    }
+    dependencies
+        .into_iter()
+        .map(|(index, values)| (index, values.into_iter().collect()))
         .collect()
+}
+
+fn validate_requirement_dependencies(issue: &Issue, requirement_count: usize) -> Vec<String> {
+    let dependencies = explicit_requirement_dependencies(issue);
+    let mut errors = Vec::new();
+    for (requirement, dependency_ids) in &dependencies {
+        for dependency in dependency_ids {
+            if *dependency >= requirement_count {
+                errors.push(format!(
+                    "verification: R{} depends on unknown R{}",
+                    requirement + 1,
+                    dependency + 1
+                ));
+            } else if dependency == requirement {
+                errors.push(format!(
+                    "verification: R{} cannot depend on itself",
+                    requirement + 1
+                ));
+            }
+        }
+    }
+
+    fn visit(
+        node: usize,
+        dependencies: &BTreeMap<usize, Vec<usize>>,
+        visiting: &mut BTreeSet<usize>,
+        visited: &mut BTreeSet<usize>,
+    ) -> bool {
+        if visited.contains(&node) {
+            return false;
+        }
+        if !visiting.insert(node) {
+            return true;
+        }
+        let cycle = dependencies
+            .get(&node)
+            .into_iter()
+            .flatten()
+            .any(|dependency| visit(*dependency, dependencies, visiting, visited));
+        visiting.remove(&node);
+        visited.insert(node);
+        cycle
+    }
+
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    if (0..requirement_count).any(|node| visit(node, &dependencies, &mut visiting, &mut visited)) {
+        errors.push("verification: Requirement dependencies must be acyclic".to_string());
+    }
+    errors
 }
 
 fn numeric_references(text: &str, prefix: char) -> Vec<String> {
