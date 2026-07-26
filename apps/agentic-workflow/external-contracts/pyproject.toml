@@ -262,9 +262,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-lifecycle-prompt-blocker-conformance.py"
 promise = "invalid oracle state routes to EC repair and decision, approval, environment, red-gate, and missing-evidence blockers remain typed with exact resume"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-blocker-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_routes_invalid_oracle_and_typed_blockers -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-blocker-conformance"
 evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-blocker-conformance.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -276,9 +276,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-lifecycle-prompt-rollup-conformance.py"
 promise = "child dispatch, parked backlog work, and root terminal completion are distinct prompt states"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-rollup-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_distinguishes_child_parked_and_root_terminal -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-rollup-conformance"
 evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-rollup-conformance.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -290,9 +290,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-lifecycle-prompt-stage-conformance.py"
 promise = "every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard; a frontend CB transition projects the complete concrete artifact-quality guard id set"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-stage-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-stage-conformance"
 evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-stage-conformance.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -304,9 +304,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-prompt-vocabulary-and-grammar.py"
 promise = "the registered public Markdown and JSON renderers expose identical prompt content with the exact closed vocabulary, seven ASCII operators, complete EC-first Python Spec transition table, sole workflow-authority boundary, and no Unicode operator lookalikes"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-prompt-vocabulary-and-grammar -- cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-prompt-vocabulary-and-grammar"
 evidence_paths = ["evidence/aw-core-client-prompt-vocabulary-and-grammar.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -318,9 +318,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-typed-prompt-ir-and-envelope-projection.py"
 promise = "a production WorkflowEnvelope pins every typed prompt JSON field and its rendered agent_prompt from the same decoded IR; an invalid typed contract makes WorkflowEnvelope serialization fail instead of falling back to prose"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-prompt-ir-and-envelope-projection -- cargo test -p agentic-workflow --lib cli::run::tests::workflow_envelope_serializes_typed_prompt_contract_from_same_ir -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-prompt-ir-and-envelope-projection"
 evidence_paths = ["evidence/aw-core-client-typed-prompt-ir-and-envelope-projection.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -500,9 +500,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/ec-artifact-producer-cli-fixture.py"
 promise = "aw ec draft creates the canonical Python pyproject, runner, and bounded case module without Markdown fallback; draft emits aw.cli.v1 with the exact aw ec check continuation; the generated Python inventory preserves the requested capability and passes structural check"
-oracle = "The canonical Python scaffold integration test must exit zero and its assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case ec-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test ec_python_inventory_check ec_python_draft_creates_only_python_scaffold_and_checks_clean -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case ec-artifact-producer-cli-fixture"
 evidence_paths = ["evidence/ec-artifact-producer-cli-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -992,9 +992,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-artifact-producer-cli-fixture.py"
 promise = "aw td create creates the durable TD skeleton and one JSON payload for the current queued section; the TD contract exposes validation, generation, evidence, and a runnable next transition; CODEGEN-BEGIN/END and HANDWRITE-BEGIN/END ownership outputs are explicit; HANDWRITE requires gap, tracker, and reason fields"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test artifact_producer_cli_test td_create_emits_cli_owned_skeleton_structured_slots_and_ownership -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
 evidence_paths = ["evidence/td-artifact-producer-cli-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1286,9 +1286,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-artifact-producer-cli-fixture.py"
 promise = "aw wi create creates the durable work-item and payload skeletons before dispatch; stdout carries aw.artifact-producer.v1 and a bounded markdown_fragment slot; the slot names its schema, payload path, apply command, validation, evidence, and next transition"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test artifact_producer_cli_test wi_create_emits_cli_owned_skeleton_and_bounded_markdown_slot -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-artifact-producer-cli-fixture"
 evidence_paths = ["evidence/wi-artifact-producer-cli-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1496,10 +1496,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/aw-core-client-operational-efficiency.py"
 promise = "The aw-core-client-model-workitem-first-artifact-lifecycle representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
 evidence_paths = ["evidence/aw-core-client-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1511,10 +1511,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/aw-core-client-operational-stability.py"
 promise = "The aw-core-client-model-workitem-first-artifact-lifecycle representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
 evidence_paths = ["evidence/aw-core-client-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]

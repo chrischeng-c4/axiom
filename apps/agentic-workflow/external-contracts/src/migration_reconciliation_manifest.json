@@ -856,62 +856,62 @@
         {
           "id": "aw-core-client-lifecycle-prompt-blocker-conformance",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_blocker_conformance.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-lifecycle-prompt-rollup-conformance",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_rollup_conformance.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-lifecycle-prompt-stage-conformance",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_stage_conformance.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-prompt-vocabulary-and-grammar",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_prompt_vocabulary_and_grammar.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-typed-prompt-ir-and-envelope-projection",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_typed_prompt_ir_and_envelope_projection.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "ec-artifact-producer-cli-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_ec_artifact_producer_cli_fixture.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-artifact-producer-cli-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_artifact_producer_cli_fixture.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-artifact-producer-cli-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_artifact_producer_cli_fixture.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     }
