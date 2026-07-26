@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::project::{EcBinding, Project, ProjectArtifactModel, Workspace};
 use crate::services::project_discovery::discover_projects;
+use crate::services::python_td_mutation_health::MutationAdequacyPolicy;
 use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
 
 pub const PROJECT_AW_CONFIG_FILE: &str = "aw.toml";
@@ -111,6 +112,9 @@ pub struct ProjectConfigRow {
     pub artifact_model: Option<ProjectArtifactModel>,
     pub cap_path: Option<String>,
     pub label: Option<String>,
+    pub mutation_adequacy: Option<MutationAdequacyPolicy>,
+    pub mutation_evidence_dir: Option<String>,
+    pub mutation_source_path: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
@@ -248,6 +252,12 @@ struct ProjectAwIdentity {
     cap_path: Option<String>,
     #[serde(default)]
     label: Option<String>,
+    #[serde(default)]
+    mutation_adequacy: Option<MutationAdequacyPolicy>,
+    #[serde(default)]
+    mutation_evidence_dir: Option<String>,
+    #[serde(default)]
+    mutation_source_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -360,7 +370,10 @@ fn merge_project_config_row(
         || incoming.td_path.is_some()
         || incoming.artifact_model.is_some()
         || incoming.cap_path.is_some()
-        || incoming.label.is_some();
+        || incoming.label.is_some()
+        || incoming.mutation_adequacy.is_some()
+        || incoming.mutation_evidence_dir.is_some()
+        || incoming.mutation_source_path.is_some();
     for alias in incoming.aliases {
         if !existing.aliases.contains(&alias) {
             existing.aliases.push(alias);
@@ -380,6 +393,15 @@ fn merge_project_config_row(
     }
     if incoming.label.is_some() {
         existing.label = incoming.label;
+    }
+    if incoming.mutation_adequacy.is_some() {
+        existing.mutation_adequacy = incoming.mutation_adequacy;
+    }
+    if incoming.mutation_evidence_dir.is_some() {
+        existing.mutation_evidence_dir = incoming.mutation_evidence_dir;
+    }
+    if incoming.mutation_source_path.is_some() {
+        existing.mutation_source_path = incoming.mutation_source_path;
     }
     existing
 }
@@ -513,6 +535,9 @@ fn load_project_config_rows_from_file(
             artifact_model: row.artifact_model,
             cap_path: row.cap_path,
             label: row.label,
+            mutation_adequacy: None,
+            mutation_evidence_dir: None,
+            mutation_source_path: None,
         })
         .collect::<Vec<_>>();
     if let (Some(project), Some(project_rel)) = (parsed.project, project_rel) {
@@ -537,6 +562,15 @@ fn load_project_config_rows_from_file(
                 .as_deref()
                 .map(|value| normalize_project_local_path(&source_path, value)),
             label: project.label,
+            mutation_adequacy: project.mutation_adequacy,
+            mutation_evidence_dir: project
+                .mutation_evidence_dir
+                .as_deref()
+                .map(|value| normalize_project_local_path(&source_path, value)),
+            mutation_source_path: project
+                .mutation_source_path
+                .as_deref()
+                .map(|value| normalize_project_local_path(&source_path, value)),
         });
     }
     Ok(rows)
@@ -1272,6 +1306,9 @@ mod resolver_tests {
             artifact_model: None,
             cap_path: None,
             label: label.map(str::to_string),
+            mutation_adequacy: None,
+            mutation_evidence_dir: None,
+            mutation_source_path: None,
         }
     }
 
