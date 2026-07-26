@@ -102,6 +102,22 @@ pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::
     serde_json::Value::Object(map)
 }
 
+/// Canonical labels for CLI-created intake Reports.
+///
+/// Callers may add domain labels, but the shared issue surface always owns the
+/// work-item type and app identity so every created issue enters AW's typed
+/// intake queue.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
+pub fn report_labels(tool: &ToolInfo, labels: &[String]) -> Vec<String> {
+    let mut canonical = labels.to_vec();
+    for required in [tool.issue_label(), "type:report".to_string()] {
+        if !canonical.iter().any(|label| label == &required) {
+            canonical.push(required);
+        }
+    }
+    canonical
+}
+
 /// The GitHub issue update payload for reopening an issue.
 #[cfg(feature = "online")]
 fn reopen_payload() -> serde_json::Value {
@@ -283,6 +299,7 @@ fn note_offline_comment_build() {
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let labels = report_labels(tool, &opts.label);
     let client = http_client(tool)?;
 
     let node = match opts.url.as_deref() {
@@ -295,7 +312,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     );
 
     if opts.dry_run {
-        print_preview(&repo, &opts.title, &body, &opts.label);
+        print_preview(&repo, &opts.title, &body, &labels);
         return Ok(());
     }
 
@@ -309,12 +326,9 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         }
         let (owner, name) = split_repo_owner_name(&repo)?;
         let url = courier_create_url(&courier_url, owner, name);
-        let filed_url = submit_issue_via_courier(
-            &client,
-            &url,
-            &issue_payload(&opts.title, &body, &opts.label),
-        )
-        .await?;
+        let filed_url =
+            submit_issue_via_courier(&client, &url, &issue_payload(&opts.title, &body, &labels))
+                .await?;
         println!("filed: {filed_url}");
         println!("next: done");
         return Ok(());
@@ -332,7 +346,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
                 &client,
                 &repo,
                 &token,
-                &issue_payload(&opts.title, &body, &opts.label),
+                &issue_payload(&opts.title, &body, &labels),
             )
             .await?;
             println!("filed: {url}");
@@ -340,7 +354,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         }
         None => {
             note_no_credential();
-            print_fallback(&repo, &opts.title, &body, &opts.label);
+            print_fallback(&repo, &opts.title, &body, &labels);
         }
     }
     Ok(())
@@ -351,12 +365,13 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let labels = report_labels(tool, &opts.label);
     let body = assemble_body(opts.message.as_deref(), &render_diagnostics(tool, None));
     if opts.dry_run {
-        print_preview(&repo, &opts.title, &body, &opts.label);
+        print_preview(&repo, &opts.title, &body, &labels);
     } else {
         note_offline_build();
-        print_fallback(&repo, &opts.title, &body, &opts.label);
+        print_fallback(&repo, &opts.title, &body, &labels);
     }
     Ok(())
 }
@@ -1011,6 +1026,10 @@ mod tests {
         assert_eq!(p["title"], "t");
         assert_eq!(p["labels"], serde_json::json!(["bug"]));
         assert!(issue_payload("t", "b", &[]).get("labels").is_none());
+        assert_eq!(
+            report_labels(&TOOL, &["severity:high".into(), "app:lumen".into()]),
+            vec!["severity:high", "app:lumen", "type:report"]
+        );
     }
 
     #[test]
