@@ -212,6 +212,14 @@ struct K8sOperatorRenderArgs {
     /// published GHCR release, matching the checked-in operator manifest.
     #[arg(long, default_value_t = format!("ghcr.io/chrischeng-c4/lumen:{}", env!("CARGO_PKG_VERSION")))]
     image: String,
+    /// Also emit the operator's ServiceMonitor and PrometheusRule (#2621).
+    /// Off by default because both are `monitoring.coreos.com/v1` CRDs and a
+    /// cluster without prometheus-operator rejects the whole apply; the
+    /// scrape *target* Service carries no CRD dependency and is always
+    /// rendered. Mirrors the opt-in `k8s/components/operator-monitoring`
+    /// kustomize component.
+    #[arg(long)]
+    monitoring: bool,
     /// Write to this path instead of stdout. A directory receives
     /// `operator.yaml`.
     #[arg(long)]
@@ -1162,7 +1170,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
         K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(args) => {
-                let yaml = render_operator_yaml(&args.namespace, &args.image)?;
+                let yaml = render_operator_yaml(&args.namespace, &args.image, args.monitoring)?;
                 write_or_print(
                     args.out.as_deref(),
                     "operator.yaml",
@@ -1745,7 +1753,7 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
+fn render_operator_yaml(namespace: &str, image: &str, monitoring: bool) -> Result<String> {
     if image.is_empty()
         || image.starts_with('-')
         || image
@@ -1786,6 +1794,19 @@ fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
         );
     }
     out.push_str(&deployment.replacen(&checked_in_image, &format!("          image: {image}"), 1));
+    // The operator's own scrape target (#2621). Unconditional: it is plain
+    // core/v1, so it applies on a cluster with no monitoring stack at all, and
+    // shipping it always means turning monitoring on later never has to come
+    // back and add the target. Kept in the same order as
+    // k8s/operator/kustomization.yaml so the two paths stay comparable.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/service.yaml"
+        )),
+        "lumen-system",
+        namespace,
+    ));
     // The PDB ships with the Deployment: `replicas: 2` only survives a node
     // drain if evictions are serialized (#2602). Render consumers get the same
     // operator layer the kustomize consumers get.
@@ -1797,7 +1818,51 @@ fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
         "lumen-system",
         namespace,
     ));
+    // Opt-in tail, byte-identical to the `operator-monitoring` component so a
+    // kustomize consumer and a render consumer get the same alerts. Gated
+    // because these two are monitoring.coreos.com CRDs: emitting them
+    // unconditionally would make `kubectl apply` of the whole render fail on
+    // any cluster without prometheus-operator, taking the operator down with
+    // the alerts.
+    if monitoring {
+        for manifest in [
+            include_str!("../../k8s/components/operator-monitoring/servicemonitor.yaml"),
+            include_str!("../../k8s/components/operator-monitoring/prometheusrule.yaml"),
+        ] {
+            out.push_str("\n---\n");
+            out.push_str(&rewrite_monitoring_namespace(
+                &cli_std::artifact::strip_source_ownership_markers(manifest),
+                namespace,
+            ));
+        }
+    }
     Ok(cli_std::artifact::ensure_trailing_newline(&out))
+}
+
+/// Rewrite the control-plane namespace in the two monitoring manifests.
+///
+/// `cli_std::artifact::replace_kubernetes_namespace` rewrites the `name:` and
+/// `namespace:` keys, which is everything the RBAC/Deployment/Service/PDB
+/// layer carries. The monitoring layer carries the namespace in three further
+/// shapes, and every one of them fails *silently* if left behind on a
+/// `--namespace` render:
+///
+/// - the ServiceMonitor's `namespaceSelector.matchNames` list item — a
+///   selector pointed at an empty namespace discovers no target, so the
+///   operator simply never appears in Prometheus;
+/// - the PromQL `namespace="..."` matchers in both alert expressions — an
+///   expression that matches nothing can never fire, which is exactly the
+///   false green row 4 exists to prevent;
+/// - the `-n <ns>` in the runbook annotations — commands an on-call would
+///   paste against the wrong namespace mid-incident.
+fn rewrite_monitoring_namespace(manifest: &str, namespace: &str) -> String {
+    cli_std::artifact::replace_kubernetes_namespace(manifest, "lumen-system", namespace)
+        .replace("- lumen-system", &format!("- {namespace}"))
+        .replace(
+            "namespace=\"lumen-system\"",
+            &format!("namespace=\"{namespace}\""),
+        )
+        .replace("-n lumen-system", &format!("-n {namespace}"))
 }
 
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {

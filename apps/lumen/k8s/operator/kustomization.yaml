@@ -18,5 +18,9 @@ resources:
   - crd.yaml
   - rbac.yaml
   - deployment.yaml
+  # The operator's own scrape target. Unconditional because it carries no CRD
+  # dependency; the ServiceMonitor + alerts that consume it are the opt-in
+  # ../components/operator-monitoring component (#2621).
+  - service.yaml
   - pdb.yaml
 # CODEGEN-END

@@ -87,6 +87,113 @@ wait_live_holder() {
   return 1
 }
 
+# --- control-plane self-observability (#2620 / #2621) ----------------------
+# The shared listener in libs/service-k8s ships for every operator, but the
+# Service that makes it reachable is per-app and today only lumen wires one, so
+# these helpers are used under an `$app` guard.
+#
+# The operator image is distroless -- no shell, no curl, nothing to exec into --
+# so every HTTP assertion port-forwards and curls from the runner.
+#
+# The local port counter is a FILE, not a variable, and that is load-bearing.
+# Callers read this through `$(...)`, which is a subshell, so an in-function
+# `port=$((port + 1))` is discarded on return and every call reuses one port --
+# whichever forward is still bound there answers, so two different pods report
+# byte-identical metrics. That reads as "the leader gauge is stuck" rather than
+# "you scraped the same pod twice", which is the wrong bug to chase in a paid
+# cluster run.
+metrics_port_state="$(mktemp)"
+printf '39090\n' > "$metrics_port_state"
+next_metrics_port() {
+  local p
+  p=$(( $(cat "$metrics_port_state") + 1 ))
+  printf '%s\n' "$p" > "$metrics_port_state"
+  printf '%s' "$p"
+}
+operator_metrics() {
+  local pod="$1" pid body="" rc=1 metrics_local_port
+  metrics_local_port="$(next_metrics_port)"
+  kubectl -n "$operator_namespace" port-forward "pod/$pod" \
+    "$metrics_local_port:9090" >/dev/null 2>&1 &
+  pid=$!
+  for _ in $(seq 1 40); do
+    if body="$(curl -sf --max-time 5 "http://127.0.0.1:$metrics_local_port/metrics" 2>/dev/null)"; then
+      rc=0
+      break
+    fi
+    sleep 0.5
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  printf '%s' "$body"
+  return $rc
+}
+
+# Terminating pods keep phase Running and their labels, so a naive selector
+# counts the outgoing replica too; filter on deletionTimestamp.
+live_operator_pods() {
+  kubectl -n "$operator_namespace" get pods \
+    -l "app.kubernetes.io/name=$service_account" -o json 2>/dev/null \
+    | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name' \
+    || true
+}
+
+# The gauge must agree with the Lease -- and the Lease is established
+# independently, above, by kubectl. That cross-check is the whole point: a pod
+# publishing `1` proves nothing on its own, while a pod publishing `1` exactly
+# when the Lease names it, and `0` when it does not, proves the gauge tracks
+# real leadership rather than being wired to a constant.
+require_leader_gauge_agrees() {
+  local holder="$1" pod want got ok
+  local deadline=$((SECONDS + 120))
+  while (( SECONDS < deadline )); do
+    ok=1
+    for pod in $(live_operator_pods); do
+      want=0
+      [[ "$pod" == "$holder" ]] && want=1
+      # `set -euo pipefail` is on: a pod that is mid-deletion refuses the
+      # port-forward, and an unguarded failure here would abort the whole
+      # acceptance run instead of retrying a transient miss.
+      got="$( { operator_metrics "$pod" || true; } \
+        | awk '$1 == "lumen_operator_leader" {print $2}' )"
+      if [[ "$got" != "$want" ]]; then
+        ok=0
+        break
+      fi
+    done
+    if (( ok == 1 )); then
+      return 0
+    fi
+    sleep 3
+  done
+  echo "lumen_operator_leader never agreed with lease holder $holder" >&2
+  kubectl -n "$operator_namespace" get pods -o wide >&2 || true
+  return 1
+}
+
+# Every live replica must be an endpoint of the metrics Service. The follower
+# matters as much as the leader: it is the replica whose `_leader 0` proves a
+# handover actually moved, and prometheus scrapes Endpoints, not the VIP, so a
+# replica missing here is a silently unscraped one.
+require_metrics_endpoints_cover_replicas() {
+  local expected actual
+  expected="$(live_operator_pods | wc -l | tr -d ' ')"
+  local deadline=$((SECONDS + 120))
+  actual=0
+  while (( SECONDS < deadline )); do
+    actual="$( { kubectl -n "$operator_namespace" get endpoints "$service_account-metrics" \
+      -o json 2>/dev/null || printf '{}'; } \
+      | jq '[.subsets // [] | .[].addresses // [] | length] | add // 0' )"
+    if [[ "$actual" == "$expected" ]]; then
+      printf '%s\n' "$actual"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "metrics Service has $actual endpoints for $expected live replicas" >&2
+  return 1
+}
+
 wait_statefulset_one() {
   local desired ready
   local deadline=$((SECONDS + 240))
@@ -132,9 +239,22 @@ tamper_and_require_reconcile
 kubectl -n "$operator_namespace" scale "deployment/$service_account" --replicas=2
 kubectl -n "$operator_namespace" rollout status "deployment/$service_account" --timeout=300s
 before="$(wait_holder)"
+# Two replicas are up and the Lease names one of them: the only moment in this
+# script where the leader gauge can be checked against a known follower.
+metrics_endpoints=""
+if [[ "$app" == "lumen" ]]; then
+  metrics_endpoints="$(require_metrics_endpoints_cover_replicas)"
+  require_leader_gauge_agrees "$before"
+fi
 kubectl -n "$operator_namespace" get "pod/$before" >/dev/null
 kubectl -n "$operator_namespace" delete "pod/$before" --wait=true --timeout=120s
 after="$(wait_holder "$before")"
+# The gauge has to move with the Lease, not just match it once. Re-checked after
+# the takeover, this is what would catch a gauge set at startup and never
+# updated -- which would look correct in the check above and be wrong here.
+if [[ "$app" == "lumen" ]]; then
+  require_leader_gauge_agrees "$after"
+fi
 tamper_and_require_reconcile
 kubectl -n "$operator_namespace" scale "deployment/$service_account" --replicas=1
 kubectl -n "$operator_namespace" rollout status "deployment/$service_account" --timeout=300s
@@ -151,5 +271,7 @@ jq -n \
   --arg before "$before" \
   --arg after "$after" \
   --arg settled "$settled" \
-  '{schema:$schema, app:$app, rbac:"passed", lease_creation:"passed", steady_state_drift_repair:"passed", leader_takeover_reconcile:"passed", holders:{initial:$initial,before_takeover:$before,after_takeover:$after,settled:$settled}}' \
+  --arg metrics "${metrics_endpoints:-}" \
+  '{schema:$schema, app:$app, rbac:"passed", lease_creation:"passed", steady_state_drift_repair:"passed", leader_takeover_reconcile:"passed", holders:{initial:$initial,before_takeover:$before,after_takeover:$after,settled:$settled}}
+   + (if $metrics == "" then {} else {control_plane_observability:{status:"passed", metrics_endpoints:($metrics|tonumber), leader_gauge_tracks_lease:"passed"}} end)' \
   > "$EVIDENCE_DIR/${app}-operator-cell.json"

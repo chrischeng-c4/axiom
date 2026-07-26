@@ -385,6 +385,177 @@ anti-affinity, which the scheduler enforces *symmetrically* — any pod wearing
 the serving labels is refused on a node already running one — so
 `replicasPerShard: N` needs N schedulable nodes.
 
+### Row 4 — the control plane can be observed at all (#2620, 2026-07-26)
+
+Row 4 was empty for all six services for one reason, not six: they share
+`libs/service-k8s`'s controller, and `run<S>()` started a reconcile loop and
+nothing else — no listener, no counters, and an `error_policy` that dropped
+the error and returned a bare requeue. A CR failing every single round was
+therefore externally identical to one converging fine. The fix is in the
+shared layer, so all six inherit it.
+
+`libs/service-k8s/src/metrics.rs` publishes four series, prefixed from the
+service's `MANAGER` (`lumen-operator` → `lumen_operator_`) so the six
+services land in one Prometheus without colliding and a query written
+against one reads the same for all:
+
+| Series | Kind | Answers |
+|---|---|---|
+| `*_reconcile_total` | counter | is the operator doing work at all |
+| `*_reconcile_errors_total` | counter | is that work succeeding |
+| `*_reconcile_duration_seconds` | histogram (11 buckets, 5ms–10s) | is the apiserver throttling it |
+| `*_leader` | gauge | which replica is actually allowed to act |
+
+Three decisions are load-bearing rather than incidental:
+
+- **The listener runs beside the controller, not inside it.** Leadership is
+  read at *scrape* time from `Election::is_leader`, so a follower publishes
+  an honest `_leader 0` instead of going dark. A gauge written only from the
+  reconcile path would report stale leadership forever on an idle cluster —
+  precisely the case where a silent handover matters most.
+- **Errors now leave a trace on both sides.** `error_policy` increments the
+  counter (feeding the alert) *and* publishes a `Warning`/`ReconcileFailed`
+  Event on the offending CR (feeding `kubectl describe`). The write is
+  detached because `error_policy` is synchronous by the controller's
+  contract; the `Recorder`'s 6-minute dedup window collapses a repeatedly
+  failing reconcile into one counted series rather than an apiserver flood.
+- **The success Event is generation-triggered, not unconditional.** It fires
+  when `observedGeneration != metadata.generation` — first reconcile and
+  every spec change — and stays silent through the 30s steady-state
+  requeues. Publishing every round would mean one apiserver write per CR per
+  requeue forever.
+
+Bind address is `OPERATOR_METRICS_ADDR` (default `0.0.0.0:9090`). The
+operator ClusterRole gained `events.k8s.io/events: create,patch`.
+
+Evidence: `cargo test -p service-k8s` **61 passed / 0 failed**.
+
+### Row 4 — Lumen-side wiring: scrape target and two alerts (#2621, 2026-07-26)
+
+The shared layer publishes; this is what makes anything read it. Lumen had a
+ServiceMonitor for *instances* and none for the operator, so the control
+plane was unscraped even after #2620.
+
+Three objects, split along one line — **CRD dependency**:
+
+- `k8s/operator/service.yaml` — `lumen-operator-metrics`, plain ClusterIP,
+  port `metrics` 9090. Installed **unconditionally** on both consumer paths,
+  because a core/v1 Service applies cleanly on a cluster with no monitoring
+  stack at all. Not headless on purpose: the Prometheus Operator scrapes a
+  ServiceMonitor's *Endpoints*, not the Service VIP, so both replicas become
+  separate targets either way — required, not incidental, since `_leader` is
+  per-replica and a collapsed target would make a handover invisible.
+- `k8s/components/operator-monitoring/` — the ServiceMonitor and
+  PrometheusRule, **opt-in**, because both are `monitoring.coreos.com/v1`
+  and a cluster without prometheus-operator rejects the *whole* apply. CLI
+  equivalent: `lumen k8s operator render --monitoring`.
+
+The two alerts, and why each is shaped the way it is:
+
+- **`LumenOperatorAbsent`** reads `up`, not any `lumen_operator_*` counter.
+  A dead control plane produces no user-visible symptom — the serving
+  StatefulSet keeps answering reads from its last-reconciled state — and
+  when the pod is gone the counters stop existing, so "no series" and "no
+  errors" evaluate identically. It needs two arms: `sum(up{...}) == 0`
+  covers pods that exist but fail to scrape, and `absent(up{...})` covers
+  scale-to-zero, where the Endpoints and therefore the `up` series itself
+  disappear and a plain comparison returns an empty vector that can never
+  fire. The scale-to-zero case is the one a `kubectl scale --replicas=0`
+  actually hits.
+- **`LumenOperatorReconcileErrorRate`** is a ratio with a denominator
+  floor (`and rate(total[15m]) > 0.01`). The floor does three jobs at once:
+  it stops a near-idle operator from reaching 100% on a single optimistic
+  concurrency conflict, it keeps 0/0 (NaN) out of the comparison, and it
+  stops the two alerts double-paging on one incident — a dead operator
+  drives the attempt rate to zero, the floor blocks this rule, and the
+  absence alert is the only one that fires.
+
+Both carry `summary` + `description` + an inline `runbook` of concrete
+kubectl recipes (the house convention set by `render.rs`) plus a
+`runbook_url` into `docs/runbooks/operator-control-plane.md`, which is new
+and holds the per-alert cause tables.
+
+One silent-failure class was caught before it shipped:
+`cli_std::artifact::replace_kubernetes_namespace` only rewrites `name:` and
+`namespace:` keys, so a `--namespace` render would have left
+`namespaceSelector.matchNames`, the PromQL `namespace="lumen-system"`
+matchers, and the `-n lumen-system` runbook text pointing at the old
+namespace — a ServiceMonitor discovering nothing and alerts that can never
+fire, neither of which errors. `rewrite_monitoring_namespace` handles all
+three shapes and
+`relocating_the_operator_relocates_its_monitoring_too` is the regression
+test.
+
+A second silent-failure class got through every local gate and was caught by
+the first real cluster, which is worth recording as a limit of the gates
+rather than just a fixed bug. An alert's `labels:` become labels on the
+*fired alert series*, so their keys are Prometheus label names and must
+match `[a-zA-Z_][a-zA-Z0-9_]*`. The surrounding `metadata.labels` are
+Kubernetes label keys, where `app.kubernetes.io/name` is not merely legal
+but conventional — so the wrong style sits six lines from a place it is
+right, and that is the mistake the first draft made. prometheus-operator
+rejects the **whole** PrometheusRule, so neither alert installs, including
+the healthy one.
+
+`promtool` cannot supply this gate: version 3.13.1 accepts UTF-8 label
+names and exits 0 on the identical bytes the cluster refused (verified by
+re-running it against the rejected file). The check is therefore a Rust
+test, `alert_label_keys_are_prometheus_label_names_not_kubernetes_ones`,
+confirmed to fail when the bug is reintroduced. Both consumer paths read
+the same bytes — `bin/lumen.rs` `include_str!`s the component file — so one
+assertion covers kustomize and CLI.
+
+Evidence:
+
+- `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`
+  **16 passed / 0 failed** (7 new), including selector-to-label and
+  port-name-to-port-name closure between Service, pod, and ServiceMonitor,
+  `every_runbook_url_resolves_to_a_file_in_this_repository`, and the
+  alert-label-name gate above.
+- `promtool check rules` on the rendered `spec` → **`SUCCESS: 2 rules
+  found`**, wired as a skip-if-absent Rust test. Scope: it checks PromQL
+  and annotation templates, **not** label-name legality — see above.
+- Kustomize/CLI parity: the sorted `kind:` set from `kustomize build`
+  (operator layer + component, minus the separately-owned CRD) and from
+  `lumen k8s operator render --monitoring` are **identical — 9 kinds**.
+
+### Row 4 — cluster proof: kind + kube-prometheus-stack (2026-07-26)
+
+Rendered YAML being correct is not the claim. The claim is that the listener
+binds, the counters move, Prometheus discovers the target, and the absence
+alert fires when the control plane disappears — none of which a unit test can
+assert. Two operator replicas on kind v1.36.1, kube-prometheus-stack 87.19.1
+(15s scrape/eval), the app image built from this tree:
+
+| Assertion | Result |
+| --- | --- |
+| All four series exposed on **both** replicas | leader + follower both scrapeable |
+| `lumen_operator_leader == 1` on exactly one replica | leader `1`, follower `0`, agreeing with the Lease holder |
+| `reconcile_total` advances over 70s | leader `9 → 11`; follower stays `0` |
+| `Normal/Reconciled` Event on the CR | `applied spec generation 1` |
+| Event is generation-triggered, not per-requeue | count `1` → *(spec change)* → `2` → *(45s idle)* → `2` |
+| Prometheus scrapes both replicas | 2 targets at `up == 1`; `sum(lumen_operator_leader) == 1` |
+| Both rules load and evaluate | `lumen.operator` group, 2 rules |
+| `LumenOperatorAbsent` on scale-to-zero | `inactive` → `pending` (~62s) → **`firing`** (350s), honouring `for: 5m` |
+| …and recovers | cleared within 16s of scale-up |
+
+The fired alert carried
+`{alertname, app=lumen, job=lumen-operator-metrics, namespace=lumen-system, role=operator, severity=critical}`
+— the labels are the ones the cluster rejected in the first draft, so this run
+is also the end-to-end proof of that fix.
+
+Two findings worth keeping, both about the *harness* rather than the product:
+
+- The follower's `reconcile_total` stays at `0` permanently, because the leader
+  gate returns before the metrics observation. Any "the counter advances"
+  assertion must **sum across replicas**; per-replica it fails spuriously on
+  the follower, and per-leader it silently stops testing the follower's
+  listener.
+- `rollout status` returning does not mean a leader exists — a new replica
+  cannot take the Lease until the old holder's expires, so for the first ~30s
+  after a rollout *every* replica honestly reports `leader 0`. Asserting
+  immediately reads a real, transient, correct state as a failure.
+
 ## Verified Cloud Evidence
 
 Standard GKE operator acceptance evidence for Lumen (epic #2434 ordered

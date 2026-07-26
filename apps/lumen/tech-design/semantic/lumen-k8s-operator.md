@@ -59,6 +59,10 @@ deployment:
           - crd.yaml
           - rbac.yaml
           - deployment.yaml
+          # The operator's own scrape target. Unconditional because it carries no CRD
+          # dependency; the ServiceMonitor + alerts that consume it are the opt-in
+          # ../components/operator-monitoring component (#2621).
+          - service.yaml
           - pdb.yaml
     - path: "apps/lumen/k8s/operator/deployment.yaml"
       kind: "kubernetes-deployment"
@@ -121,6 +125,14 @@ deployment:
                   image: ghcr.io/chrischeng-c4/lumen:0.4.25
                   imagePullPolicy: IfNotPresent
                   command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]
+                  ports:
+                    # Control-plane scrape endpoint (#2620/#2621). Every replica serves
+                    # it, leader and standby alike: the standby publishes `_leader 0`
+                    # rather than going dark, which is what makes "which replica is in
+                    # charge" answerable and a failed handover visible.
+                    - name: metrics
+                      containerPort: 9090
+                      protocol: TCP
                   env:
                     - name: RUST_LOG
                       value: "info"
@@ -148,6 +160,38 @@ deployment:
                     readOnlyRootFilesystem: true
                     capabilities:
                       drop: ["ALL"]
+    - path: "apps/lumen/k8s/operator/service.yaml"
+      kind: "kubernetes-service"
+      content: |
+        # The operator's own scrape target (#2621).
+        #
+        # Deliberately a plain ClusterIP rather than headless: the Prometheus Operator
+        # scrapes a ServiceMonitor's *Endpoints*, not the Service VIP, so both operator
+        # replicas become separate targets either way — and that is required, not
+        # incidental. The leader gauge is per-replica, so collapsing the two into one
+        # target would make a lease handover invisible and leave "which replica is
+        # actually reconciling" unanswerable.
+        #
+        # Carries no CRD dependency, so it applies cleanly on a cluster with no
+        # monitoring stack at all; the ServiceMonitor and alerts that consume it live
+        # in the opt-in `operator-monitoring` component.
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: lumen-operator-metrics
+          namespace: lumen-system
+          labels:
+            app.kubernetes.io/name: lumen-operator
+            app.kubernetes.io/part-of: lumen
+        spec:
+          type: ClusterIP
+          selector:
+            app.kubernetes.io/name: lumen-operator
+          ports:
+            - name: metrics
+              port: 9090
+              targetPort: metrics
+              protocol: TCP
     - path: "apps/lumen/k8s/operator/pdb.yaml"
       kind: "kubernetes-poddisruptionbudget"
       content: |

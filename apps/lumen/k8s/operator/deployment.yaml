@@ -58,6 +58,14 @@ spec:
           image: ghcr.io/chrischeng-c4/lumen:0.4.25
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/lumen", "k8s", "operator", "run"]
+          ports:
+            # Control-plane scrape endpoint (#2620/#2621). Every replica serves
+            # it, leader and standby alike: the standby publishes `_leader 0`
+            # rather than going dark, which is what makes "which replica is in
+            # charge" answerable and a failed handover visible.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: RUST_LOG
               value: "info"
