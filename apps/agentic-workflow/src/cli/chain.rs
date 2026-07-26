@@ -134,11 +134,9 @@ const CHAIN_REQUIRED_POSITIONALS: &[ChainRequiredPositional] = &[ChainRequiredPo
 ///   2. Consult [`CHAIN_REQUIRED_POSITIONALS`] for positionals that are
 ///      clap-optional but semantically required for correct dispatch.
 ///
-/// Token splitting is plain `str::split_whitespace` (a documented
-/// limitation, not a real shell/shlex split): no EMIT_REGISTRY template
-/// today quotes a substituted value, so a naive split round-trips correctly
-/// for the current surface. A real shlex split is tier 2 (#914 slice G) if
-/// that stops being true.
+/// Token splitting honors POSIX-style single/double quotes and backslash
+/// escapes so an emitted `aw goal set --gate "<command>" "<intent>"`
+/// round-trips through the same Clap tree without executing the command.
 pub fn validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {
@@ -148,8 +146,9 @@ pub fn validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> {
             "command string is empty",
         ));
     }
-    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-    if tokens.first() != Some(&"aw") {
+    let tokens = split_command_words(trimmed)
+        .map_err(|reason| ChainBlocker::new(ChainBlockerKind::ClapRejected, cmd, reason))?;
+    if tokens.first().map(String::as_str) != Some("aw") {
         return Err(ChainBlocker::new(
             ChainBlockerKind::NotAwCommand,
             cmd,
@@ -157,7 +156,7 @@ pub fn validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> {
         ));
     }
     let matches = TraceabilityCli::command()
-        .try_get_matches_from(tokens.iter().copied())
+        .try_get_matches_from(tokens.iter().map(String::as_str))
         .map_err(|err| {
             let reason = err
                 .to_string()
@@ -169,6 +168,61 @@ pub fn validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> {
         })?;
     check_chain_required_positionals(cmd, &matches)?;
     Ok(())
+}
+
+fn split_command_words(command: &str) -> std::result::Result<Vec<String>, String> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Quote {
+        None,
+        Single,
+        Double,
+    }
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = Quote::None;
+    let mut escaped = false;
+    let mut started = false;
+    for character in command.chars() {
+        if escaped {
+            word.push(character);
+            escaped = false;
+            started = true;
+            continue;
+        }
+        match (quote, character) {
+            (Quote::None | Quote::Double, '\\') => escaped = true,
+            (Quote::None, '\'') => {
+                quote = Quote::Single;
+                started = true;
+            }
+            (Quote::Single, '\'') => quote = Quote::None,
+            (Quote::None, '"') => {
+                quote = Quote::Double;
+                started = true;
+            }
+            (Quote::Double, '"') => quote = Quote::None,
+            (Quote::None, character) if character.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            (_, character) => {
+                word.push(character);
+                started = true;
+            }
+        }
+    }
+    if escaped {
+        return Err("command ends with an incomplete backslash escape".to_string());
+    }
+    if quote != Quote::None {
+        return Err("command contains an unterminated quoted argument".to_string());
+    }
+    if started {
+        words.push(word);
+    }
+    Ok(words)
 }
 
 fn check_chain_required_positionals(
@@ -1594,6 +1648,18 @@ mod tests {
             "non-migration verb(s) carrying a sunset_criterion (only Migration entries should): \
              {non_migration_with_sunset:?}"
         );
+    }
+
+    #[test]
+    fn quoted_goal_gate_round_trips_through_live_clap_tree() {
+        validate_aw_command_string(
+            r#"aw goal set --gate "aw health --project demo mutation" "Produce complete mutation evidence for demo""#,
+        )
+        .unwrap();
+        let error =
+            validate_aw_command_string(r#"aw goal set --gate "aw health --project demo mutation"#)
+                .unwrap_err();
+        assert_eq!(error.kind, ChainBlockerKind::ClapRejected);
     }
 
     #[test]

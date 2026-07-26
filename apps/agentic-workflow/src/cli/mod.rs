@@ -65,6 +65,13 @@ pub mod merge_target;
 // call into these.
 pub use commands::{run_command, Commands};
 
+/// Read-only conformance check for an emitted `aw ...` command. Public so
+/// integration tests and downstream envelope producers can prove a handoff
+/// round-trips through the live Clap tree without executing it.
+pub fn validate_emitted_aw_command(command: &str) -> std::result::Result<(), String> {
+    chain::validate_aw_command_string(command).map_err(|error| error.to_string())
+}
+
 const LEGACY_SCORE_WORKSPACE_DIR: &str = concat!(".", "score");
 
 fn legacy_score_workspace_error(root: &std::path::Path) -> anyhow::Error {

@@ -4049,6 +4049,24 @@ mod tests {
             },
             test_gates: crate::cli::project::ProjectTestGateReport::passed_fixture("true"),
             python_artifact: None,
+            mutation_adequacy:
+                crate::services::python_td_mutation_health::PythonTdMutationAdequacy {
+                    enabled: false,
+                    policy:
+                        crate::services::python_td_mutation_health::MutationAdequacyPolicy::Advisory,
+                    required_for_production: false,
+                    status:
+                        crate::services::python_td_mutation_health::MutationAdequacyStatus::Missing,
+                    ready: false,
+                    evidence_dir: String::new(),
+                    source_path: String::new(),
+                    expected_run_count: 0,
+                    evidence_run_count: 0,
+                    killed_count: 0,
+                    survived_count: 0,
+                    findings: Vec::new(),
+                    next_command: None,
+                },
             ec: crate::cli::project::ProjectEcGateReport::not_evaluated(project),
             claim_closure: crate::cli::project::ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),

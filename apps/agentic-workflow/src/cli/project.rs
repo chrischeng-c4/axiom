@@ -31,7 +31,7 @@ use crate::models::project::EcBinding;
 #[derive(Debug, Args, Clone)]
 #[command(after_help = r#"Default output is a low-token metrics envelope.
 Use `aw health --project <project> full` for the previous detailed report, or a
-focused section: metrics, capability, meta, gates, tests, ec, cb, cold, traceability,
+focused section: metrics, capability, meta, gates, tests, ec, mutation, cb, cold, traceability,
 regenerable, api, stack, td-lock, claims, blockers, drift-marker,
 takeover-audit.
 Use `-v/--verbose` to include progress events.
@@ -114,6 +114,8 @@ pub enum ProjectHealthSection {
     Gates,
     Tests,
     Ec,
+    /// Typed Python TD mutation adequacy and digest-bound evidence coverage.
+    Mutation,
     /// Python Spec production view: EC -> TD -> CB evidence rather than
     /// legacy source-marker coverage.
     Spec,
@@ -153,6 +155,7 @@ pub struct ProjectHealthReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python_artifact:
         Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
+    pub mutation_adequacy: crate::services::python_td_mutation_health::PythonTdMutationAdequacy,
     pub ec: ProjectEcGateReport,
     pub claim_closure: ProjectClaimClosureReport,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -651,6 +654,7 @@ fn build_health_report_with_options_internal(
         apply_ec_to_report(&mut report, verify_ec)?;
         apply_python_artifact_readiness_to_report(&mut report)?;
         apply_claim_closure_to_report(&mut report)?;
+        apply_mutation_adequacy_to_report(&mut report)?;
         Ok(report)
     })
 }
@@ -1335,6 +1339,24 @@ impl ProjectHealthReport {
             capability: CapabilityHealthReport::ready_fixture(project),
             test_gates,
             python_artifact: None,
+            mutation_adequacy:
+                crate::services::python_td_mutation_health::PythonTdMutationAdequacy {
+                    enabled: false,
+                    policy:
+                        crate::services::python_td_mutation_health::MutationAdequacyPolicy::Advisory,
+                    required_for_production: false,
+                    status:
+                        crate::services::python_td_mutation_health::MutationAdequacyStatus::Missing,
+                    ready: false,
+                    evidence_dir: String::new(),
+                    source_path: String::new(),
+                    expected_run_count: 0,
+                    evidence_run_count: 0,
+                    killed_count: 0,
+                    survived_count: 0,
+                    findings: Vec::new(),
+                    next_command: None,
+                },
             ec: ProjectEcGateReport::not_evaluated(project),
             claim_closure: ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),
@@ -2031,6 +2053,9 @@ pub fn project_health_section_summary(
             "data": meta,
         });
     }
+    if section == ProjectHealthSection::Mutation {
+        return mutation_health_summary(&report.project, &report.mutation_adequacy);
+    }
     let payload = match section {
         ProjectHealthSection::Full => unreachable!(),
         ProjectHealthSection::Meta => unreachable!(),
@@ -2042,6 +2067,7 @@ pub fn project_health_section_summary(
         ProjectHealthSection::Gates => serde_json::json!({
             "tests": project_test_gate_summary(&report.test_gates),
             "ec": project_ec_gate_summary(&report.ec),
+            "mutation": &report.mutation_adequacy,
             "claim_closure": project_claim_closure_summary(&report.claim_closure),
             "cb_verify_evaluated": report.cb_verify_evaluated,
             "cb_verify_clean": report.cb_verify_clean,
@@ -2052,8 +2078,10 @@ pub fn project_health_section_summary(
         }),
         ProjectHealthSection::Tests => project_test_gate_summary(&report.test_gates),
         ProjectHealthSection::Ec => project_ec_gate_summary(&report.ec),
+        ProjectHealthSection::Mutation => unreachable!(),
         ProjectHealthSection::Spec => serde_json::json!({
             "python_spec": &report.python_artifact,
+            "mutation": &report.mutation_adequacy,
             "production_ready": report.production_ready,
             "production_blockers": &report.production_blockers,
         }),
@@ -2155,6 +2183,44 @@ pub fn project_health_section_summary(
         "section": section,
         "next": project_health_next(report),
         "data": payload,
+    })
+}
+
+pub fn mutation_health_summary(
+    project: &str,
+    adequacy: &crate::services::python_td_mutation_health::PythonTdMutationAdequacy,
+) -> serde_json::Value {
+    let blocked = adequacy.required_for_production && !adequacy.ready;
+    let next = if blocked {
+        serde_json::json!({
+            "kind": "run_command",
+            "command": adequacy.next_command,
+            "reason": "production-required mutation adequacy is not green",
+        })
+    } else {
+        serde_json::json!({
+            "kind": "done",
+            "reason": if adequacy.ready {
+                "mutation adequacy evidence is complete"
+            } else {
+                "mutation adequacy is advisory for this project"
+            },
+        })
+    };
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "result",
+        "status": if blocked { "blocked" } else { "done" },
+        "action": "health",
+        "project": project,
+        "section": "mutation",
+        "completion": {
+            "workflow_complete": !blocked,
+            "requires_hitl": false,
+            "missing": if blocked { adequacy.findings.clone() } else { Vec::<String>::new() },
+        },
+        "next": next,
+        "data": adequacy,
     })
 }
 
@@ -2305,6 +2371,7 @@ fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Valu
         "capability": project_health_capability_axis(report),
         "ec": project_health_ec_axis(report),
         "ec_gen": project_health_ec_gen_axis(report),
+        "mutation": &report.mutation_adequacy,
         "td": project_health_td_axis(report),
         "td_gen": project_health_td_gen_axis(report),
         "drift_marker": project_health_drift_marker_axis(report),
@@ -2894,6 +2961,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     {
         return readiness.next_command.clone();
     }
+    if report.mutation_adequacy.required_for_production && !report.mutation_adequacy.ready {
+        return report.mutation_adequacy.next_command.clone();
+    }
     if !report.ec.lock_clean {
         if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
             return None;
@@ -3139,6 +3209,27 @@ fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json:
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
+    if args.section == Some(ProjectHealthSection::Mutation) {
+        let project_root = crate::find_project_root()?;
+        let row = crate::services::project_registry::resolve_project_config_row(
+            &project_root,
+            &args.project,
+        )?;
+        let adequacy =
+            crate::services::python_td_mutation_health::evaluate(&project_root, &row.name)?;
+        let payload_path = write_mutation_health_payload(&row.name, &adequacy)?;
+        let summary =
+            with_payload_path(mutation_health_summary(&row.name, &adequacy), &payload_path);
+        if args.human || args.pretty || args.json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!("{}", serde_json::to_string(&summary)?);
+        }
+        if adequacy.required_for_production && !adequacy.ready {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let verification = effective_health_verification_flags(&args);
     let mut report = build_health_report_with_options_internal(
         &args.project,
@@ -3186,9 +3277,14 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     }
     let focused_meta_blocked = args.section == Some(ProjectHealthSection::Meta)
         && !project_meta_health(&report.project).clean;
-    let aggregate_blocked = args.section != Some(ProjectHealthSection::Meta)
-        && report.status == ProjectHealthStatus::Blocked;
-    if focused_meta_blocked || aggregate_blocked {
+    let focused_mutation_blocked = args.section == Some(ProjectHealthSection::Mutation)
+        && report.mutation_adequacy.required_for_production
+        && !report.mutation_adequacy.ready;
+    let aggregate_blocked = !matches!(
+        args.section,
+        Some(ProjectHealthSection::Meta | ProjectHealthSection::Mutation)
+    ) && report.status == ProjectHealthStatus::Blocked;
+    if focused_meta_blocked || focused_mutation_blocked || aggregate_blocked {
         std::process::exit(1);
     }
     Ok(())
@@ -3240,6 +3336,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Capability
             | ProjectHealthSection::Meta
             | ProjectHealthSection::Gates
+            | ProjectHealthSection::Mutation
             | ProjectHealthSection::TdLock
             | ProjectHealthSection::Blockers
             | ProjectHealthSection::DriftMarker
@@ -3319,6 +3416,22 @@ fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     let path = dir.join("report.json");
     let bytes = health_payload_bytes(report)?;
     fs::write(&path, bytes).with_context(|| format!("write health payload {}", path.display()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn write_mutation_health_payload(
+    project: &str,
+    adequacy: &crate::services::python_td_mutation_health::PythonTdMutationAdequacy,
+) -> Result<String> {
+    let dir = std::env::temp_dir()
+        .join("aw")
+        .join(sanitize_tmp_path_segment(project))
+        .join("health");
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("create health payload dir {}", dir.display()))?;
+    let path = dir.join("mutation.json");
+    fs::write(&path, serde_json::to_vec_pretty(adequacy)?)
+        .with_context(|| format!("write mutation health payload {}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -3693,6 +3806,29 @@ fn apply_python_artifact_readiness_projection(
     }
     report.python_artifact = readiness;
     report.refresh_takeover_readiness();
+}
+
+pub(crate) fn apply_mutation_adequacy_to_report(report: &mut ProjectHealthReport) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let adequacy =
+        crate::services::python_td_mutation_health::evaluate(&project_root, &report.project)?;
+    if !adequacy.ready {
+        let summary = format!(
+            "mutation adequacy {:?}: {} finding(s)",
+            adequacy.status,
+            adequacy.findings.len()
+        );
+        if adequacy.required_for_production {
+            block_health_report(report, summary);
+        } else {
+            report.optional_quality_warnings.push(summary);
+            report.optional_quality_warnings.sort();
+            report.optional_quality_warnings.dedup();
+        }
+    }
+    report.mutation_adequacy = adequacy;
+    report.refresh_takeover_readiness();
+    Ok(())
 }
 
 /// #1828: an outstanding EC review (missing/stale/incomplete evidence, or an

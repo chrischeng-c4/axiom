@@ -25,6 +25,7 @@ pub mod python_ec;
 pub mod python_td;
 pub mod python_td_mutation;
 pub mod python_td_mutation_evidence;
+pub mod python_td_mutation_health;
 pub mod python_td_mutation_runner;
 pub mod python_td_openapi_target;
 pub mod python_td_rust_target;
