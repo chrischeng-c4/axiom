@@ -15,9 +15,13 @@ from typing import Any
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 AW_BINARY = REPOSITORY_ROOT / "target" / "debug" / "aw"
 EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "evidence"
+_AW_READY = False
 
 
 def _ensure_aw_binary() -> None:
+    global _AW_READY
+    if _AW_READY:
+        return
     completed = subprocess.run(
         ["cargo", "build", "-p", "agentic-workflow", "--bin", "aw"],
         cwd=REPOSITORY_ROOT,
@@ -29,6 +33,7 @@ def _ensure_aw_binary() -> None:
         raise AssertionError(
             f"failed to build aw:\nstdout={completed.stdout}\nstderr={completed.stderr}"
         )
+    _AW_READY = True
 
 
 @contextmanager

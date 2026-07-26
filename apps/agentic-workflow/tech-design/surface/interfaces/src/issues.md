@@ -7954,9 +7954,7 @@ async fn run_validate_legacy(
     backend: &dyn IssueBackend,
     issue: &Issue,
 ) -> Result<()> {
-    let quality = crate::services::issue_parser::validate_issue_quality(&issue.body);
-    let mut quality_errors = quality.errors.clone();
-    quality_errors.extend(validate_planning_alignment(issue));
+    let quality_errors = validate_publishable_issue_body(issue);
 
     if !quality_errors.is_empty() {
         let patch = IssuePatch {

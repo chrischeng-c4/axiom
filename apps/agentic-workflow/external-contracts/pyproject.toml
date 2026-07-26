@@ -86,6 +86,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/shared-cli-issue-report-intake.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "work-item-intake-health"
+artifact_id = "artifact:agentic-workflow/work-item-intake-health"
+capability_id = "work-item-planning"
+use_case_id = "typed-intake-health"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-intake-health.py"
+promise = "health projects open Report and expired Spike counts plus the exact next typed intake remediation command"
+oracle = "The hand-authored Python EC creates real local-backend intake WIs, executes health, and independently checks the public intake_queue axis before and after triage."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
+evidence_paths = ["evidence/work-item-intake-health.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "api-contract-source-passes"
 artifact_id = "artifact:agentic-workflow/api-contract-source-passes"
 capability_id = "td-cb-lifecycle-automation"
