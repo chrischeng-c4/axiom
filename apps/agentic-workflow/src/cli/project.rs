@@ -3693,8 +3693,7 @@ fn build_project_claim_closure_report(
         require_td_artifact_evidence,
     )
     .with_context(|| "failed to scan TD capability_refs")?;
-    let manifest =
-        crate::cli::ec::load_project_ec_manifest(&report.project)?.map(|(_, manifest)| manifest);
+    let manifest = load_claim_closure_ec_manifest(project_root, &report.project)?;
     Ok(build_claim_closure_report(
         &report.project,
         &document,
@@ -3705,6 +3704,74 @@ fn build_project_claim_closure_report(
             || (report.managed_ready && report.semantic_ready && report.traceability_ready),
         require_td_artifact_evidence,
     ))
+}
+
+fn load_claim_closure_ec_manifest(
+    project_root: &std::path::Path,
+    project: &str,
+) -> Result<Option<crate::cli::ec::EcManifest>> {
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    if row.effective_artifact_model() != crate::models::project::ProjectArtifactModel::PythonV1 {
+        return Ok(crate::cli::ec::load_project_ec_manifest(project)?.map(|(_, manifest)| manifest));
+    }
+    let inventory = crate::services::python_ec::discover_python_ec_inventory(
+        &project_root.join(&row.path).join("external-contracts"),
+    )?;
+    if !inventory.findings.is_empty() {
+        anyhow::bail!(
+            "Python EC inventory is not structurally valid:\n{}",
+            inventory.findings.join("\n")
+        );
+    }
+    Ok(Some(python_ec_inventory_as_claim_manifest(
+        project, &inventory,
+    )))
+}
+
+fn python_ec_inventory_as_claim_manifest(
+    project: &str,
+    inventory: &crate::services::python_ec::PythonEcInventory,
+) -> crate::cli::ec::EcManifest {
+    let cases = inventory
+        .cases
+        .iter()
+        .map(|case| crate::cli::ec::EcManifestCase {
+            id: case.id.clone(),
+            capability_id: case.capability_id.clone(),
+            claim_id: case.use_case_id.clone(),
+            contract_id: case.artifact_id.clone(),
+            category: case.dimension.clone(),
+            td_ref: case.artifact_id.clone(),
+            test_path: case.test_path.clone(),
+            command: case.command.clone(),
+            required_for_production: case.dimension != "efficiency"
+                || inventory.efficiency_policy == "required",
+            assertions: vec![case.promise.clone()],
+            evidence: case
+                .evidence_paths
+                .iter()
+                .map(|path| crate::cli::ec::EcEvidenceArtifact {
+                    kind: "file".to_string(),
+                    path: path.clone(),
+                    label: case.id.clone(),
+                    locator: String::new(),
+                    format: "json".to_string(),
+                    command: case.command.clone(),
+                    screenshots: Vec::new(),
+                    highlights: Vec::new(),
+                    steps: Vec::new(),
+                })
+                .collect(),
+            evaluators: Vec::new(),
+        })
+        .collect();
+    crate::cli::ec::EcManifest {
+        version: 1,
+        project: project.to_string(),
+        generated_from_td_digest: inventory.source_digest.clone(),
+        cases,
+        tool_manifests: Vec::new(),
+    }
 }
 
 fn collect_td_capability_refs_for_claim_closure(
@@ -5486,6 +5553,47 @@ mod tests {
         .unwrap();
 
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn python_ec_inventory_projects_use_case_ids_into_claim_closure_manifest() {
+        let case = |id: &str, dimension: &str| crate::services::python_ec::PythonEcCase {
+            id: id.to_string(),
+            artifact_id: format!("artifact:demo/{id}"),
+            capability_id: "cap".to_string(),
+            use_case_id: "claim".to_string(),
+            dimension: dimension.to_string(),
+            applicability: "td".to_string(),
+            test_path: format!("src/cases/{id}.py"),
+            promise: format!("{id} promise"),
+            oracle: format!("{id} oracle"),
+            threshold: None,
+            target: "rust".to_string(),
+            command: format!("cargo test {id}"),
+            evidence_paths: vec![format!("evidence/{id}.json")],
+            known_failure: None,
+        };
+        let inventory = crate::services::python_ec::PythonEcInventory {
+            inventory_path: std::path::PathBuf::from("external-contracts/pyproject.toml"),
+            source_digest: "sha256:python-source".to_string(),
+            dependency_lock_digest: "sha256:dependencies".to_string(),
+            author: "agent:test".to_string(),
+            input_files: Vec::new(),
+            efficiency_policy: "optional".to_string(),
+            cases: vec![
+                case("behavior", "behavior"),
+                case("efficiency", "efficiency"),
+            ],
+            findings: Vec::new(),
+        };
+
+        let manifest = python_ec_inventory_as_claim_manifest("demo", &inventory);
+
+        assert_eq!(manifest.generated_from_td_digest, "sha256:python-source");
+        assert_eq!(manifest.cases[0].claim_id, "claim");
+        assert!(manifest.cases[0].required_for_production);
+        assert!(!manifest.cases[1].required_for_production);
+        assert_eq!(manifest.cases[0].evidence[0].path, "evidence/behavior.json");
     }
 
     fn ec_report_unverified(project: &str, status: ProjectEcGateStatus) -> ProjectEcGateReport {
