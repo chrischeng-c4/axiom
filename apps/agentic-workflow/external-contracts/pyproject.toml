@@ -178,9 +178,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-agent-first-cli-product-model.py"
 promise = "binary orientation, README, capability contract, and canonical product TDs share one agent-first CLI model and reject removed architecture prose"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-first-cli-product-model -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-first-cli-product-model"
 evidence_paths = ["evidence/aw-core-client-agent-first-cli-product-model.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -192,9 +192,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-agent-orientation-surface.py"
 promise = "agent-facing llm outline lists the registered command surface"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-orientation-surface -- cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-orientation-surface"
 evidence_paths = ["evidence/aw-core-client-agent-orientation-surface.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -206,9 +206,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-core-concept-model-and-invariants.py"
 promise = "from an admitted CB-generated child, the real compiled goal runner follows emitted CB commands, closes the child, rolls up its epic and capability, and terminates with completion.workflow_complete=true"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-and-invariants -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-and-invariants"
 evidence_paths = ["evidence/aw-core-client-core-concept-model-and-invariants.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -220,9 +220,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-core-concept-model-ec-first-phase-table.py"
 promise = "the Python Spec lifecycle has one explicit EC review, TD behavior/security, CB generation/check, and terminal all-dimension EC routing table with no phase gaps"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-ec-first-phase-table -- cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_goal_routing_uses_one_ec_first_phase_table -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-ec-first-phase-table"
 evidence_paths = ["evidence/aw-core-client-core-concept-model-ec-first-phase-table.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -234,9 +234,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-core-concept-model-phase-less-admission.py"
 promise = "a phase-less project WorkItem enters EC authoring before any TD authoring command"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission -- cargo test -p agentic-workflow --lib cli::run::tests::phase_less_project_wi_enters_ec_before_td -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission"
 evidence_paths = ["evidence/aw-core-client-core-concept-model-phase-less-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -248,9 +248,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-core-concept-model-remote-ledger-admission.py"
 promise = "admitting a remote WorkItem seeds the local EC-first lifecycle ledger before dispatching artifact work"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-remote-ledger-admission -- cargo test -p agentic-workflow --lib cli::run::tests::remote_wi_admission_seeds_the_local_ec_lifecycle_ledger -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-remote-ledger-admission"
 evidence_paths = ["evidence/aw-core-client-core-concept-model-remote-ledger-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -332,9 +332,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-workitem-artifact-admission-gate.py"
 promise = "the real compiled CB generator rejects an unsupported or unadmitted artifact before issue, Git, or source mutation and accepts a valid admitted WorkItem with exact generated ownership"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-artifact-admission-gate -- cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-artifact-admission-gate"
 evidence_paths = ["evidence/aw-core-client-workitem-artifact-admission-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -346,9 +346,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-core-client-workitem-loop-state-model.py"
 promise = "work-item loop state serializes and parses losslessly"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-loop-state-model -- cargo test -p agentic-workflow --lib loop_state_round_trips -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-loop-state-model"
 evidence_paths = ["evidence/aw-core-client-workitem-loop-state-model.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -374,9 +374,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-epic-project-label-dispatch-chain.py"
 promise = "run.rs:open_epic_envelope is present in EMIT_REGISTRY; aw wi atomize --project pgpool parses through the real CLI tree; aw conf init --project-label app:workbench parses through the real CLI tree"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-chain -- cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-chain"
 evidence_paths = ["evidence/aw-epic-project-label-dispatch-chain.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -388,9 +388,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-epic-project-label-dispatch-focused.py"
 promise = "the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool; app:mamba and lib:pg retain their existing atomize commands; missing, empty, and whitespace-only project labels return blocked/HITL remediation; a valid unregistered app:workbench identity emits aw conf init --project-label app:workbench; no tested envelope contains --project PROJECT"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-focused -- cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-focused"
 evidence_paths = ["evidence/aw-epic-project-label-dispatch-focused.json"]
 
 [[tool.aw.python-ec.cases]]

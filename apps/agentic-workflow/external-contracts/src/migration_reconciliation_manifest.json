@@ -790,62 +790,62 @@
         {
           "id": "aw-core-client-agent-first-cli-product-model",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-agent-orientation-surface",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_orientation_surface.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-core-concept-model-and-invariants",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-core-concept-model-ec-first-phase-table",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_ec_first_phase_table.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-core-concept-model-phase-less-admission",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_phase_less_admission.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-core-concept-model-remote-ledger-admission",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_remote_ledger_admission.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-workitem-artifact-admission-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_artifact_admission_gate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-core-client-workitem-loop-state-model",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_loop_state_model.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-epic-project-label-dispatch-chain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_chain.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-epic-project-label-dispatch-focused",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_focused.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },
