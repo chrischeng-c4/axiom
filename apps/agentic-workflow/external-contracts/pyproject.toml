@@ -556,9 +556,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/existing-project-standardization-shared-service-kit-connection-budget.py"
 promise = "connection admission consumes the configured budget and releases the permit after the handler finishes"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-connection-budget -- cargo test -p server-tcp --lib tests::connection_budget_releases_after_handler_finishes -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-connection-budget"
 evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-connection-budget.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -570,9 +570,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/existing-project-standardization-shared-service-kit-drain.py"
 promise = "a drain transition published before subscription remains durable and is observed by a late server-plane subscriber"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-drain -- cargo test -p server-lifecycle --test drain_prestart receiverless_drain_persists_for_late_subscriber -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-drain"
 evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-drain.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -584,9 +584,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/existing-project-standardization-shared-service-kit-http1-h2c-options.py"
 promise = "the shared HTTP runtime serves HTTP/1.1 and h2c on one real listener while accepting explicit HTTP/2 stream and drain options"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-http1-h2c-options -- cargo test -p server-http --lib tests::serves_http1_and_h2c_on_one_listener_with_tunable_options -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-http1-h2c-options"
 evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-http1-h2c-options.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -598,9 +598,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/existing-project-standardization-shared-service-kit-service-http-delegation.py"
 promise = "the service-http policy shell delegates listener ownership and request dispatch to server-http while preserving the service router response"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-service-http-delegation -- cargo test -p service-http --lib transport::delegation_tests::serve_delegates_listener_to_shared_http_runtime -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-service-http-delegation"
 evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-service-http-delegation.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -612,9 +612,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/existing-project-standardization-shared-service-kit-substrate.py"
 promise = "the shared TCP accept loop binds a real listener, admits a connection, invokes the closure handler, and completes without an async-trait box (#1241)"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-substrate -- cargo test -p server-tcp --lib tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-substrate"
 evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-substrate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -668,9 +668,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/jet-health-verification-dedup-smoke.py"
 promise = "health command succeeds or reports only real project blockers; duplicate README gate commands do not multiply command execution inside one AW verification pass"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case jet-health-verification-dedup-smoke -- cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case jet-health-verification-dedup-smoke"
 evidence_paths = ["evidence/jet-health-verification-dedup-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -738,9 +738,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/project-health-no-regression.py"
 promise = "unrelated workflow envelope change does not regress project health reporting"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-no-regression -- cargo test -p agentic-workflow --lib project_health -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-no-regression"
 evidence_paths = ["evidence/project-health-no-regression.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1556,10 +1556,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/existing-project-standardization-operational-efficiency.py"
 promise = "The existing-project-standardization representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency"
 evidence_paths = ["evidence/existing-project-standardization-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1571,10 +1571,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/existing-project-standardization-operational-stability.py"
 promise = "The existing-project-standardization representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
 evidence_paths = ["evidence/existing-project-standardization-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]

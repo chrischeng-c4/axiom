@@ -244,56 +244,56 @@
         {
           "id": "existing-project-standardization-shared-service-kit-connection-budget",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_connection_budget.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-shared-service-kit-drain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_drain.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-shared-service-kit-http1-h2c-options",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_http1_h2c_options.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-shared-service-kit-service-http-delegation",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_service_http_delegation.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-shared-service-kit-substrate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "jet-health-verification-dedup-smoke",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-health-no-regression",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_health_no_regression.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "existing-project-standardization-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },
