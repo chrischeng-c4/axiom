@@ -11,6 +11,17 @@ from wi_contract_fixture import project_fixture, run_aw, verify_case
 
 
 CASE_ID = "work-item-type-vocabulary"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "terminology-first-work-item-vocabulary"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-type-vocabulary"
+)
+ASSERTIONS = (
+    "aw llm defines all four work-item types by terminal state",
+    "the META-doc producer projects the same canonical vocabulary",
+)
 TYPES = ("`epic`", "`change`", "`spike`", "`report`")
 TERMINAL_TERMS = (
     "all owned children are terminal",
@@ -44,10 +55,7 @@ def verify() -> list[str]:
         assert "### Work-item terminal states" in agents
         assert_vocabulary(agents)
 
-    return [
-        "aw llm defines all four work-item types by terminal state",
-        "the META-doc producer projects the same canonical vocabulary",
-    ]
+    return list(ASSERTIONS)
 
 
 if __name__ == "__main__":

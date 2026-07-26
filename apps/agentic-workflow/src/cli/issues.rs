@@ -11158,7 +11158,7 @@ labels:\n\
     }
 
     #[test]
-    fn type_filter_exposes_only_epic_and_change_for_authoring() {
+    fn type_filter_exposes_all_four_canonical_authoring_types() {
         use clap::ValueEnum as _;
 
         let values = TypeFilter::value_variants()
@@ -11167,7 +11167,7 @@ labels:\n\
             .map(|value| value.get_name().to_string())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, vec!["epic", "change"]);
+        assert_eq!(values, vec!["epic", "change", "spike", "report"]);
     }
 
     #[test]

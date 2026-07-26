@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:fcecbba6397c96680534bf90ed0708d496def062c5eb5b95ddae0563b364d9d9",
+  "source_digest": "sha256:7e4224b8893ede2d9c816844c32c79ccde6bfa381604f543bf20720f1c8ed9c1",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-26T19:50:48.078134+00:00",
-  "summary": "Accepted after complete review of the 44-case Python inventory and 75 separately retained Rust invariants. All 44 case promises match their concrete native verifier scenarios; the 28 behavior, 8 efficiency, and 8 stability cases close the required dimensions. Operational evidence derives DIMENSION from case source, enforces the efficiency threshold, and records two independent stability attempts with assertion digests. Inventory parity, claim reconciliation, all 12 migration clusters, projection, guidance, structural EC check, and negative reconciliation tests are clean with zero cargo-test delegation, legacy test_path, synthetic claim cases, or projected Rust invariants.",
+  "reviewed_at": "2026-07-26T20:33:47.949165+00:00",
+  "summary": "Accepted after a fresh independent review of digest sha256:7e4224b8893ede2d9c816844c32c79ccde6bfa381604f543bf20720f1c8ed9c1. All seven new work-item case modules now project CASE_ID, CAPABILITY_ID, USE_CASE_ID, DIMENSION, TARGET_COMMAND, and non-empty ASSERTIONS exactly from pyproject.toml and expose callable verify functions, including shared-cli-issue-report-intake as behavior. The complete 44-case inventory covers 28 behavior, 8 efficiency, and 8 stability cases with concrete independent black-box oracles; all 75 Rust invariants remain source-owned outside the Python inventory. EC check, inventory parity, claim reconciliation, all 12 migration clusters, guidance, retired-tree, frozen 164-file/112-case baseline, policy, and negative tests are clean with zero Cargo-test delegation, legacy test_path, synthetic claim cases, or surviving legacy app-test files.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

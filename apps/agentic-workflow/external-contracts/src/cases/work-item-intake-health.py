@@ -11,6 +11,17 @@ from wi_contract_fixture import create, final_json, project_fixture, run_aw, ver
 
 
 CASE_ID = "work-item-intake-health"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "typed-intake-health"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-intake-health"
+)
+ASSERTIONS = (
+    "health counts open Reports and expired Spikes in a typed intake axis",
+    "health prioritizes Report triage before expired Spike remediation",
+)
 
 
 def health(root: Path) -> dict:
@@ -53,10 +64,7 @@ def verify() -> list[str]:
         assert intake["open_report_count"] == 0
         assert intake["expired_spike_count"] == 1
         assert intake["next_command"] == f"aw wi spike expire {spike['slug']}"
-    return [
-        "health counts open Reports and expired Spikes in a typed intake axis",
-        "health prioritizes Report triage before expired Spike remediation",
-    ]
+    return list(ASSERTIONS)
 
 
 if __name__ == "__main__":

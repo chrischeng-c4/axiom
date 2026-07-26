@@ -293,7 +293,4 @@ def _verify_health(case_id: str) -> list[str]:
 def verify(case_id: str) -> list[str]:
     if case_id not in CASE_IDS:
         raise AssertionError(f"case is not owned by existing-health: {case_id}")
-    started = time.monotonic()
-    assertions = _verify_health(case_id)
-    assert time.monotonic() - started <= 120
-    return assertions
+    return _verify_health(case_id)

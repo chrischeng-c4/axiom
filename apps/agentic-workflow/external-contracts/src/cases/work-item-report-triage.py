@@ -11,6 +11,18 @@ from wi_contract_fixture import create, final_json, project_fixture, run_aw, sho
 
 
 CASE_ID = "work-item-report-triage"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "report-terminal-triage"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-report-triage"
+)
+ASSERTIONS = (
+    "Report type is immutable",
+    "accepted triage spawns a linked delivery Change and closes the Report",
+    "duplicate triage closes without spawning delivery work",
+)
 
 
 def verify() -> list[str]:
@@ -67,11 +79,7 @@ def verify() -> list[str]:
         )
         assert terminal["terminal_state"] == "duplicate"
         assert terminal["spawned"] is None
-    return [
-        "Report type is immutable",
-        "accepted triage spawns a linked delivery Change and closes the Report",
-        "duplicate triage closes without spawning delivery work",
-    ]
+    return list(ASSERTIONS)
 
 
 if __name__ == "__main__":

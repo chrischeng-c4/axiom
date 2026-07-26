@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-26T19:51:28.449140+00:00"
+generated_at = "2026-07-26T20:34:03.088003+00:00"
 ir_digest = "sha256:a077e9dcbc4e351df848eebfa7f874277391e0593568974af605b7659263e87b"
-source_digest = "sha256:a6e5a923c34951f97ec143c7850f8e9a7eaf2ac8dfc8d2974ec5eb2e1bc49766"
+source_digest = "sha256:4630b8506f9f5816876dfe5a7dfcda5fd014a3ca93f63283c2d884132731211b"
 tool_contracts = []
 
 [[sources]]
@@ -94,7 +94,7 @@ digest = "sha256:68f9306c51580e193ce53d2014536737c6f7ed57e4577ce98001393280478ef
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
-digest = "sha256:486e1ff1342114916d4ee8fec16bb0041901f3809800f724d7b314a20a4f2879"
+digest = "sha256:8144ebb46d860c48aa17ec7c9bcfbf2bedb96807a844da2bf53f07a720048a3c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
@@ -150,11 +150,11 @@ digest = "sha256:f2f5b46a8f07a206850ed82a7b9f382a05a95e4b63d46800a65d3fa48e5d9fc
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
-digest = "sha256:5b415d853873554afd42a169bde0ff3250dccff001aa522f0bc4114c1ac9da77"
+digest = "sha256:4d7018c0c60a61b1904d622438687fd83bd343481a61024044286968fdbd97db"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
-digest = "sha256:9237a17316fe342d8cd0f4ff5a1f79ef68fa1f8a9d977c531bc69faf3ed07a52"
+digest = "sha256:8fc48ad867dbed80ee6a125a8140aab025651e5f8c29750fb7fb14a6eeba2299"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-epic-to-change-atomization.py"
@@ -170,19 +170,19 @@ digest = "sha256:8ee041915c314bbeb7f4c1a1e248ccc7bb7bae81c2b9ce932c6959d8f41d2c0
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
-digest = "sha256:827f71e8ca4d1435df178f04e97cae9313bd00b1bc321ac72f1daece0039db06"
+digest = "sha256:27e23dcc5717b2a7c979945afefbdcec0eb141eba00fde4e46993004b6e50948"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
-digest = "sha256:ff652aa686d5245dc987176aacac1f2d0e667e6c2cd404efd111c2121dbe4128"
+digest = "sha256:3ca2cdeaa205d5547f85aa9e61c686d822413a7f24be6f8a19227b391e81ee26"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
-digest = "sha256:9be9b6dcc4fe1217813d20395dd20ff8d26f31cb1c6f9012bc2703bec20c5beb"
+digest = "sha256:88a6fe44d211a8364446dac1d8c79376ddc5ce8659c18ced9bd5ec310b23e5b4"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
-digest = "sha256:74ce74cb75a5ba413c90e832a038586d2e02bce6270dab1f25c2c2fd437ac957"
+digest = "sha256:0af4650078b6e9cdaf5171020bc07691c13510ff0159b6e1bce5c423a4e81843"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-parent-rollup-routing.py"
@@ -214,7 +214,7 @@ digest = "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py"
-digest = "sha256:860e68a3f12598c1f6489c32bfeeeb884e3b6feb96f19fb90af1d0f0877bb201"
+digest = "sha256:2835608a97f6f4b6f6abe6fc81ba35b8cf6e93873824a506543c4fe39d442ca9"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py"
@@ -254,7 +254,7 @@ digest = "sha256:8a07c2fb854f1a90f3f47db1029e3bcc82a69f266973d10daaaa3d6d6b5a848
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py"
-digest = "sha256:1ab9a9340471f537cb487d0cbc4fe48ba8d9891a35ba746cbff27c49b191226d"
+digest = "sha256:3436535f0b44a466ff43263a70a8bae3ae380b8ebbc14a3d497ff59e96def34c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/runner.py"

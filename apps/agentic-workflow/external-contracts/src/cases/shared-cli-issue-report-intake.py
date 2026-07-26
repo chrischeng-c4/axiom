@@ -12,6 +12,19 @@ from urllib.parse import parse_qs, urlparse
 
 
 CASE_ID = "shared-cli-issue-report-intake"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "shared-cli-report-intake"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case shared-cli-issue-report-intake"
+)
+ASSERTIONS = (
+    "the real shared CLI dry-run exposes app identity and type:report",
+    "the courier transport sends both labels in its JSON issue payload",
+    "the credential-free fallback preserves both labels in its issue URL",
+    "all exercised public paths preserve the executable terminal next marker",
+)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[5]
 CAP_FULL = REPOSITORY_ROOT / "target" / "debug" / "cap-full"
 
@@ -121,9 +134,4 @@ def verify() -> list[str]:
     assert fallback_labels == {"app:cap", "type:report"}
     assert fallback.stdout.rstrip().endswith("next: done")
 
-    return [
-        "the real shared CLI dry-run exposes app identity and type:report",
-        "the courier transport sends both labels in its JSON issue payload",
-        "the credential-free fallback preserves both labels in its issue URL",
-        "all exercised public paths preserve the executable terminal next marker",
-    ]
+    return list(ASSERTIONS)

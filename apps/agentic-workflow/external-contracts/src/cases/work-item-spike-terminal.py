@@ -11,6 +11,18 @@ from wi_contract_fixture import create, final_json, project_fixture, run_aw, sho
 
 
 CASE_ID = "work-item-spike-terminal"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "spike-terminal-convergence"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-spike-terminal"
+)
+ASSERTIONS = (
+    "Spike roots cannot enter product EC/TD/CB work",
+    "a decision requires spawned WIs or explicit no-action",
+    "expired Spikes terminate as gave_up",
+)
 
 
 def verify() -> list[str]:
@@ -67,11 +79,7 @@ def verify() -> list[str]:
         terminal = final_json(run_aw(root, "wi", "spike", "expire", expired["slug"]))
         assert terminal["terminal_state"] == "gave_up"
         assert "Status: gave_up" in show(root, expired["slug"])["body"]
-    return [
-        "Spike roots cannot enter product EC/TD/CB work",
-        "a decision requires spawned WIs or explicit no-action",
-        "expired Spikes terminate as gave_up",
-    ]
+    return list(ASSERTIONS)
 
 
 if __name__ == "__main__":

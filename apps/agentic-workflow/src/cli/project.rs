@@ -2954,7 +2954,7 @@ fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     let caps_ec_only = project_health_caps_ec_only(&report.project);
-    if report.production_ready || (!caps_ec_only && report.workflow_lock_count > 0) {
+    if report.production_ready || project_health_requires_hitl(report) {
         return None;
     }
     if !caps_ec_only {
@@ -3105,6 +3105,13 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     let caps_ec_only = project_health_caps_ec_only(&report.project);
     if report.production_ready {
         return "project production readiness is complete".to_string();
+    }
+    if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
+        return report
+            .ec
+            .note
+            .clone()
+            .unwrap_or_else(|| "EC lock migration requires HITL resolution".to_string());
     }
     if !caps_ec_only && report.workflow_lock_count > 0 {
         return report

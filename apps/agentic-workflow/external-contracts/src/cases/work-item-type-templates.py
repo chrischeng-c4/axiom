@@ -11,6 +11,19 @@ from wi_contract_fixture import create, project_fixture, run_aw, show, verify_ca
 
 
 CASE_ID = "work-item-type-templates"
+CAPABILITY_ID = "work-item-planning"
+USE_CASE_ID = "typed-work-item-authoring-profiles"
+DIMENSION = "behavior"
+TARGET_COMMAND = (
+    "python3 apps/agentic-workflow/external-contracts/src/runner.py "
+    "--case work-item-type-templates"
+)
+ASSERTIONS = (
+    "Spike and Report expose exact type-specific profiles",
+    "Report intake is exempt from Capability Alignment",
+    "cross-profile sections are rejected",
+    "boundedness reads title and In Scope while ignoring descriptive and anti-scope prose",
+)
 
 
 def change_body(in_scope: str) -> str:
@@ -88,12 +101,7 @@ def verify() -> list[str]:
             expect_success=False,
         )
         assert "too-large" in oversized.stderr
-    return [
-        "Spike and Report expose exact type-specific profiles",
-        "Report intake is exempt from Capability Alignment",
-        "cross-profile sections are rejected",
-        "boundedness reads title and In Scope while ignoring descriptive and anti-scope prose",
-    ]
+    return list(ASSERTIONS)
 
 
 if __name__ == "__main__":
