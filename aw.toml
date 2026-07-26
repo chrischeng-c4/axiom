@@ -64,7 +64,12 @@ path = "tech-design"
 #
 #   • paths     — CB glob(s) for this workspace's code.
 #   • target    — language toolchain (rust / python / typescript / …).
-#   • test_cmd  — how this workspace runs its tests.
+#   • test_cmd  — how this workspace runs its tests. Rust apps with optional
+#                 test-target features use `cargo test -p <app> --all-features`
+#                 unless features are mutually exclusive or require unsuitable
+#                 external services; in that case list every test-target
+#                 feature explicitly with `--features`. `--all-targets` does
+#                 not enable `#![cfg(feature = "...")]` integration tests.
 #   • codegen.profile — optional generator/template profile for this
 #                 workspace's codebase. TD remains project-scoped; codegen
 #                 profile is workspace-scoped because each workspace has its
@@ -204,7 +209,7 @@ ec.security = { tool = "guard", dir = "apps/tape", command = "cd apps/tape && ..
 name = "tape"
 paths = ["apps/tape/**"]
 target = "rust"
-test_cmd = "cargo test -p tape"
+test_cmd = "cargo test -p tape --all-features"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
@@ -218,8 +223,8 @@ label = "app:defer"
 [[projects.workspaces]]
 name = "defer"
 paths = ["apps/defer/**"]
-target = "schemas"
-test_cmd = "true"
+target = "rust"
+test_cmd = "cargo test -p defer --all-features"
 
 [[projects]]
 name = "cube"
@@ -347,7 +352,7 @@ ec.stability = { tool = "rig", dir = "apps/lumen/tests/rig/cases/resilience", co
 name = "lumen"
 paths = ["apps/lumen/**"]
 target = "rust"
-test_cmd = "cargo test -p lumen"
+test_cmd = "cargo test -p lumen --all-features"
 verify_cold = true
 
 
@@ -457,7 +462,7 @@ ec.security = { tool = "guard", dir = "apps/relay", command = "cd apps/relay && 
 name = "relay"
 paths = ["apps/relay/**"]
 target = "rust"
-test_cmd = "cargo test -p relay"
+test_cmd = "cargo test -p relay --all-features"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
@@ -473,7 +478,7 @@ ec.security = { tool = "guard", dir = "apps/keep", command = "cd apps/keep && ..
 name = "keep"
 paths = ["apps/keep/**"]
 target = "rust"
-test_cmd = "cargo test -p keep"
+test_cmd = "cargo test -p keep --all-features"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
