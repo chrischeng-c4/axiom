@@ -456,6 +456,7 @@ A service is not "done" until it satisfies every row:
 | **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to `file://`, `s3://`, or `gs://` destinations (the GCS adapter is unconditional in `service-backup`, authenticates via workload-identity ADC in-cluster, and is GKE-proven); the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
 | **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
+| **Operations** | Alert rules with runbooks, control-plane self-observability, `status.conditions[]`, network isolation, and verifiable release artifacts. A service that emits signal but cannot notice its own breach is not production-ready. | see *Operations baseline* below. Instrumentation (the Observability row) is the raw signal; this is what makes the signal act. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -756,6 +757,68 @@ autonomous axes: storage ownership grows through disk-usage-driven shard
 splits, compute capacity grows through CPU-driven replica/HPA scaling, and
 neither axis has a human gate. HPA owns compute scaling only — it never
 changes shard ownership or storage topology.
+
+### Operations baseline — notice the breach, watch the watcher, answer "converged?"
+
+*(policy-only — judgment, not trait-enforced; promote to a capability trait once
+`libs/service-k8s` can render and validate these mechanically.)*
+
+**Instrumentation is not operations.** The *Observability / trace context* row
+above buys per-request spans, correlation, and counters — the raw signal. A
+service that stops there has a perfect record of an outage nobody was told
+about. This section is the other half: something must *notice* a breach, the
+thing doing the reconciling must be observable *itself*, and a deployer must be
+able to ask "is it converged?" without reading logs.
+
+Every row is mandatory for a Kubernetes-native service, and adoption is
+currently uneven across `lumen`/`tape`/`relay`/`keep`/`defer`.
+
+**Roll out through `lumen` first**, then in this order:
+
+```text
+lumen → tape → defer → relay → keep → sift → (remaining services)
+```
+
+`lumen` leads because it is already the reference adopter for standard
+endpoints, HA, and `prometheus_rule`, and because it is the service with live
+integrators — the only one where a row gets exercised against real traffic
+rather than an acceptance harness. A row is proven in `lumen`, lands its
+mechanism in `libs/service-k8s`, and only then moves down the order. **Do not
+open the same row in several services in parallel**: the second adopter's job is
+to compose the shared mechanism, not to re-derive it. When a row needs a
+mechanism, **extend `libs/service-k8s` so every adopter gets it once** — never
+fork the pattern into one project.
+
+Leading the order does not mean inventing every row. Several rows already ship
+in a service further down it — the `network-policy` component in `defer`,
+`relay`, and `tape`; `replicas: 2` in `defer`'s operator. Where that is true,
+`lumen`'s job is to **adopt the existing pattern and pull it into
+`libs/service-k8s`**, not to write a second one. Check the other services for
+the row before authoring it.
+
+`sift` (in `projects/sift`, not `apps/`) sits late in that order for a
+structural reason, not a priority one. Like `lumen` it is something other
+services integrate *with*, but the coupling is a **one-way versioned schema** —
+emitters write `axiom.service.log.v1` to stdout
+(`libs/service-observability/contracts/axiom.service.log.v1.schema.json`) and
+the sift collector ingests it; nobody calls sift on the request path. So
+`sift`'s own operations rollout blocks no emitter, and no emitter's rollout
+blocks `sift` — it can move out of order whenever it is convenient. One row is
+an exception to its late slot: **control-plane observability lands in `sift`
+early**, because a blind operational-event platform is the single failure that
+hides every other service's failure.
+
+| Dimension | Requirement | Reference / gotcha |
+|-----------|-------------|--------------------|
+| **Alert rules** | The operator renders a **`PrometheusRule`** beside its `ServiceMonitor`, behind the same `spec.observability` switch. Baseline for a stateful service: no ready replicas, pod crash-looping, PVC near full, scheduled backup job failing, storage degraded. Every alert carries a **`runbook` annotation naming the first command to run**. | `lumen`'s `operator/render.rs` `prometheus_rule` is the reference. **An alert on a series nothing publishes is worse than no alert** — if the signal lives in the CR's `status`, it needs a `customresourcestate` config or a driver-side gauge before the alert means anything (see `LumenReshardWorkflowStalled`, which can only read a fence gauge and misses `PrepareSplit`/`Splitting` stalls entirely). |
+| **Early warning before the wall** | Any resource with a hard limit (disk, quota, connection budget) pairs its **degraded** alert with an **approaching** alert that fires earlier. | A degraded alert alone only tells you the outage already started. `LumenPvcNearFull` (10% free, 10m) is the early warning `LumenStorageDegraded`'s own runbook cross-references. |
+| **SLO-shaped latency alerting** | Where a latency **histogram** exists, alert on quantiles or error-budget burn rate — not on a static-threshold counter. | A histogram referenced only from a runbook *string* is instrumentation nobody automated: `lumen_search_latency_seconds_bucket` ships, yet the only latency alert is `rate(lumen_slow_queries_total[5m]) > 0.1`. |
+| **Control-plane observability** | The operator exposes its **own `/metrics`** (reconcile attempts/failures/duration, leader-election state), ships its own `ServiceMonitor` in `<svc>-system`, emits Kubernetes **`Event`s** for reconcile decisions and failures, and owns at least two alerts: **operator absent** and **reconcile error rate non-zero**. | Belongs in `libs/service-k8s`'s shared controller, not per app. **Data-plane alerts cannot see a control plane that stopped reconciling** — every data-plane alert reading green is exactly what a wedged operator looks like, and `kubectl describe <cr>` with no Events cannot tell a deployer why nothing happened. |
+| **Status is the convergence API** | `status` carries `observedGeneration`, `additionalPrinterColumns` for the fields a human greps, and a standard **`conditions[]`** array (`metav1.Condition` shape: `type`/`status`/`reason`/`message`/`lastTransitionTime`/`observedGeneration`) with at least `Ready` and `Progressing`. | Without `conditions[]`, **`kubectl wait --for=condition=Ready` has nothing to read** and Argo/Flux cannot assess health without a bespoke Lua hook. A custom `phase` string is for humans; `conditions[]` is for automation. Both are needed — they are not substitutes. |
+| **Network isolation ships with the instance** | Every service ships a **`k8s/components/network-policy`** kustomize component: default-deny ingress plus explicit allows for client traffic, peer/consensus traffic, and metrics scrape. | `defer`, `relay`, and `tape` are the reference components. It is a **component, not a base resource** — a cluster whose CNI does not enforce NetworkPolicy opts out by not composing it, instead of silently believing it is isolated. |
+| **Operator HA is on by default** | A leader-elected operator's rendered Deployment defaults to **`replicas: 2`**. | Shipping the lease (`libs/service-k8s::lease`) and then `replicas: 1` means a node drain stops reconciliation until a fresh Pod schedules — the failover machinery is built and switched off. |
+| **Both scaling axes stay autonomous** | See *HA* above: storage grows by disk-driven shard split, compute by CPU-driven replica scaling, neither gated on a human. | **A CRD field that still advertises autoscaling bounds while the renderer has stopped emitting the autoscaler is a defect in both directions** — either wire the replacement policy or remove the field. An inert knob whose doc comment promises elasticity is worse than an honest absence. |
+| **Release artifacts are verifiable** | Published container images carry a **cosign signature, an SBOM, and build provenance**; the release workflow produces them and the deploy handoff names the verification command. | A sha256 on the release tarball proves the tarball — it says nothing about the image a cluster actually pulls. Without attestation, no admission policy can enforce "only run images we built". |
 
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
 
