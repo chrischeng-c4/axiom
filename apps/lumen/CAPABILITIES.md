@@ -564,6 +564,58 @@ contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
 lands. Harness: `benchmarks/gcp-operator-acceptance` (mode noted per run).
 
+### GKE acceptance run 0726092400 (2026-07-26, Lumen phase PASSED — Wave 2 row 4 proven; run capped before the Sift phase)
+
+Source-build run from `65fdab777e` (clean tree; Cloud Build
+`839f9eef-ceab-4a12-baed-f3faa731ddd2` produced
+`lumen@sha256:ef73ebc9…` / `sift@sha256:fe874cbb…`). Mode
+`ACCEPTANCE_APPS='lumen sift'`, on a **freshly created** persistent cluster.
+
+**Row 4 (#2620/#2621) — control-plane self-observability, proven on GKE.**
+
+```json
+{"control_plane_observability":{"status":"passed","metrics_endpoints":2,
+  "leader_gauge_tracks_lease":"passed"}}
+```
+
+Both halves matter and neither is a self-report. The metrics `Service` carried
+**2 endpoints for 2 live replicas** — Prometheus scrapes Endpoints, not the
+VIP, so a follower missing here is a silently unscraped replica. And
+`lumen_operator_leader` was cross-checked against the `Lease` **twice**: once
+while `…-lgk6g` held it (leader `1`, follower `0`), then again after that pod
+was deleted and `…-vkpxg` took over. A gauge set once at startup and never
+updated passes the first check and fails the second; this one moved with the
+Lease. The Lease itself is established independently by `kubectl`, so the
+operator is never the witness for its own leadership.
+
+Every prior Lumen leg re-passed on the new build: reconcile 1×1, pod-restart
+retention, admission exposure, GCS backup before split
+(`gs://…/lumen/0726092400-…json`, 271 B), cold restore onto a fresh PVC,
+seed-set restart retention, auto-split 1→2 (2 ready pods, ≥2 PVCs), live
+replica membership, and #2610 peer DNS (`lumen-quorum`, replicated read off the
+follower).
+
+**What this run does *not* prove.** It ended at the harness's own 45-minute
+cloud cap (`exit 124`) **after** the Lumen phase completed and **before** the
+Sift phase began, so both Sift legs are unproven on this build. Cloud Build ate
+28 of the 45 minutes (12 min uploading a 2.6 GiB / 571,702-file source archive,
+20 min building); the entire Lumen acceptance took 14. A digest-mode re-run of
+the same source — the images above already exist in Artifact Registry — skips
+that 28 minutes entirely.
+
+**Coverage regression found, not caused, by this run.** `auth_csi_gke_leg` came
+back `skipped_no_addon`: the GKE Secret Manager add-on had been enabled by hand
+on the previous long-lived cluster and was never written into
+`cluster/main.tf`, so recreating the cluster took the #2457 leg with it — a
+shrink in coverage with zero failures. The add-on is now declared in terraform,
+and `bootstrap-cluster.sh`'s reuse branch warns about the drift in the first ten
+seconds instead of letting it surface forty minutes into a paid run.
+
+Cleanup ran on the EXIT trap as required: `Destroy complete! Resources: 9
+destroyed`, `status: "clean"`, no run-tagged bucket, service account, secret, or
+namespace left. Evidence root: `/tmp/axiom-gcp-operator-evidence/0726092400/`
+(`lumen-operator-cell.json`, `lumen-acceptance.json`, `cleanup.json`).
+
 ### GKE acceptance run 0726053353 (2026-07-26, PASSED — #2610 peer DNS on a managed cluster + Wave 1 rows 5/7)
 
 Full two-service digest-mode run (GHCR `sha-7745ba935d20` images, zero Cloud
