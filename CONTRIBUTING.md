@@ -265,7 +265,7 @@ meta-doc producer/check after a trait changes.
 policy, not a project capability trait.)*
 
 *(validator-backed —
-`apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh`)*
+`apps/agentic-workflow/external-contracts/fixtures/shared_service_library_names/assert_semantic_names.sh`)*
 
 `libs/<name>` must expose both the library's stable responsibility and its
 abstraction level before an agent opens `Cargo.toml`. A shared library is named
@@ -777,6 +777,15 @@ named so `ls` tells you what is enforced before you open anything:
 A breach is a non-zero-exit finding that blocks the terminal
 `aw cb check <slug>` gate. Keep these files `SPEC-MANAGED` — regenerate
 them from their contract; do not hand-edit the `AW-EC-TOOL` block.
+
+Agentic Workflow itself uses the canonical Python EC project under
+`apps/agentic-workflow/external-contracts/`: `pyproject.toml` is the inventory,
+`src/cases/*.py` implements external black-box verifiers, and independent
+digest-bound review approves the exact Python source bundle. Do not create
+app-level Rust EC wrappers or delegate a Python EC to `cargo test`. Rules that
+can only be observed inside the Rust implementation are colocated Rust invariants
+under their semantic `src/**` owner and run separately with
+`cargo test -p agentic-workflow --lib`.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `issue`
 

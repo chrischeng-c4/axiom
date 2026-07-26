@@ -64,6 +64,12 @@ explicitly asks for Claude-specific behavior.
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 <!-- aw:cli-table:workflow:end -->
 
+For Agentic Workflow, external behavior belongs in the canonical Python EC
+project under `apps/agentic-workflow/external-contracts/`. A Python EC must
+exercise the observable contract directly and must not delegate to Cargo.
+Implementation-only rules are colocated Rust invariants under their semantic
+`src/**` owner and are verified separately by the library test gate.
+
 The lifecycle is linear: `aw wi` → `aw ec` → `aw td` → `aw cb`. Drive one
 root with `aw goal wi <id>`, `aw goal capability --project <project>`, or
 `aw goal backlog --project <project>`, then follow the emitted command.
