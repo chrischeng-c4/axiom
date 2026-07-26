@@ -3552,6 +3552,14 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
     let project_root = crate::find_project_root()?;
     let readiness =
         crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
+    apply_python_artifact_readiness_projection(report, readiness);
+    Ok(())
+}
+
+fn apply_python_artifact_readiness_projection(
+    report: &mut ProjectHealthReport,
+    readiness: Option<crate::services::python_artifact_readiness::PythonArtifactReadiness>,
+) {
     if let Some(readiness) = &readiness {
         // Python Spec projects are assessed on the artifact graph, not on
         // legacy managed/HANDWRITE/source-traceability coverage. Preserve the
@@ -3581,7 +3589,10 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
         if !report.ec.lock_clean {
             spec_blockers.push(format!("EC lock is not clean: {}", report.ec.lock_path));
         }
-        if !matches!(report.ec.status, ProjectEcGateStatus::Passed) {
+        let self_ec_is_advisory = project_health_caps_ec_only(&report.project)
+            && report.ec.command_count == 0
+            && matches!(report.ec.status, ProjectEcGateStatus::NotEvaluated);
+        if !self_ec_is_advisory && !matches!(report.ec.status, ProjectEcGateStatus::Passed) {
             spec_blockers
                 .push("EC verification/review is not green for the current digest".to_string());
         }
@@ -3606,7 +3617,6 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
     }
     report.python_artifact = readiness;
     report.refresh_takeover_readiness();
-    Ok(())
 }
 
 /// #1828: an outstanding EC review (missing/stale/incomplete evidence, or an
@@ -3674,15 +3684,17 @@ fn build_project_claim_closure_report(
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
     let document = crate::cli::capability::parse_capability_document(&cap_body, &cap_path)
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
-    let td_refs = crate::cli::capability::collect_td_capability_refs(
+    let caps_ec_only = project_health_caps_ec_only(&report.project);
+    let require_td_artifact_evidence = !caps_ec_only;
+    let td_refs = collect_td_capability_refs_for_claim_closure(
         project_root,
         &report.project,
         &document,
+        require_td_artifact_evidence,
     )
     .with_context(|| "failed to scan TD capability_refs")?;
     let manifest =
         crate::cli::ec::load_project_ec_manifest(&report.project)?.map(|(_, manifest)| manifest);
-    let caps_ec_only = project_health_caps_ec_only(&report.project);
     Ok(build_claim_closure_report(
         &report.project,
         &document,
@@ -3691,8 +3703,20 @@ fn build_project_claim_closure_report(
         &report.ec,
         caps_ec_only
             || (report.managed_ready && report.semantic_ready && report.traceability_ready),
-        !caps_ec_only,
+        require_td_artifact_evidence,
     ))
+}
+
+fn collect_td_capability_refs_for_claim_closure(
+    project_root: &std::path::Path,
+    project: &str,
+    document: &crate::cli::capability::CapabilityDocument,
+    required: bool,
+) -> Result<Vec<crate::cli::capability::TdCapabilityEvidence>> {
+    if !required {
+        return Ok(Vec::new());
+    }
+    crate::cli::capability::collect_td_capability_refs(project_root, project, document)
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -4679,6 +4703,15 @@ mod tests {
         report
     }
 
+    fn ready_python_artifact_readiness(
+    ) -> crate::services::python_artifact_readiness::PythonArtifactReadiness {
+        crate::services::python_artifact_readiness::PythonArtifactReadiness {
+            enabled: true,
+            ready: true,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn health_without_verify_flags_defaults_to_metrics_only() {
         let flags =
@@ -4876,6 +4909,55 @@ mod tests {
         let missing = project_health_missing(&report);
 
         assert_eq!(missing, report.blockers);
+    }
+
+    #[test]
+    fn python_readiness_preserves_advisory_self_ec_status() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_unverified("agentic-workflow", ProjectEcGateStatus::NotEvaluated);
+
+        apply_python_artifact_readiness_projection(
+            &mut report,
+            Some(ready_python_artifact_readiness()),
+        );
+
+        assert!(report.production_ready);
+        assert!(report.production_blockers.is_empty());
+        assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn python_readiness_keeps_configured_self_ec_failure_blocking() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_for("case-1", ProjectTestCommandStatus::Failed);
+
+        apply_python_artifact_readiness_projection(
+            &mut report,
+            Some(ready_python_artifact_readiness()),
+        );
+
+        assert!(!report.production_ready);
+        assert!(report
+            .production_blockers
+            .iter()
+            .any(|blocker| blocker.contains("EC verification/review is not green")));
+    }
+
+    #[test]
+    fn python_readiness_keeps_non_self_unverified_ec_blocking() {
+        let mut report = ready_project_health_report("demo");
+        report.ec = ec_report_unverified("demo", ProjectEcGateStatus::NotVerified);
+
+        apply_python_artifact_readiness_projection(
+            &mut report,
+            Some(ready_python_artifact_readiness()),
+        );
+
+        assert!(!report.production_ready);
+        assert!(report
+            .production_blockers
+            .iter()
+            .any(|blocker| blocker.contains("EC verification/review is not green")));
     }
 
     #[test]
@@ -5388,6 +5470,22 @@ mod tests {
 
         assert_eq!(report.closed_claim_count, 1);
         assert!(report.blockers.is_empty());
+    }
+
+    #[test]
+    fn claim_closure_without_td_evidence_policy_does_not_scan_td_inventory() {
+        let root_without_project_config = tempfile::tempdir().unwrap();
+        let document = claim_document(true);
+
+        let refs = collect_td_capability_refs_for_claim_closure(
+            root_without_project_config.path(),
+            "agentic-workflow",
+            &document,
+            false,
+        )
+        .unwrap();
+
+        assert!(refs.is_empty());
     }
 
     fn ec_report_unverified(project: &str, status: ProjectEcGateStatus) -> ProjectEcGateReport {
