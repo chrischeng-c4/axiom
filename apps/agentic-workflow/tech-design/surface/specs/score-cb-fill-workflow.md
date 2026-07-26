@@ -12,8 +12,8 @@ capability_refs:
     rationale: "Command/root TDs support CLI workflow chain routing and root-runner dispatch."
   - id: td-cb-lifecycle-automation
     role: primary
-    gap: remote-td-fill-hydration
-    claim: remote-td-fill-hydration
+    gap: remote-cb-fill-hydration
+    claim: remote-cb-fill-hydration
     coverage: full
     rationale: "Brief-mode fill hydrates a missing local projection from the configured tracker before it creates the marker-fill lock."
 ---
@@ -39,10 +39,11 @@ capability_refs:
 >
 > **AMENDMENT (2026-07-24, #2535).** Brief mode first resolves the WI through
 > the shared TD bootstrap path. If the configured remote tracker has the WI
-> but the ephemeral `/tmp/aw` issue projection is missing, `aw td fill`
+> but the ephemeral `/tmp/aw` issue projection is missing, `aw cb fill`
 > hydrates and commits that projection, canonicalizes the remote numeric slug,
 > and then enumerates markers and creates the fill lock. This keeps the exact
-> command emitted by `aw goal wi` executable after local runtime-state loss.
+> canonical command selected by the goal phase router executable after local
+> runtime-state loss.
 
 > **Phase C root note.** Legacy "worktree" wording in this spec refers to the
 > active checkout/branch that owns the code and TD artifacts. Current CLI root

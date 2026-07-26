@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-26T05:51:54.615585+00:00"
-ir_digest = "sha256:5bb4ed9993345a00ef186619696b90390eedb598e77603b54e111e358bad3e51"
-source_digest = "sha256:97a14c8fa29eb974a863966b612f9ef7a5c40d7676e681fe9b5cb2a0374b162e"
+generated_at = "2026-07-26T06:35:53.300495+00:00"
+ir_digest = "sha256:ace626d4555e5548e320d5e79d8c10c4f7ccd20841a1a2d7ab7190d5cf679d03"
+source_digest = "sha256:9e2a8bf3edccda7ace47729927481145f2ab4e8ddd761ac287993e5d2621b654"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:d18f4fc0d8840b3647c0d7f4268ca632f0b864fa02541909471608e0371c4597"
+digest = "sha256:e5a55c44eaee41b821a0a412cce4b15527685537e57681ad508aef179a0f8fb2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/api-contract-source-passes.py"
@@ -435,6 +435,10 @@ digest = "sha256:d056650b5741fb9912171848a01a271226ec5f1b53327184dce24b1e99b2620
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery.py"
 digest = "sha256:deab770e29321df5a87b5996444160be236891d58048a8f0bcf09d11b6f029e8"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration.py"
+digest = "sha256:59626b025fb8998019ba01e2dc81540e9ba5257303b50563371356f25c079fcd"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion.py"
@@ -2999,6 +3003,26 @@ assertions = [
 evidence_digest = "sha256:f1c7be59189d567f9e85aa1e7eebf748bcbea17159c794bb1ec935a9c41e728b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:c2e974194751a065ab1f8c5b1ad559a8eb0c61637598514791e9054c128470ee"
+
+[[cases]]
+id = "claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "remote-cb-fill-hydration"
+contract_id = "claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+required_for_production = true
+assertions = [
+    "Remote CB fill hydration: `cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests cb_fill_brief_hydrates_missing_remote_projection -- --nocapture`; the authoritative goal phase projection emits canonical `aw cb fill <id>`, and that exact public surface hydrates a missing `/tmp/aw` projection from the configured tracker before creating the marker-fill lock",
+    "artifact: artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration",
+    "oracle: Every executable gate declared for td-cb-lifecycle-automation:remote-cb-fill-hydration must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture; cargo test -p agentic-workflow --test cli_tests cb_fill_brief_hydrates_missing_remote_projection -- --nocapture",
+    "target: rust",
+]
+evidence_digest = "sha256:5b13c975bf04d03af410c9229a1476b39d2211686406d0f869012a329760a6d3"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:dc4fb9d0bd516409c156207bc5141ec3b0021378bc2bdb711a3216c6d454aaf9"
 
 [[cases]]
 id = "claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"

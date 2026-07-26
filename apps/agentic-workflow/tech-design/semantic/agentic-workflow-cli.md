@@ -118,6 +118,12 @@ capability_refs:
     rationale: "TD lock and source adoption keep commit ownership with the caller by default; explicit commit mode accepts only literal generated file paths and uses path-limited commits so unrelated staged, unstaged, and untracked files remain untouched, while directory adoption remains caller-committed."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: remote-cb-fill-hydration
+    claim: remote-cb-fill-hydration
+    coverage: full
+    rationale: "The authoritative goal phase projection emits canonical aw cb fill for cb_genned work items, and CB fill uses the shared remote-aware issue bootstrap before marker enumeration and lock creation, so the emitted numeric command remains executable after an ephemeral local projection is lost."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: ambiguous-multi-target-generation-preflight
     claim: ambiguous-multi-target-generation-preflight
     coverage: full

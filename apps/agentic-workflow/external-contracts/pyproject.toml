@@ -2666,6 +2666,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "remote-cb-fill-hydration"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration.py"
+promise = "Remote CB fill hydration: `cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests cb_fill_brief_hydrates_missing_remote_projection -- --nocapture`; the authoritative goal phase projection emits canonical `aw cb fill <id>`, and that exact public surface hydrates a missing `/tmp/aw` projection from the configured tracker before creating the marker-fill lock"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:remote-cb-fill-hydration must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture; cargo test -p agentic-workflow --test cli_tests cb_fill_brief_hydrates_missing_remote_projection -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-remote-cb-fill-hydration.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"
 artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"
 capability_id = "td-cb-lifecycle-automation"
