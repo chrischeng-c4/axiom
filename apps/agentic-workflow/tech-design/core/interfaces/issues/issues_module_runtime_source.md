@@ -51,5 +51,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:issues-module-facade-runtime>"
-    description: "Source template owns the issues module facade runtime and tests."
+    description: "Source template owns the issues module facade runtime, including staged project-plan exports, and tests."
 ```

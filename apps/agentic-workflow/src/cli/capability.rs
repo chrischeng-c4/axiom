@@ -3326,6 +3326,8 @@ async fn write_capability_sweep_wi_plans(
         let report =
             crate::cli::issues::build_capability_wi_plan_report(crate::cli::issues::PlanArgs {
                 project: Some(project.project.clone()),
+                stage: crate::cli::issues::PlanStageArg::Atomize,
+                root: None,
                 title: None,
                 cap_path: Some(project.cap_path.clone()),
                 output: None,

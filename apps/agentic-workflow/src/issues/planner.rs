@@ -1,19 +1,41 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/issues/two-stage-project-plan.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:rust:two-stage-project-planner" tracker="#2387" reason="The deterministic planner is a new issue-domain aggregate; the spec defines its projection while the generator does not yet emit Rust planning logic."
 
-//! Canonical two-stage epic/change planning projection.
+//! Canonical staged epic/change planning projection.
 
 use super::{build_work_item_graph, issue_key, GraphDiagnostic, GraphNext, Issue, IssueState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PROJECT_PLAN_SCHEMA: &str = "aw.wi.project-plan.v1";
+pub const PROJECT_PLAN_SCHEMA: &str = "aw.wi.project-plan.v2";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanningStage {
+    Normalize,
+    Reconcile,
+    Atomize,
+    Verify,
+}
+
+impl PlanningStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normalize => "normalize",
+            Self::Reconcile => "reconcile",
+            Self::Atomize => "atomize",
+            Self::Verify => "verify",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectPlan {
     pub schema: String,
     pub action: String,
+    pub root_id: String,
+    pub stage: PlanningStage,
     pub project: String,
     pub project_label: String,
     pub source_graph_digest: String,
@@ -69,6 +91,13 @@ pub struct PlanRequirement {
     pub owner_epic: String,
     pub covered_by: Vec<String>,
     pub status: String,
+    pub verification: Vec<RequirementVerification>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequirementVerification {
+    pub gate: String,
+    pub oracle: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +137,10 @@ struct EpicSeed {
     horizon: String,
     requirements: Vec<(String, String)>,
     change_ids: Vec<String>,
+    closed_change_ids: Vec<String>,
+    completed_child_plan_ids: Vec<String>,
+    explicit_requirement_coverage: BTreeMap<usize, Vec<String>>,
+    requirement_verification: BTreeMap<usize, Vec<RequirementVerification>>,
     split_into: Vec<String>,
 }
 
@@ -117,6 +150,92 @@ struct EpicSeed {
 /// context and scheduling horizon, proposes explicit epic owners, and leaves
 /// that complete mapping for independent review before publication.
 pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) -> ProjectPlan {
+    build_project_plan_for_stage(project, project_label, issues, PlanningStage::Atomize)
+}
+
+pub fn build_project_plan_for_stage(
+    project: &str,
+    project_label: &str,
+    issues: &[Issue],
+    stage: PlanningStage,
+) -> ProjectPlan {
+    let mut plan = build_full_project_plan(project, project_label, issues, stage);
+    match stage {
+        PlanningStage::Normalize => {
+            plan.proposed_epics.clear();
+            plan.proposed_changes.clear();
+            for epic in &mut plan.epics {
+                epic.split_into.clear();
+            }
+            for change in &mut plan.changes {
+                change.duplicate_of = None;
+                change.replacement_ids.clear();
+            }
+        }
+        PlanningStage::Reconcile => {
+            plan.proposed_epics.clear();
+            plan.proposed_changes.clear();
+            for epic in &mut plan.epics {
+                epic.split_into.clear();
+            }
+            for change in &mut plan.changes {
+                change.replacement_ids.clear();
+            }
+        }
+        PlanningStage::Atomize | PlanningStage::Verify => {
+            if plan
+                .proposed_epics
+                .iter()
+                .any(|epic| epic.reason == "unowned_change_bootstrap")
+            {
+                plan.valid = false;
+                plan.action = "blocked".to_string();
+                plan.proposed_epics
+                    .retain(|epic| epic.reason != "unowned_change_bootstrap");
+                plan.proposed_changes
+                    .retain(|change| !change.owner_epic.starts_with("proposal:epic:bootstrap:"));
+                plan.next = Some(GraphNext {
+                    command: format!(
+                        "aw wi plan --project {project} --stage reconcile --root {} --json",
+                        plan.root_id
+                    ),
+                    reason: "unowned changes require explicit human owner decisions".to_string(),
+                });
+            }
+            if let Some(epic) = plan
+                .epics
+                .iter()
+                .find(|epic| !epic.id.starts_with("proposal:") && epic.requirements.is_empty())
+            {
+                plan.valid = false;
+                plan.action = "blocked".to_string();
+                plan.diagnostics.push(GraphDiagnostic {
+                    code: "missing_authoritative_requirements".to_string(),
+                    issue: epic.id.clone(),
+                    related: None,
+                    message: format!(
+                        "epic `{}` has no authoritative `## Requirements` entries",
+                        epic.id
+                    ),
+                    remediation_target: format!("Requirements on epic {}", epic.id),
+                    next_command: format!("aw wi show {}", epic.id),
+                });
+                plan.next = Some(GraphNext {
+                    command: format!("aw wi show {}", epic.id),
+                    reason: "atomization requires authoritative Requirements".to_string(),
+                });
+            }
+        }
+    }
+    with_digest(plan)
+}
+
+fn build_full_project_plan(
+    project: &str,
+    project_label: &str,
+    issues: &[Issue],
+    stage: PlanningStage,
+) -> ProjectPlan {
     let graph = build_work_item_graph(project, project_label, issues);
     let stages = vec![
         ProjectPlanStage {
@@ -143,9 +262,11 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
             command: diagnostic.next_command.clone(),
             reason: diagnostic.message.clone(),
         });
-        return with_digest(ProjectPlan {
+        return ProjectPlan {
             schema: PROJECT_PLAN_SCHEMA.to_string(),
             action: "blocked".to_string(),
+            root_id: project_plan_root_id(project, &graph.digest),
+            stage,
             project: project.to_string(),
             project_label: project_label.to_string(),
             source_graph_digest: graph.digest,
@@ -159,7 +280,7 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
             proposed_changes: Vec::new(),
             diagnostics: fatal_diagnostics,
             next,
-        });
+        };
     }
 
     let issue_by_id = issues
@@ -203,6 +324,19 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
                 return None;
             }
             let priority = epic.priority.clone().unwrap_or_else(|| "p3".to_string());
+            let explicit_child_ids = explicit_child_work_item_ids(source);
+            let explicit_requirement_coverage = explicit_child_requirement_coverage(source);
+            let requirement_verification = explicit_requirement_verification(source);
+            let completed_child_plan_ids = if !explicit_child_ids.is_empty()
+                && explicit_child_ids.iter().all(|id| {
+                    issue_by_id
+                        .get(id)
+                        .is_some_and(|issue| issue.state == IssueState::Closed)
+                }) {
+                explicit_child_ids
+            } else {
+                Vec::new()
+            };
             let mut split_into = Vec::new();
             if horizon == "mixed" {
                 let active_id = format!("proposal:epic:{}:active", epic.id);
@@ -239,6 +373,19 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
                     .filter(|id| active_ids.contains(*id))
                     .cloned()
                     .collect(),
+                closed_change_ids: epic
+                    .children
+                    .iter()
+                    .filter(|id| {
+                        issue_by_id
+                            .get(*id)
+                            .is_some_and(|issue| issue.state == IssueState::Closed)
+                    })
+                    .cloned()
+                    .collect(),
+                completed_child_plan_ids,
+                explicit_requirement_coverage,
+                requirement_verification,
                 split_into,
             })
         })
@@ -307,6 +454,10 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
                 .map(|requirement| (requirement, horizon.clone()))
                 .collect(),
             change_ids,
+            closed_change_ids: Vec::new(),
+            completed_child_plan_ids: Vec::new(),
+            explicit_requirement_coverage: BTreeMap::new(),
+            requirement_verification: BTreeMap::new(),
             split_into: Vec::new(),
         });
     }
@@ -347,6 +498,49 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
             .collect::<Vec<_>>();
         let inferred_duplicates = inferred_duplicate_targets(&owned);
         let mut coverage = BTreeMap::<String, Vec<String>>::new();
+        for (index, _) in seed.requirements.iter().enumerate() {
+            if !seed.completed_child_plan_ids.is_empty() {
+                coverage.insert(
+                    requirement_id(&seed.id, index),
+                    seed.completed_child_plan_ids.clone(),
+                );
+            }
+        }
+        for (index, child_ids) in &seed.explicit_requirement_coverage {
+            let requirement = requirement_id(&seed.id, *index);
+            for child_id in child_ids {
+                let delivered = seed.closed_change_ids.contains(child_id);
+                let active_valid = owned.iter().find(|(id, _, _)| id == child_id).is_some_and(
+                    |(id, issue, graph_change)| {
+                        graph_change.duplicate_of.is_none()
+                            && !inferred_duplicates.contains_key(id)
+                            && !looks_too_large_for_atomic_wi(issue)
+                            && is_structured_change(issue)
+                    },
+                );
+                if delivered || active_valid {
+                    coverage
+                        .entry(requirement.clone())
+                        .or_default()
+                        .push(child_id.clone());
+                }
+            }
+        }
+        for change_id in &seed.closed_change_ids {
+            let Some(issue) = issue_by_id.get(change_id).copied() else {
+                continue;
+            };
+            for (index, (requirement, _)) in seed.requirements.iter().enumerate() {
+                if normalized_text(requirement) == normalized_text(&issue.title)
+                    || text_covers(issue, requirement)
+                {
+                    coverage
+                        .entry(requirement_id(&seed.id, index))
+                        .or_default()
+                        .push(change_id.clone());
+                }
+            }
+        }
         for (change_id, issue, graph_change) in &owned {
             let duplicate_of = graph_change
                 .duplicate_of
@@ -402,20 +596,27 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
 
             let mut replacement_ids = Vec::new();
             if oversized && duplicate_of.is_none() {
+                let eligible_covers = covers
+                    .iter()
+                    .filter(|requirement| {
+                        requirement_index(requirement)
+                            .and_then(|index| seed.requirements.get(index))
+                            .map(|(_, horizon)| horizon.as_str())
+                            == Some(if deferred { "deferred" } else { "active" })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
                 for part in 1..=2 {
                     let proposal_id = format!("proposal:change:{change_id}:part-{part}");
-                    let proposal_covers = covers
+                    let proposal_covers = eligible_covers
                         .iter()
-                        .filter(|requirement| {
-                            requirement_index(requirement)
-                                .and_then(|index| seed.requirements.get(index))
-                                .map(|(_, horizon)| horizon.as_str())
-                                == Some(if deferred { "deferred" } else { "active" })
-                        })
                         .enumerate()
                         .filter(|(index, _)| index % 2 == part - 1)
                         .map(|(_, requirement)| requirement.clone())
                         .collect::<Vec<_>>();
+                    if proposal_covers.is_empty() {
+                        continue;
+                    }
                     for requirement in &proposal_covers {
                         coverage
                             .entry(requirement.clone())
@@ -464,7 +665,11 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
             .enumerate()
             .map(|(index, (text, horizon))| {
                 let id = requirement_id(&seed.id, index);
-                let covered_by = coverage.remove(&id).unwrap_or_default();
+                let mut covered_by = coverage.remove(&id).unwrap_or_default();
+                covered_by.sort_by(|left, right| {
+                    reference_sort_key(left).cmp(&reference_sort_key(right))
+                });
+                covered_by.dedup();
                 let owner_epic = requirement_owner(seed, horizon);
                 if covered_by.is_empty() {
                     proposed_changes.push(ProposedChange {
@@ -505,6 +710,11 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
                     }
                     .to_string(),
                     covered_by,
+                    verification: seed
+                        .requirement_verification
+                        .get(&index)
+                        .cloned()
+                        .unwrap_or_default(),
                 }
             })
             .collect::<Vec<_>>();
@@ -561,9 +771,11 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
     });
     let epic_order = epic_order_nodes.into_iter().map(|(_, _, id)| id).collect();
 
-    with_digest(ProjectPlan {
+    ProjectPlan {
         schema: PROJECT_PLAN_SCHEMA.to_string(),
         action: "done".to_string(),
+        root_id: project_plan_root_id(project, &graph.digest),
+        stage,
         project: project.to_string(),
         project_label: project_label.to_string(),
         source_graph_digest: graph.digest,
@@ -575,9 +787,18 @@ pub fn build_project_plan(project: &str, project_label: &str, issues: &[Issue]) 
         proposed_epics,
         changes,
         proposed_changes,
-        diagnostics: Vec::new(),
+        diagnostics: graph.diagnostics,
         next: None,
-    })
+    }
+}
+
+fn project_plan_root_id(project: &str, graph_digest: &str) -> String {
+    let suffix = graph_digest
+        .trim_start_matches("sha256:")
+        .chars()
+        .take(12)
+        .collect::<String>();
+    format!("project-plan:{project}:{suffix}")
 }
 
 /// Shared #2142 boundedness classifier used by validation and project planning.
@@ -662,54 +883,63 @@ pub fn looks_too_large_for_atomic_wi(issue: &Issue) -> bool {
 
 fn extract_requirements(issue: &Issue) -> Vec<(String, String)> {
     let mut section = String::new();
-    let mut in_scope = true;
-    let mut requirements = Vec::new();
-    let transaction_published = issue.body.contains("<!-- aw:planning-transaction:");
+    let mut raw_requirements = Vec::new();
+    let mut current = None::<String>;
     for line in issue.body.lines() {
         let trimmed = line.trim();
         if let Some(heading) = trimmed.strip_prefix("## ") {
+            if section == "requirements" {
+                if let Some(requirement) = current.take() {
+                    raw_requirements.push(requirement);
+                }
+            }
             section = heading.to_ascii_lowercase();
-            in_scope = !section.contains("out of scope");
             continue;
         }
-        if let Some(heading) = trimmed.strip_prefix("### ") {
-            in_scope = !heading.to_ascii_lowercase().contains("out of scope");
+        if trimmed.starts_with("### ") {
+            if section == "requirements" {
+                if let Some(requirement) = current.take() {
+                    raw_requirements.push(requirement);
+                }
+            }
             continue;
         }
-        let eligible_section = if transaction_published {
-            section == "requirements"
-        } else {
-            matches!(
-                section.as_str(),
-                "requirements" | "scope" | "acceptance criteria"
-            )
-        };
-        if !eligible_section || !in_scope {
+        if section != "requirements" {
             continue;
         }
-        let Some(value) = list_item_value(trimmed) else {
-            continue;
-        };
-        if !real_value(&value) {
+        if let Some(value) = list_item_value(trimmed) {
+            if let Some(requirement) = current.replace(value) {
+                raw_requirements.push(requirement);
+            }
             continue;
         }
-        let horizon = if deferred_text(&value) {
-            "deferred"
-        } else {
-            "active"
-        };
-        requirements.push((value, horizon.to_string()));
+        if !trimmed.is_empty()
+            && line
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            if let Some(requirement) = current.as_mut() {
+                requirement.push(' ');
+                requirement.push_str(trimmed);
+            }
+        }
     }
-    if requirements.is_empty() {
-        requirements.push((
-            issue.title.clone(),
-            if is_deferred_issue(issue) {
-                "deferred".to_string()
+    if let Some(requirement) = current {
+        raw_requirements.push(requirement);
+    }
+    let mut requirements = raw_requirements
+        .into_iter()
+        .filter(|value| real_value(value))
+        .map(|value| {
+            let horizon = if deferred_text(&value) {
+                "deferred"
             } else {
-                "active".to_string()
-            },
-        ));
-    }
+                "active"
+            };
+            (value, horizon.to_string())
+        })
+        .collect::<Vec<_>>();
     let mut seen = BTreeSet::new();
     requirements.retain(|(text, horizon)| seen.insert((normalized_text(text), horizon.clone())));
     requirements
@@ -772,6 +1002,150 @@ fn list_item_value(line: &str) -> Option<String> {
         .map(|(_, rest)| rest.trim().to_string())
         .unwrap_or(value);
     Some(value)
+}
+
+fn explicit_child_work_item_ids(issue: &Issue) -> Vec<String> {
+    let mut in_child_work_items = false;
+    let mut ids = BTreeSet::new();
+    for line in issue.body.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            in_child_work_items = heading.trim().eq_ignore_ascii_case("child work items");
+            continue;
+        }
+        if !in_child_work_items {
+            continue;
+        }
+        for token in trimmed.split(|ch: char| ch != '#' && !ch.is_ascii_digit()) {
+            let Some(id) = token.strip_prefix('#') else {
+                continue;
+            };
+            if !id.is_empty() && id.chars().all(|ch| ch.is_ascii_digit()) {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids.into_iter().collect()
+}
+
+fn explicit_child_requirement_coverage(issue: &Issue) -> BTreeMap<usize, Vec<String>> {
+    let mut in_child_work_items = false;
+    let mut coverage = BTreeMap::<usize, BTreeSet<String>>::new();
+    for line in issue.body.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            in_child_work_items = heading.trim().eq_ignore_ascii_case("child work items");
+            continue;
+        }
+        if !in_child_work_items || !trimmed.starts_with('|') {
+            continue;
+        }
+        let cells = trimmed
+            .split('|')
+            .map(str::trim)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>();
+        let Some(issue_cell) = cells.first() else {
+            continue;
+        };
+        let issue_ids = numeric_references(issue_cell, '#');
+        if issue_ids.is_empty() {
+            continue;
+        }
+        for cell in cells.iter().skip(1) {
+            for requirement in numeric_references(cell, 'r') {
+                let Some(index) = requirement
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                else {
+                    continue;
+                };
+                coverage
+                    .entry(index)
+                    .or_default()
+                    .extend(issue_ids.iter().cloned());
+            }
+        }
+    }
+    coverage
+        .into_iter()
+        .map(|(index, ids)| (index, ids.into_iter().collect()))
+        .collect()
+}
+
+fn explicit_requirement_verification(
+    issue: &Issue,
+) -> BTreeMap<usize, Vec<RequirementVerification>> {
+    let mut in_inventory = false;
+    let mut verification = BTreeMap::<usize, Vec<RequirementVerification>>::new();
+    for line in issue.body.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            in_inventory = heading
+                .trim()
+                .eq_ignore_ascii_case("verification inventory");
+            continue;
+        }
+        if !in_inventory || !trimmed.starts_with('|') {
+            continue;
+        }
+        let cells = trimmed
+            .split('|')
+            .map(str::trim)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>();
+        if cells.len() < 3 {
+            continue;
+        }
+        let gate = cells[1].trim_matches('`').trim().to_string();
+        let oracle = cells[2].trim().to_string();
+        if !real_value(&gate) || !real_value(&oracle) || gate.chars().all(|ch| ch == '-') {
+            continue;
+        }
+        for requirement in numeric_references(cells[0], 'r') {
+            let Some(index) = requirement
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1))
+            else {
+                continue;
+            };
+            verification
+                .entry(index)
+                .or_default()
+                .push(RequirementVerification {
+                    gate: gate.clone(),
+                    oracle: oracle.clone(),
+                });
+        }
+    }
+    verification
+}
+
+fn numeric_references(text: &str, prefix: char) -> Vec<String> {
+    let canonical_prefix = prefix.to_ascii_lowercase();
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut values = BTreeSet::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index].to_ascii_lowercase() != canonical_prefix {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < chars.len() && chars[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start {
+            values.insert(chars[start..end].iter().collect::<String>());
+            index = end;
+        } else {
+            index += 1;
+        }
+    }
+    values.into_iter().collect()
 }
 
 fn real_value(value: &str) -> bool {
@@ -883,20 +1257,37 @@ fn published_split_source_and_horizon(issue: &Issue) -> Option<(String, String)>
 }
 
 fn deferred_text(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    [
-        "deferred",
-        "later phase",
-        "future phase",
-        "follow-up",
-        "follow up",
-        "phase 2",
-        "subsequent",
-        "eventually",
-        "not now",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    text.lines().any(|line| {
+        let cleaned = line
+            .trim()
+            .trim_start_matches(|ch: char| matches!(ch, '-' | '*' | ' '))
+            .replace("**", "")
+            .replace('`', "");
+        let mut lower = cleaned.trim().to_ascii_lowercase();
+        if let Some((prefix, rest)) = lower.split_once(':') {
+            let prefix = prefix.trim();
+            if prefix.len() <= 8
+                && prefix.chars().any(|ch| ch.is_ascii_digit())
+                && prefix.chars().all(|ch| ch.is_ascii_alphanumeric())
+            {
+                lower = rest.trim().to_string();
+            }
+        }
+        [
+            "deferred:",
+            "[deferred]",
+            "later phase:",
+            "future phase:",
+            "follow-up:",
+            "follow up:",
+            "phase 2:",
+            "subsequent phase:",
+            "eventually:",
+            "not now:",
+        ]
+        .iter()
+        .any(|marker| lower.starts_with(marker))
+    })
 }
 
 fn inferred_duplicate_targets(

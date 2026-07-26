@@ -5,21 +5,23 @@
 
 use super::{
     explicit_parent_references, issue_key, Issue, IssueBackend, IssueFilter, IssuePatch, IssueType,
-    ProjectPlan,
+    PlanningStage, ProjectPlan,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub const PLANNING_TRANSACTION_SCHEMA: &str = "aw.wi.project-plan-transaction.v1";
+pub const PLANNING_TRANSACTION_SCHEMA: &str = "aw.wi.project-plan-transaction.v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanningTransactionManifest {
     pub version: u8,
     pub schema: String,
     pub kind: String,
+    pub root_id: String,
+    pub stage: PlanningStage,
     pub project: String,
     pub project_label: String,
     pub plan_digest: String,
@@ -57,6 +59,11 @@ pub struct PlanningMutation {
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
     pub reason: String,
+    pub stage: PlanningStage,
+    pub certainty: String,
+    pub evidence: Vec<String>,
+    pub decision_source: String,
+    pub requires_hitl: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +116,18 @@ pub fn build_planning_transaction_manifest(
         .iter()
         .map(|issue| (issue_key(issue), issue))
         .collect::<BTreeMap<_, _>>();
+    let requirement_text_by_id = plan
+        .epics
+        .iter()
+        .flat_map(|epic| {
+            epic.requirements.iter().map(|requirement| {
+                (
+                    requirement.id.clone(),
+                    (requirement.text.clone(), requirement.verification.clone()),
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut mutations = Vec::new();
 
     for proposal in &plan.proposed_epics {
@@ -158,21 +177,58 @@ pub fn build_planning_transaction_manifest(
             ]),
             remove_labels: Vec::new(),
             reason: proposal.reason.clone(),
+            stage: plan.stage,
+            certainty: "decision".to_string(),
+            evidence: vec![format!("source_epic:{}", proposal.source_epic)],
+            decision_source: "agent_review_and_human_confirmation".to_string(),
+            requires_hitl: true,
         });
     }
 
     for proposal in &plan.proposed_changes {
+        if proposal.covers.is_empty() {
+            continue;
+        }
         let target = proposal.id.clone();
         let key = mutation_key(&plan.digest, "create", &target);
+        let capability = issue_by_id
+            .get(&proposal.owner_epic)
+            .and_then(|issue| issue_capability(issue))
+            .unwrap_or_else(|| format!("inherited from parent epic #{}", proposal.owner_epic));
+        let scope = proposal
+            .covers
+            .iter()
+            .filter_map(|requirement| requirement_text_by_id.get(requirement))
+            .map(|(requirement, _)| format!("- {requirement}"))
+            .collect::<Vec<_>>();
+        let scope = if scope.is_empty() {
+            format!("- {}", proposal.title)
+        } else {
+            scope.join("\n")
+        };
+        let verification = proposal
+            .covers
+            .iter()
+            .filter_map(|requirement| requirement_text_by_id.get(requirement))
+            .flat_map(|(_, verification)| verification)
+            .map(|verification| {
+                format!(
+                    "- Gate: `{}`\n  Oracle: {}",
+                    verification.gate, verification.oracle
+                )
+            })
+            .collect::<Vec<_>>();
+        let verification = if verification.is_empty() {
+            "- Gate and oracle must be supplied before publication.".to_string()
+        } else {
+            verification.join("\n")
+        };
         let body = format!(
-            "## Capability Alignment\n\nCapability: work-item-planning\nParent Epic: #{}\n\n## Scope\n\n### In Scope\n- {}\n\n### Out of Scope\n- Unrelated requirements outside this reviewed atomic change.\n\n## Acceptance Criteria\n\n- The change closes reviewed requirement coverage: {}.\n\n## Reference Context\n\n- Project plan digest: `{}`\n- Planning reason: `{}`\n{}\n\n{}\n",
+            "## Capability Alignment\n\nCapability: {capability}\nParent Epic: #{}\n\n## Scope\n\n### In Scope\n{}\n\n### Out of Scope\n- Unrelated requirements outside this reviewed atomic change.\n\n## Acceptance Criteria\n\n- The change closes reviewed requirement coverage: {}.\n\n## Verification\n\n{}\n\n## Reference Context\n\n- Project plan digest: `{}`\n- Planning reason: `{}`\n{}\n\n{}\n",
             proposal.owner_epic,
-            proposal.title,
-            if proposal.covers.is_empty() {
-                "bounded replacement responsibility".to_string()
-            } else {
-                proposal.covers.join(", ")
-            },
+            scope,
+            proposal.covers.join(", "),
+            verification,
             plan.digest,
             proposal.reason,
             proposal
@@ -202,6 +258,11 @@ pub fn build_planning_transaction_manifest(
             add_labels: sorted_labels(labels),
             remove_labels: Vec::new(),
             reason: proposal.reason.clone(),
+            stage: plan.stage,
+            certainty: "decision".to_string(),
+            evidence: proposal.covers.clone(),
+            decision_source: "agent_review_and_human_confirmation".to_string(),
+            requires_hitl: true,
         });
     }
 
@@ -246,6 +307,21 @@ pub fn build_planning_transaction_manifest(
             } else {
                 "record_reviewed_epic_split".to_string()
             },
+            stage: plan.stage,
+            certainty: if plan.stage == PlanningStage::Normalize {
+                "deterministic"
+            } else {
+                "inferred"
+            }
+            .to_string(),
+            evidence: vec![format!("issue:{}", epic.id)],
+            decision_source: if plan.stage == PlanningStage::Normalize {
+                "explicit_metadata"
+            } else {
+                "human_decision"
+            }
+            .to_string(),
+            requires_hitl: plan.stage == PlanningStage::Reconcile,
         });
     }
 
@@ -323,8 +399,61 @@ pub fn build_planning_transaction_manifest(
             } else {
                 "canonicalize_change_graph_and_priority".to_string()
             },
+            stage: plan.stage,
+            certainty: if plan.stage == PlanningStage::Normalize {
+                "deterministic"
+            } else {
+                "inferred"
+            }
+            .to_string(),
+            evidence: vec![format!("issue:{}", change.id)],
+            decision_source: if plan.stage == PlanningStage::Normalize {
+                "explicit_metadata"
+            } else {
+                "human_decision"
+            }
+            .to_string(),
+            requires_hitl: plan.stage == PlanningStage::Reconcile,
         });
     }
+
+    mutations.retain(|mutation| match plan.stage {
+        PlanningStage::Normalize => {
+            if mutation.action != "update" || mutation.certainty != "deterministic" {
+                return false;
+            }
+            let Some(issue) = issue_by_id.get(&mutation.target).copied() else {
+                return false;
+            };
+            if mutation.issue_type == "epic" {
+                issue.labels.iter().any(|label| {
+                    matches!(
+                        label.as_str(),
+                        "priority:p0" | "priority:p1" | "priority:p2" | "priority:p3"
+                    )
+                })
+            } else {
+                let Some(change) = plan
+                    .changes
+                    .iter()
+                    .find(|change| change.id == mutation.target)
+                else {
+                    return false;
+                };
+                !change.owner_epic.starts_with("proposal:")
+                    && change.priority_source == "explicit"
+                    && explicit_parent_references(issue) == vec![change.owner_epic.clone()]
+            }
+        }
+        PlanningStage::Reconcile => {
+            mutation.action == "update"
+                && !plan.changes.iter().any(|change| {
+                    change.id == mutation.target && change.owner_epic.starts_with("proposal:")
+                })
+        }
+        PlanningStage::Atomize => true,
+        PlanningStage::Verify => false,
+    });
 
     mutations.sort_by(|left, right| {
         mutation_action_rank(&left.action, &left.issue_type)
@@ -336,9 +465,11 @@ pub fn build_planning_transaction_manifest(
     }
 
     PlanningTransactionManifest {
-        version: 1,
+        version: 2,
         schema: PLANNING_TRANSACTION_SCHEMA.to_string(),
         kind: "project_plan".to_string(),
+        root_id: plan.root_id.clone(),
+        stage: plan.stage,
         project: plan.project.clone(),
         project_label: plan.project_label.clone(),
         plan_digest: plan.digest.clone(),
@@ -358,12 +489,13 @@ pub async fn apply_planning_transaction(
     source_digest: &str,
     checkpoint_path: &Path,
 ) -> Result<PlanningTransactionResult> {
-    if manifest.version != 1
+    if manifest.version != 2
         || manifest.schema != PLANNING_TRANSACTION_SCHEMA
         || manifest.kind != "project_plan"
     {
         anyhow::bail!("unsupported project planning transaction manifest");
     }
+    validate_stage_mutations(manifest)?;
     let mut checkpoint = load_checkpoint(checkpoint_path, source_digest)?;
     let mut current = backend.list(&IssueFilter::default()).await?;
     let mut resolutions = reconcile_created_targets(manifest, &current);
@@ -460,6 +592,21 @@ pub fn planning_transaction_source_digest(plan_body: &str, manifest_body: &str) 
     format!("{:x}", hasher.finalize())
 }
 
+/// Keep retry checkpoints scoped to the exact plan/manifest authorization
+/// unit. A later iteration of the same stage must not collide with an earlier
+/// completed digest.
+pub fn planning_transaction_checkpoint_path(
+    plan_path: &Path,
+    stage: PlanningStage,
+    source_digest: &str,
+) -> PathBuf {
+    plan_path.with_extension(format!(
+        "{}.{}.transaction.json",
+        stage.as_str(),
+        source_digest
+    ))
+}
+
 /// Read-only admission gate for goal roots consuming a published plan.
 ///
 /// Lifecycle state and non-graph labels may advance after publication. Graph
@@ -472,7 +619,7 @@ pub fn verify_published_planning_transaction(
     checkpoint_path: &Path,
     current: &[Issue],
 ) -> Result<()> {
-    if manifest.version != 1
+    if manifest.version != 2
         || manifest.schema != PLANNING_TRANSACTION_SCHEMA
         || manifest.kind != "project_plan"
     {
@@ -630,6 +777,50 @@ pub fn verify_published_planning_transaction(
                 expected_graph_labels.join(", "),
                 actual_graph_labels.join(", ")
             );
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_stage_mutations(manifest: &PlanningTransactionManifest) -> Result<()> {
+    for mutation in &manifest.mutations {
+        if mutation.stage != manifest.stage {
+            anyhow::bail!(
+                "planning mutation {} stage does not match manifest stage",
+                mutation.order
+            );
+        }
+        match manifest.stage {
+            PlanningStage::Normalize => {
+                if mutation.action != "update"
+                    || mutation.certainty != "deterministic"
+                    || mutation.requires_hitl
+                {
+                    anyhow::bail!(
+                        "normalize manifest contains non-deterministic or non-update mutation {}",
+                        mutation.order
+                    );
+                }
+            }
+            PlanningStage::Reconcile => {
+                if mutation.action != "update" {
+                    anyhow::bail!(
+                        "reconcile manifest contains non-update mutation {}",
+                        mutation.order
+                    );
+                }
+            }
+            PlanningStage::Atomize => {
+                if mutation.action == "create" && !mutation.requires_hitl {
+                    anyhow::bail!(
+                        "atomize create mutation {} lacks human confirmation",
+                        mutation.order
+                    );
+                }
+            }
+            PlanningStage::Verify => {
+                anyhow::bail!("verify stage may not contain tracker mutations");
+            }
         }
     }
     Ok(())
@@ -1031,6 +1222,18 @@ fn sorted_labels(values: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
+fn issue_capability(issue: &Issue) -> Option<String> {
+    issue.body.lines().find_map(|line| {
+        let trimmed = line.trim().replace("**", "").replace('`', "");
+        let (field, value) = trimmed.split_once(':')?;
+        if !field.trim().eq_ignore_ascii_case("capability") {
+            return None;
+        }
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
 fn canonical_body(body: &str) -> String {
     let normalized = body.replace("\r\n", "\n");
     let mut lines = Vec::new();
@@ -1319,5 +1522,18 @@ mod tests {
         assert!(error
             .to_string()
             .contains("issue `42` graph labels changed"));
+    }
+
+    #[test]
+    fn checkpoint_path_is_scoped_to_the_exact_stage_digest() {
+        let plan_path = Path::new("/tmp/project-plan.json");
+        let first =
+            planning_transaction_checkpoint_path(plan_path, PlanningStage::Reconcile, "digest-a");
+        let second =
+            planning_transaction_checkpoint_path(plan_path, PlanningStage::Reconcile, "digest-b");
+
+        assert_ne!(first, second);
+        assert!(first.ends_with("project-plan.reconcile.digest-a.transaction.json"));
+        assert!(second.ends_with("project-plan.reconcile.digest-b.transaction.json"));
     }
 }

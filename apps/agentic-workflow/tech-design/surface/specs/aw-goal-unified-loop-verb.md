@@ -95,7 +95,10 @@ completes correctly after it, because the string is rewritten before
 <!-- type: doc lang: markdown -->
 
 `aw goal backlog --project <p>` (`run_backlog_root`) consumes only the current
-accepted and completely published `aw.wi.project-plan.v1` graph. The shared
+completed `aw.wi.project-plan.v2` verify-stage graph and its digest-bound
+zero-mutation verification checkpoint. A legacy reviewed publication remains
+readable for compatibility, but new project-plan roots establish scheduling
+authority only when `completion.workflow_complete=true`. The shared
 ready-leaf selector orders epics first by explicit epic priority, then orders
 ready children within that epic by dependency readiness and explicit or
 inherited child priority. `aw goal wi <epic>` uses the same loader and selector,

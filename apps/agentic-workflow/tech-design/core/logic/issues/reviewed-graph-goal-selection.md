@@ -20,10 +20,11 @@ command_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-The accepted and completely published project plan is the scheduling authority
+The completed v2 verify-stage project plan is the scheduling authority
 for `aw goal wi <epic>` and `aw goal backlog --project <project>`. Both roots
-load the same review digest, publication checkpoint, current issue inventory,
-and canonical epic/change graph before selecting a change.
+load the same final plan/manifest digest, zero-mutation verification checkpoint,
+current issue inventory, and canonical epic/change graph before selecting a
+change. Legacy accepted review evidence remains readable only for compatibility.
 
 Selection is hierarchical: epic priority chooses project direction first;
 dependency readiness and explicit or inherited change priority choose a leaf
@@ -36,7 +37,7 @@ parking is an outer runtime concern and never changes graph metadata.
 ```yaml
 requirements:
   - id: R1
-    text: Epic and backlog roots consume only the current accepted and completely published project graph.
+    text: Epic and backlog roots consume only the current completed verify-stage project graph.
   - id: R2
     text: Both roots select the same next change for the same graph and exclusion set.
   - id: R3
@@ -44,7 +45,7 @@ requirements:
   - id: R4
     text: A blocked high-priority change is reported and skipped without hiding another ready leaf.
   - id: R5
-    text: Invalid ownership, change-as-parent, stale graph labels, stale review provenance, and unresolved dependencies fail closed with executable remediation.
+    text: Invalid ownership, change-as-parent, stale graph labels, stale verification provenance, and unresolved dependencies fail closed with executable remediation.
   - id: R6
     text: An open epic whose reviewed children are all closed reuses terminal child rollup and is never re-atomized.
   - id: R7
@@ -76,7 +77,7 @@ Feature: choose one ready change from a reviewed epic graph
     And it never emits aw wi atomize
 
   Scenario: post-publication graph drift fails closed
-    Given one accepted completed project-plan transaction
+    Given one completed verify-stage project-plan checkpoint
     When an ownership or priority graph label changes
     Then no change root is dispatched
     And the blocked envelope identifies the stale issue and replanning command
@@ -90,7 +91,7 @@ Feature: choose one ready change from a reviewed epic graph
 id: reviewed-graph-goal-selection
 entry: load_review
 nodes:
-  load_review: { kind: start, label: "load accepted review and completed transaction" }
+  load_review: { kind: start, label: "load completed verify plan and checkpoint" }
   verify_graph: { kind: decision, label: "published graph valid and current?" }
   order_epics: { kind: process, label: "order open epics by priority and stable id" }
   inspect_children: { kind: decision, label: "ready child in current epic?" }
@@ -124,9 +125,8 @@ flowchart TD
 
 ```yaml
 inputs:
-  review: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.review.json
   manifest: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.manifest.json
-  checkpoint: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.transaction.json
+  checkpoint: /tmp/aw/workspaces/<workspace>/workitems/<project>/project-plan/project-plan.verify.<source-digest>.transaction.json
 roots:
   epic: aw goal wi <epic-id>
   backlog: aw goal backlog --project <project>

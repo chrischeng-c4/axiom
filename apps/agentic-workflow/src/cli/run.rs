@@ -20,10 +20,10 @@ use crate::cli::capability::{
 use crate::cli::issues as wi_cli;
 use crate::issues::types::td_phase;
 use crate::issues::{
-    build_work_item_graph, make_backend, planning_transaction_source_digest,
-    resolve_default_backend, select_ready_change_leaf, verify_published_planning_transaction,
-    Issue, IssueFilter, IssueState, IssueType, PlanningTransactionManifest, ProjectPlan,
-    ReadyGraphSelection, WorkItemGraph,
+    build_work_item_graph, make_backend, planning_transaction_checkpoint_path,
+    planning_transaction_source_digest, resolve_default_backend, select_ready_change_leaf,
+    verify_published_planning_transaction, Issue, IssueFilter, IssueState, IssueType,
+    PlanningTransactionManifest, ProjectPlan, ReadyGraphSelection, WorkItemGraph,
 };
 use crate::models::artifact_quality::{
     infer_artifact_kind_from_hint, ArtifactKind, ArtifactQualityProfile,
@@ -968,7 +968,6 @@ async fn load_reviewed_project_graph(
     let plan_path = directory.join("project-plan.json");
     let manifest_path = plan_path.with_extension("manifest.json");
     let review_path = plan_path.with_extension("review.json");
-    let checkpoint_path = plan_path.with_extension("transaction.json");
 
     let read = |path: &Path, kind: &str| {
         fs::read_to_string(path).map_err(|error| ReviewedGraphFailure {
@@ -981,7 +980,6 @@ async fn load_reviewed_project_graph(
     };
     let plan_body = read(&plan_path, "plan")?;
     let manifest_body = read(&manifest_path, "manifest")?;
-    let review_body = read(&review_path, "accepted review")?;
     let plan: ProjectPlan =
         serde_json::from_str(&plan_body).map_err(|error| ReviewedGraphFailure {
             reason: format!("current project plan is invalid: {error}"),
@@ -992,24 +990,45 @@ async fn load_reviewed_project_graph(
             reason: format!("current project-plan transaction manifest is invalid: {error}"),
             next_command: rebuild.clone(),
         })?;
-    let review: PublishedProjectPlanReview =
-        serde_json::from_str(&review_body).map_err(|error| ReviewedGraphFailure {
-            reason: format!("current project-plan review record is invalid: {error}"),
-            next_command: rebuild.clone(),
-        })?;
     let source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
-    if review.version != 1
-        || review.kind != "project_plan"
-        || review.project != project
-        || review.decision != "accepted"
-        || review.source_digest != source_digest
-        || Path::new(&review.plan_path) != plan_path
-        || Path::new(&review.manifest_path) != manifest_path
+    let verified_v2 = plan.schema == crate::issues::PROJECT_PLAN_SCHEMA
+        && plan.stage == crate::issues::PlanningStage::Verify
+        && plan.valid
+        && plan.diagnostics.is_empty()
+        && plan.proposed_epics.is_empty()
+        && plan.proposed_changes.is_empty()
+        && manifest.version == 2
+        && manifest.stage == crate::issues::PlanningStage::Verify
+        && manifest.mutations.is_empty();
+    if !verified_v2 {
+        let review_body = read(&review_path, "accepted review")?;
+        let review: PublishedProjectPlanReview =
+            serde_json::from_str(&review_body).map_err(|error| ReviewedGraphFailure {
+                reason: format!("current project-plan review record is invalid: {error}"),
+                next_command: rebuild.clone(),
+            })?;
+        if review.version != 1
+            || review.kind != "project_plan"
+            || review.project != project
+            || review.decision != "accepted"
+            || review.source_digest != source_digest
+            || Path::new(&review.plan_path) != plan_path
+            || Path::new(&review.manifest_path) != manifest_path
+        {
+            return Err(ReviewedGraphFailure {
+                reason: "current project plan is stale or lacks exact accepted review evidence"
+                    .to_string(),
+                next_command: rebuild,
+            });
+        }
+    }
+    if manifest.root_id != plan.root_id
+        || manifest.stage != plan.stage
         || manifest.project != project
         || manifest.plan_digest != plan.digest
     {
         return Err(ReviewedGraphFailure {
-            reason: "current project plan is stale or lacks exact accepted review evidence"
+            reason: "current project plan and transaction manifest do not describe the same root"
                 .to_string(),
             next_command: rebuild,
         });
@@ -1039,6 +1058,8 @@ async fn load_reviewed_project_graph(
             source_digest,
         });
     }
+    let checkpoint_path =
+        planning_transaction_checkpoint_path(&plan_path, manifest.stage, &source_digest);
     verify_published_planning_transaction(&manifest, &source_digest, &checkpoint_path, &inventory)
         .map_err(|error| ReviewedGraphFailure {
             reason: error.to_string(),
