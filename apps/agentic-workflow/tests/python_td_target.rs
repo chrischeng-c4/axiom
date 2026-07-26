@@ -183,6 +183,133 @@ fn native_targets_update_owned_files_and_preserve_unrelated_files() {
 }
 
 #[test]
+fn openapi_python_td_routes_all_profiles_through_managed_native_targets() {
+    let ir = compile_python_td_project(&fixture("python_td_openapi")).unwrap();
+
+    let python_first = tempfile::tempdir().unwrap();
+    let python_second = tempfile::tempdir().unwrap();
+    let first_python = emit_python_td_target(&ir, python_first.path()).unwrap();
+    let second_python = emit_python_td_target(&ir, python_second.path()).unwrap();
+    assert_eq!(first_python, second_python);
+    assert_eq!(
+        snapshot(python_first.path()),
+        snapshot(python_second.path())
+    );
+    let python_models = fs::read_to_string(
+        python_first
+            .path()
+            .join("src/pet_api/interface/pets_openapi/models.py"),
+    )
+    .unwrap();
+    assert!(python_models.contains("type PetIds = list[str]"));
+    let pyproject = fs::read_to_string(python_first.path().join("pyproject.toml")).unwrap();
+    assert!(pyproject.contains("requires-python = \">=3.12\""));
+    assert!(pyproject.contains("\"pydantic>=2\""));
+    let python_manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            python_first
+                .path()
+                .join("src/pet_api/interface/pets_openapi/.openapi-codegen.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(python_manifest["target"], "python-3.12");
+    let python_compile = Command::new("python3")
+        .args(["-m", "compileall", "-q", "src"])
+        .current_dir(python_first.path())
+        .output()
+        .unwrap();
+    assert!(
+        python_compile.status.success(),
+        "generated OpenAPI Python target failed compilation:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&python_compile.stdout),
+        String::from_utf8_lossy(&python_compile.stderr)
+    );
+
+    let typescript_first = tempfile::tempdir().unwrap();
+    let typescript_second = tempfile::tempdir().unwrap();
+    let first_typescript = emit_python_td_typescript_target(&ir, typescript_first.path()).unwrap();
+    let second_typescript =
+        emit_python_td_typescript_target(&ir, typescript_second.path()).unwrap();
+    assert_eq!(first_typescript, second_typescript);
+    assert_eq!(
+        snapshot(typescript_first.path()),
+        snapshot(typescript_second.path())
+    );
+    let types = fs::read_to_string(
+        typescript_first
+            .path()
+            .join("src/interface/pets_openapi/types.ts"),
+    )
+    .unwrap();
+    assert!(types.contains("export interface Pet"));
+    let tsconfig = fs::read_to_string(typescript_first.path().join("tsconfig.json")).unwrap();
+    assert!(tsconfig.contains("\"moduleResolution\": \"Bundler\""));
+
+    let rust_first = tempfile::tempdir().unwrap();
+    let rust_second = tempfile::tempdir().unwrap();
+    let first_rust = emit_python_td_rust_target(&ir, rust_first.path()).unwrap();
+    let second_rust = emit_python_td_rust_target(&ir, rust_second.path()).unwrap();
+    assert_eq!(first_rust, second_rust);
+    assert_eq!(snapshot(rust_first.path()), snapshot(rust_second.path()));
+    let rust_models = fs::read_to_string(
+        rust_first
+            .path()
+            .join("src/interface/pets_openapi/models.rs"),
+    )
+    .unwrap();
+    assert!(rust_models.contains("#[serde(rename = \"gen\")]"));
+    assert!(rust_models.contains("pub gen_: String,"));
+    let cargo = fs::read_to_string(rust_first.path().join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("edition=\"2024\""));
+    assert!(cargo.contains("reqwest ="));
+}
+
+#[test]
+fn cb_gen_routes_openapi_python_td_to_each_selected_native_profile() {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .unwrap()
+        .to_path_buf();
+    for (target, expected) in [
+        (
+            "python",
+            "src/pet_api/interface/pets_openapi/.openapi-codegen.json",
+        ),
+        (
+            "typescript",
+            "src/interface/pets_openapi/.openapi-codegen.json",
+        ),
+        ("rust", "src/interface/pets_openapi/.openapi-codegen.json"),
+    ] {
+        let output = tempfile::tempdir().unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_aw"))
+            .args([
+                "cb",
+                "gen",
+                "--target",
+                target,
+                "--source-root",
+                fixture("python_td_openapi").to_str().unwrap(),
+                "--output-dir",
+                output.path().to_str().unwrap(),
+            ])
+            .current_dir(&workspace_root)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "aw cb gen --target {target} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(output.path().join(expected).is_file());
+    }
+}
+
+#[test]
 fn cb_gen_python_target_routes_to_native_emitter() {
     let output = tempfile::tempdir().unwrap();
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

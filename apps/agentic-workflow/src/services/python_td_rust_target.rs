@@ -22,6 +22,7 @@ pub struct RustTdTargetFile {
 pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTdTarget> {
     let mut files = BTreeMap::new();
     let mut roles = BTreeSet::new();
+    let mut openapi_requirements = None;
     for module in ir.modules.iter().filter(|m| m.path.starts_with("src/")) {
         let name = module
             .path
@@ -48,6 +49,35 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
             super::python_td::PythonTdRole::Interface => "interface",
             _ => "support",
         };
+        if let Some(generated) = super::python_td_openapi_target::generate_openapi_target(
+            module,
+            openapi_codegen::Lang::Rust,
+        )? {
+            if openapi_requirements
+                .replace(generated.requirements)
+                .is_some_and(|existing| existing != generated.requirements)
+            {
+                bail!("Python TD OpenAPI modules must select one Rust target profile");
+            }
+            let directory = generated.directory;
+            if !ident(&directory) {
+                bail!(
+                    "unsupported Python TD OpenAPI module directory `{directory}` for Rust target"
+                );
+            }
+            for (relative, content) in generated.files {
+                let path = format!("src/{role}/{directory}/{relative}");
+                if files.insert(path.clone(), content).is_some() {
+                    bail!("unsupported duplicate Rust OpenAPI path `{path}`");
+                }
+            }
+            files
+                .entry(format!("src/{role}/mod.rs"))
+                .or_insert_with(|| format!("// {}\n", super::python_td::NATIVE_TARGET_OWNER))
+                .push_str(&format!("pub mod {directory};\n"));
+            roles.insert(role);
+            continue;
+        }
         let mut body = format!(
             "// {}\n// CODEGEN-BEGIN python-ir-rust-target\n",
             super::python_td::NATIVE_TARGET_OWNER
@@ -119,13 +149,7 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
             super::python_td::NATIVE_TARGET_OWNER
         ),
     );
-    files.insert(
-        "Cargo.toml".into(),
-        format!(
-            "# {}\n[package]\nname=\"generated-python-td-rust-target\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
-            super::python_td::NATIVE_TARGET_OWNER
-        ),
-    );
+    files.insert("Cargo.toml".into(), render_cargo_toml(openapi_requirements));
     let manifest = files
         .iter()
         .map(|(p, c)| RustTdTargetFile {
@@ -138,6 +162,31 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
         digest: digest(&serde_json::to_vec(&manifest)?),
         files: manifest,
     })
+}
+fn render_cargo_toml(openapi_requirements: Option<openapi_codegen::TargetRequirements>) -> String {
+    let edition = openapi_requirements
+        .map(|requirements| requirements.language_standard)
+        .unwrap_or("2021");
+    let mut output = format!(
+        "# {}\n[package]\nname=\"generated-python-td-rust-target\"\nversion=\"0.1.0\"\nedition=\"{edition}\"\n",
+        super::python_td::NATIVE_TARGET_OWNER
+    );
+    if let Some(requirements) = openapi_requirements {
+        output.push_str("\n[dependencies]\n");
+        for dependency in requirements.runtime_dependencies {
+            let declaration = match *dependency {
+                "reqwest" => {
+                    "reqwest = { version = \"0.12\", features = [\"blocking\", \"json\"] }"
+                }
+                "serde" => "serde = { version = \"1\", features = [\"derive\"] }",
+                "serde_json" => "serde_json = \"1\"",
+                dependency => dependency,
+            };
+            output.push_str(declaration);
+            output.push('\n');
+        }
+    }
+    output
 }
 fn ident(value: &str) -> bool {
     !value.is_empty()

@@ -31,13 +31,43 @@ pub fn emit_python_td_typescript_target(
 ) -> Result<TypeScriptTdTarget> {
     let mut files = BTreeMap::new();
     let mut roles = BTreeSet::new();
+    let mut openapi_requirements = None;
     for module in ir
         .modules
         .iter()
         .filter(|module| module.path.starts_with("src/"))
     {
-        let name = module_name(module)?;
         let role = ddd_role(&module.role);
+        if let Some(generated) = super::python_td_openapi_target::generate_openapi_target(
+            module,
+            openapi_codegen::Lang::Ts,
+        )? {
+            if openapi_requirements
+                .replace(generated.requirements)
+                .is_some_and(|existing| existing != generated.requirements)
+            {
+                bail!("Python TD OpenAPI modules must select one TypeScript target profile");
+            }
+            let directory = generated.directory;
+            if !identifier(&directory) {
+                bail!(
+                    "unsupported Python TD OpenAPI module directory `{directory}` for TypeScript target"
+                );
+            }
+            for (relative, content) in generated.files {
+                let path = format!("src/{role}/{directory}/{relative}");
+                if files.insert(path.clone(), content).is_some() {
+                    bail!("unsupported duplicate TypeScript OpenAPI path `{path}`");
+                }
+            }
+            files
+                .entry(format!("src/{role}/index.ts"))
+                .or_insert_with(|| format!("// {}\n", super::python_td::NATIVE_TARGET_OWNER))
+                .push_str(&format!("export * from './{directory}/index.js';\n"));
+            roles.insert(role);
+            continue;
+        }
+        let name = module_name(module)?;
         let path = format!("src/{role}/{name}.ts");
         if files.insert(path.clone(), render_module(module)?).is_some() {
             bail!("unsupported duplicate TypeScript module path `{path}`");
@@ -63,7 +93,7 @@ pub fn emit_python_td_typescript_target(
         ),
     );
     files.insert("package.json".into(), package_json());
-    files.insert("tsconfig.json".into(), tsconfig_json());
+    files.insert("tsconfig.json".into(), tsconfig_json(openapi_requirements));
     files.insert(
         "tests/generated_inventory.test.mjs".into(),
         inventory_test(),
@@ -150,10 +180,20 @@ fn package_json() -> String {
     )
 }
 
-fn tsconfig_json() -> String {
+fn tsconfig_json(openapi_requirements: Option<openapi_codegen::TargetRequirements>) -> String {
+    let Some(requirements) = openapi_requirements else {
+        return format!(
+            "// {}\n{{\n  \"compilerOptions\": {{\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"noEmit\": true\n  }},\n  \"include\": [\"src/**/*.ts\"]\n}}\n",
+            super::python_td::NATIVE_TARGET_OWNER
+        );
+    };
     format!(
-        "// {}\n{{\n  \"compilerOptions\": {{\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"noEmit\": true\n  }},\n  \"include\": [\"src/**/*.ts\"]\n}}\n",
-        super::python_td::NATIVE_TARGET_OWNER
+        "// {}\n{{\n  \"compilerOptions\": {{\n    \"target\": {:?},\n    \"module\": {:?},\n    \"moduleResolution\": {:?},\n    \"strict\": {},\n    \"noEmit\": true\n  }},\n  \"include\": [\"src/**/*.ts\"]\n}}\n",
+        super::python_td::NATIVE_TARGET_OWNER,
+        requirements.language_standard,
+        requirements.module_system.unwrap_or("ESNext"),
+        requirements.module_resolution.unwrap_or("Bundler"),
+        requirements.strict.unwrap_or(true)
     )
 }
 

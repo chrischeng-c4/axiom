@@ -6,10 +6,13 @@
 //! @spec apps/agentic-workflow/tech-design/logic/aw-ddd-python-source-generation.md#logic
 
 use super::python_td::{PythonTdDeclarationKind, PythonTdIr};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PythonTdTarget {
@@ -25,15 +28,52 @@ pub struct PythonTdTargetFile {
 
 pub fn emit_python_td_target(ir: &PythonTdIr, output_root: &Path) -> Result<PythonTdTarget> {
     let mut files = BTreeMap::<String, String>::new();
+    let mut openapi_target = None;
+    let mut runtime_dependencies = BTreeSet::new();
     for module in &ir.modules {
         if !module.path.starts_with("src/") {
             continue;
         }
-        let source = render_module(module);
-        files.insert(module.path.clone(), source);
-        add_package_markers(&mut files, &module.path);
+        if module.codegen.is_none() {
+            let source = render_module(module);
+            files.insert(module.path.clone(), source);
+            add_package_markers(&mut files, &module.path);
+        }
+        if let Some(generated) = super::python_td_openapi_target::generate_openapi_target(
+            module,
+            openapi_codegen::Lang::Py,
+        )? {
+            if openapi_target
+                .replace(generated.requirements.target)
+                .is_some_and(|existing| existing != generated.requirements.target)
+            {
+                bail!("Python TD OpenAPI modules must select one Python target profile");
+            }
+            runtime_dependencies.extend(
+                generated
+                    .requirements
+                    .runtime_dependencies
+                    .iter()
+                    .map(|dependency| (*dependency).to_string()),
+            );
+            let parent = Path::new(&module.path)
+                .parent()
+                .unwrap_or_else(|| Path::new(""));
+            for (relative, content) in generated.files {
+                let path = parent
+                    .join(&generated.directory)
+                    .join(relative)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                files.insert(path.clone(), content);
+                add_package_markers(&mut files, &path);
+            }
+        }
     }
-    files.insert("pyproject.toml".to_string(), render_pyproject());
+    files.insert(
+        "pyproject.toml".to_string(),
+        render_pyproject(openapi_target, &runtime_dependencies),
+    );
     let unit_path = "tests/unit/test_generated_inventory.py".to_string();
     files.insert(unit_path.clone(), render_unit_test(ir));
 
@@ -69,11 +109,30 @@ fn add_package_markers(files: &mut BTreeMap<String, String>, module_path: &str) 
     }
 }
 
-fn render_pyproject() -> String {
-    format!(
-        "# {}\n[build-system]\nrequires = [\"setuptools>=68\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"generated-python-td-target\"\nversion = \"0.1.0\"\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n",
+fn render_pyproject(
+    openapi_target: Option<&str>,
+    runtime_dependencies: &BTreeSet<String>,
+) -> String {
+    let mut output = format!(
+        "# {}\n[build-system]\nrequires = [\"setuptools>=68\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"generated-python-td-target\"\nversion = \"0.1.0\"\n",
         super::python_td::NATIVE_TARGET_OWNER
-    )
+    );
+    if let Some(target) = openapi_target {
+        let minimum = target.trim_start_matches("python-");
+        output.push_str(&format!("requires-python = \">={minimum}\"\n"));
+    }
+    if !runtime_dependencies.is_empty() {
+        output.push_str(&format!(
+            "dependencies = [{}]\n",
+            runtime_dependencies
+                .iter()
+                .map(|dependency| format!("{dependency:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    output.push_str("\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n");
+    output
 }
 
 fn render_module(module: &super::python_td::PythonTdModule) -> String {
@@ -109,7 +168,10 @@ fn render_unit_test(ir: &PythonTdIr) -> String {
     );
     let mut count = 0;
     for module in &ir.modules {
-        if !module.path.starts_with("src/") || module.declarations.is_empty() {
+        if !module.path.starts_with("src/")
+            || module.declarations.is_empty()
+            || module.codegen.is_some()
+        {
             continue;
         }
         let name = module
