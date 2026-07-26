@@ -299,8 +299,8 @@ changes:
   - path: apps/agentic-workflow/src/services/project_registry.rs
     action: modify
     section: logic
-    impl_mode: codegen
-    description: Parse and merge ec_review_backing from project-local aw.toml into the resolved Project model.
+    impl_mode: hand-written
+    description: Describe ec_review_backing parsing and merge behavior without claiming whole-file ownership; the project-registry source snapshot is the sole CODEGEN owner.
   - path: apps/agentic-workflow/src/cli/project.rs
     action: modify
     section: logic

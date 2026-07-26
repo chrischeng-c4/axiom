@@ -74,6 +74,12 @@ capability_refs:
     claim: project-label-producer-td-routing
     coverage: full
     rationale: "The WI --project producer receives path-canonical app/lib labels from registered rows before the default TD resolver accepts them; a raw retired project label remains invalid at the TD boundary."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: keep-project-local-td-routing
+    claim: keep-project-local-td-routing
+    coverage: full
+    rationale: "Keep's registry entry uses its project-local TD/workspace scope, while the shared TD root resolver rejects any future repo-root .aw override before authoring and names the exact project-local remediation."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: td-apply-section-lookup-parity

@@ -53,1360 +53,880 @@ payload.
 | `resolve_td_root_from_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1180 | resolve_td_root_from_config(repo_root: &Path, project_name: &str) -> Result<TdRootResult, TdResolveError> |
 | `write_projects_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 34 | write_projects_config(root: &Path, projects: &[Project]) -> Result<()> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-handwrite -->
-
-<!-- source-snapshot: path=apps/agentic-workflow/src/services/project_registry.rs -->
-````rust
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-// CODEGEN-BEGIN
-//! Project registry: read/write `[[projects]]` block in root `aw.toml`.
-//!
-//! The auto-generated block is delimited by:
-//! - `SYNC_BEGIN_MARKER` — `# BEGIN AW SYNC — auto-generated, do not edit by hand`
-//! - `SYNC_END_MARKER`   — `# END AW SYNC`
-//!
-//! `toml_edit` is used for lossless round-trips so that non-generated sections
-//! (comments, formatting, sdd.* tables) are preserved byte-identical on each sync.
-
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-
-use crate::models::project::{EcBinding, Project, ProjectArtifactModel, Workspace};
-use crate::services::project_discovery::discover_projects;
-use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
-
-pub const PROJECT_AW_CONFIG_FILE: &str = "aw.toml";
-
-// @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R1
-// @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R4
-/// Write `[[projects]]` entries into the marker-delimited block in root `aw.toml`.
-///
-/// - If the BEGIN/END AW SYNC marker pair is already present, the content
-///   between the markers is replaced with a freshly serialized `[[projects]]` block.
-/// - If the markers are absent, the block (with markers) is appended at EOF.
-/// - After a successful write, `.aw/projects.toml` is deleted if it exists (R10 migration).
-/// - Non-generated content in `aw.toml` is preserved byte-identical via `toml_edit`.
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
-    let config_file = config_path(root);
-    std::fs::create_dir_all(config_file.parent().unwrap())?;
-
-    // Read existing aw.toml or start with empty string
-    let existing = if config_file.exists() {
-        std::fs::read_to_string(&config_file)
-            .with_context(|| format!("reading {}", config_file.display()))?
-    } else {
-        String::new()
-    };
-
-    // Serialize the [[projects]] block
-    let block = serialize_projects_block(projects)?;
-
-    // Splice or append the marker-delimited block
-    let new_content = splice_or_append(&existing, &block);
-
-    std::fs::write(&config_file, &new_content)
-        .with_context(|| format!("writing {}", config_file.display()))?;
-
-    // Migration: delete stale projects.toml if present (R10)
-    let stale = workspace_path(root).join("projects.toml");
-    if stale.exists() {
-        std::fs::remove_file(&stale)
-            .with_context(|| format!("deleting stale {}", stale.display()))?;
-    }
-
-    Ok(())
-}
-
-// @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R9
-/// Load the project list from root `aw.toml`.
-///
-/// Reads `[[projects]]` entries directly from `aw.toml` — the marker block
-/// is written there by `write_projects_config`. No projects.toml overlay.
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
-    let mut projects = Vec::new();
-
-    #[derive(serde::Deserialize, Default)]
-    struct ConfigWithProjects {
-        #[serde(default)]
-        projects: Vec<Project>,
-    }
-
-    let config_file = config_path(root);
-    if config_file.exists() {
-        let content = std::fs::read_to_string(&config_file)
-            .with_context(|| format!("reading {}", config_file.display()))?;
-        let parsed: ConfigWithProjects = toml::from_str(&content)
-            .with_context(|| format!("parsing projects from {}", config_file.display()))?;
-        upsert_projects(&mut projects, parsed.projects);
-    }
-
-    let project_aw = load_project_aw_projects(root)?;
-    upsert_projects(&mut projects, project_aw);
-
-    Ok(projects)
-}
-
-/// Root-level AW config path: `{repo}/aw.toml`.
-pub fn root_aw_config_path(root: &Path) -> PathBuf {
-    config_path(root)
-}
-
-/// Public row projection used by commands that need project identity fields
-/// (`aliases`, tracker label, capability path) without depending on the full
-/// `Project` model.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectConfigRow {
-    pub name: String,
-    pub aliases: Vec<String>,
-    pub path: String,
-    pub td_path: Option<String>,
-    pub artifact_model: Option<ProjectArtifactModel>,
-    pub cap_path: Option<String>,
-    pub label: Option<String>,
-}
-
-impl ProjectConfigRow {
-    pub fn matches(&self, requested: &str) -> bool {
-        self.name == requested || self.aliases.iter().any(|alias| alias == requested)
-    }
-
-    pub fn label_or_default(&self) -> String {
-        let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
-            "lib"
-        } else {
-            "app"
-        };
-        match self.label.as_deref() {
-            Some(label) => {
-                if !label.starts_with("project:") {
-                    return label.to_string();
-                }
-                format!("{prefix}:{}", self.name)
-            }
-            None => format!("{prefix}:{}", self.name),
-        }
-    }
-
-    /// The Python artifact lifecycle is canonical for every project.
-    ///
-    /// Keep the configured value available for read compatibility and config
-    /// projection, but never let it route a project back to legacy EC/TD.
-    pub fn effective_artifact_model(&self) -> ProjectArtifactModel {
-        ProjectArtifactModel::PythonV1
-    }
-}
-
-/// Load project identity rows from root `aw.toml` and discovered project-local
-/// `aw.toml` files. Later sources override earlier
-/// ones by project name, matching `load_projects`.
-pub fn load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> {
-    let mut rows = Vec::new();
-
-    let root_aw = root_aw_config_path(root);
-    if root_aw.exists() {
-        rows.extend(load_project_config_rows_from_file(&root_aw, None)?);
-    }
-
-    for path in discover_project_aw_paths(root)? {
-        let project_rel = path
-            .parent()
-            .and_then(|parent| parent.strip_prefix(root).ok())
-            .map(path_to_string)
-            .unwrap_or_default();
-        rows.extend(load_project_config_rows_from_file(
-            &path,
-            Some(&project_rel),
-        )?);
-    }
-
-    Ok(dedupe_project_rows(rows))
-}
-
-pub fn resolve_project_config_row(root: &Path, requested: &str) -> Result<ProjectConfigRow> {
-    load_project_config_rows(root)?
-        .into_iter()
-        .find(|row| row.matches(requested))
-        .ok_or_else(|| anyhow::anyhow!("project `{requested}` has no AW project config row"))
-}
-
-// @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R11
-/// Compute a diff between the current marker-delimited block in `aw.toml`
-/// and a freshly discovered set of projects.
-///
-/// Returns `Some(unified_diff)` if different, `None` if identical.
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn check_drift(root: &Path) -> Result<Option<String>> {
-    // Generate fresh block content (without writing)
-    let discovered = discover_projects(root)?;
-    let fresh_block = serialize_projects_block(&discovered)?;
-
-    let config_file = config_path(root);
-    if !config_file.exists() {
-        if fresh_block.trim().is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(build_diff("", &fresh_block, "aw.toml")));
-    }
-
-    let existing_content = std::fs::read_to_string(&config_file)
-        .with_context(|| format!("reading {}", config_file.display()))?;
-
-    // Extract the current block from aw.toml (between markers)
-    let current_block = extract_sync_block(&existing_content).unwrap_or_default();
-
-    if current_block.trim() == fresh_block.trim() {
-        Ok(None)
-    } else {
-        Ok(Some(build_diff(&current_block, &fresh_block, "aw.toml")))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize, Default)]
-struct ProjectAwToml {
-    #[serde(default)]
-    project: ProjectAwIdentity,
-    #[serde(default)]
-    workspaces: Vec<Workspace>,
-    #[serde(default)]
-    ec: BTreeMap<String, EcBinding>,
-    /// EC review-backing policy (`human` | `agent` | `either`); #1829.
-    #[serde(default)]
-    ec_review_backing: Option<String>,
-    /// EC review-timing policy (`blocking` | `deferred`); #1828.
-    #[serde(default)]
-    ec_review_mode: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ProjectAwIdentity {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default, alias = "tech_design_dir")]
-    td_path: Option<String>,
-    #[serde(default, rename = "spec_model", alias = "artifact_model")]
-    artifact_model: Option<ProjectArtifactModel>,
-    #[serde(default)]
-    cap_path: Option<String>,
-    #[serde(default)]
-    label: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RootAwProjectDiscovery {
-    #[serde(default)]
-    discover: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RootAwAgenticWorkflow {
-    #[serde(default)]
-    projects: Option<RootAwProjectDiscovery>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RootAwDiscoveryConfig {
-    #[serde(default)]
-    agentic_workflow: RootAwAgenticWorkflow,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ProjectRowDocument {
-    #[serde(default)]
-    projects: Vec<ProjectRowToml>,
-    #[serde(default)]
-    project: Option<ProjectAwIdentity>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ProjectRowToml {
-    name: String,
-    #[serde(default)]
-    aliases: Vec<String>,
-    path: String,
-    #[serde(default, alias = "tech_design_dir")]
-    td_path: Option<String>,
-    #[serde(default, rename = "spec_model", alias = "artifact_model")]
-    artifact_model: Option<ProjectArtifactModel>,
-    #[serde(default)]
-    cap_path: Option<String>,
-    #[serde(default)]
-    label: Option<String>,
-}
-
-fn upsert_projects(projects: &mut Vec<Project>, incoming: Vec<Project>) {
-    for project in incoming {
-        if let Some(idx) = projects
-            .iter()
-            .position(|existing| existing.name == project.name)
-        {
-            projects[idx] = merge_project(projects[idx].clone(), project);
-        } else {
-            projects.push(project);
-        }
-    }
-}
-
-fn merge_project(mut existing: Project, incoming: Project) -> Project {
-    existing.name = incoming.name;
-    let incoming_has_identity_override =
-        incoming.tech_design_dir.is_some() || !incoming.ec.is_empty();
-    if existing.path.as_os_str().is_empty()
-        || (!incoming.path.as_os_str().is_empty() && incoming_has_identity_override)
-    {
-        existing.path = incoming.path;
-    }
-    if incoming.tech_design_dir.is_some() {
-        existing.tech_design_dir = incoming.tech_design_dir;
-    }
-    if incoming.artifact_model.is_some() {
-        existing.artifact_model = incoming.artifact_model;
-    }
-    if !incoming.ec.is_empty() {
-        existing.ec = incoming.ec;
-    }
-    if incoming.ec_review_backing.is_some() {
-        existing.ec_review_backing = incoming.ec_review_backing;
-    }
-    if incoming.ec_review_mode.is_some() {
-        existing.ec_review_mode = incoming.ec_review_mode;
-    }
-    if !incoming.workspaces.is_empty() {
-        existing.workspaces = incoming.workspaces;
-    }
-    existing
-}
-
-fn dedupe_project_rows(rows: Vec<ProjectConfigRow>) -> Vec<ProjectConfigRow> {
-    let mut out = Vec::new();
-    for row in rows {
-        if let Some(idx) = out.iter().position(|existing: &ProjectConfigRow| {
-            existing.name == row.name
-                || existing.aliases.iter().any(|alias| alias == &row.name)
-                || row.aliases.iter().any(|alias| alias == &existing.name)
-        }) {
-            out[idx] = merge_project_config_row(out[idx].clone(), row);
-        } else {
-            out.push(row);
-        }
-    }
-    out
-}
-
-fn merge_project_config_row(
-    mut existing: ProjectConfigRow,
-    incoming: ProjectConfigRow,
-) -> ProjectConfigRow {
-    existing.name = incoming.name;
-    let incoming_has_identity_override = !incoming.aliases.is_empty()
-        || incoming.td_path.is_some()
-        || incoming.artifact_model.is_some()
-        || incoming.cap_path.is_some()
-        || incoming.label.is_some();
-    for alias in incoming.aliases {
-        if !existing.aliases.contains(&alias) {
-            existing.aliases.push(alias);
-        }
-    }
-    if existing.path.is_empty() || (!incoming.path.is_empty() && incoming_has_identity_override) {
-        existing.path = incoming.path;
-    }
-    if incoming.td_path.is_some() {
-        existing.td_path = incoming.td_path;
-    }
-    if incoming.artifact_model.is_some() {
-        existing.artifact_model = incoming.artifact_model;
-    }
-    if incoming.cap_path.is_some() {
-        existing.cap_path = incoming.cap_path;
-    }
-    if incoming.label.is_some() {
-        existing.label = incoming.label;
-    }
-    existing
-}
-
-fn load_project_aw_projects(root: &Path) -> Result<Vec<Project>> {
-    let mut projects = Vec::new();
-    for path in discover_project_aw_paths(root)? {
-        let project = parse_project_aw_project(root, &path)?;
-        projects.push(project);
-    }
-    Ok(projects)
-}
-
-fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut patterns = Vec::new();
-    let root_aw = root_aw_config_path(root);
-    if root_aw.is_file() {
-        let content = std::fs::read_to_string(&root_aw)
-            .with_context(|| format!("reading {}", root_aw.display()))?;
-        let config: RootAwDiscoveryConfig =
-            toml::from_str(&content).with_context(|| format!("parsing {}", root_aw.display()))?;
-        if let Some(projects) = config.agentic_workflow.projects {
-            patterns.extend(projects.discover);
-        }
-    }
-    if patterns.is_empty() {
-        patterns.push("apps/*/aw.toml".to_string());
-        patterns.push("projects/*/aw.toml".to_string());
-    }
-
-    let mut paths = Vec::new();
-    for pattern in patterns {
-        if let Some(parent_dir) = aw_toml_single_star_parent(&pattern) {
-            paths.extend(discover_project_aw_paths_under(root, parent_dir));
-        } else {
-            let candidate = root.join(&pattern);
-            if candidate.is_file() {
-                paths.push(candidate);
-            }
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
-}
-
-fn aw_toml_single_star_parent(pattern: &str) -> Option<&str> {
-    pattern.strip_suffix("/*/aw.toml")
-}
-
-fn discover_project_aw_paths_under(root: &Path, parent_dir: &str) -> Vec<PathBuf> {
-    let dir = root.join(parent_dir);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path().join(PROJECT_AW_CONFIG_FILE))
-        .filter(|candidate| candidate.is_file())
-        .collect()
-}
-
-fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let manifest: ProjectAwToml =
-        toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
-    let project_dir = path
-        .parent()
-        .context("project aw.toml must have a parent directory")?;
-    let project_rel = project_dir
-        .strip_prefix(root)
-        .map(path_to_string)
-        .unwrap_or_else(|_| path_to_string(project_dir));
-    let name = manifest.project.name.unwrap_or_else(|| {
-        project_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("project")
-            .to_string()
-    });
-    let source_path = manifest.project.path.unwrap_or_else(|| project_rel.clone());
-    let tech_design_dir = manifest
-        .project
-        .td_path
-        .as_deref()
-        .map(|value| normalize_project_local_path(&source_path, value));
-    let workspaces = manifest
-        .workspaces
-        .into_iter()
-        .map(|workspace| normalize_project_aw_workspace(&source_path, workspace))
-        .collect::<Vec<_>>();
-
-    Ok(Project {
-        name,
-        path: PathBuf::from(source_path),
-        tech_design_dir,
-        artifact_model: manifest.project.artifact_model,
-        ec: manifest.ec,
-        ec_review_backing: manifest.ec_review_backing,
-        ec_review_mode: manifest.ec_review_mode,
-        workspaces,
-    })
-}
-
-fn normalize_project_aw_workspace(project_path: &str, mut workspace: Workspace) -> Workspace {
-    workspace.paths = workspace
-        .paths
-        .into_iter()
-        .map(|path| normalize_project_local_glob(project_path, &path))
-        .collect();
-    workspace
-}
-
-fn load_project_config_rows_from_file(
-    path: &Path,
-    project_rel: Option<&str>,
-) -> Result<Vec<ProjectConfigRow>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed: ProjectRowDocument =
-        toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
-    let mut rows = parsed
-        .projects
-        .into_iter()
-        .map(|row| ProjectConfigRow {
-            name: row.name,
-            aliases: row.aliases,
-            path: row.path,
-            td_path: row.td_path,
-            artifact_model: row.artifact_model,
-            cap_path: row.cap_path,
-            label: row.label,
-        })
-        .collect::<Vec<_>>();
-    if let (Some(project), Some(project_rel)) = (parsed.project, project_rel) {
-        let inferred_name = Path::new(project_rel)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("project")
-            .to_string();
-        let name = project.name.unwrap_or(inferred_name);
-        let source_path = project.path.unwrap_or_else(|| project_rel.to_string());
-        rows.push(ProjectConfigRow {
-            name,
-            aliases: project.aliases,
-            path: source_path.clone(),
-            td_path: project
-                .td_path
-                .as_deref()
-                .map(|value| normalize_project_local_path(&source_path, value)),
-            artifact_model: project.artifact_model,
-            cap_path: project
-                .cap_path
-                .as_deref()
-                .map(|value| normalize_project_local_path(&source_path, value)),
-            label: project.label,
-        });
-    }
-    Ok(rows)
-}
-
-fn normalize_project_local_path(project_path: &str, value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("projects/")
-        || trimmed.starts_with("apps/")
-        || trimmed.starts_with("crates/")
-        || trimmed.starts_with("packages/")
-        || trimmed.starts_with(".aw/")
-        || trimmed.starts_with(".github/")
-        || trimmed == "."
-    {
-        trimmed.to_string()
-    } else {
-        format!("{}/{}", project_path.trim_end_matches('/'), trimmed)
-    }
-}
-
-fn normalize_project_local_glob(project_path: &str, value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed == "**" {
-        return format!("{}/**", project_path.trim_end_matches('/'));
-    }
-    normalize_project_local_path(project_path, trimmed)
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-/// Serialize a list of projects into the `[[projects]]` TOML block string
-/// (without markers).
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-fn serialize_projects_block(projects: &[Project]) -> Result<String> {
-    #[derive(serde::Serialize)]
-    struct ProjectsOnly<'a> {
-        projects: &'a [Project],
-    }
-    let doc = ProjectsOnly { projects };
-    toml::to_string_pretty(&doc).context("serializing [[projects]] block")
-}
-
-/// If BEGIN/END AW SYNC markers are found in `existing`, replace the content
-/// between them (inclusive of the marker lines) with the new block surrounded by
-/// markers. Otherwise append the block at EOF with a blank-line separator.
-///
-/// The result preserves all content outside the delimited region byte-identical.
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-fn splice_or_append(existing: &str, block: &str) -> String {
-    let begin = SYNC_BEGIN_MARKER;
-    let end = SYNC_END_MARKER;
-
-    // Find marker positions by scanning lines
-    let lines: Vec<&str> = existing.lines().collect();
-    let begin_idx = lines.iter().position(|l| l.trim() == begin);
-    let end_idx = lines.iter().position(|l| l.trim() == end);
-
-    if let (Some(bi), Some(ei)) = (begin_idx, end_idx) {
-        // Replace lines from bi..=ei (inclusive) with fresh marker block
-        let mut result = String::new();
-        for line in &lines[..bi] {
-            result.push_str(line);
-            result.push('\n');
-        }
-        result.push_str(begin);
-        result.push('\n');
-        result.push('\n');
-        result.push_str(block.trim_end());
-        result.push('\n');
-        result.push('\n');
-        result.push_str(end);
-        result.push('\n');
-        for line in &lines[(ei + 1)..] {
-            result.push_str(line);
-            result.push('\n');
-        }
-        result
-    } else {
-        // Append at EOF with blank-line separator
-        let mut result = existing.to_string();
-        // Ensure we don't double-newline if existing ends with newline
-        if !result.is_empty() && !result.ends_with('\n') {
-            result.push('\n');
-        }
-        if !result.is_empty() {
-            result.push('\n');
-        }
-        result.push_str(begin);
-        result.push('\n');
-        result.push('\n');
-        result.push_str(block.trim_end());
-        result.push('\n');
-        result.push('\n');
-        result.push_str(end);
-        result.push('\n');
-        result
-    }
-}
-
-/// Extract only the content between BEGIN and END AW SYNC markers (exclusive
-/// of the marker lines themselves).
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-fn extract_sync_block(content: &str) -> Option<String> {
-    let begin = SYNC_BEGIN_MARKER;
-    let end = SYNC_END_MARKER;
-    let lines: Vec<&str> = content.lines().collect();
-    let begin_idx = lines.iter().position(|l| l.trim() == begin)?;
-    let end_idx = lines.iter().position(|l| l.trim() == end)?;
-    if end_idx <= begin_idx {
-        return None;
-    }
-    Some(lines[(begin_idx + 1)..end_idx].join("\n"))
-}
-
-/// Build a simple unified-style diff between two strings.
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-fn build_diff(old: &str, new: &str, label: &str) -> String {
-    let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
-
-    let mut out = format!("--- {}\n+++ {} (fresh discovery)\n", label, label);
-
-    let mut i = 0;
-    let mut j = 0;
-    while i < old_lines.len() || j < new_lines.len() {
-        let old_line = old_lines.get(i).copied();
-        let new_line = new_lines.get(j).copied();
-
-        match (old_line, new_line) {
-            (Some(o), Some(n)) if o == n => {
-                out.push(' ');
-                out.push_str(o);
-                out.push('\n');
-                i += 1;
-                j += 1;
-            }
-            (Some(o), _) => {
-                out.push('-');
-                out.push_str(o);
-                out.push('\n');
-                i += 1;
-            }
-            (None, Some(n)) => {
-                out.push('+');
-                out.push_str(n);
-                out.push('\n');
-                j += 1;
-            }
-            (None, None) => break,
-        }
-    }
-
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-mod tests {
-    use super::*;
-    use crate::models::project::{Project, Workspace};
-    use crate::models::tech_stack::Language;
-    use std::fs;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    /// Build a minimal "repo root" with a `.aw/` dir and return the TempDir.
-    fn make_score_root() -> TempDir {
-        let tmp = TempDir::new().unwrap();
-        fs::create_dir_all(tmp.path().join(".aw")).unwrap();
-        tmp
-    }
-
-    /// Write `content` to `aw.toml` inside `root`.
-    fn write_config_file(root: &std::path::Path, content: &str) {
-        let path = root.join("aw.toml");
-        fs::write(&path, content).unwrap();
-    }
-
-    /// Create a minimal Project for use in tests.
-    fn make_project(name: &str, target: Language, test_cmd: Option<&str>) -> Project {
-        Project {
-            name: name.to_string(),
-            path: PathBuf::from(format!("crates/{}", name)),
-            tech_design_dir: None,
-            artifact_model: None,
-            ec: Default::default(),
-            ec_review_backing: None,
-            ec_review_mode: None,
-            workspaces: vec![Workspace {
-                name: Some(name.to_string()),
-                paths: vec![format!("crates/{}/**", name)],
-                target,
-                test_cmd: test_cmd.map(|s| s.to_string()),
-                verify_cold: false,
-                codegen: None,
-            }],
-        }
-    }
-
-    // REQ: REQ-001 (R1: writes to aw.toml)
-    // T17: marker_upsert_first_run
-    #[test]
-    fn marker_upsert_first_run() {
-        let tmp = make_score_root();
-
-        // aw.toml exists but has no markers
-        write_config_file(
-            tmp.path(),
-            "[agentic_workflow.test.scope]\nroots = [\"crates\"]\n",
-        );
-
-        let projects = vec![make_project(
-            "proj-a",
-            Language::Rust,
-            Some("cargo test -p proj-a"),
-        )];
-        write_projects_config(tmp.path(), &projects).unwrap();
-
-        let path = tmp.path().join("aw.toml");
-        let content = fs::read_to_string(&path).unwrap();
-
-        // R2: markers present
-        assert!(
-            content.contains(SYNC_BEGIN_MARKER),
-            "aw.toml must contain BEGIN AW SYNC marker; got:\n{content}"
-        );
-        assert!(
-            content.contains(SYNC_END_MARKER),
-            "aw.toml must contain END AW SYNC marker; got:\n{content}"
-        );
-
-        // R1: [[projects]] entries present
-        assert!(
-            content.contains("proj-a"),
-            "aw.toml must contain discovered project; got:\n{content}"
-        );
-
-        // R3: user content untouched
-        assert!(
-            content.contains("[agentic_workflow.test.scope]"),
-            "user-authored section must survive sync; got:\n{content}"
-        );
-        assert!(
-            content.contains("roots = [\"crates\"]"),
-            "user-authored content must survive sync byte-identical; got:\n{content}"
-        );
-    }
-
-    // REQ: REQ-003 (R3: non-projects content preserved)
-    // REQ: REQ-005 (R5: idempotency)
-    // REQ: REQ-006 (R6: full enumeration)
-    // T18: marker_upsert_round_trip
-    #[test]
-    fn marker_upsert_round_trip() {
-        let tmp = make_score_root();
-
-        // Pre-existing user content
-        write_config_file(
-            tmp.path(),
-            "# user comment\n[agentic_workflow.test.scope]\nroots = [\"crates\"]\n\n[defaults.workspace]\ncodegen.target = \"rust\"\n",
-        );
-
-        let projects = vec![
-            make_project("alpha", Language::Rust, Some("cargo test -p alpha")),
-            make_project(
-                "beta",
-                Language::Python,
-                Some("cd projects/beta && uv run pytest"),
-            ),
-            make_project("gamma", Language::TypeScript, None),
-        ];
-
-        // First sync
-        write_projects_config(tmp.path(), &projects).unwrap();
-        let after_first = fs::read_to_string(tmp.path().join("aw.toml")).unwrap();
-
-        // Second sync with identical input (idempotency check, R5)
-        write_projects_config(tmp.path(), &projects).unwrap();
-        let after_second = fs::read_to_string(tmp.path().join("aw.toml")).unwrap();
-
-        assert_eq!(
-            after_first, after_second,
-            "double sync with identical input must produce zero diff (R5 idempotency)"
-        );
-
-        // R3: non-projects sections byte-identical
-        assert!(
-            after_second.contains("# user comment"),
-            "user comment must be preserved; got:\n{after_second}"
-        );
-        assert!(
-            after_second.contains("[agentic_workflow.test.scope]"),
-            "user section must be preserved; got:\n{after_second}"
-        );
-        assert!(
-            after_second.contains("[defaults.workspace]"),
-            "defaults section must be preserved; got:\n{after_second}"
-        );
-
-        // R6: full enumeration — assert count via round-trip load
-        let loaded = load_projects(tmp.path()).unwrap();
-        assert_eq!(
-            loaded.len(),
-            projects.len(),
-            "R6: all {} projects must be written and readable; got {}",
-            projects.len(),
-            loaded.len()
-        );
-    }
-
-    // REQ: REQ-010 (R10: migration deletes projects.toml)
-    // T21: migration_deletes_projects_toml
-    #[test]
-    fn migration_deletes_projects_toml() {
-        let tmp = make_score_root();
-
-        // Write a stale projects.toml
-        let stale = tmp.path().join(".aw").join("projects.toml");
-        fs::write(&stale, "# old file\n[[projects]]\nname = \"old\"\n").unwrap();
-        assert!(stale.exists(), "stale projects.toml must exist before sync");
-
-        let projects = vec![make_project(
-            "new-proj",
-            Language::Rust,
-            Some("cargo test -p new-proj"),
-        )];
-        write_projects_config(tmp.path(), &projects).unwrap();
-
-        assert!(
-            !stale.exists(),
-            "stale .aw/projects.toml must be deleted after successful sync"
-        );
-    }
-
-    // REQ: REQ-009 (R9: consumers read from aw.toml only)
-    #[test]
-    fn load_reads_from_config_toml() {
-        let tmp = make_score_root();
-
-        // Write projects via write_projects_config
-        let projects = vec![make_project(
-            "my-crate",
-            Language::Rust,
-            Some("cargo test -p my-crate"),
-        )];
-        write_projects_config(tmp.path(), &projects).unwrap();
-
-        // load_projects must return data from aw.toml
-        let loaded = load_projects(tmp.path()).unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].name, "my-crate");
-    }
-
-    #[test]
-    fn duplicate_project_rows_preserve_existing_td_path_when_override_omits_it() {
-        let tmp = make_score_root();
-        write_config_file(
-            tmp.path(),
-            r#"
-[[projects]]
-name = "jet"
-path = "apps/jet"
-td_path = "apps/jet/tech-design"
-label = "app:jet"
-
-[[projects.workspaces]]
-name = "jet-full"
-paths = ["apps/jet/**"]
-target = "rust"
-test_cmd = "cargo test -p jet -p jet-wasm"
-
-[[projects]]
-name = "jet"
-path = "projects/stale-jet-sync"
-
-[[projects.workspaces]]
-name = "jet"
-paths = ["apps/jet/**"]
-target = "rust"
-test_cmd = "cargo test -p jet"
-"#,
-        );
-
-        let rows = load_project_config_rows(tmp.path()).unwrap();
-        let jet = rows.iter().find(|row| row.name == "jet").unwrap();
-        assert_eq!(jet.path, "apps/jet");
-        assert_eq!(jet.td_path.as_deref(), Some("apps/jet/tech-design"));
-        assert_eq!(jet.label.as_deref(), Some("app:jet"));
-
-        let projects = load_projects(tmp.path()).unwrap();
-        let jet = projects
-            .iter()
-            .find(|project| project.name == "jet")
-            .unwrap();
-        assert_eq!(jet.path, PathBuf::from("apps/jet"));
-        assert_eq!(jet.tech_design_dir.as_deref(), Some("apps/jet/tech-design"));
-        assert_eq!(
-            jet.workspaces[0].test_cmd.as_deref(),
-            Some("cargo test -p jet")
-        );
-    }
-
-    #[test]
-    fn project_aw_discovery_expands_libs_single_star_patterns() {
-        let tmp = make_score_root();
-        fs::write(
-            tmp.path().join("aw.toml"),
-            r#"
-[agentic_workflow.projects]
-discover = ["libs/*/aw.toml"]
-"#,
-        )
-        .unwrap();
-        let compass = tmp.path().join("libs").join("compass");
-        fs::create_dir_all(&compass).unwrap();
-        fs::write(
-            compass.join(PROJECT_AW_CONFIG_FILE),
-            r#"
-[project]
-name = "compass"
-aliases = ["cclab-compass"]
-cap_path = "README.md"
-
-[[workspaces]]
-name = "compass"
-paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-compass"
-"#,
-        )
-        .unwrap();
-
-        let row = resolve_project_config_row(tmp.path(), "cclab-compass").unwrap();
-
-        assert_eq!(row.name, "compass");
-        assert_eq!(row.path, "libs/compass");
-        assert_eq!(row.cap_path.as_deref(), Some("libs/compass/README.md"));
-    }
-
-    // REQ: REQ-005 (R5: check_drift detects changes)
-    #[test]
-    fn check_drift_round_trip() {
-        let tmp = make_score_root();
-
-        // Create a minimal Cargo project so discovery finds one project.
-        let proj_dir = tmp.path().join("crates").join("round-trip");
-        fs::create_dir_all(&proj_dir).unwrap();
-        fs::write(
-            proj_dir.join("Cargo.toml"),
-            "[package]\nname = \"round-trip\"\n",
-        )
-        .unwrap();
-
-        // Discover and write to aw.toml.
-        let discovered = discover_projects(tmp.path()).unwrap();
-        write_projects_config(tmp.path(), &discovered).unwrap();
-
-        // check_drift should detect no difference.
-        let drift = check_drift(tmp.path()).unwrap();
-        assert!(drift.is_none(), "expected no drift after round-trip write");
-    }
-
-    // REQ: REQ-011 (R11: --check / check_drift targets aw.toml)
-    #[test]
-    fn check_drift_no_write() {
-        let tmp = make_score_root();
-
-        // Write an aw.toml with a stale entry that won't match fresh discovery
-        write_config_file(
-            tmp.path(),
-            &format!("{}\n\n[[projects]]\nname = \"stale-proj\"\npath = \"crates/stale-proj\"\n\n[[projects.workspaces]]\nname = \"stale-proj\"\npaths = [\"crates/stale-proj/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
-        );
-
-        let drift = check_drift(tmp.path()).unwrap();
-        assert!(
-            drift.is_some(),
-            "expected drift when aw.toml differs from fresh discovery"
-        );
-
-        // aw.toml must NOT be modified by check_drift
-        let path = tmp.path().join("aw.toml");
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(
-            content.contains("stale-proj"),
-            "check_drift must not modify aw.toml"
-        );
-    }
-
-    // REQ: REQ-011 (R11: check_drift returns Some when content differs)
-    #[test]
-    fn check_drift_exits_nonzero_on_diff() {
-        let tmp = make_score_root();
-
-        // Write an aw.toml that won't match fresh discovery (no real dirs)
-        write_config_file(
-            tmp.path(),
-            &format!("{}\n\n[[projects]]\nname = \"ghost\"\npath = \"crates/ghost\"\n\n[[projects.workspaces]]\nname = \"ghost\"\npaths = [\"crates/ghost/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
-        );
-
-        let drift = check_drift(tmp.path()).unwrap();
-        assert!(
-            drift.is_some(),
-            "check_drift should return Some when content differs (drift detected)"
-        );
-    }
-
-    // REQ: REQ-001 (R1: write target is aw.toml, diff references aw.toml)
-    #[test]
-    fn check_drift_references_config_toml() {
-        let tmp = make_score_root();
-
-        // Stale aw.toml with a ghost project
-        write_config_file(
-            tmp.path(),
-            &format!("{}\n\n[[projects]]\nname = \"ghost2\"\npath = \"crates/ghost2\"\n\n[[projects.workspaces]]\nname = \"ghost2\"\npaths = [\"crates/ghost2/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
-        );
-
-        let drift = check_drift(tmp.path()).unwrap().expect("expected drift");
-        assert!(
-            drift.contains("aw.toml"),
-            "--check / check_drift output must reference aw.toml, not projects.toml; got:\n{drift}"
-        );
-    }
-}
-
-/// Project descriptor consumed by `ProjectRegistry::resolve_td_root`.
-/// Materialised from `[[projects]]` table rows in `aw.toml`.
-/// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub struct TdRootInput {
-    /// Project name (matches `[[projects]].name`).
-    pub name: String,
-    /// Optional per-project repo-relative spec root override
-    /// (matches `[[projects]].td_path`).
-    /// When non-null this value wins over the project-local convention.
-    #[serde(default)]
-    pub td_path: Option<String>,
-    /// Project root (matches `[[projects]].path`). Used to derive the
-    /// conventional TD root when `td_path` is null.
-    pub source_path: String,
-}
-
-/// Output of `resolve_td_root`.
-/// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub struct TdRootResult {
-    /// Absolute filesystem path to the project's TD spec root.
-    pub root: String,
-    /// Indicates which precedence branch resolved the path. Surfaced for
-    /// diagnostics; consumers MUST NOT branch on this value.
-    pub precedence: String,
-}
-
-/// Failure modes of `resolve_td_root`.
-/// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub struct TdResolveError {
-    /// - unknown_project: project name not in `[[projects]]` table.
-    /// - td_path_escapes_repo_root: `td_path` resolves outside the repo
-    ///   root after canonicalisation (e.g. `../../something`).
-    /// Project-local fallback does not require global TD platform config.
-    pub kind: String,
-    pub message: String,
-}
-
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-fn lex_normalize(path: &std::path::Path) -> std::path::PathBuf {
-    let mut out = std::path::PathBuf::new();
-    for c in path.components() {
-        match c {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-impl TdResolveError {
-    fn unknown_project(name: &str) -> Self {
-        Self {
-            kind: "unknown_project".into(),
-            message: format!("project '{name}' is not registered in [[projects]]"),
-        }
-    }
-
-    fn td_path_escapes_repo_root(td_path: &str) -> Self {
-        Self {
-            kind: "td_path_escapes_repo_root".into(),
-            message: format!("td_path '{td_path}' resolves outside the repository root"),
-        }
-    }
-}
-
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn default_project_td_path(source_path: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(source_path).join("tech-design")
-}
-
-/// Resolve the TD spec root for `input` against `repo_root`.
-///
-/// Precedence (matches spec flowchart):
-/// 1. If `input.td_path` is `Some(p)` → candidate = `repo_root.join(p)`, precedence = `"td_path"`.
-/// 2. Else → candidate = `repo_root.join(input.source_path).join("tech-design")`,
-///    precedence = `"project_path"`.
-///
-/// After composing `candidate`, canonicalise and verify it stays inside
-/// `repo_root` (defends against `../` escapes). Canonicalisation falls back
-/// to lexical containment when the candidate does not yet exist on disk —
-/// the resolver runs during `aw td init` before the spec dir is created.
-///
-/// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn resolve_td_root(
-    input: &TdRootInput,
-    _global_base: Option<&str>,
-    repo_root: &std::path::Path,
-) -> std::result::Result<TdRootResult, TdResolveError> {
-    let (candidate, precedence) = if let Some(td_path) = input.td_path.as_deref() {
-        (repo_root.join(td_path), "td_path")
-    } else {
-        (
-            repo_root.join(default_project_td_path(&input.source_path)),
-            "project_path",
-        )
-    };
-
-    // Lexical containment check — the spec only requires defending against
-    // `../` escape sequences. Filesystem canonicalisation is unreliable here
-    // because the candidate may not exist yet (resolver runs during
-    // `aw td init`, before the spec directory is created) and because
-    // macOS resolves `/var/...` → `/private/var/...` asymmetrically.
-    let normalized_root = lex_normalize(repo_root);
-    let normalized_candidate = lex_normalize(&candidate);
-
-    if !normalized_candidate.starts_with(&normalized_root) {
-        let display = input
-            .td_path
-            .as_deref()
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                default_project_td_path(&input.source_path)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .to_string();
-        return Err(TdResolveError::td_path_escapes_repo_root(&display));
-    }
-
-    Ok(TdRootResult {
-        root: candidate.to_string_lossy().into_owned(),
-        precedence: precedence.into(),
-    })
-}
-
-/// Convenience wrapper: load `aw.toml`, look up the project by
-/// name, and dispatch to `resolve_td_root`. Reads only the narrow
-/// projection needed (`[[projects]].{name,aliases,path,td_path}`) to stay decoupled from the broader
-/// `Project` schema.
-///
-/// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-pub fn resolve_td_root_from_config(
-    repo_root: &std::path::Path,
-    project_name: &str,
-) -> std::result::Result<TdRootResult, TdResolveError> {
-    let row = resolve_project_config_row(repo_root, project_name)
-        .map_err(|_| TdResolveError::unknown_project(project_name))?;
-
-    let input = TdRootInput {
-        name: row.name,
-        td_path: row.td_path,
-        source_path: row.path,
-    };
-
-    resolve_td_root(&input, None, repo_root)
-}
-
-#[cfg(test)]
-/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
-mod resolver_tests {
-    use super::*;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    fn repo() -> TempDir {
-        TempDir::new().unwrap()
-    }
-
-    fn project_row(path: &str, label: Option<&str>) -> ProjectConfigRow {
-        ProjectConfigRow {
-            name: "demo".to_string(),
-            aliases: Vec::new(),
-            path: path.to_string(),
-            td_path: None,
-            artifact_model: None,
-            cap_path: None,
-            label: label.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn project_label_canonicalization_uses_path_only_for_retired_prefixes() {
-        assert_eq!(
-            project_row("libs/demo", Some("project:demo")).label_or_default(),
-            "lib:demo"
-        );
-        assert_eq!(
-            project_row("libs/demo", Some("project:wrong-name")).label_or_default(),
-            "lib:demo"
-        );
-        assert_eq!(
-            project_row("projects/mamba/mambalibs/demo", Some("project:demo")).label_or_default(),
-            "lib:demo"
-        );
-        assert_eq!(
-            project_row("apps/demo", Some("project:demo")).label_or_default(),
-            "app:demo"
-        );
-        assert_eq!(
-            project_row("libs/demo", Some("project:")).label_or_default(),
-            "lib:demo"
-        );
-        assert_eq!(
-            project_row("libs/demo", None).label_or_default(),
-            "lib:demo"
-        );
-        assert_eq!(
-            project_row("apps/demo", Some("app:custom-demo")).label_or_default(),
-            "app:custom-demo"
-        );
-        assert_eq!(
-            project_row("libs/demo", Some("lib:custom-demo")).label_or_default(),
-            "lib:custom-demo"
-        );
-        assert_eq!(
-            project_row("crates/demo", Some("crate:legacy-demo")).label_or_default(),
-            "crate:legacy-demo"
-        );
-    }
-
-    #[test]
-    fn td_path_wins_when_set() {
-        let tmp = repo();
-        let input = TdRootInput {
-            name: "sdd".into(),
-            td_path: Some("apps/cgdb/tech_design".into()),
-            source_path: "apps/cgdb".into(),
-        };
-        let out = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap();
-        assert_eq!(out.precedence, "td_path");
-        assert_eq!(
-            PathBuf::from(&out.root),
-            tmp.path().join("apps/cgdb/tech_design")
-        );
-    }
-
-    #[test]
-    fn falls_back_to_project_tech_design() {
-        let tmp = repo();
-        let input = TdRootInput {
-            name: "sdd".into(),
-            td_path: None,
-            source_path: "apps/agentic-workflow".into(),
-        };
-        let out = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap();
-        assert_eq!(out.precedence, "project_path");
-        assert_eq!(
-            PathBuf::from(&out.root),
-            tmp.path().join("apps/agentic-workflow/tech-design")
-        );
-    }
-
-    #[test]
-    fn does_not_require_global_base_for_project_fallback() {
-        let tmp = repo();
-        let input = TdRootInput {
-            name: "x".into(),
-            td_path: None,
-            source_path: "x".into(),
-        };
-        let out = resolve_td_root(&input, None, tmp.path()).unwrap();
-        assert_eq!(PathBuf::from(out.root), tmp.path().join("x/tech-design"));
-    }
-
-    #[test]
-    fn errors_when_td_path_escapes_repo_root() {
-        let tmp = repo();
-        let input = TdRootInput {
-            name: "x".into(),
-            td_path: Some("../escape".into()),
-            source_path: "x".into(),
-        };
-        let err = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap_err();
-        assert_eq!(err.kind, "td_path_escapes_repo_root");
-    }
-}
-
-// CODEGEN-END
-````
+<!-- type: rust-source-unit lang: rust -->
+<!-- aw-source-partitions: version=1 count=2 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:23e9fd8d8f56a0607128a71c4e92228f19e66654a3443f9c2c13a8ad7bdadfcb -->
+
+```rust
+// AW source partition manifest v1: 2 ordered rust chunks, max 48128 decoded / 65536 encoded bytes, digest sha256:23e9fd8d8f56a0607128a71c4e92228f19e66654a3443f9c2c13a8ad7bdadfcb
+```
+### Source Partition 0001
+<!-- aw-source-partition: index=1 count=2 bytes=44437 payload_bytes=60031 encoding=base64 digest=sha256:7f072cea396d85cf8096801b6ee9faf39371a6a23a19b640b2ff65feceed6083 boundary=ast terminal_newline=true -->
+
+```text
+Ly8gU1BFQy1NQU5BR0VEOiBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29yZS9p
+bnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCi8vIENPREVHRU4t
+QkVHSU4KLy8hIFByb2plY3QgcmVnaXN0cnk6IHJlYWQvd3JpdGUgYFtbcHJvamVjdHNdXWAgYmxv
+Y2sgaW4gcm9vdCBgYXcudG9tbGAuCi8vIQovLyEgVGhlIGF1dG8tZ2VuZXJhdGVkIGJsb2NrIGlz
+IGRlbGltaXRlZCBieToKLy8hIC0gYFNZTkNfQkVHSU5fTUFSS0VSYCDigJQgYCMgQkVHSU4gQVcg
+U1lOQyDigJQgYXV0by1nZW5lcmF0ZWQsIGRvIG5vdCBlZGl0IGJ5IGhhbmRgCi8vISAtIGBTWU5D
+X0VORF9NQVJLRVJgICAg4oCUIGAjIEVORCBBVyBTWU5DYAovLyEKLy8hIGB0b21sX2VkaXRgIGlz
+IHVzZWQgZm9yIGxvc3NsZXNzIHJvdW5kLXRyaXBzIHNvIHRoYXQgbm9uLWdlbmVyYXRlZCBzZWN0
+aW9ucwovLyEgKGNvbW1lbnRzLCBmb3JtYXR0aW5nLCBzZGQuKiB0YWJsZXMpIGFyZSBwcmVzZXJ2
+ZWQgYnl0ZS1pZGVudGljYWwgb24gZWFjaCBzeW5jLgoKdXNlIHN0ZDo6Y29sbGVjdGlvbnM6OkJU
+cmVlTWFwOwp1c2Ugc3RkOjpwYXRoOjp7UGF0aCwgUGF0aEJ1Zn07Cgp1c2UgYW55aG93Ojp7Q29u
+dGV4dCwgUmVzdWx0fTsKdXNlIHNlcmRlOjp7RGVzZXJpYWxpemUsIFNlcmlhbGl6ZX07Cgp1c2Ug
+Y3JhdGU6Om1vZGVsczo6cHJvamVjdDo6e0VjQmluZGluZywgUHJvamVjdCwgUHJvamVjdEFydGlm
+YWN0TW9kZWwsIFdvcmtzcGFjZX07CnVzZSBjcmF0ZTo6c2VydmljZXM6OnByb2plY3RfZGlzY292
+ZXJ5OjpkaXNjb3Zlcl9wcm9qZWN0czsKdXNlIGNyYXRlOjpzaGFyZWQ6OndvcmtzcGFjZTo6e2Nv
+bmZpZ19wYXRoLCB3b3Jrc3BhY2VfcGF0aCwgU1lOQ19CRUdJTl9NQVJLRVIsIFNZTkNfRU5EX01B
+UktFUn07CgpwdWIgY29uc3QgUFJPSkVDVF9BV19DT05GSUdfRklMRTogJnN0ciA9ICJhdy50b21s
+IjsKCi8vIEBzcGVjIGFwcHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2lnbi9zdXJmYWNlL3Nw
+ZWNzL3N5bmMtY29tbWFuZC5tZCNSMQovLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVj
+aC1kZXNpZ24vc3VyZmFjZS9zcGVjcy9zeW5jLWNvbW1hbmQubWQjUjQKLy8vIFdyaXRlIGBbW3By
+b2plY3RzXV1gIGVudHJpZXMgaW50byB0aGUgbWFya2VyLWRlbGltaXRlZCBibG9jayBpbiByb290
+IGBhdy50b21sYC4KLy8vCi8vLyAtIElmIHRoZSBCRUdJTi9FTkQgQVcgU1lOQyBtYXJrZXIgcGFp
+ciBpcyBhbHJlYWR5IHByZXNlbnQsIHRoZSBjb250ZW50Ci8vLyAgIGJldHdlZW4gdGhlIG1hcmtl
+cnMgaXMgcmVwbGFjZWQgd2l0aCBhIGZyZXNobHkgc2VyaWFsaXplZCBgW1twcm9qZWN0c11dYCBi
+bG9jay4KLy8vIC0gSWYgdGhlIG1hcmtlcnMgYXJlIGFic2VudCwgdGhlIGJsb2NrICh3aXRoIG1h
+cmtlcnMpIGlzIGFwcGVuZGVkIGF0IEVPRi4KLy8vIC0gQWZ0ZXIgYSBzdWNjZXNzZnVsIHdyaXRl
+LCBgLmF3L3Byb2plY3RzLnRvbWxgIGlzIGRlbGV0ZWQgaWYgaXQgZXhpc3RzIChSMTAgbWlncmF0
+aW9uKS4KLy8vIC0gTm9uLWdlbmVyYXRlZCBjb250ZW50IGluIGBhdy50b21sYCBpcyBwcmVzZXJ2
+ZWQgYnl0ZS1pZGVudGljYWwgdmlhIGB0b21sX2VkaXRgLgovLy8gQHNwZWMgYXBwcy9hZ2VudGlj
+LXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJmYWNlcy9zZXJ2aWNlcy9wcm9qZWN0X3Jl
+Z2lzdHJ5Lm1kI3NvdXJjZQpwdWIgZm4gd3JpdGVfcHJvamVjdHNfY29uZmlnKHJvb3Q6ICZQYXRo
+LCBwcm9qZWN0czogJltQcm9qZWN0XSkgLT4gUmVzdWx0PCgpPiB7CiAgICBsZXQgY29uZmlnX2Zp
+bGUgPSBjb25maWdfcGF0aChyb290KTsKICAgIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJfYWxsKGNvbmZp
+Z19maWxlLnBhcmVudCgpLnVud3JhcCgpKT87CgogICAgLy8gUmVhZCBleGlzdGluZyBhdy50b21s
+IG9yIHN0YXJ0IHdpdGggZW1wdHkgc3RyaW5nCiAgICBsZXQgZXhpc3RpbmcgPSBpZiBjb25maWdf
+ZmlsZS5leGlzdHMoKSB7CiAgICAgICAgc3RkOjpmczo6cmVhZF90b19zdHJpbmcoJmNvbmZpZ19m
+aWxlKQogICAgICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoInJlYWRpbmcge30iLCBj
+b25maWdfZmlsZS5kaXNwbGF5KCkpKT8KICAgIH0gZWxzZSB7CiAgICAgICAgU3RyaW5nOjpuZXco
+KQogICAgfTsKCiAgICAvLyBTZXJpYWxpemUgdGhlIFtbcHJvamVjdHNdXSBibG9jawogICAgbGV0
+IGJsb2NrID0gc2VyaWFsaXplX3Byb2plY3RzX2Jsb2NrKHByb2plY3RzKT87CgogICAgLy8gU3Bs
+aWNlIG9yIGFwcGVuZCB0aGUgbWFya2VyLWRlbGltaXRlZCBibG9jawogICAgbGV0IG5ld19jb250
+ZW50ID0gc3BsaWNlX29yX2FwcGVuZCgmZXhpc3RpbmcsICZibG9jayk7CgogICAgc3RkOjpmczo6
+d3JpdGUoJmNvbmZpZ19maWxlLCAmbmV3X2NvbnRlbnQpCiAgICAgICAgLndpdGhfY29udGV4dCh8
+fCBmb3JtYXQhKCJ3cml0aW5nIHt9IiwgY29uZmlnX2ZpbGUuZGlzcGxheSgpKSk/OwoKICAgIC8v
+IE1pZ3JhdGlvbjogZGVsZXRlIHN0YWxlIHByb2plY3RzLnRvbWwgaWYgcHJlc2VudCAoUjEwKQog
+ICAgbGV0IHN0YWxlID0gd29ya3NwYWNlX3BhdGgocm9vdCkuam9pbigicHJvamVjdHMudG9tbCIp
+OwogICAgaWYgc3RhbGUuZXhpc3RzKCkgewogICAgICAgIHN0ZDo6ZnM6OnJlbW92ZV9maWxlKCZz
+dGFsZSkKICAgICAgICAgICAgLndpdGhfY29udGV4dCh8fCBmb3JtYXQhKCJkZWxldGluZyBzdGFs
+ZSB7fSIsIHN0YWxlLmRpc3BsYXkoKSkpPzsKICAgIH0KCiAgICBPaygoKSkKfQoKLy8gQHNwZWMg
+YXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL3N1cmZhY2Uvc3BlY3Mvc3luYy1jb21t
+YW5kLm1kI1I5Ci8vLyBMb2FkIHRoZSBwcm9qZWN0IGxpc3QgZnJvbSByb290IGBhdy50b21sYC4K
+Ly8vCi8vLyBSZWFkcyBgW1twcm9qZWN0c11dYCBlbnRyaWVzIGRpcmVjdGx5IGZyb20gYGF3LnRv
+bWxgIOKAlCB0aGUgbWFya2VyIGJsb2NrCi8vLyBpcyB3cml0dGVuIHRoZXJlIGJ5IGB3cml0ZV9w
+cm9qZWN0c19jb25maWdgLiBObyBwcm9qZWN0cy50b21sIG92ZXJsYXkuCi8vLyBAc3BlYyBhcHBz
+L2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3By
+b2plY3RfcmVnaXN0cnkubWQjc291cmNlCnB1YiBmbiBsb2FkX3Byb2plY3RzKHJvb3Q6ICZQYXRo
+KSAtPiBSZXN1bHQ8VmVjPFByb2plY3Q+PiB7CiAgICBsZXQgbXV0IHByb2plY3RzID0gVmVjOjpu
+ZXcoKTsKCiAgICAjW2Rlcml2ZShzZXJkZTo6RGVzZXJpYWxpemUsIERlZmF1bHQpXQogICAgc3Ry
+dWN0IENvbmZpZ1dpdGhQcm9qZWN0cyB7CiAgICAgICAgI1tzZXJkZShkZWZhdWx0KV0KICAgICAg
+ICBwcm9qZWN0czogVmVjPFByb2plY3Q+LAogICAgfQoKICAgIGxldCBjb25maWdfZmlsZSA9IGNv
+bmZpZ19wYXRoKHJvb3QpOwogICAgaWYgY29uZmlnX2ZpbGUuZXhpc3RzKCkgewogICAgICAgIGxl
+dCBjb250ZW50ID0gc3RkOjpmczo6cmVhZF90b19zdHJpbmcoJmNvbmZpZ19maWxlKQogICAgICAg
+ICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoInJlYWRpbmcge30iLCBjb25maWdfZmlsZS5k
+aXNwbGF5KCkpKT87CiAgICAgICAgbGV0IHBhcnNlZDogQ29uZmlnV2l0aFByb2plY3RzID0gdG9t
+bDo6ZnJvbV9zdHIoJmNvbnRlbnQpCiAgICAgICAgICAgIC53aXRoX2NvbnRleHQofHwgZm9ybWF0
+ISgicGFyc2luZyBwcm9qZWN0cyBmcm9tIHt9IiwgY29uZmlnX2ZpbGUuZGlzcGxheSgpKSk/Owog
+ICAgICAgIHVwc2VydF9wcm9qZWN0cygmbXV0IHByb2plY3RzLCBwYXJzZWQucHJvamVjdHMpOwog
+ICAgfQoKICAgIGxldCBwcm9qZWN0X2F3ID0gbG9hZF9wcm9qZWN0X2F3X3Byb2plY3RzKHJvb3Qp
+PzsKICAgIHVwc2VydF9wcm9qZWN0cygmbXV0IHByb2plY3RzLCBwcm9qZWN0X2F3KTsKCiAgICBP
+ayhwcm9qZWN0cykKfQoKLy8vIFJvb3QtbGV2ZWwgQVcgY29uZmlnIHBhdGg6IGB7cmVwb30vYXcu
+dG9tbGAuCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29yZS9p
+bnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCnB1YiBmbiByb290
+X2F3X2NvbmZpZ19wYXRoKHJvb3Q6ICZQYXRoKSAtPiBQYXRoQnVmIHsKICAgIGNvbmZpZ19wYXRo
+KHJvb3QpCn0KCi8vLyBQdWJsaWMgcm93IHByb2plY3Rpb24gdXNlZCBieSBjb21tYW5kcyB0aGF0
+IG5lZWQgcHJvamVjdCBpZGVudGl0eSBmaWVsZHMKLy8vIChgYWxpYXNlc2AsIHRyYWNrZXIgbGFi
+ZWwsIGNhcGFiaWxpdHkgcGF0aCkgd2l0aG91dCBkZXBlbmRpbmcgb24gdGhlIGZ1bGwKLy8vIGBQ
+cm9qZWN0YCBtb2RlbC4KLy8vIEBzcGVjIGFwcHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2ln
+bi9jb3JlL2ludGVyZmFjZXMvc2VydmljZXMvcHJvamVjdF9yZWdpc3RyeS5tZCNzb3VyY2UKI1tk
+ZXJpdmUoRGVidWcsIENsb25lLCBQYXJ0aWFsRXEsIEVxKV0KcHViIHN0cnVjdCBQcm9qZWN0Q29u
+ZmlnUm93IHsKICAgIHB1YiBuYW1lOiBTdHJpbmcsCiAgICBwdWIgYWxpYXNlczogVmVjPFN0cmlu
+Zz4sCiAgICBwdWIgcGF0aDogU3RyaW5nLAogICAgcHViIHRkX3BhdGg6IE9wdGlvbjxTdHJpbmc+
+LAogICAgcHViIGFydGlmYWN0X21vZGVsOiBPcHRpb248UHJvamVjdEFydGlmYWN0TW9kZWw+LAog
+ICAgcHViIGNhcF9wYXRoOiBPcHRpb248U3RyaW5nPiwKICAgIHB1YiBsYWJlbDogT3B0aW9uPFN0
+cmluZz4sCn0KCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29y
+ZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCmltcGwgUHJv
+amVjdENvbmZpZ1JvdyB7CiAgICBwdWIgZm4gbWF0Y2hlcygmc2VsZiwgcmVxdWVzdGVkOiAmc3Ry
+KSAtPiBib29sIHsKICAgICAgICBzZWxmLm5hbWUgPT0gcmVxdWVzdGVkIHx8IHNlbGYuYWxpYXNl
+cy5pdGVyKCkuYW55KHxhbGlhc3wgYWxpYXMgPT0gcmVxdWVzdGVkKQogICAgfQoKICAgIHB1YiBm
+biBsYWJlbF9vcl9kZWZhdWx0KCZzZWxmKSAtPiBTdHJpbmcgewogICAgICAgIGxldCBwcmVmaXgg
+PSBpZiBzZWxmLnBhdGguc3RhcnRzX3dpdGgoImxpYnMvIikgfHwgc2VsZi5wYXRoLmNvbnRhaW5z
+KCIvbWFtYmFsaWJzLyIpIHsKICAgICAgICAgICAgImxpYiIKICAgICAgICB9IGVsc2UgewogICAg
+ICAgICAgICAiYXBwIgogICAgICAgIH07CiAgICAgICAgbWF0Y2ggc2VsZi5sYWJlbC5hc19kZXJl
+ZigpIHsKICAgICAgICAgICAgU29tZShsYWJlbCkgPT4gewogICAgICAgICAgICAgICAgaWYgIWxh
+YmVsLnN0YXJ0c193aXRoKCJwcm9qZWN0OiIpIHsKICAgICAgICAgICAgICAgICAgICByZXR1cm4g
+bGFiZWwudG9fc3RyaW5nKCk7CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBmb3Jt
+YXQhKCJ7cHJlZml4fTp7fSIsIHNlbGYubmFtZSkKICAgICAgICAgICAgfQogICAgICAgICAgICBO
+b25lID0+IGZvcm1hdCEoIntwcmVmaXh9Ont9Iiwgc2VsZi5uYW1lKSwKICAgICAgICB9CiAgICB9
+CgogICAgLy8vIFRoZSBQeXRob24gYXJ0aWZhY3QgbGlmZWN5Y2xlIGlzIGNhbm9uaWNhbCBmb3Ig
+ZXZlcnkgcHJvamVjdC4KICAgIC8vLwogICAgLy8vIEtlZXAgdGhlIGNvbmZpZ3VyZWQgdmFsdWUg
+YXZhaWxhYmxlIGZvciByZWFkIGNvbXBhdGliaWxpdHkgYW5kIGNvbmZpZwogICAgLy8vIHByb2pl
+Y3Rpb24sIGJ1dCBuZXZlciBsZXQgaXQgcm91dGUgYSBwcm9qZWN0IGJhY2sgdG8gbGVnYWN5IEVD
+L1RELgogICAgcHViIGZuIGVmZmVjdGl2ZV9hcnRpZmFjdF9tb2RlbCgmc2VsZikgLT4gUHJvamVj
+dEFydGlmYWN0TW9kZWwgewogICAgICAgIGNyYXRlOjptb2RlbHM6OnByb2plY3Q6OmVmZmVjdGl2
+ZV9wcm9qZWN0X2FydGlmYWN0X21vZGVsKHNlbGYuYXJ0aWZhY3RfbW9kZWwpCiAgICB9Cn0KCi8v
+LyBMb2FkIHByb2plY3QgaWRlbnRpdHkgcm93cyBmcm9tIHJvb3QgYGF3LnRvbWxgIGFuZCBkaXNj
+b3ZlcmVkIHByb2plY3QtbG9jYWwKLy8vIGBhdy50b21sYCBmaWxlcy4gTGF0ZXIgc291cmNlcyBv
+dmVycmlkZSBlYXJsaWVyCi8vLyBvbmVzIGJ5IHByb2plY3QgbmFtZSwgbWF0Y2hpbmcgYGxvYWRf
+cHJvamVjdHNgLgovLy8gQHNwZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2Nv
+cmUvaW50ZXJmYWNlcy9zZXJ2aWNlcy9wcm9qZWN0X3JlZ2lzdHJ5Lm1kI3NvdXJjZQpwdWIgZm4g
+bG9hZF9wcm9qZWN0X2NvbmZpZ19yb3dzKHJvb3Q6ICZQYXRoKSAtPiBSZXN1bHQ8VmVjPFByb2pl
+Y3RDb25maWdSb3c+PiB7CiAgICBsZXQgbXV0IHJvd3MgPSBWZWM6Om5ldygpOwoKICAgIGxldCBy
+b290X2F3ID0gcm9vdF9hd19jb25maWdfcGF0aChyb290KTsKICAgIGlmIHJvb3RfYXcuZXhpc3Rz
+KCkgewogICAgICAgIHJvd3MuZXh0ZW5kKGxvYWRfcHJvamVjdF9jb25maWdfcm93c19mcm9tX2Zp
+bGUoJnJvb3RfYXcsIE5vbmUpPyk7CiAgICB9CgogICAgZm9yIHBhdGggaW4gZGlzY292ZXJfcHJv
+amVjdF9hd19wYXRocyhyb290KT8gewogICAgICAgIGxldCBwcm9qZWN0X3JlbCA9IHBhdGgKICAg
+ICAgICAgICAgLnBhcmVudCgpCiAgICAgICAgICAgIC5hbmRfdGhlbih8cGFyZW50fCBwYXJlbnQu
+c3RyaXBfcHJlZml4KHJvb3QpLm9rKCkpCiAgICAgICAgICAgIC5tYXAocGF0aF90b19zdHJpbmcp
+CiAgICAgICAgICAgIC51bndyYXBfb3JfZGVmYXVsdCgpOwogICAgICAgIHJvd3MuZXh0ZW5kKGxv
+YWRfcHJvamVjdF9jb25maWdfcm93c19mcm9tX2ZpbGUoCiAgICAgICAgICAgICZwYXRoLAogICAg
+ICAgICAgICBTb21lKCZwcm9qZWN0X3JlbCksCiAgICAgICAgKT8pOwogICAgfQoKICAgIE9rKGRl
+ZHVwZV9wcm9qZWN0X3Jvd3Mocm93cykpCn0KCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zs
+b3cvdGVjaC1kZXNpZ24vY29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnku
+bWQjc291cmNlCnB1YiBmbiByZXNvbHZlX3Byb2plY3RfY29uZmlnX3Jvdyhyb290OiAmUGF0aCwg
+cmVxdWVzdGVkOiAmc3RyKSAtPiBSZXN1bHQ8UHJvamVjdENvbmZpZ1Jvdz4gewogICAgbG9hZF9w
+cm9qZWN0X2NvbmZpZ19yb3dzKHJvb3QpPwogICAgICAgIC5pbnRvX2l0ZXIoKQogICAgICAgIC5m
+aW5kKHxyb3d8IHJvdy5tYXRjaGVzKHJlcXVlc3RlZCkpCiAgICAgICAgLm9rX29yX2Vsc2UofHwg
+YW55aG93Ojphbnlob3chKCJwcm9qZWN0IGB7cmVxdWVzdGVkfWAgaGFzIG5vIEFXIHByb2plY3Qg
+Y29uZmlnIHJvdyIpKQp9CgovLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNp
+Z24vc3VyZmFjZS9zcGVjcy9zeW5jLWNvbW1hbmQubWQjUjExCi8vLyBDb21wdXRlIGEgZGlmZiBi
+ZXR3ZWVuIHRoZSBjdXJyZW50IG1hcmtlci1kZWxpbWl0ZWQgYmxvY2sgaW4gYGF3LnRvbWxgCi8v
+LyBhbmQgYSBmcmVzaGx5IGRpc2NvdmVyZWQgc2V0IG9mIHByb2plY3RzLgovLy8KLy8vIFJldHVy
+bnMgYFNvbWUodW5pZmllZF9kaWZmKWAgaWYgZGlmZmVyZW50LCBgTm9uZWAgaWYgaWRlbnRpY2Fs
+LgovLy8gQHNwZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJm
+YWNlcy9zZXJ2aWNlcy9wcm9qZWN0X3JlZ2lzdHJ5Lm1kI3NvdXJjZQpwdWIgZm4gY2hlY2tfZHJp
+ZnQocm9vdDogJlBhdGgpIC0+IFJlc3VsdDxPcHRpb248U3RyaW5nPj4gewogICAgLy8gR2VuZXJh
+dGUgZnJlc2ggYmxvY2sgY29udGVudCAod2l0aG91dCB3cml0aW5nKQogICAgbGV0IGRpc2NvdmVy
+ZWQgPSBkaXNjb3Zlcl9wcm9qZWN0cyhyb290KT87CiAgICBsZXQgZnJlc2hfYmxvY2sgPSBzZXJp
+YWxpemVfcHJvamVjdHNfYmxvY2soJmRpc2NvdmVyZWQpPzsKCiAgICBsZXQgY29uZmlnX2ZpbGUg
+PSBjb25maWdfcGF0aChyb290KTsKICAgIGlmICFjb25maWdfZmlsZS5leGlzdHMoKSB7CiAgICAg
+ICAgaWYgZnJlc2hfYmxvY2sudHJpbSgpLmlzX2VtcHR5KCkgewogICAgICAgICAgICByZXR1cm4g
+T2soTm9uZSk7CiAgICAgICAgfQogICAgICAgIHJldHVybiBPayhTb21lKGJ1aWxkX2RpZmYoIiIs
+ICZmcmVzaF9ibG9jaywgImF3LnRvbWwiKSkpOwogICAgfQoKICAgIGxldCBleGlzdGluZ19jb250
+ZW50ID0gc3RkOjpmczo6cmVhZF90b19zdHJpbmcoJmNvbmZpZ19maWxlKQogICAgICAgIC53aXRo
+X2NvbnRleHQofHwgZm9ybWF0ISgicmVhZGluZyB7fSIsIGNvbmZpZ19maWxlLmRpc3BsYXkoKSkp
+PzsKCiAgICAvLyBFeHRyYWN0IHRoZSBjdXJyZW50IGJsb2NrIGZyb20gYXcudG9tbCAoYmV0d2Vl
+biBtYXJrZXJzKQogICAgbGV0IGN1cnJlbnRfYmxvY2sgPSBleHRyYWN0X3N5bmNfYmxvY2soJmV4
+aXN0aW5nX2NvbnRlbnQpLnVud3JhcF9vcl9kZWZhdWx0KCk7CgogICAgaWYgY3VycmVudF9ibG9j
+ay50cmltKCkgPT0gZnJlc2hfYmxvY2sudHJpbSgpIHsKICAgICAgICBPayhOb25lKQogICAgfSBl
+bHNlIHsKICAgICAgICBPayhTb21lKGJ1aWxkX2RpZmYoJmN1cnJlbnRfYmxvY2ssICZmcmVzaF9i
+bG9jaywgImF3LnRvbWwiKSkpCiAgICB9Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBQcml2
+YXRlIGhlbHBlcnMKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJp
+YWxpemUsIERlZmF1bHQpXQpzdHJ1Y3QgUHJvamVjdEF3VG9tbCB7CiAgICAjW3NlcmRlKGRlZmF1
+bHQpXQogICAgcHJvamVjdDogUHJvamVjdEF3SWRlbnRpdHksCiAgICAjW3NlcmRlKGRlZmF1bHQp
+XQogICAgd29ya3NwYWNlczogVmVjPFdvcmtzcGFjZT4sCiAgICAjW3NlcmRlKGRlZmF1bHQpXQog
+ICAgZWM6IEJUcmVlTWFwPFN0cmluZywgRWNCaW5kaW5nPiwKICAgIC8vLyBFQyByZXZpZXctYmFj
+a2luZyBwb2xpY3kgKGBodW1hbmAgfCBgYWdlbnRgIHwgYGVpdGhlcmApOyAjMTgyOS4KICAgICNb
+c2VyZGUoZGVmYXVsdCldCiAgICBlY19yZXZpZXdfYmFja2luZzogT3B0aW9uPFN0cmluZz4sCiAg
+ICAvLy8gRUMgcmV2aWV3LXRpbWluZyBwb2xpY3kgKGBibG9ja2luZ2AgfCBgZGVmZXJyZWRgKTsg
+IzE4MjguCiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgZWNfcmV2aWV3X21vZGU6IE9wdGlvbjxT
+dHJpbmc+LAp9CgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJpYWxpemUsIERlZmF1bHQpXQpzdHJ1Y3Qg
+UHJvamVjdEF3SWRlbnRpdHkgewogICAgI1tzZXJkZShkZWZhdWx0KV0KICAgIG5hbWU6IE9wdGlv
+bjxTdHJpbmc+LAogICAgI1tzZXJkZShkZWZhdWx0KV0KICAgIGFsaWFzZXM6IFZlYzxTdHJpbmc+
+LAogICAgI1tzZXJkZShkZWZhdWx0KV0KICAgIHBhdGg6IE9wdGlvbjxTdHJpbmc+LAogICAgI1tz
+ZXJkZShkZWZhdWx0LCBhbGlhcyA9ICJ0ZWNoX2Rlc2lnbl9kaXIiKV0KICAgIHRkX3BhdGg6IE9w
+dGlvbjxTdHJpbmc+LAogICAgI1tzZXJkZShkZWZhdWx0LCByZW5hbWUgPSAic3BlY19tb2RlbCIs
+IGFsaWFzID0gImFydGlmYWN0X21vZGVsIildCiAgICBhcnRpZmFjdF9tb2RlbDogT3B0aW9uPFBy
+b2plY3RBcnRpZmFjdE1vZGVsPiwKICAgICNbc2VyZGUoZGVmYXVsdCldCiAgICBjYXBfcGF0aDog
+T3B0aW9uPFN0cmluZz4sCiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgbGFiZWw6IE9wdGlvbjxT
+dHJpbmc+LAp9CgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJpYWxpemUsIERlZmF1bHQpXQpzdHJ1Y3Qg
+Um9vdEF3UHJvamVjdERpc2NvdmVyeSB7CiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgZGlzY292
+ZXI6IFZlYzxTdHJpbmc+LAp9CgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJpYWxpemUsIERlZmF1bHQp
+XQpzdHJ1Y3QgUm9vdEF3QWdlbnRpY1dvcmtmbG93IHsKICAgICNbc2VyZGUoZGVmYXVsdCldCiAg
+ICBwcm9qZWN0czogT3B0aW9uPFJvb3RBd1Byb2plY3REaXNjb3Zlcnk+LAp9CgojW2Rlcml2ZShE
+ZWJ1ZywgRGVzZXJpYWxpemUsIERlZmF1bHQpXQpzdHJ1Y3QgUm9vdEF3RGlzY292ZXJ5Q29uZmln
+IHsKICAgICNbc2VyZGUoZGVmYXVsdCldCiAgICBhZ2VudGljX3dvcmtmbG93OiBSb290QXdBZ2Vu
+dGljV29ya2Zsb3csCn0KCiNbZGVyaXZlKERlYnVnLCBEZXNlcmlhbGl6ZSwgRGVmYXVsdCldCnN0
+cnVjdCBQcm9qZWN0Um93RG9jdW1lbnQgewogICAgI1tzZXJkZShkZWZhdWx0KV0KICAgIHByb2pl
+Y3RzOiBWZWM8UHJvamVjdFJvd1RvbWw+LAogICAgI1tzZXJkZShkZWZhdWx0KV0KICAgIHByb2pl
+Y3Q6IE9wdGlvbjxQcm9qZWN0QXdJZGVudGl0eT4sCn0KCiNbZGVyaXZlKERlYnVnLCBEZXNlcmlh
+bGl6ZSwgRGVmYXVsdCldCnN0cnVjdCBQcm9qZWN0Um93VG9tbCB7CiAgICBuYW1lOiBTdHJpbmcs
+CiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgYWxpYXNlczogVmVjPFN0cmluZz4sCiAgICBwYXRo
+OiBTdHJpbmcsCiAgICAjW3NlcmRlKGRlZmF1bHQsIGFsaWFzID0gInRlY2hfZGVzaWduX2RpciIp
+XQogICAgdGRfcGF0aDogT3B0aW9uPFN0cmluZz4sCiAgICAjW3NlcmRlKGRlZmF1bHQsIHJlbmFt
+ZSA9ICJzcGVjX21vZGVsIiwgYWxpYXMgPSAiYXJ0aWZhY3RfbW9kZWwiKV0KICAgIGFydGlmYWN0
+X21vZGVsOiBPcHRpb248UHJvamVjdEFydGlmYWN0TW9kZWw+LAogICAgI1tzZXJkZShkZWZhdWx0
+KV0KICAgIGNhcF9wYXRoOiBPcHRpb248U3RyaW5nPiwKICAgICNbc2VyZGUoZGVmYXVsdCldCiAg
+ICBsYWJlbDogT3B0aW9uPFN0cmluZz4sCn0KCmZuIHVwc2VydF9wcm9qZWN0cyhwcm9qZWN0czog
+Jm11dCBWZWM8UHJvamVjdD4sIGluY29taW5nOiBWZWM8UHJvamVjdD4pIHsKICAgIGZvciBwcm9q
+ZWN0IGluIGluY29taW5nIHsKICAgICAgICBpZiBsZXQgU29tZShpZHgpID0gcHJvamVjdHMKICAg
+ICAgICAgICAgLml0ZXIoKQogICAgICAgICAgICAucG9zaXRpb24ofGV4aXN0aW5nfCBleGlzdGlu
+Zy5uYW1lID09IHByb2plY3QubmFtZSkKICAgICAgICB7CiAgICAgICAgICAgIHByb2plY3RzW2lk
+eF0gPSBtZXJnZV9wcm9qZWN0KHByb2plY3RzW2lkeF0uY2xvbmUoKSwgcHJvamVjdCk7CiAgICAg
+ICAgfSBlbHNlIHsKICAgICAgICAgICAgcHJvamVjdHMucHVzaChwcm9qZWN0KTsKICAgICAgICB9
+CiAgICB9Cn0KCmZuIG1lcmdlX3Byb2plY3QobXV0IGV4aXN0aW5nOiBQcm9qZWN0LCBpbmNvbWlu
+ZzogUHJvamVjdCkgLT4gUHJvamVjdCB7CiAgICBleGlzdGluZy5uYW1lID0gaW5jb21pbmcubmFt
+ZTsKICAgIGxldCBpbmNvbWluZ19oYXNfaWRlbnRpdHlfb3ZlcnJpZGUgPQogICAgICAgIGluY29t
+aW5nLnRlY2hfZGVzaWduX2Rpci5pc19zb21lKCkgfHwgIWluY29taW5nLmVjLmlzX2VtcHR5KCk7
+CiAgICBpZiBleGlzdGluZy5wYXRoLmFzX29zX3N0cigpLmlzX2VtcHR5KCkKICAgICAgICB8fCAo
+IWluY29taW5nLnBhdGguYXNfb3Nfc3RyKCkuaXNfZW1wdHkoKSAmJiBpbmNvbWluZ19oYXNfaWRl
+bnRpdHlfb3ZlcnJpZGUpCiAgICB7CiAgICAgICAgZXhpc3RpbmcucGF0aCA9IGluY29taW5nLnBh
+dGg7CiAgICB9CiAgICBpZiBpbmNvbWluZy50ZWNoX2Rlc2lnbl9kaXIuaXNfc29tZSgpIHsKICAg
+ICAgICBleGlzdGluZy50ZWNoX2Rlc2lnbl9kaXIgPSBpbmNvbWluZy50ZWNoX2Rlc2lnbl9kaXI7
+CiAgICB9CiAgICBpZiBpbmNvbWluZy5hcnRpZmFjdF9tb2RlbC5pc19zb21lKCkgewogICAgICAg
+IGV4aXN0aW5nLmFydGlmYWN0X21vZGVsID0gaW5jb21pbmcuYXJ0aWZhY3RfbW9kZWw7CiAgICB9
+CiAgICBpZiAhaW5jb21pbmcuZWMuaXNfZW1wdHkoKSB7CiAgICAgICAgZXhpc3RpbmcuZWMgPSBp
+bmNvbWluZy5lYzsKICAgIH0KICAgIGlmIGluY29taW5nLmVjX3Jldmlld19iYWNraW5nLmlzX3Nv
+bWUoKSB7CiAgICAgICAgZXhpc3RpbmcuZWNfcmV2aWV3X2JhY2tpbmcgPSBpbmNvbWluZy5lY19y
+ZXZpZXdfYmFja2luZzsKICAgIH0KICAgIGlmIGluY29taW5nLmVjX3Jldmlld19tb2RlLmlzX3Nv
+bWUoKSB7CiAgICAgICAgZXhpc3RpbmcuZWNfcmV2aWV3X21vZGUgPSBpbmNvbWluZy5lY19yZXZp
+ZXdfbW9kZTsKICAgIH0KICAgIGlmICFpbmNvbWluZy53b3Jrc3BhY2VzLmlzX2VtcHR5KCkgewog
+ICAgICAgIGV4aXN0aW5nLndvcmtzcGFjZXMgPSBpbmNvbWluZy53b3Jrc3BhY2VzOwogICAgfQog
+ICAgZXhpc3RpbmcKfQoKZm4gZGVkdXBlX3Byb2plY3Rfcm93cyhyb3dzOiBWZWM8UHJvamVjdENv
+bmZpZ1Jvdz4pIC0+IFZlYzxQcm9qZWN0Q29uZmlnUm93PiB7CiAgICBsZXQgbXV0IG91dCA9IFZl
+Yzo6bmV3KCk7CiAgICBmb3Igcm93IGluIHJvd3MgewogICAgICAgIGlmIGxldCBTb21lKGlkeCkg
+PSBvdXQuaXRlcigpLnBvc2l0aW9uKHxleGlzdGluZzogJlByb2plY3RDb25maWdSb3d8IHsKICAg
+ICAgICAgICAgZXhpc3RpbmcubmFtZSA9PSByb3cubmFtZQogICAgICAgICAgICAgICAgfHwgZXhp
+c3RpbmcuYWxpYXNlcy5pdGVyKCkuYW55KHxhbGlhc3wgYWxpYXMgPT0gJnJvdy5uYW1lKQogICAg
+ICAgICAgICAgICAgfHwgcm93LmFsaWFzZXMuaXRlcigpLmFueSh8YWxpYXN8IGFsaWFzID09ICZl
+eGlzdGluZy5uYW1lKQogICAgICAgIH0pIHsKICAgICAgICAgICAgb3V0W2lkeF0gPSBtZXJnZV9w
+cm9qZWN0X2NvbmZpZ19yb3cob3V0W2lkeF0uY2xvbmUoKSwgcm93KTsKICAgICAgICB9IGVsc2Ug
+ewogICAgICAgICAgICBvdXQucHVzaChyb3cpOwogICAgICAgIH0KICAgIH0KICAgIG91dAp9Cgpm
+biBtZXJnZV9wcm9qZWN0X2NvbmZpZ19yb3coCiAgICBtdXQgZXhpc3Rpbmc6IFByb2plY3RDb25m
+aWdSb3csCiAgICBpbmNvbWluZzogUHJvamVjdENvbmZpZ1JvdywKKSAtPiBQcm9qZWN0Q29uZmln
+Um93IHsKICAgIGV4aXN0aW5nLm5hbWUgPSBpbmNvbWluZy5uYW1lOwogICAgbGV0IGluY29taW5n
+X2hhc19pZGVudGl0eV9vdmVycmlkZSA9ICFpbmNvbWluZy5hbGlhc2VzLmlzX2VtcHR5KCkKICAg
+ICAgICB8fCBpbmNvbWluZy50ZF9wYXRoLmlzX3NvbWUoKQogICAgICAgIHx8IGluY29taW5nLmFy
+dGlmYWN0X21vZGVsLmlzX3NvbWUoKQogICAgICAgIHx8IGluY29taW5nLmNhcF9wYXRoLmlzX3Nv
+bWUoKQogICAgICAgIHx8IGluY29taW5nLmxhYmVsLmlzX3NvbWUoKTsKICAgIGZvciBhbGlhcyBp
+biBpbmNvbWluZy5hbGlhc2VzIHsKICAgICAgICBpZiAhZXhpc3RpbmcuYWxpYXNlcy5jb250YWlu
+cygmYWxpYXMpIHsKICAgICAgICAgICAgZXhpc3RpbmcuYWxpYXNlcy5wdXNoKGFsaWFzKTsKICAg
+ICAgICB9CiAgICB9CiAgICBpZiBleGlzdGluZy5wYXRoLmlzX2VtcHR5KCkgfHwgKCFpbmNvbWlu
+Zy5wYXRoLmlzX2VtcHR5KCkgJiYgaW5jb21pbmdfaGFzX2lkZW50aXR5X292ZXJyaWRlKSB7CiAg
+ICAgICAgZXhpc3RpbmcucGF0aCA9IGluY29taW5nLnBhdGg7CiAgICB9CiAgICBpZiBpbmNvbWlu
+Zy50ZF9wYXRoLmlzX3NvbWUoKSB7CiAgICAgICAgZXhpc3RpbmcudGRfcGF0aCA9IGluY29taW5n
+LnRkX3BhdGg7CiAgICB9CiAgICBpZiBpbmNvbWluZy5hcnRpZmFjdF9tb2RlbC5pc19zb21lKCkg
+ewogICAgICAgIGV4aXN0aW5nLmFydGlmYWN0X21vZGVsID0gaW5jb21pbmcuYXJ0aWZhY3RfbW9k
+ZWw7CiAgICB9CiAgICBpZiBpbmNvbWluZy5jYXBfcGF0aC5pc19zb21lKCkgewogICAgICAgIGV4
+aXN0aW5nLmNhcF9wYXRoID0gaW5jb21pbmcuY2FwX3BhdGg7CiAgICB9CiAgICBpZiBpbmNvbWlu
+Zy5sYWJlbC5pc19zb21lKCkgewogICAgICAgIGV4aXN0aW5nLmxhYmVsID0gaW5jb21pbmcubGFi
+ZWw7CiAgICB9CiAgICBleGlzdGluZwp9CgpmbiBsb2FkX3Byb2plY3RfYXdfcHJvamVjdHMocm9v
+dDogJlBhdGgpIC0+IFJlc3VsdDxWZWM8UHJvamVjdD4+IHsKICAgIGxldCBtdXQgcHJvamVjdHMg
+PSBWZWM6Om5ldygpOwogICAgZm9yIHBhdGggaW4gZGlzY292ZXJfcHJvamVjdF9hd19wYXRocyhy
+b290KT8gewogICAgICAgIGxldCBwcm9qZWN0ID0gcGFyc2VfcHJvamVjdF9hd19wcm9qZWN0KHJv
+b3QsICZwYXRoKT87CiAgICAgICAgcHJvamVjdHMucHVzaChwcm9qZWN0KTsKICAgIH0KICAgIE9r
+KHByb2plY3RzKQp9CgpmbiBkaXNjb3Zlcl9wcm9qZWN0X2F3X3BhdGhzKHJvb3Q6ICZQYXRoKSAt
+PiBSZXN1bHQ8VmVjPFBhdGhCdWY+PiB7CiAgICBsZXQgbXV0IHBhdHRlcm5zID0gVmVjOjpuZXco
+KTsKICAgIGxldCByb290X2F3ID0gcm9vdF9hd19jb25maWdfcGF0aChyb290KTsKICAgIGlmIHJv
+b3RfYXcuaXNfZmlsZSgpIHsKICAgICAgICBsZXQgY29udGVudCA9IHN0ZDo6ZnM6OnJlYWRfdG9f
+c3RyaW5nKCZyb290X2F3KQogICAgICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoInJl
+YWRpbmcge30iLCByb290X2F3LmRpc3BsYXkoKSkpPzsKICAgICAgICBsZXQgY29uZmlnOiBSb290
+QXdEaXNjb3ZlcnlDb25maWcgPQogICAgICAgICAgICB0b21sOjpmcm9tX3N0cigmY29udGVudCku
+d2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoInBhcnNpbmcge30iLCByb290X2F3LmRpc3BsYXkoKSkp
+PzsKICAgICAgICBpZiBsZXQgU29tZShwcm9qZWN0cykgPSBjb25maWcuYWdlbnRpY193b3JrZmxv
+dy5wcm9qZWN0cyB7CiAgICAgICAgICAgIHBhdHRlcm5zLmV4dGVuZChwcm9qZWN0cy5kaXNjb3Zl
+cik7CiAgICAgICAgfQogICAgfQogICAgaWYgcGF0dGVybnMuaXNfZW1wdHkoKSB7CiAgICAgICAg
+cGF0dGVybnMucHVzaCgiYXBwcy8qL2F3LnRvbWwiLnRvX3N0cmluZygpKTsKICAgICAgICBwYXR0
+ZXJucy5wdXNoKCJwcm9qZWN0cy8qL2F3LnRvbWwiLnRvX3N0cmluZygpKTsKICAgIH0KCiAgICBs
+ZXQgbXV0IHBhdGhzID0gVmVjOjpuZXcoKTsKICAgIGZvciBwYXR0ZXJuIGluIHBhdHRlcm5zIHsK
+ICAgICAgICBpZiBsZXQgU29tZShwYXJlbnRfZGlyKSA9IGF3X3RvbWxfc2luZ2xlX3N0YXJfcGFy
+ZW50KCZwYXR0ZXJuKSB7CiAgICAgICAgICAgIHBhdGhzLmV4dGVuZChkaXNjb3Zlcl9wcm9qZWN0
+X2F3X3BhdGhzX3VuZGVyKHJvb3QsIHBhcmVudF9kaXIpKTsKICAgICAgICB9IGVsc2UgewogICAg
+ICAgICAgICBsZXQgY2FuZGlkYXRlID0gcm9vdC5qb2luKCZwYXR0ZXJuKTsKICAgICAgICAgICAg
+aWYgY2FuZGlkYXRlLmlzX2ZpbGUoKSB7CiAgICAgICAgICAgICAgICBwYXRocy5wdXNoKGNhbmRp
+ZGF0ZSk7CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9CiAgICBwYXRocy5zb3J0KCk7CiAg
+ICBwYXRocy5kZWR1cCgpOwogICAgT2socGF0aHMpCn0KCmZuIGF3X3RvbWxfc2luZ2xlX3N0YXJf
+cGFyZW50KHBhdHRlcm46ICZzdHIpIC0+IE9wdGlvbjwmc3RyPiB7CiAgICBwYXR0ZXJuLnN0cmlw
+X3N1ZmZpeCgiLyovYXcudG9tbCIpCn0KCmZuIGRpc2NvdmVyX3Byb2plY3RfYXdfcGF0aHNfdW5k
+ZXIocm9vdDogJlBhdGgsIHBhcmVudF9kaXI6ICZzdHIpIC0+IFZlYzxQYXRoQnVmPiB7CiAgICBs
+ZXQgZGlyID0gcm9vdC5qb2luKHBhcmVudF9kaXIpOwogICAgbGV0IE9rKGVudHJpZXMpID0gc3Rk
+Ojpmczo6cmVhZF9kaXIoJmRpcikgZWxzZSB7CiAgICAgICAgcmV0dXJuIFZlYzo6bmV3KCk7CiAg
+ICB9OwogICAgZW50cmllcwogICAgICAgIC5mbGF0dGVuKCkKICAgICAgICAubWFwKHxlbnRyeXwg
+ZW50cnkucGF0aCgpLmpvaW4oUFJPSkVDVF9BV19DT05GSUdfRklMRSkpCiAgICAgICAgLmZpbHRl
+cih8Y2FuZGlkYXRlfCBjYW5kaWRhdGUuaXNfZmlsZSgpKQogICAgICAgIC5jb2xsZWN0KCkKfQoK
+Zm4gcGFyc2VfcHJvamVjdF9hd19wcm9qZWN0KHJvb3Q6ICZQYXRoLCBwYXRoOiAmUGF0aCkgLT4g
+UmVzdWx0PFByb2plY3Q+IHsKICAgIGxldCBjb250ZW50ID0KICAgICAgICBzdGQ6OmZzOjpyZWFk
+X3RvX3N0cmluZyhwYXRoKS53aXRoX2NvbnRleHQofHwgZm9ybWF0ISgicmVhZGluZyB7fSIsIHBh
+dGguZGlzcGxheSgpKSk/OwogICAgbGV0IG1hbmlmZXN0OiBQcm9qZWN0QXdUb21sID0KICAgICAg
+ICB0b21sOjpmcm9tX3N0cigmY29udGVudCkud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoInBhcnNp
+bmcge30iLCBwYXRoLmRpc3BsYXkoKSkpPzsKICAgIGxldCBwcm9qZWN0X2RpciA9IHBhdGgKICAg
+ICAgICAucGFyZW50KCkKICAgICAgICAuY29udGV4dCgicHJvamVjdCBhdy50b21sIG11c3QgaGF2
+ZSBhIHBhcmVudCBkaXJlY3RvcnkiKT87CiAgICBsZXQgcHJvamVjdF9yZWwgPSBwcm9qZWN0X2Rp
+cgogICAgICAgIC5zdHJpcF9wcmVmaXgocm9vdCkKICAgICAgICAubWFwKHBhdGhfdG9fc3RyaW5n
+KQogICAgICAgIC51bndyYXBfb3JfZWxzZSh8X3wgcGF0aF90b19zdHJpbmcocHJvamVjdF9kaXIp
+KTsKICAgIGxldCBuYW1lID0gbWFuaWZlc3QucHJvamVjdC5uYW1lLnVud3JhcF9vcl9lbHNlKHx8
+IHsKICAgICAgICBwcm9qZWN0X2RpcgogICAgICAgICAgICAuZmlsZV9uYW1lKCkKICAgICAgICAg
+ICAgLmFuZF90aGVuKHxuYW1lfCBuYW1lLnRvX3N0cigpKQogICAgICAgICAgICAudW53cmFwX29y
+KCJwcm9qZWN0IikKICAgICAgICAgICAgLnRvX3N0cmluZygpCiAgICB9KTsKICAgIGxldCBzb3Vy
+Y2VfcGF0aCA9IG1hbmlmZXN0LnByb2plY3QucGF0aC51bndyYXBfb3JfZWxzZSh8fCBwcm9qZWN0
+X3JlbC5jbG9uZSgpKTsKICAgIGxldCB0ZWNoX2Rlc2lnbl9kaXIgPSBtYW5pZmVzdAogICAgICAg
+IC5wcm9qZWN0CiAgICAgICAgLnRkX3BhdGgKICAgICAgICAuYXNfZGVyZWYoKQogICAgICAgIC5t
+YXAofHZhbHVlfCBub3JtYWxpemVfcHJvamVjdF9sb2NhbF9wYXRoKCZzb3VyY2VfcGF0aCwgdmFs
+dWUpKTsKICAgIGxldCB3b3Jrc3BhY2VzID0gbWFuaWZlc3QKICAgICAgICAud29ya3NwYWNlcwog
+ICAgICAgIC5pbnRvX2l0ZXIoKQogICAgICAgIC5tYXAofHdvcmtzcGFjZXwgbm9ybWFsaXplX3By
+b2plY3RfYXdfd29ya3NwYWNlKCZzb3VyY2VfcGF0aCwgd29ya3NwYWNlKSkKICAgICAgICAuY29s
+bGVjdDo6PFZlYzxfPj4oKTsKCiAgICBPayhQcm9qZWN0IHsKICAgICAgICBuYW1lLAogICAgICAg
+IHBhdGg6IFBhdGhCdWY6OmZyb20oc291cmNlX3BhdGgpLAogICAgICAgIHRlY2hfZGVzaWduX2Rp
+ciwKICAgICAgICBhcnRpZmFjdF9tb2RlbDogbWFuaWZlc3QucHJvamVjdC5hcnRpZmFjdF9tb2Rl
+bCwKICAgICAgICBlYzogbWFuaWZlc3QuZWMsCiAgICAgICAgZWNfcmV2aWV3X2JhY2tpbmc6IG1h
+bmlmZXN0LmVjX3Jldmlld19iYWNraW5nLAogICAgICAgIGVjX3Jldmlld19tb2RlOiBtYW5pZmVz
+dC5lY19yZXZpZXdfbW9kZSwKICAgICAgICB3b3Jrc3BhY2VzLAogICAgfSkKfQoKZm4gbm9ybWFs
+aXplX3Byb2plY3RfYXdfd29ya3NwYWNlKHByb2plY3RfcGF0aDogJnN0ciwgbXV0IHdvcmtzcGFj
+ZTogV29ya3NwYWNlKSAtPiBXb3Jrc3BhY2UgewogICAgd29ya3NwYWNlLnBhdGhzID0gd29ya3Nw
+YWNlCiAgICAgICAgLnBhdGhzCiAgICAgICAgLmludG9faXRlcigpCiAgICAgICAgLm1hcCh8cGF0
+aHwgbm9ybWFsaXplX3Byb2plY3RfbG9jYWxfZ2xvYihwcm9qZWN0X3BhdGgsICZwYXRoKSkKICAg
+ICAgICAuY29sbGVjdCgpOwogICAgd29ya3NwYWNlCn0KCmZuIGxvYWRfcHJvamVjdF9jb25maWdf
+cm93c19mcm9tX2ZpbGUoCiAgICBwYXRoOiAmUGF0aCwKICAgIHByb2plY3RfcmVsOiBPcHRpb248
+JnN0cj4sCikgLT4gUmVzdWx0PFZlYzxQcm9qZWN0Q29uZmlnUm93Pj4gewogICAgbGV0IGNvbnRl
+bnQgPQogICAgICAgIHN0ZDo6ZnM6OnJlYWRfdG9fc3RyaW5nKHBhdGgpLndpdGhfY29udGV4dCh8
+fCBmb3JtYXQhKCJyZWFkaW5nIHt9IiwgcGF0aC5kaXNwbGF5KCkpKT87CiAgICBsZXQgcGFyc2Vk
+OiBQcm9qZWN0Um93RG9jdW1lbnQgPQogICAgICAgIHRvbWw6OmZyb21fc3RyKCZjb250ZW50KS53
+aXRoX2NvbnRleHQofHwgZm9ybWF0ISgicGFyc2luZyB7fSIsIHBhdGguZGlzcGxheSgpKSk/Owog
+ICAgbGV0IG11dCByb3dzID0gcGFyc2VkCiAgICAgICAgLnByb2plY3RzCiAgICAgICAgLmludG9f
+aXRlcigpCiAgICAgICAgLm1hcCh8cm93fCBQcm9qZWN0Q29uZmlnUm93IHsKICAgICAgICAgICAg
+bmFtZTogcm93Lm5hbWUsCiAgICAgICAgICAgIGFsaWFzZXM6IHJvdy5hbGlhc2VzLAogICAgICAg
+ICAgICBwYXRoOiByb3cucGF0aCwKICAgICAgICAgICAgdGRfcGF0aDogcm93LnRkX3BhdGgsCiAg
+ICAgICAgICAgIGFydGlmYWN0X21vZGVsOiByb3cuYXJ0aWZhY3RfbW9kZWwsCiAgICAgICAgICAg
+IGNhcF9wYXRoOiByb3cuY2FwX3BhdGgsCiAgICAgICAgICAgIGxhYmVsOiByb3cubGFiZWwsCiAg
+ICAgICAgfSkKICAgICAgICAuY29sbGVjdDo6PFZlYzxfPj4oKTsKICAgIGlmIGxldCAoU29tZShw
+cm9qZWN0KSwgU29tZShwcm9qZWN0X3JlbCkpID0gKHBhcnNlZC5wcm9qZWN0LCBwcm9qZWN0X3Jl
+bCkgewogICAgICAgIGxldCBpbmZlcnJlZF9uYW1lID0gUGF0aDo6bmV3KHByb2plY3RfcmVsKQog
+ICAgICAgICAgICAuZmlsZV9uYW1lKCkKICAgICAgICAgICAgLmFuZF90aGVuKHxuYW1lfCBuYW1l
+LnRvX3N0cigpKQogICAgICAgICAgICAudW53cmFwX29yKCJwcm9qZWN0IikKICAgICAgICAgICAg
+LnRvX3N0cmluZygpOwogICAgICAgIGxldCBuYW1lID0gcHJvamVjdC5uYW1lLnVud3JhcF9vcihp
+bmZlcnJlZF9uYW1lKTsKICAgICAgICBsZXQgc291cmNlX3BhdGggPSBwcm9qZWN0LnBhdGgudW53
+cmFwX29yX2Vsc2UofHwgcHJvamVjdF9yZWwudG9fc3RyaW5nKCkpOwogICAgICAgIHJvd3MucHVz
+aChQcm9qZWN0Q29uZmlnUm93IHsKICAgICAgICAgICAgbmFtZSwKICAgICAgICAgICAgYWxpYXNl
+czogcHJvamVjdC5hbGlhc2VzLAogICAgICAgICAgICBwYXRoOiBzb3VyY2VfcGF0aC5jbG9uZSgp
+LAogICAgICAgICAgICB0ZF9wYXRoOiBwcm9qZWN0CiAgICAgICAgICAgICAgICAudGRfcGF0aAog
+ICAgICAgICAgICAgICAgLmFzX2RlcmVmKCkKICAgICAgICAgICAgICAgIC5tYXAofHZhbHVlfCBu
+b3JtYWxpemVfcHJvamVjdF9sb2NhbF9wYXRoKCZzb3VyY2VfcGF0aCwgdmFsdWUpKSwKICAgICAg
+ICAgICAgYXJ0aWZhY3RfbW9kZWw6IHByb2plY3QuYXJ0aWZhY3RfbW9kZWwsCiAgICAgICAgICAg
+IGNhcF9wYXRoOiBwcm9qZWN0CiAgICAgICAgICAgICAgICAuY2FwX3BhdGgKICAgICAgICAgICAg
+ICAgIC5hc19kZXJlZigpCiAgICAgICAgICAgICAgICAubWFwKHx2YWx1ZXwgbm9ybWFsaXplX3By
+b2plY3RfbG9jYWxfcGF0aCgmc291cmNlX3BhdGgsIHZhbHVlKSksCiAgICAgICAgICAgIGxhYmVs
+OiBwcm9qZWN0LmxhYmVsLAogICAgICAgIH0pOwogICAgfQogICAgT2socm93cykKfQoKZm4gbm9y
+bWFsaXplX3Byb2plY3RfbG9jYWxfcGF0aChwcm9qZWN0X3BhdGg6ICZzdHIsIHZhbHVlOiAmc3Ry
+KSAtPiBTdHJpbmcgewogICAgbGV0IHRyaW1tZWQgPSB2YWx1ZS50cmltKCk7CiAgICBpZiB0cmlt
+bWVkLmlzX2VtcHR5KCkKICAgICAgICB8fCB0cmltbWVkLnN0YXJ0c193aXRoKCcvJykKICAgICAg
+ICB8fCB0cmltbWVkLnN0YXJ0c193aXRoKCJwcm9qZWN0cy8iKQogICAgICAgIHx8IHRyaW1tZWQu
+c3RhcnRzX3dpdGgoImFwcHMvIikKICAgICAgICB8fCB0cmltbWVkLnN0YXJ0c193aXRoKCJjcmF0
+ZXMvIikKICAgICAgICB8fCB0cmltbWVkLnN0YXJ0c193aXRoKCJwYWNrYWdlcy8iKQogICAgICAg
+IHx8IHRyaW1tZWQuc3RhcnRzX3dpdGgoIi5hdy8iKQogICAgICAgIHx8IHRyaW1tZWQuc3RhcnRz
+X3dpdGgoIi5naXRodWIvIikKICAgICAgICB8fCB0cmltbWVkID09ICIuIgogICAgewogICAgICAg
+IHRyaW1tZWQudG9fc3RyaW5nKCkKICAgIH0gZWxzZSB7CiAgICAgICAgZm9ybWF0ISgie30ve30i
+LCBwcm9qZWN0X3BhdGgudHJpbV9lbmRfbWF0Y2hlcygnLycpLCB0cmltbWVkKQogICAgfQp9Cgpm
+biBub3JtYWxpemVfcHJvamVjdF9sb2NhbF9nbG9iKHByb2plY3RfcGF0aDogJnN0ciwgdmFsdWU6
+ICZzdHIpIC0+IFN0cmluZyB7CiAgICBsZXQgdHJpbW1lZCA9IHZhbHVlLnRyaW0oKTsKICAgIGlm
+IHRyaW1tZWQgPT0gIioqIiB7CiAgICAgICAgcmV0dXJuIGZvcm1hdCEoInt9LyoqIiwgcHJvamVj
+dF9wYXRoLnRyaW1fZW5kX21hdGNoZXMoJy8nKSk7CiAgICB9CiAgICBub3JtYWxpemVfcHJvamVj
+dF9sb2NhbF9wYXRoKHByb2plY3RfcGF0aCwgdHJpbW1lZCkKfQoKZm4gcGF0aF90b19zdHJpbmco
+cGF0aDogJlBhdGgpIC0+IFN0cmluZyB7CiAgICBwYXRoLnRvX3N0cmluZ19sb3NzeSgpLnJlcGxh
+Y2UoJ1xcJywgIi8iKQp9CgovLy8gU2VyaWFsaXplIGEgbGlzdCBvZiBwcm9qZWN0cyBpbnRvIHRo
+ZSBgW1twcm9qZWN0c11dYCBUT01MIGJsb2NrIHN0cmluZwovLy8gKHdpdGhvdXQgbWFya2Vycyku
+Ci8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29yZS9pbnRlcmZh
+Y2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCmZuIHNlcmlhbGl6ZV9wcm9q
+ZWN0c19ibG9jayhwcm9qZWN0czogJltQcm9qZWN0XSkgLT4gUmVzdWx0PFN0cmluZz4gewogICAg
+I1tkZXJpdmUoc2VyZGU6OlNlcmlhbGl6ZSldCiAgICBzdHJ1Y3QgUHJvamVjdHNPbmx5PCdhPiB7
+CiAgICAgICAgcHJvamVjdHM6ICYnYSBbUHJvamVjdF0sCiAgICB9CiAgICBsZXQgZG9jID0gUHJv
+amVjdHNPbmx5IHsgcHJvamVjdHMgfTsKICAgIHRvbWw6OnRvX3N0cmluZ19wcmV0dHkoJmRvYyku
+Y29udGV4dCgic2VyaWFsaXppbmcgW1twcm9qZWN0c11dIGJsb2NrIikKfQoKLy8vIElmIEJFR0lO
+L0VORCBBVyBTWU5DIG1hcmtlcnMgYXJlIGZvdW5kIGluIGBleGlzdGluZ2AsIHJlcGxhY2UgdGhl
+IGNvbnRlbnQKLy8vIGJldHdlZW4gdGhlbSAoaW5jbHVzaXZlIG9mIHRoZSBtYXJrZXIgbGluZXMp
+IHdpdGggdGhlIG5ldyBibG9jayBzdXJyb3VuZGVkIGJ5Ci8vLyBtYXJrZXJzLiBPdGhlcndpc2Ug
+YXBwZW5kIHRoZSBibG9jayBhdCBFT0Ygd2l0aCBhIGJsYW5rLWxpbmUgc2VwYXJhdG9yLgovLy8K
+Ly8vIFRoZSByZXN1bHQgcHJlc2VydmVzIGFsbCBjb250ZW50IG91dHNpZGUgdGhlIGRlbGltaXRl
+ZCByZWdpb24gYnl0ZS1pZGVudGljYWwuCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cv
+dGVjaC1kZXNpZ24vY29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQj
+c291cmNlCmZuIHNwbGljZV9vcl9hcHBlbmQoZXhpc3Rpbmc6ICZzdHIsIGJsb2NrOiAmc3RyKSAt
+PiBTdHJpbmcgewogICAgbGV0IGJlZ2luID0gU1lOQ19CRUdJTl9NQVJLRVI7CiAgICBsZXQgZW5k
+ID0gU1lOQ19FTkRfTUFSS0VSOwoKICAgIC8vIEZpbmQgbWFya2VyIHBvc2l0aW9ucyBieSBzY2Fu
+bmluZyBsaW5lcwogICAgbGV0IGxpbmVzOiBWZWM8JnN0cj4gPSBleGlzdGluZy5saW5lcygpLmNv
+bGxlY3QoKTsKICAgIGxldCBiZWdpbl9pZHggPSBsaW5lcy5pdGVyKCkucG9zaXRpb24ofGx8IGwu
+dHJpbSgpID09IGJlZ2luKTsKICAgIGxldCBlbmRfaWR4ID0gbGluZXMuaXRlcigpLnBvc2l0aW9u
+KHxsfCBsLnRyaW0oKSA9PSBlbmQpOwoKICAgIGlmIGxldCAoU29tZShiaSksIFNvbWUoZWkpKSA9
+IChiZWdpbl9pZHgsIGVuZF9pZHgpIHsKICAgICAgICAvLyBSZXBsYWNlIGxpbmVzIGZyb20gYmku
+Lj1laSAoaW5jbHVzaXZlKSB3aXRoIGZyZXNoIG1hcmtlciBibG9jawogICAgICAgIGxldCBtdXQg
+cmVzdWx0ID0gU3RyaW5nOjpuZXcoKTsKICAgICAgICBmb3IgbGluZSBpbiAmbGluZXNbLi5iaV0g
+ewogICAgICAgICAgICByZXN1bHQucHVzaF9zdHIobGluZSk7CiAgICAgICAgICAgIHJlc3VsdC5w
+dXNoKCdcbicpOwogICAgICAgIH0KICAgICAgICByZXN1bHQucHVzaF9zdHIoYmVnaW4pOwogICAg
+ICAgIHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAgIHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAg
+IHJlc3VsdC5wdXNoX3N0cihibG9jay50cmltX2VuZCgpKTsKICAgICAgICByZXN1bHQucHVzaCgn
+XG4nKTsKICAgICAgICByZXN1bHQucHVzaCgnXG4nKTsKICAgICAgICByZXN1bHQucHVzaF9zdHIo
+ZW5kKTsKICAgICAgICByZXN1bHQucHVzaCgnXG4nKTsKICAgICAgICBmb3IgbGluZSBpbiAmbGlu
+ZXNbKGVpICsgMSkuLl0gewogICAgICAgICAgICByZXN1bHQucHVzaF9zdHIobGluZSk7CiAgICAg
+ICAgICAgIHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAgIH0KICAgICAgICByZXN1bHQKICAgIH0g
+ZWxzZSB7CiAgICAgICAgLy8gQXBwZW5kIGF0IEVPRiB3aXRoIGJsYW5rLWxpbmUgc2VwYXJhdG9y
+CiAgICAgICAgbGV0IG11dCByZXN1bHQgPSBleGlzdGluZy50b19zdHJpbmcoKTsKICAgICAgICAv
+LyBFbnN1cmUgd2UgZG9uJ3QgZG91YmxlLW5ld2xpbmUgaWYgZXhpc3RpbmcgZW5kcyB3aXRoIG5l
+d2xpbmUKICAgICAgICBpZiAhcmVzdWx0LmlzX2VtcHR5KCkgJiYgIXJlc3VsdC5lbmRzX3dpdGgo
+J1xuJykgewogICAgICAgICAgICByZXN1bHQucHVzaCgnXG4nKTsKICAgICAgICB9CiAgICAgICAg
+aWYgIXJlc3VsdC5pc19lbXB0eSgpIHsKICAgICAgICAgICAgcmVzdWx0LnB1c2goJ1xuJyk7CiAg
+ICAgICAgfQogICAgICAgIHJlc3VsdC5wdXNoX3N0cihiZWdpbik7CiAgICAgICAgcmVzdWx0LnB1
+c2goJ1xuJyk7CiAgICAgICAgcmVzdWx0LnB1c2goJ1xuJyk7CiAgICAgICAgcmVzdWx0LnB1c2hf
+c3RyKGJsb2NrLnRyaW1fZW5kKCkpOwogICAgICAgIHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAg
+IHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAgIHJlc3VsdC5wdXNoX3N0cihlbmQpOwogICAgICAg
+IHJlc3VsdC5wdXNoKCdcbicpOwogICAgICAgIHJlc3VsdAogICAgfQp9CgovLy8gRXh0cmFjdCBv
+bmx5IHRoZSBjb250ZW50IGJldHdlZW4gQkVHSU4gYW5kIEVORCBBVyBTWU5DIG1hcmtlcnMgKGV4
+Y2x1c2l2ZQovLy8gb2YgdGhlIG1hcmtlciBsaW5lcyB0aGVtc2VsdmVzKS4KLy8vIEBzcGVjIGFw
+cHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2lnbi9jb3JlL2ludGVyZmFjZXMvc2VydmljZXMv
+cHJvamVjdF9yZWdpc3RyeS5tZCNzb3VyY2UKZm4gZXh0cmFjdF9zeW5jX2Jsb2NrKGNvbnRlbnQ6
+ICZzdHIpIC0+IE9wdGlvbjxTdHJpbmc+IHsKICAgIGxldCBiZWdpbiA9IFNZTkNfQkVHSU5fTUFS
+S0VSOwogICAgbGV0IGVuZCA9IFNZTkNfRU5EX01BUktFUjsKICAgIGxldCBsaW5lczogVmVjPCZz
+dHI+ID0gY29udGVudC5saW5lcygpLmNvbGxlY3QoKTsKICAgIGxldCBiZWdpbl9pZHggPSBsaW5l
+cy5pdGVyKCkucG9zaXRpb24ofGx8IGwudHJpbSgpID09IGJlZ2luKT87CiAgICBsZXQgZW5kX2lk
+eCA9IGxpbmVzLml0ZXIoKS5wb3NpdGlvbih8bHwgbC50cmltKCkgPT0gZW5kKT87CiAgICBpZiBl
+bmRfaWR4IDw9IGJlZ2luX2lkeCB7CiAgICAgICAgcmV0dXJuIE5vbmU7CiAgICB9CiAgICBTb21l
+KGxpbmVzWyhiZWdpbl9pZHggKyAxKS4uZW5kX2lkeF0uam9pbigiXG4iKSkKfQoKLy8vIEJ1aWxk
+IGEgc2ltcGxlIHVuaWZpZWQtc3R5bGUgZGlmZiBiZXR3ZWVuIHR3byBzdHJpbmdzLgovLy8gQHNw
+ZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJmYWNlcy9zZXJ2
+aWNlcy9wcm9qZWN0X3JlZ2lzdHJ5Lm1kI3NvdXJjZQpmbiBidWlsZF9kaWZmKG9sZDogJnN0ciwg
+bmV3OiAmc3RyLCBsYWJlbDogJnN0cikgLT4gU3RyaW5nIHsKICAgIGxldCBvbGRfbGluZXM6IFZl
+Yzwmc3RyPiA9IG9sZC5saW5lcygpLmNvbGxlY3QoKTsKICAgIGxldCBuZXdfbGluZXM6IFZlYzwm
+c3RyPiA9IG5ldy5saW5lcygpLmNvbGxlY3QoKTsKCiAgICBsZXQgbXV0IG91dCA9IGZvcm1hdCEo
+Ii0tLSB7fVxuKysrIHt9IChmcmVzaCBkaXNjb3ZlcnkpXG4iLCBsYWJlbCwgbGFiZWwpOwoKICAg
+IGxldCBtdXQgaSA9IDA7CiAgICBsZXQgbXV0IGogPSAwOwogICAgd2hpbGUgaSA8IG9sZF9saW5l
+cy5sZW4oKSB8fCBqIDwgbmV3X2xpbmVzLmxlbigpIHsKICAgICAgICBsZXQgb2xkX2xpbmUgPSBv
+bGRfbGluZXMuZ2V0KGkpLmNvcGllZCgpOwogICAgICAgIGxldCBuZXdfbGluZSA9IG5ld19saW5l
+cy5nZXQoaikuY29waWVkKCk7CgogICAgICAgIG1hdGNoIChvbGRfbGluZSwgbmV3X2xpbmUpIHsK
+ICAgICAgICAgICAgKFNvbWUobyksIFNvbWUobikpIGlmIG8gPT0gbiA9PiB7CiAgICAgICAgICAg
+ICAgICBvdXQucHVzaCgnICcpOwogICAgICAgICAgICAgICAgb3V0LnB1c2hfc3RyKG8pOwogICAg
+ICAgICAgICAgICAgb3V0LnB1c2goJ1xuJyk7CiAgICAgICAgICAgICAgICBpICs9IDE7CiAgICAg
+ICAgICAgICAgICBqICs9IDE7CiAgICAgICAgICAgIH0KICAgICAgICAgICAgKFNvbWUobyksIF8p
+ID0+IHsKICAgICAgICAgICAgICAgIG91dC5wdXNoKCctJyk7CiAgICAgICAgICAgICAgICBvdXQu
+cHVzaF9zdHIobyk7CiAgICAgICAgICAgICAgICBvdXQucHVzaCgnXG4nKTsKICAgICAgICAgICAg
+ICAgIGkgKz0gMTsKICAgICAgICAgICAgfQogICAgICAgICAgICAoTm9uZSwgU29tZShuKSkgPT4g
+ewogICAgICAgICAgICAgICAgb3V0LnB1c2goJysnKTsKICAgICAgICAgICAgICAgIG91dC5wdXNo
+X3N0cihuKTsKICAgICAgICAgICAgICAgIG91dC5wdXNoKCdcbicpOwogICAgICAgICAgICAgICAg
+aiArPSAxOwogICAgICAgICAgICB9CiAgICAgICAgICAgIChOb25lLCBOb25lKSA9PiBicmVhaywK
+ICAgICAgICB9CiAgICB9CgogICAgb3V0Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBUZXN0
+cwovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KCiNbY2ZnKHRlc3QpXQovLy8gQHNwZWMgYXBwcy9hZ2Vu
+dGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJmYWNlcy9zZXJ2aWNlcy9wcm9qZWN0
+X3JlZ2lzdHJ5Lm1kI3NvdXJjZQptb2QgdGVzdHMgewogICAgdXNlIHN1cGVyOjoqOwogICAgdXNl
+IGNyYXRlOjptb2RlbHM6OnByb2plY3Q6OntQcm9qZWN0LCBXb3Jrc3BhY2V9OwogICAgdXNlIGNy
+YXRlOjptb2RlbHM6OnRlY2hfc3RhY2s6Okxhbmd1YWdlOwogICAgdXNlIHN0ZDo6ZnM7CiAgICB1
+c2Ugc3RkOjpwYXRoOjpQYXRoQnVmOwogICAgdXNlIHRlbXBmaWxlOjpUZW1wRGlyOwoKICAgIC8v
+LyBCdWlsZCBhIG1pbmltYWwgInJlcG8gcm9vdCIgd2l0aCBhIGAuYXcvYCBkaXIgYW5kIHJldHVy
+biB0aGUgVGVtcERpci4KICAgIGZuIG1ha2Vfc2NvcmVfcm9vdCgpIC0+IFRlbXBEaXIgewogICAg
+ICAgIGxldCB0bXAgPSBUZW1wRGlyOjpuZXcoKS51bndyYXAoKTsKICAgICAgICBmczo6Y3JlYXRl
+X2Rpcl9hbGwodG1wLnBhdGgoKS5qb2luKCIuYXciKSkudW53cmFwKCk7CiAgICAgICAgdG1wCiAg
+ICB9CgogICAgLy8vIFdyaXRlIGBjb250ZW50YCB0byBgYXcudG9tbGAgaW5zaWRlIGByb290YC4K
+ICAgIGZuIHdyaXRlX2NvbmZpZ19maWxlKHJvb3Q6ICZzdGQ6OnBhdGg6OlBhdGgsIGNvbnRlbnQ6
+ICZzdHIpIHsKICAgICAgICBsZXQgcGF0aCA9IHJvb3Quam9pbigiYXcudG9tbCIpOwogICAgICAg
+IGZzOjp3cml0ZSgmcGF0aCwgY29udGVudCkudW53cmFwKCk7CiAgICB9CgogICAgLy8vIENyZWF0
+ZSBhIG1pbmltYWwgUHJvamVjdCBmb3IgdXNlIGluIHRlc3RzLgogICAgZm4gbWFrZV9wcm9qZWN0
+KG5hbWU6ICZzdHIsIHRhcmdldDogTGFuZ3VhZ2UsIHRlc3RfY21kOiBPcHRpb248JnN0cj4pIC0+
+IFByb2plY3QgewogICAgICAgIFByb2plY3QgewogICAgICAgICAgICBuYW1lOiBuYW1lLnRvX3N0
+cmluZygpLAogICAgICAgICAgICBwYXRoOiBQYXRoQnVmOjpmcm9tKGZvcm1hdCEoImNyYXRlcy97
+fSIsIG5hbWUpKSwKICAgICAgICAgICAgdGVjaF9kZXNpZ25fZGlyOiBOb25lLAogICAgICAgICAg
+ICBhcnRpZmFjdF9tb2RlbDogTm9uZSwKICAgICAgICAgICAgZWM6IERlZmF1bHQ6OmRlZmF1bHQo
+KSwKICAgICAgICAgICAgZWNfcmV2aWV3X2JhY2tpbmc6IE5vbmUsCiAgICAgICAgICAgIGVjX3Jl
+dmlld19tb2RlOiBOb25lLAogICAgICAgICAgICB3b3Jrc3BhY2VzOiB2ZWMhW1dvcmtzcGFjZSB7
+CiAgICAgICAgICAgICAgICBuYW1lOiBTb21lKG5hbWUudG9fc3RyaW5nKCkpLAogICAgICAgICAg
+ICAgICAgcGF0aHM6IHZlYyFbZm9ybWF0ISgiY3JhdGVzL3t9LyoqIiwgbmFtZSldLAogICAgICAg
+ICAgICAgICAgdGFyZ2V0LAogICAgICAgICAgICAgICAgdGVzdF9jbWQ6IHRlc3RfY21kLm1hcCh8
+c3wgcy50b19zdHJpbmcoKSksCiAgICAgICAgICAgICAgICB2ZXJpZnlfY29sZDogZmFsc2UsCiAg
+ICAgICAgICAgICAgICBjb2RlZ2VuOiBOb25lLAogICAgICAgICAgICB9XSwKICAgICAgICB9CiAg
+ICB9CgogICAgLy8gUkVROiBSRVEtMDAxIChSMTogd3JpdGVzIHRvIGF3LnRvbWwpCiAgICAvLyBU
+MTc6IG1hcmtlcl91cHNlcnRfZmlyc3RfcnVuCiAgICAjW3Rlc3RdCiAgICBmbiBtYXJrZXJfdXBz
+ZXJ0X2ZpcnN0X3J1bigpIHsKICAgICAgICBsZXQgdG1wID0gbWFrZV9zY29yZV9yb290KCk7Cgog
+ICAgICAgIC8vIGF3LnRvbWwgZXhpc3RzIGJ1dCBoYXMgbm8gbWFya2VycwogICAgICAgIHdyaXRl
+X2NvbmZpZ19maWxlKAogICAgICAgICAgICB0bXAucGF0aCgpLAogICAgICAgICAgICAiW2FnZW50
+aWNfd29ya2Zsb3cudGVzdC5zY29wZV1cbnJvb3RzID0gW1wiY3JhdGVzXCJdXG4iLAogICAgICAg
+ICk7CgogICAgICAgIGxldCBwcm9qZWN0cyA9IHZlYyFbbWFrZV9wcm9qZWN0KAogICAgICAgICAg
+ICAicHJvai1hIiwKICAgICAgICAgICAgTGFuZ3VhZ2U6OlJ1c3QsCiAgICAgICAgICAgIFNvbWUo
+ImNhcmdvIHRlc3QgLXAgcHJvai1hIiksCiAgICAgICAgKV07CiAgICAgICAgd3JpdGVfcHJvamVj
+dHNfY29uZmlnKHRtcC5wYXRoKCksICZwcm9qZWN0cykudW53cmFwKCk7CgogICAgICAgIGxldCBw
+YXRoID0gdG1wLnBhdGgoKS5qb2luKCJhdy50b21sIik7CiAgICAgICAgbGV0IGNvbnRlbnQgPSBm
+czo6cmVhZF90b19zdHJpbmcoJnBhdGgpLnVud3JhcCgpOwoKICAgICAgICAvLyBSMjogbWFya2Vy
+cyBwcmVzZW50CiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgY29udGVudC5jb250YWlucyhT
+WU5DX0JFR0lOX01BUktFUiksCiAgICAgICAgICAgICJhdy50b21sIG11c3QgY29udGFpbiBCRUdJ
+TiBBVyBTWU5DIG1hcmtlcjsgZ290Olxue2NvbnRlbnR9IgogICAgICAgICk7CiAgICAgICAgYXNz
+ZXJ0ISgKICAgICAgICAgICAgY29udGVudC5jb250YWlucyhTWU5DX0VORF9NQVJLRVIpLAogICAg
+ICAgICAgICAiYXcudG9tbCBtdXN0IGNvbnRhaW4gRU5EIEFXIFNZTkMgbWFya2VyOyBnb3Q6XG57
+Y29udGVudH0iCiAgICAgICAgKTsKCiAgICAgICAgLy8gUjE6IFtbcHJvamVjdHNdXSBlbnRyaWVz
+IHByZXNlbnQKICAgICAgICBhc3NlcnQhKAogICAgICAgICAgICBjb250ZW50LmNvbnRhaW5zKCJw
+cm9qLWEiKSwKICAgICAgICAgICAgImF3LnRvbWwgbXVzdCBjb250YWluIGRpc2NvdmVyZWQgcHJv
+amVjdDsgZ290Olxue2NvbnRlbnR9IgogICAgICAgICk7CgogICAgICAgIC8vIFIzOiB1c2VyIGNv
+bnRlbnQgdW50b3VjaGVkCiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgY29udGVudC5jb250
+YWlucygiW2FnZW50aWNfd29ya2Zsb3cudGVzdC5zY29wZV0iKSwKICAgICAgICAgICAgInVzZXIt
+YXV0aG9yZWQgc2VjdGlvbiBtdXN0IHN1cnZpdmUgc3luYzsgZ290Olxue2NvbnRlbnR9IgogICAg
+ICAgICk7CiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgY29udGVudC5jb250YWlucygicm9v
+dHMgPSBbXCJjcmF0ZXNcIl0iKSwKICAgICAgICAgICAgInVzZXItYXV0aG9yZWQgY29udGVudCBt
+dXN0IHN1cnZpdmUgc3luYyBieXRlLWlkZW50aWNhbDsgZ290Olxue2NvbnRlbnR9IgogICAgICAg
+ICk7CiAgICB9CgogICAgLy8gUkVROiBSRVEtMDAzIChSMzogbm9uLXByb2plY3RzIGNvbnRlbnQg
+cHJlc2VydmVkKQogICAgLy8gUkVROiBSRVEtMDA1IChSNTogaWRlbXBvdGVuY3kpCiAgICAvLyBS
+RVE6IFJFUS0wMDYgKFI2OiBmdWxsIGVudW1lcmF0aW9uKQogICAgLy8gVDE4OiBtYXJrZXJfdXBz
+ZXJ0X3JvdW5kX3RyaXAKICAgICNbdGVzdF0KICAgIGZuIG1hcmtlcl91cHNlcnRfcm91bmRfdHJp
+cCgpIHsKICAgICAgICBsZXQgdG1wID0gbWFrZV9zY29yZV9yb290KCk7CgogICAgICAgIC8vIFBy
+ZS1leGlzdGluZyB1c2VyIGNvbnRlbnQKICAgICAgICB3cml0ZV9jb25maWdfZmlsZSgKICAgICAg
+ICAgICAgdG1wLnBhdGgoKSwKICAgICAgICAgICAgIiMgdXNlciBjb21tZW50XG5bYWdlbnRpY193
+b3JrZmxvdy50ZXN0LnNjb3BlXVxucm9vdHMgPSBbXCJjcmF0ZXNcIl1cblxuW2RlZmF1bHRzLndv
+cmtzcGFjZV1cbmNvZGVnZW4udGFyZ2V0ID0gXCJydXN0XCJcbiIsCiAgICAgICAgKTsKCiAgICAg
+ICAgbGV0IHByb2plY3RzID0gdmVjIVsKICAgICAgICAgICAgbWFrZV9wcm9qZWN0KCJhbHBoYSIs
+IExhbmd1YWdlOjpSdXN0LCBTb21lKCJjYXJnbyB0ZXN0IC1wIGFscGhhIikpLAogICAgICAgICAg
+ICBtYWtlX3Byb2plY3QoCiAgICAgICAgICAgICAgICAiYmV0YSIsCiAgICAgICAgICAgICAgICBM
+YW5ndWFnZTo6UHl0aG9uLAogICAgICAgICAgICAgICAgU29tZSgiY2QgcHJvamVjdHMvYmV0YSAm
+JiB1diBydW4gcHl0ZXN0IiksCiAgICAgICAgICAgICksCiAgICAgICAgICAgIG1ha2VfcHJvamVj
+dCgiZ2FtbWEiLCBMYW5ndWFnZTo6VHlwZVNjcmlwdCwgTm9uZSksCiAgICAgICAgXTsKCiAgICAg
+ICAgLy8gRmlyc3Qgc3luYwogICAgICAgIHdyaXRlX3Byb2plY3RzX2NvbmZpZyh0bXAucGF0aCgp
+LCAmcHJvamVjdHMpLnVud3JhcCgpOwogICAgICAgIGxldCBhZnRlcl9maXJzdCA9IGZzOjpyZWFk
+X3RvX3N0cmluZyh0bXAucGF0aCgpLmpvaW4oImF3LnRvbWwiKSkudW53cmFwKCk7CgogICAgICAg
+IC8vIFNlY29uZCBzeW5jIHdpdGggaWRlbnRpY2FsIGlucHV0IChpZGVtcG90ZW5jeSBjaGVjaywg
+UjUpCiAgICAgICAgd3JpdGVfcHJvamVjdHNfY29uZmlnKHRtcC5wYXRoKCksICZwcm9qZWN0cyku
+dW53cmFwKCk7CiAgICAgICAgbGV0IGFmdGVyX3NlY29uZCA9IGZzOjpyZWFkX3RvX3N0cmluZyh0
+bXAucGF0aCgpLmpvaW4oImF3LnRvbWwiKSkudW53cmFwKCk7CgogICAgICAgIGFzc2VydF9lcSEo
+CiAgICAgICAgICAgIGFmdGVyX2ZpcnN0LCBhZnRlcl9zZWNvbmQsCiAgICAgICAgICAgICJkb3Vi
+bGUgc3luYyB3aXRoIGlkZW50aWNhbCBpbnB1dCBtdXN0IHByb2R1Y2UgemVybyBkaWZmIChSNSBp
+ZGVtcG90ZW5jeSkiCiAgICAgICAgKTsKCiAgICAgICAgLy8gUjM6IG5vbi1wcm9qZWN0cyBzZWN0
+aW9ucyBieXRlLWlkZW50aWNhbAogICAgICAgIGFzc2VydCEoCiAgICAgICAgICAgIGFmdGVyX3Nl
+Y29uZC5jb250YWlucygiIyB1c2VyIGNvbW1lbnQiKSwKICAgICAgICAgICAgInVzZXIgY29tbWVu
+dCBtdXN0IGJlIHByZXNlcnZlZDsgZ290Olxue2FmdGVyX3NlY29uZH0iCiAgICAgICAgKTsKICAg
+ICAgICBhc3NlcnQhKAogICAgICAgICAgICBhZnRlcl9zZWNvbmQuY29udGFpbnMoIlthZ2VudGlj
+X3dvcmtmbG93LnRlc3Quc2NvcGVdIiksCiAgICAgICAgICAgICJ1c2VyIHNlY3Rpb24gbXVzdCBi
+ZSBwcmVzZXJ2ZWQ7IGdvdDpcbnthZnRlcl9zZWNvbmR9IgogICAgICAgICk7CiAgICAgICAgYXNz
+ZXJ0ISgKICAgICAgICAgICAgYWZ0ZXJfc2Vjb25kLmNvbnRhaW5zKCJbZGVmYXVsdHMud29ya3Nw
+YWNlXSIpLAogICAgICAgICAgICAiZGVmYXVsdHMgc2VjdGlvbiBtdXN0IGJlIHByZXNlcnZlZDsg
+Z290Olxue2FmdGVyX3NlY29uZH0iCiAgICAgICAgKTsKCiAgICAgICAgLy8gUjY6IGZ1bGwgZW51
+bWVyYXRpb24g4oCUIGFzc2VydCBjb3VudCB2aWEgcm91bmQtdHJpcCBsb2FkCiAgICAgICAgbGV0
+IGxvYWRlZCA9IGxvYWRfcHJvamVjdHModG1wLnBhdGgoKSkudW53cmFwKCk7CiAgICAgICAgYXNz
+ZXJ0X2VxISgKICAgICAgICAgICAgbG9hZGVkLmxlbigpLAogICAgICAgICAgICBwcm9qZWN0cy5s
+ZW4oKSwKICAgICAgICAgICAgIlI2OiBhbGwge30gcHJvamVjdHMgbXVzdCBiZSB3cml0dGVuIGFu
+ZCByZWFkYWJsZTsgZ290IHt9IiwKICAgICAgICAgICAgcHJvamVjdHMubGVuKCksCiAgICAgICAg
+ICAgIGxvYWRlZC5sZW4oKQogICAgICAgICk7CiAgICB9CgogICAgLy8gUkVROiBSRVEtMDEwIChS
+MTA6IG1pZ3JhdGlvbiBkZWxldGVzIHByb2plY3RzLnRvbWwpCiAgICAvLyBUMjE6IG1pZ3JhdGlv
+bl9kZWxldGVzX3Byb2plY3RzX3RvbWwKICAgICNbdGVzdF0KICAgIGZuIG1pZ3JhdGlvbl9kZWxl
+dGVzX3Byb2plY3RzX3RvbWwoKSB7CiAgICAgICAgbGV0IHRtcCA9IG1ha2Vfc2NvcmVfcm9vdCgp
+OwoKICAgICAgICAvLyBXcml0ZSBhIHN0YWxlIHByb2plY3RzLnRvbWwKICAgICAgICBsZXQgc3Rh
+bGUgPSB0bXAucGF0aCgpLmpvaW4oIi5hdyIpLmpvaW4oInByb2plY3RzLnRvbWwiKTsKICAgICAg
+ICBmczo6d3JpdGUoJnN0YWxlLCAiIyBvbGQgZmlsZVxuW1twcm9qZWN0c11dXG5uYW1lID0gXCJv
+bGRcIlxuIikudW53cmFwKCk7CiAgICAgICAgYXNzZXJ0IShzdGFsZS5leGlzdHMoKSwgInN0YWxl
+IHByb2plY3RzLnRvbWwgbXVzdCBleGlzdCBiZWZvcmUgc3luYyIpOwoKICAgICAgICBsZXQgcHJv
+amVjdHMgPSB2ZWMhW21ha2VfcHJvamVjdCgKICAgICAgICAgICAgIm5ldy1wcm9qIiwKICAgICAg
+ICAgICAgTGFuZ3VhZ2U6OlJ1c3QsCiAgICAgICAgICAgIFNvbWUoImNhcmdvIHRlc3QgLXAgbmV3
+LXByb2oiKSwKICAgICAgICApXTsKICAgICAgICB3cml0ZV9wcm9qZWN0c19jb25maWcodG1wLnBh
+dGgoKSwgJnByb2plY3RzKS51bndyYXAoKTsKCiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAg
+IXN0YWxlLmV4aXN0cygpLAogICAgICAgICAgICAic3RhbGUgLmF3L3Byb2plY3RzLnRvbWwgbXVz
+dCBiZSBkZWxldGVkIGFmdGVyIHN1Y2Nlc3NmdWwgc3luYyIKICAgICAgICApOwogICAgfQoKICAg
+IC8vIFJFUTogUkVRLTAwOSAoUjk6IGNvbnN1bWVycyByZWFkIGZyb20gYXcudG9tbCBvbmx5KQog
+ICAgI1t0ZXN0XQogICAgZm4gbG9hZF9yZWFkc19mcm9tX2NvbmZpZ190b21sKCkgewogICAgICAg
+IGxldCB0bXAgPSBtYWtlX3Njb3JlX3Jvb3QoKTsKCiAgICAgICAgLy8gV3JpdGUgcHJvamVjdHMg
+dmlhIHdyaXRlX3Byb2plY3RzX2NvbmZpZwogICAgICAgIGxldCBwcm9qZWN0cyA9IHZlYyFbbWFr
+ZV9wcm9qZWN0KAogICAgICAgICAgICAibXktY3JhdGUiLAogICAgICAgICAgICBMYW5ndWFnZTo6
+UnVzdCwKICAgICAgICAgICAgU29tZSgiY2FyZ28gdGVzdCAtcCBteS1jcmF0ZSIpLAogICAgICAg
+ICldOwogICAgICAgIHdyaXRlX3Byb2plY3RzX2NvbmZpZyh0bXAucGF0aCgpLCAmcHJvamVjdHMp
+LnVud3JhcCgpOwoKICAgICAgICAvLyBsb2FkX3Byb2plY3RzIG11c3QgcmV0dXJuIGRhdGEgZnJv
+bSBhdy50b21sCiAgICAgICAgbGV0IGxvYWRlZCA9IGxvYWRfcHJvamVjdHModG1wLnBhdGgoKSku
+dW53cmFwKCk7CiAgICAgICAgYXNzZXJ0X2VxIShsb2FkZWQubGVuKCksIDEpOwogICAgICAgIGFz
+c2VydF9lcSEobG9hZGVkWzBdLm5hbWUsICJteS1jcmF0ZSIpOwogICAgfQoKICAgICNbdGVzdF0K
+ICAgIGZuIGR1cGxpY2F0ZV9wcm9qZWN0X3Jvd3NfcHJlc2VydmVfZXhpc3RpbmdfdGRfcGF0aF93
+aGVuX292ZXJyaWRlX29taXRzX2l0KCkgewogICAgICAgIGxldCB0bXAgPSBtYWtlX3Njb3JlX3Jv
+b3QoKTsKICAgICAgICB3cml0ZV9jb25maWdfZmlsZSgKICAgICAgICAgICAgdG1wLnBhdGgoKSwK
+ICAgICAgICAgICAgciMiCltbcHJvamVjdHNdXQpuYW1lID0gImpldCIKcGF0aCA9ICJhcHBzL2pl
+dCIKdGRfcGF0aCA9ICJhcHBzL2pldC90ZWNoLWRlc2lnbiIKbGFiZWwgPSAiYXBwOmpldCIKCltb
+cHJvamVjdHMud29ya3NwYWNlc11dCm5hbWUgPSAiamV0LWZ1bGwiCnBhdGhzID0gWyJhcHBzL2pl
+dC8qKiJdCnRhcmdldCA9ICJydXN0Igp0ZXN0X2NtZCA9ICJjYXJnbyB0ZXN0IC1wIGpldCAtcCBq
+ZXQtd2FzbSIKCltbcHJvamVjdHNdXQpuYW1lID0gImpldCIKcGF0aCA9ICJwcm9qZWN0cy9zdGFs
+ZS1qZXQtc3luYyIKCltbcHJvamVjdHMud29ya3NwYWNlc11dCm5hbWUgPSAiamV0IgpwYXRocyA9
+IFsiYXBwcy9qZXQvKioiXQp0YXJnZXQgPSAicnVzdCIKdGVzdF9jbWQgPSAiY2FyZ28gdGVzdCAt
+cCBqZXQiCiIjLAogICAgICAgICk7CgogICAgICAgIGxldCByb3dzID0gbG9hZF9wcm9qZWN0X2Nv
+bmZpZ19yb3dzKHRtcC5wYXRoKCkpLnVud3JhcCgpOwogICAgICAgIGxldCBqZXQgPSByb3dzLml0
+ZXIoKS5maW5kKHxyb3d8IHJvdy5uYW1lID09ICJqZXQiKS51bndyYXAoKTsKICAgICAgICBhc3Nl
+cnRfZXEhKGpldC5wYXRoLCAiYXBwcy9qZXQiKTsKICAgICAgICBhc3NlcnRfZXEhKGpldC50ZF9w
+YXRoLmFzX2RlcmVmKCksIFNvbWUoImFwcHMvamV0L3RlY2gtZGVzaWduIikpOwogICAgICAgIGFz
+c2VydF9lcSEoamV0LmxhYmVsLmFzX2RlcmVmKCksIFNvbWUoImFwcDpqZXQiKSk7CgogICAgICAg
+IGxldCBwcm9qZWN0cyA9IGxvYWRfcHJvamVjdHModG1wLnBhdGgoKSkudW53cmFwKCk7CiAgICAg
+ICAgbGV0IGpldCA9IHByb2plY3RzCiAgICAgICAgICAgIC5pdGVyKCkKICAgICAgICAgICAgLmZp
+bmQofHByb2plY3R8IHByb2plY3QubmFtZSA9PSAiamV0IikKICAgICAgICAgICAgLnVud3JhcCgp
+OwogICAgICAgIGFzc2VydF9lcSEoamV0LnBhdGgsIFBhdGhCdWY6OmZyb20oImFwcHMvamV0Iikp
+OwogICAgICAgIGFzc2VydF9lcSEoamV0LnRlY2hfZGVzaWduX2Rpci5hc19kZXJlZigpLCBTb21l
+KCJhcHBzL2pldC90ZWNoLWRlc2lnbiIpKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAgICAg
+ICBqZXQud29ya3NwYWNlc1swXS50ZXN0X2NtZC5hc19kZXJlZigpLAogICAgICAgICAgICBTb21l
+KCJjYXJnbyB0ZXN0IC1wIGpldCIpCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBm
+biBwcm9qZWN0X2F3X2Rpc2NvdmVyeV9leHBhbmRzX2xpYnNfc2luZ2xlX3N0YXJfcGF0dGVybnMo
+KSB7CiAgICAgICAgbGV0IHRtcCA9IG1ha2Vfc2NvcmVfcm9vdCgpOwogICAgICAgIGZzOjp3cml0
+ZSgKICAgICAgICAgICAgdG1wLnBhdGgoKS5qb2luKCJhdy50b21sIiksCiAgICAgICAgICAgIHIj
+IgpbYWdlbnRpY193b3JrZmxvdy5wcm9qZWN0c10KZGlzY292ZXIgPSBbImxpYnMvKi9hdy50b21s
+Il0KIiMsCiAgICAgICAgKQogICAgICAgIC51bndyYXAoKTsKICAgICAgICBsZXQgY29tcGFzcyA9
+IHRtcC5wYXRoKCkuam9pbigibGlicyIpLmpvaW4oImNvbXBhc3MiKTsKICAgICAgICBmczo6Y3Jl
+YXRlX2Rpcl9hbGwoJmNvbXBhc3MpLnVud3JhcCgpOwogICAgICAgIGZzOjp3cml0ZSgKICAgICAg
+ICAgICAgY29tcGFzcy5qb2luKFBST0pFQ1RfQVdfQ09ORklHX0ZJTEUpLAogICAgICAgICAgICBy
+IyIKW3Byb2plY3RdCm5hbWUgPSAiY29tcGFzcyIKYWxpYXNlcyA9IFsiY2NsYWItY29tcGFzcyJd
+CmNhcF9wYXRoID0gIlJFQURNRS5tZCIKCltbd29ya3NwYWNlc11dCm5hbWUgPSAiY29tcGFzcyIK
+cGF0aHMgPSBbIioqIl0KdGFyZ2V0ID0gInJ1c3QiCnRlc3RfY21kID0gImNhcmdvIHRlc3QgLXAg
+Y2NsYWItY29tcGFzcyIKIiMsCiAgICAgICAgKQogICAgICAgIC51bndyYXAoKTsKCiAgICAgICAg
+bGV0IHJvdyA9IHJlc29sdmVfcHJvamVjdF9jb25maWdfcm93KHRtcC5wYXRoKCksICJjY2xhYi1j
+b21wYXNzIikudW53cmFwKCk7CgogICAgICAgIGFzc2VydF9lcSEocm93Lm5hbWUsICJjb21wYXNz
+Iik7CiAgICAgICAgYXNzZXJ0X2VxIShyb3cucGF0aCwgImxpYnMvY29tcGFzcyIpOwogICAgICAg
+IGFzc2VydF9lcSEocm93LmNhcF9wYXRoLmFzX2RlcmVmKCksIFNvbWUoImxpYnMvY29tcGFzcy9S
+RUFETUUubWQiKSk7CiAgICB9CgogICAgLy8gUkVROiBSRVEtMDA1IChSNTogY2hlY2tfZHJpZnQg
+ZGV0ZWN0cyBjaGFuZ2VzKQogICAgI1t0ZXN0XQogICAgZm4gY2hlY2tfZHJpZnRfcm91bmRfdHJp
+cCgpIHsKICAgICAgICBsZXQgdG1wID0gbWFrZV9zY29yZV9yb290KCk7CgogICAgICAgIC8vIENy
+ZWF0ZSBhIG1pbmltYWwgQ2FyZ28gcHJvamVjdCBzbyBkaXNjb3ZlcnkgZmluZHMgb25lIHByb2pl
+Y3QuCiAgICAgICAgbGV0IHByb2pfZGlyID0gdG1wLnBhdGgoKS5qb2luKCJjcmF0ZXMiKS5qb2lu
+KCJyb3VuZC10cmlwIik7CiAgICAgICAgZnM6OmNyZWF0ZV9kaXJfYWxsKCZwcm9qX2RpcikudW53
+cmFwKCk7CiAgICAgICAgZnM6OndyaXRlKAogICAgICAgICAgICBwcm9qX2Rpci5qb2luKCJDYXJn
+by50b21sIiksCiAgICAgICAgICAgICJbcGFja2FnZV1cbm5hbWUgPSBcInJvdW5kLXRyaXBcIlxu
+IiwKICAgICAgICApCiAgICAgICAgLnVud3JhcCgpOwoKICAgICAgICAvLyBEaXNjb3ZlciBhbmQg
+d3JpdGUgdG8gYXcudG9tbC4KICAgICAgICBsZXQgZGlzY292ZXJlZCA9IGRpc2NvdmVyX3Byb2pl
+Y3RzKHRtcC5wYXRoKCkpLnVud3JhcCgpOwogICAgICAgIHdyaXRlX3Byb2plY3RzX2NvbmZpZyh0
+bXAucGF0aCgpLCAmZGlzY292ZXJlZCkudW53cmFwKCk7CgogICAgICAgIC8vIGNoZWNrX2RyaWZ0
+IHNob3VsZCBkZXRlY3Qgbm8gZGlmZmVyZW5jZS4KICAgICAgICBsZXQgZHJpZnQgPSBjaGVja19k
+cmlmdCh0bXAucGF0aCgpKS51bndyYXAoKTsKICAgICAgICBhc3NlcnQhKGRyaWZ0LmlzX25vbmUo
+KSwgImV4cGVjdGVkIG5vIGRyaWZ0IGFmdGVyIHJvdW5kLXRyaXAgd3JpdGUiKTsKICAgIH0KCiAg
+ICAvLyBSRVE6IFJFUS0wMTEgKFIxMTogLS1jaGVjayAvIGNoZWNrX2RyaWZ0IHRhcmdldHMgYXcu
+dG9tbCkKICAgICNbdGVzdF0KICAgIGZuIGNoZWNrX2RyaWZ0X25vX3dyaXRlKCkgewogICAgICAg
+IGxldCB0bXAgPSBtYWtlX3Njb3JlX3Jvb3QoKTsKCiAgICAgICAgLy8gV3JpdGUgYW4gYXcudG9t
+bCB3aXRoIGEgc3RhbGUgZW50cnkgdGhhdCB3b24ndCBtYXRjaCBmcmVzaCBkaXNjb3ZlcnkKICAg
+ICAgICB3cml0ZV9jb25maWdfZmlsZSgKICAgICAgICAgICAgdG1wLnBhdGgoKSwKICAgICAgICAg
+ICAgJmZvcm1hdCEoInt9XG5cbltbcHJvamVjdHNdXVxubmFtZSA9IFwic3RhbGUtcHJvalwiXG5w
+YXRoID0gXCJjcmF0ZXMvc3RhbGUtcHJvalwiXG5cbltbcHJvamVjdHMud29ya3NwYWNlc11dXG5u
+YW1lID0gXCJzdGFsZS1wcm9qXCJcbnBhdGhzID0gW1wiY3JhdGVzL3N0YWxlLXByb2ovKipcIl1c
+bnRhcmdldCA9IFwicnVzdFwiXG5cbnt9XG4iLCBTWU5DX0JFR0lOX01BUktFUiwgU1lOQ19FTkRf
+TUFSS0VSKSwKICAgICAgICApOwoKICAgICAgICBsZXQgZHJpZnQgPSBjaGVja19kcmlmdCh0bXAu
+cGF0aCgpKS51bndyYXAoKTsKICAgICAgICBhc3NlcnQhKAogICAgICAgICAgICBkcmlmdC5pc19z
+b21lKCksCiAgICAgICAgICAgICJleHBlY3RlZCBkcmlmdCB3aGVuIGF3LnRvbWwgZGlmZmVycyBm
+cm9tIGZyZXNoIGRpc2NvdmVyeSIKICAgICAgICApOwoKICAgICAgICAvLyBhdy50b21sIG11c3Qg
+Tk9UIGJlIG1vZGlmaWVkIGJ5IGNoZWNrX2RyaWZ0CiAgICAgICAgbGV0IHBhdGggPSB0bXAucGF0
+aCgpLmpvaW4oImF3LnRvbWwiKTsKICAgICAgICBsZXQgY29udGVudCA9IGZzOjpyZWFkX3RvX3N0
+cmluZygmcGF0aCkudW53cmFwKCk7CiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgY29udGVu
+dC5jb250YWlucygic3RhbGUtcHJvaiIpLAogICAgICAgICAgICAiY2hlY2tfZHJpZnQgbXVzdCBu
+b3QgbW9kaWZ5IGF3LnRvbWwiCiAgICAgICAgKTsKICAgIH0KCiAgICAvLyBSRVE6IFJFUS0wMTEg
+KFIxMTogY2hlY2tfZHJpZnQgcmV0dXJucyBTb21lIHdoZW4gY29udGVudCBkaWZmZXJzKQogICAg
+I1t0ZXN0XQogICAgZm4gY2hlY2tfZHJpZnRfZXhpdHNfbm9uemVyb19vbl9kaWZmKCkgewogICAg
+ICAgIGxldCB0bXAgPSBtYWtlX3Njb3JlX3Jvb3QoKTsKCiAgICAgICAgLy8gV3JpdGUgYW4gYXcu
+dG9tbCB0aGF0IHdvbid0IG1hdGNoIGZyZXNoIGRpc2NvdmVyeSAobm8gcmVhbCBkaXJzKQogICAg
+ICAgIHdyaXRlX2NvbmZpZ19maWxlKAogICAgICAgICAgICB0bXAucGF0aCgpLAogICAgICAgICAg
+ICAmZm9ybWF0ISgie31cblxuW1twcm9qZWN0c11dXG5uYW1lID0gXCJnaG9zdFwiXG5wYXRoID0g
+XCJjcmF0ZXMvZ2hvc3RcIlxuXG5bW3Byb2plY3RzLndvcmtzcGFjZXNdXVxubmFtZSA9IFwiZ2hv
+c3RcIlxucGF0aHMgPSBbXCJjcmF0ZXMvZ2hvc3QvKipcIl1cbnRhcmdldCA9IFwicnVzdFwiXG5c
+bnt9XG4iLCBTWU5DX0JFR0lOX01BUktFUiwgU1lOQ19FTkRfTUFSS0VSKSwKICAgICAgICApOwoK
+ICAgICAgICBsZXQgZHJpZnQgPSBjaGVja19kcmlmdCh0bXAucGF0aCgpKS51bndyYXAoKTsKICAg
+ICAgICBhc3NlcnQhKAogICAgICAgICAgICBkcmlmdC5pc19zb21lKCksCiAgICAgICAgICAgICJj
+aGVja19kcmlmdCBzaG91bGQgcmV0dXJuIFNvbWUgd2hlbiBjb250ZW50IGRpZmZlcnMgKGRyaWZ0
+IGRldGVjdGVkKSIKICAgICAgICApOwogICAgfQoKICAgIC8vIFJFUTogUkVRLTAwMSAoUjE6IHdy
+aXRlIHRhcmdldCBpcyBhdy50b21sLCBkaWZmIHJlZmVyZW5jZXMgYXcudG9tbCkKICAgICNbdGVz
+dF0KICAgIGZuIGNoZWNrX2RyaWZ0X3JlZmVyZW5jZXNfY29uZmlnX3RvbWwoKSB7CiAgICAgICAg
+bGV0IHRtcCA9IG1ha2Vfc2NvcmVfcm9vdCgpOwoKICAgICAgICAvLyBTdGFsZSBhdy50b21sIHdp
+dGggYSBnaG9zdCBwcm9qZWN0CiAgICAgICAgd3JpdGVfY29uZmlnX2ZpbGUoCiAgICAgICAgICAg
+IHRtcC5wYXRoKCksCiAgICAgICAgICAgICZmb3JtYXQhKCJ7fVxuXG5bW3Byb2plY3RzXV1cbm5h
+bWUgPSBcImdob3N0MlwiXG5wYXRoID0gXCJjcmF0ZXMvZ2hvc3QyXCJcblxuW1twcm9qZWN0cy53
+b3Jrc3BhY2VzXV1cbm5hbWUgPSBcImdob3N0MlwiXG5wYXRocyA9IFtcImNyYXRlcy9naG9zdDIv
+KipcIl1cbnRhcmdldCA9IFwicnVzdFwiXG5cbnt9XG4iLCBTWU5DX0JFR0lOX01BUktFUiwgU1lO
+Q19FTkRfTUFSS0VSKSwKICAgICAgICApOwoKICAgICAgICBsZXQgZHJpZnQgPSBjaGVja19kcmlm
+dCh0bXAucGF0aCgpKS51bndyYXAoKS5leHBlY3QoImV4cGVjdGVkIGRyaWZ0Iik7CiAgICAgICAg
+YXNzZXJ0ISgKICAgICAgICAgICAgZHJpZnQuY29udGFpbnMoImF3LnRvbWwiKSwKICAgICAgICAg
+ICAgIi0tY2hlY2sgLyBjaGVja19kcmlmdCBvdXRwdXQgbXVzdCByZWZlcmVuY2UgYXcudG9tbCwg
+bm90IHByb2plY3RzLnRvbWw7IGdvdDpcbntkcmlmdH0iCiAgICAgICAgKTsKICAgIH0KfQoKLy8v
+IFByb2plY3QgZGVzY3JpcHRvciBjb25zdW1lZCBieSBgUHJvamVjdFJlZ2lzdHJ5OjpyZXNvbHZl
+X3RkX3Jvb3RgLgovLy8gTWF0ZXJpYWxpc2VkIGZyb20gYFtbcHJvamVjdHNdXWAgdGFibGUgcm93
+cyBpbiBgYXcudG9tbGAuCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNp
+Z24vY29yZS9zcGVjcy90ZC1yb290LXJlc29sdmVyLm1kI3NjaGVtYQojW2Rlcml2ZShEZWJ1Zywg
+Q2xvbmUsIFBhcnRpYWxFcSwgU2VyaWFsaXplLCBEZXNlcmlhbGl6ZSldCi8vLyBAc3BlYyBhcHBz
+L2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3By
+b2plY3RfcmVnaXN0cnkubWQjc291cmNlCnB1YiBzdHJ1Y3QgVGRSb290SW5wdXQgewogICAgLy8v
+IFByb2plY3QgbmFtZSAobWF0Y2hlcyBgW1twcm9qZWN0c11dLm5hbWVgKS4KICAgIHB1YiBuYW1l
+OiBTdHJpbmcsCiAgICAvLy8gT3B0aW9uYWwgcGVyLXByb2plY3QgcmVwby1yZWxhdGl2ZSBzcGVj
+IHJvb3Qgb3ZlcnJpZGUKICAgIC8vLyAobWF0Y2hlcyBgW1twcm9qZWN0c11dLnRkX3BhdGhgKS4K
+ICAgIC8vLyBXaGVuIG5vbi1udWxsIHRoaXMgdmFsdWUgd2lucyBvdmVyIHRoZSBwcm9qZWN0LWxv
+Y2FsIGNvbnZlbnRpb24uCiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgcHViIHRkX3BhdGg6IE9w
+dGlvbjxTdHJpbmc+LAogICAgLy8vIFByb2plY3Qgcm9vdCAobWF0Y2hlcyBgW1twcm9qZWN0c11d
+LnBhdGhgKS4gVXNlZCB0byBkZXJpdmUgdGhlCiAgICAvLy8gY29udmVudGlvbmFsIFREIHJvb3Qg
+d2hlbiBgdGRfcGF0aGAgaXMgbnVsbC4KICAgIHB1YiBzb3VyY2VfcGF0aDogU3RyaW5nLAp9Cgov
+Ly8gT3V0cHV0IG9mIGByZXNvbHZlX3RkX3Jvb3RgLgovLy8gQHNwZWMgYXBwcy9hZ2VudGljLXdv
+cmtmbG93L3RlY2gtZGVzaWduL2NvcmUvc3BlY3MvdGQtcm9vdC1yZXNvbHZlci5tZCNzY2hlbWEK
+I1tkZXJpdmUoRGVidWcsIENsb25lLCBQYXJ0aWFsRXEsIFNlcmlhbGl6ZSwgRGVzZXJpYWxpemUp
+XQovLy8gQHNwZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJm
+YWNlcy9zZXJ2aWNlcy9wcm9qZWN0X3JlZ2lzdHJ5Lm1kI3NvdXJjZQpwdWIgc3RydWN0IFRkUm9v
+dFJlc3VsdCB7CiAgICAvLy8gQWJzb2x1dGUgZmlsZXN5c3RlbSBwYXRoIHRvIHRoZSBwcm9qZWN0
+J3MgVEQgc3BlYyByb290LgogICAgcHViIHJvb3Q6IFN0cmluZywKICAgIC8vLyBJbmRpY2F0ZXMg
+d2hpY2ggcHJlY2VkZW5jZSBicmFuY2ggcmVzb2x2ZWQgdGhlIHBhdGguIFN1cmZhY2VkIGZvcgog
+ICAgLy8vIGRpYWdub3N0aWNzOyBjb25zdW1lcnMgTVVTVCBOT1QgYnJhbmNoIG9uIHRoaXMgdmFs
+dWUuCiAgICBwdWIgcHJlY2VkZW5jZTogU3RyaW5nLAp9CgovLy8gRmFpbHVyZSBtb2RlcyBvZiBg
+cmVzb2x2ZV90ZF9yb290YC4KLy8vIEBzcGVjIGFwcHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRl
+c2lnbi9jb3JlL3NwZWNzL3RkLXJvb3QtcmVzb2x2ZXIubWQjc2NoZW1hCiNbZGVyaXZlKERlYnVn
+LCBDbG9uZSwgUGFydGlhbEVxLCBTZXJpYWxpemUsIERlc2VyaWFsaXplKV0KLy8vIEBzcGVjIGFw
+cHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2lnbi9jb3JlL2ludGVyZmFjZXMvc2VydmljZXMv
+cHJvamVjdF9yZWdpc3RyeS5tZCNzb3VyY2UKcHViIHN0cnVjdCBUZFJlc29sdmVFcnJvciB7CiAg
+ICAvLy8gLSB1bmtub3duX3Byb2plY3Q6IHByb2plY3QgbmFtZSBub3QgaW4gYFtbcHJvamVjdHNd
+XWAgdGFibGUuCiAgICAvLy8gLSByZXRpcmVkX3RkX3BhdGg6IGB0ZF9wYXRoYCB0YXJnZXRzIHRo
+ZSByZXRpcmVkIHJlcG8tcm9vdCBgLmF3L2AgdHJlZS4KICAgIC8vLyAtIHRkX3BhdGhfZXNjYXBl
+c19yZXBvX3Jvb3Q6IGB0ZF9wYXRoYCByZXNvbHZlcyBvdXRzaWRlIHRoZSByZXBvCiAgICAvLy8g
+ICByb290IGFmdGVyIGNhbm9uaWNhbGlzYXRpb24gKGUuZy4gYC4uLy4uL3NvbWV0aGluZ2ApLgog
+ICAgLy8vIFByb2plY3QtbG9jYWwgZmFsbGJhY2sgZG9lcyBub3QgcmVxdWlyZSBnbG9iYWwgVEQg
+cGxhdGZvcm0gY29uZmlnLgogICAgcHViIGtpbmQ6IFN0cmluZywKICAgIHB1YiBtZXNzYWdlOiBT
+dHJpbmcsCn0KCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24vY29y
+ZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCmZuIGxleF9u
+b3JtYWxpemUocGF0aDogJnN0ZDo6cGF0aDo6UGF0aCkgLT4gc3RkOjpwYXRoOjpQYXRoQnVmIHsK
+ICAgIGxldCBtdXQgb3V0ID0gc3RkOjpwYXRoOjpQYXRoQnVmOjpuZXcoKTsKICAgIGZvciBjIGlu
+IHBhdGguY29tcG9uZW50cygpIHsKICAgICAgICBtYXRjaCBjIHsKICAgICAgICAgICAgc3RkOjpw
+YXRoOjpDb21wb25lbnQ6OlBhcmVudERpciA9PiB7CiAgICAgICAgICAgICAgICBvdXQucG9wKCk7
+CiAgICAgICAgICAgIH0KICAgICAgICAgICAgc3RkOjpwYXRoOjpDb21wb25lbnQ6OkN1ckRpciA9
+PiB7fQogICAgICAgICAgICBvdGhlciA9PiBvdXQucHVzaChvdGhlci5hc19vc19zdHIoKSksCiAg
+ICAgICAgfQogICAgfQogICAgb3V0Cn0KCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cv
+dGVjaC1kZXNpZ24vY29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQj
+c291cmNlCmltcGwgVGRSZXNvbHZlRXJyb3IgewogICAgZm4gdW5rbm93bl9wcm9qZWN0KG5hbWU6
+ICZzdHIpIC0+IFNlbGYgewogICAgICAgIFNlbGYgewogICAgICAgICAgICBraW5kOiAidW5rbm93
+bl9wcm9qZWN0Ii5pbnRvKCksCiAgICAgICAgICAgIG1lc3NhZ2U6IGZvcm1hdCEoInByb2plY3Qg
+J3tuYW1lfScgaXMgbm90IHJlZ2lzdGVyZWQgaW4gW1twcm9qZWN0c11dIiksCiAgICAgICAgfQog
+ICAgfQoKICAgIGZuIHRkX3BhdGhfZXNjYXBlc19yZXBvX3Jvb3QodGRfcGF0aDogJnN0cikgLT4g
+U2VsZiB7CiAgICAgICAgU2VsZiB7CiAgICAgICAgICAgIGtpbmQ6ICJ0ZF9wYXRoX2VzY2FwZXNf
+cmVwb19yb290Ii5pbnRvKCksCiAgICAgICAgICAgIG1lc3NhZ2U6IGZvcm1hdCEoInRkX3BhdGgg
+J3t0ZF9wYXRofScgcmVzb2x2ZXMgb3V0c2lkZSB0aGUgcmVwb3NpdG9yeSByb290IiksCiAgICAg
+ICAgfQogICAgfQoKICAgIGZuIHJldGlyZWRfdGRfcGF0aCh0ZF9wYXRoOiAmc3RyLCBzb3VyY2Vf
+cGF0aDogJnN0cikgLT4gU2VsZiB7CiAgICAgICAgbGV0IHJlcGxhY2VtZW50ID0gZGVmYXVsdF9w
+cm9qZWN0X3RkX3BhdGgoc291cmNlX3BhdGgpOwogICAgICAgIFNlbGYgewogICAgICAgICAgICBr
+aW5kOiAicmV0aXJlZF90ZF9wYXRoIi5pbnRvKCksCiAgICAgICAgICAgIG1lc3NhZ2U6IGZvcm1h
+dCEoCiAgICAgICAgICAgICAgICAidGRfcGF0aCAne3RkX3BhdGh9JyB0YXJnZXRzIHRoZSByZXRp
+cmVkIHJlcG8tcm9vdCAuYXcgdHJlZTsgcmVtb3ZlIHRoZSB0ZF9wYXRoIG92ZXJyaWRlIHRvIHVz
+ZSAne30nIiwKICAgICAgICAgICAgICAgIHJlcGxhY2VtZW50LmRpc3BsYXkoKQogICAgICAgICAg
+ICApLAogICAgICAgIH0KICAgIH0KfQoKLy8vIEBzcGVjIGFwcHMvYWdlbnRpYy13b3JrZmxvdy90
+ZWNoLWRlc2lnbi9jb3JlL2ludGVyZmFjZXMvc2VydmljZXMvcHJvamVjdF9yZWdpc3RyeS5tZCNz
+b3VyY2UKcHViIGZuIGRlZmF1bHRfcHJvamVjdF90ZF9wYXRoKHNvdXJjZV9wYXRoOiAmc3RyKSAt
+PiBzdGQ6OnBhdGg6OlBhdGhCdWYgewogICAgc3RkOjpwYXRoOjpQYXRoQnVmOjpmcm9tKHNvdXJj
+ZV9wYXRoKS5qb2luKCJ0ZWNoLWRlc2lnbiIpCn0KCi8vLyBSZXNvbHZlIHRoZSBURCBzcGVjIHJv
+b3QgZm9yIGBpbnB1dGAgYWdhaW5zdCBgcmVwb19yb290YC4KLy8vCi8vLyBQcmVjZWRlbmNlICht
+YXRjaGVzIHNwZWMgZmxvd2NoYXJ0KToKLy8vIDEuIElmIGBpbnB1dC50ZF9wYXRoYCBpcyBgU29t
+ZShwKWAg4oaSIGNhbmRpZGF0ZSA9IGByZXBvX3Jvb3Quam9pbihwKWAsIHByZWNlZGVuY2UgPSBg
+InRkX3BhdGgiYC4KLy8vIDIuIEVsc2Ug4oaSIGNhbmRpZGF0ZSA9IGByZXBvX3Jvb3Quam9pbihp
+bnB1dC5zb3VyY2VfcGF0aCkuam9pbigidGVjaC1kZXNpZ24iKWAsCi8vLyAgICBwcmVjZWRlbmNl
+ID0gYCJwcm9qZWN0X3BhdGgiYC4KLy8vCi8vLyBBZnRlciBjb21wb3NpbmcgYGNhbmRpZGF0ZWAs
+IGNhbm9uaWNhbGlzZSBhbmQgdmVyaWZ5IGl0IHN0YXlzIGluc2lkZQovLy8gYHJlcG9fcm9vdGAg
+KGRlZmVuZHMgYWdhaW5zdCBgLi4vYCBlc2NhcGVzKS4gQ2Fub25pY2FsaXNhdGlvbiBmYWxscyBi
+YWNrCi8vLyB0byBsZXhpY2FsIGNvbnRhaW5tZW50IHdoZW4gdGhlIGNhbmRpZGF0ZSBkb2VzIG5v
+dCB5ZXQgZXhpc3Qgb24gZGlzayDigJQKLy8vIHRoZSByZXNvbHZlciBydW5zIGR1cmluZyBgYXcg
+dGQgaW5pdGAgYmVmb3JlIHRoZSBzcGVjIGRpciBpcyBjcmVhdGVkLgovLy8KLy8vIEBzcGVjIGFw
+cHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2lnbi9jb3JlL3NwZWNzL3RkLXJvb3QtcmVzb2x2
+ZXIubWQjbG9naWMKLy8vIEBzcGVjIGFwcHMvYWdlbnRpYy13b3JrZmxvdy90ZWNoLWRlc2lnbi9j
+b3JlL2ludGVyZmFjZXMvc2VydmljZXMvcHJvamVjdF9yZWdpc3RyeS5tZCNzb3VyY2UKcHViIGZu
+IHJlc29sdmVfdGRfcm9vdCgKICAgIGlucHV0OiAmVGRSb290SW5wdXQsCiAgICBfZ2xvYmFsX2Jh
+c2U6IE9wdGlvbjwmc3RyPiwKICAgIHJlcG9fcm9vdDogJnN0ZDo6cGF0aDo6UGF0aCwKKSAtPiBz
+dGQ6OnJlc3VsdDo6UmVzdWx0PFRkUm9vdFJlc3VsdCwgVGRSZXNvbHZlRXJyb3I+IHsKICAgIGlm
+IGxldCBTb21lKHRkX3BhdGgpID0gaW5wdXQudGRfcGF0aC5hc19kZXJlZigpIHsKICAgICAgICBp
+ZiBzdGQ6OnBhdGg6OlBhdGg6Om5ldyh0ZF9wYXRoKQogICAgICAgICAgICAuY29tcG9uZW50cygp
+CiAgICAgICAgICAgIC5uZXh0KCkKICAgICAgICAgICAgLmlzX3NvbWVfYW5kKHxjb21wb25lbnR8
+IGNvbXBvbmVudC5hc19vc19zdHIoKSA9PSAiLmF3IikKICAgICAgICB7CiAgICAgICAgICAgIHJl
+dHVybiBFcnIoVGRSZXNvbHZlRXJyb3I6OnJldGlyZWRfdGRfcGF0aCh0ZF9wYXRoLCAmaW5wdXQu
+c291cmNlX3BhdGgpKTsKICAgICAgICB9CiAgICB9CgogICAgbGV0IChjYW5kaWRhdGUsIHByZWNl
+ZGVuY2UpID0gaWYgbGV0IFNvbWUodGRfcGF0aCkgPSBpbnB1dC50ZF9wYXRoLmFzX2RlcmVmKCkg
+ewogICAgICAgIChyZXBvX3Jvb3Quam9pbih0ZF9wYXRoKSwgInRkX3BhdGgiKQogICAgfSBlbHNl
+IHsKICAgICAgICAoCiAgICAgICAgICAgIHJlcG9fcm9vdC5qb2luKGRlZmF1bHRfcHJvamVjdF90
+ZF9wYXRoKCZpbnB1dC5zb3VyY2VfcGF0aCkpLAogICAgICAgICAgICAicHJvamVjdF9wYXRoIiwK
+ICAgICAgICApCiAgICB9OwoKICAgIC8vIExleGljYWwgY29udGFpbm1lbnQgY2hlY2sg4oCUIHRo
+ZSBzcGVjIG9ubHkgcmVxdWlyZXMgZGVmZW5kaW5nIGFnYWluc3QKICAgIC8vIGAuLi9gIGVzY2Fw
+ZSBzZXF1ZW5jZXMuIEZpbGVzeXN0ZW0gY2Fub25pY2FsaXNhdGlvbiBpcyB1bnJlbGlhYmxlIGhl
+cmUKICAgIC8vIGJlY2F1c2UgdGhlIGNhbmRpZGF0ZSBtYXkgbm90IGV4aXN0IHlldCAocmVzb2x2
+ZXIgcnVucyBkdXJpbmcKICAgIC8vIGBhdyB0ZCBpbml0YCwgYmVmb3JlIHRoZSBzcGVjIGRpcmVj
+dG9yeSBpcyBjcmVhdGVkKSBhbmQgYmVjYXVzZQogICAgLy8gbWFjT1MgcmVzb2x2ZXMgYC92YXIv
+Li4uYCDihpIgYC9wcml2YXRlL3Zhci8uLi5gIGFzeW1tZXRyaWNhbGx5LgogICAgbGV0IG5vcm1h
+bGl6ZWRfcm9vdCA9IGxleF9ub3JtYWxpemUocmVwb19yb290KTsKICAgIGxldCBub3JtYWxpemVk
+X2NhbmRpZGF0ZSA9IGxleF9ub3JtYWxpemUoJmNhbmRpZGF0ZSk7CgogICAgaWYgIW5vcm1hbGl6
+ZWRfY2FuZGlkYXRlLnN0YXJ0c193aXRoKCZub3JtYWxpemVkX3Jvb3QpIHsKICAgICAgICBsZXQg
+ZGlzcGxheSA9IGlucHV0CiAgICAgICAgICAgIC50ZF9wYXRoCiAgICAgICAgICAgIC5hc19kZXJl
+ZigpCiAgICAgICAgICAgIC5tYXAoc3RyOjp0b19zdHJpbmcpCiAgICAgICAgICAgIC51bndyYXBf
+b3JfZWxzZSh8fCB7CiAgICAgICAgICAgICAgICBkZWZhdWx0X3Byb2plY3RfdGRfcGF0aCgmaW5w
+dXQuc291cmNlX3BhdGgpCiAgICAgICAgICAgICAgICAgICAgLnRvX3N0cmluZ19sb3NzeSgpCiAg
+ICAgICAgICAgICAgICAgICAgLmludG9fb3duZWQoKQogICAgICAgICAgICB9KQogICAgICAgICAg
+ICAudG9fc3RyaW5nKCk7CiAgICAgICAgcmV0dXJuIEVycihUZFJlc29sdmVFcnJvcjo6dGRfcGF0
+aF9lc2NhcGVzX3JlcG9fcm9vdCgmZGlzcGxheSkpOwogICAgfQoKICAgIE9rKFRkUm9vdFJlc3Vs
+dCB7CiAgICAgICAgcm9vdDogY2FuZGlkYXRlLnRvX3N0cmluZ19sb3NzeSgpLmludG9fb3duZWQo
+KSwKICAgICAgICBwcmVjZWRlbmNlOiBwcmVjZWRlbmNlLmludG8oKSwKICAgIH0pCn0KCi8vLyBD
+b252ZW5pZW5jZSB3cmFwcGVyOiBsb2FkIGBhdy50b21sYCwgbG9vayB1cCB0aGUgcHJvamVjdCBi
+eQovLy8gbmFtZSwgYW5kIGRpc3BhdGNoIHRvIGByZXNvbHZlX3RkX3Jvb3RgLiBSZWFkcyBvbmx5
+IHRoZSBuYXJyb3cKLy8vIHByb2plY3Rpb24gbmVlZGVkIChgW1twcm9qZWN0c11dLntuYW1lLGFs
+aWFzZXMscGF0aCx0ZF9wYXRofWApIHRvIHN0YXkgZGVjb3VwbGVkIGZyb20gdGhlIGJyb2FkZXIK
+Ly8vIGBQcm9qZWN0YCBzY2hlbWEuCi8vLwovLy8gQHNwZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93
+L3RlY2gtZGVzaWduL2NvcmUvc3BlY3MvdGQtcm9vdC1yZXNvbHZlci5tZCNsb2dpYwovLy8gQHNw
+ZWMgYXBwcy9hZ2VudGljLXdvcmtmbG93L3RlY2gtZGVzaWduL2NvcmUvaW50ZXJmYWNlcy9zZXJ2
+aWNlcy9wcm9qZWN0X3JlZ2lzdHJ5Lm1kI3NvdXJjZQpwdWIgZm4gcmVzb2x2ZV90ZF9yb290X2Zy
+b21fY29uZmlnKAogICAgcmVwb19yb290OiAmc3RkOjpwYXRoOjpQYXRoLAogICAgcHJvamVjdF9u
+YW1lOiAmc3RyLAopIC0+IHN0ZDo6cmVzdWx0OjpSZXN1bHQ8VGRSb290UmVzdWx0LCBUZFJlc29s
+dmVFcnJvcj4gewogICAgbGV0IHJvdyA9IHJlc29sdmVfcHJvamVjdF9jb25maWdfcm93KHJlcG9f
+cm9vdCwgcHJvamVjdF9uYW1lKQogICAgICAgIC5tYXBfZXJyKHxffCBUZFJlc29sdmVFcnJvcjo6
+dW5rbm93bl9wcm9qZWN0KHByb2plY3RfbmFtZSkpPzsKCiAgICBsZXQgaW5wdXQgPSBUZFJvb3RJ
+bnB1dCB7CiAgICAgICAgbmFtZTogcm93Lm5hbWUsCiAgICAgICAgdGRfcGF0aDogcm93LnRkX3Bh
+dGgsCiAgICAgICAgc291cmNlX3BhdGg6IHJvdy5wYXRoLAogICAgfTsKCiAgICByZXNvbHZlX3Rk
+X3Jvb3QoJmlucHV0LCBOb25lLCByZXBvX3Jvb3QpCn0KCg==
+```
+
+### Source Partition 0002
+<!-- aw-source-partition: index=2 count=2 bytes=4377 payload_bytes=5912 encoding=base64 digest=sha256:5cc7f3d9d0cc27730fb366b2755fdb8a9e8923d1f6816e4196ddf295192e5a17 boundary=ast terminal_newline=true -->
+
+```text
+I1tjZmcodGVzdCldCi8vLyBAc3BlYyBhcHBzL2FnZW50aWMtd29ya2Zsb3cvdGVjaC1kZXNpZ24v
+Y29yZS9pbnRlcmZhY2VzL3NlcnZpY2VzL3Byb2plY3RfcmVnaXN0cnkubWQjc291cmNlCm1vZCBy
+ZXNvbHZlcl90ZXN0cyB7CiAgICB1c2Ugc3VwZXI6Oio7CiAgICB1c2Ugc3RkOjpwYXRoOjpQYXRo
+QnVmOwogICAgdXNlIHRlbXBmaWxlOjpUZW1wRGlyOwoKICAgIGZuIHJlcG8oKSAtPiBUZW1wRGly
+IHsKICAgICAgICBUZW1wRGlyOjpuZXcoKS51bndyYXAoKQogICAgfQoKICAgIGZuIHByb2plY3Rf
+cm93KHBhdGg6ICZzdHIsIGxhYmVsOiBPcHRpb248JnN0cj4pIC0+IFByb2plY3RDb25maWdSb3cg
+ewogICAgICAgIFByb2plY3RDb25maWdSb3cgewogICAgICAgICAgICBuYW1lOiAiZGVtbyIudG9f
+c3RyaW5nKCksCiAgICAgICAgICAgIGFsaWFzZXM6IFZlYzo6bmV3KCksCiAgICAgICAgICAgIHBh
+dGg6IHBhdGgudG9fc3RyaW5nKCksCiAgICAgICAgICAgIHRkX3BhdGg6IE5vbmUsCiAgICAgICAg
+ICAgIGFydGlmYWN0X21vZGVsOiBOb25lLAogICAgICAgICAgICBjYXBfcGF0aDogTm9uZSwKICAg
+ICAgICAgICAgbGFiZWw6IGxhYmVsLm1hcChzdHI6OnRvX3N0cmluZyksCiAgICAgICAgfQogICAg
+fQoKICAgICNbdGVzdF0KICAgIGZuIHByb2plY3RfbGFiZWxfY2Fub25pY2FsaXphdGlvbl91c2Vz
+X3BhdGhfb25seV9mb3JfcmV0aXJlZF9wcmVmaXhlcygpIHsKICAgICAgICBhc3NlcnRfZXEhKAog
+ICAgICAgICAgICBwcm9qZWN0X3JvdygibGlicy9kZW1vIiwgU29tZSgicHJvamVjdDpkZW1vIikp
+LmxhYmVsX29yX2RlZmF1bHQoKSwKICAgICAgICAgICAgImxpYjpkZW1vIgogICAgICAgICk7CiAg
+ICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgcHJvamVjdF9yb3coImxpYnMvZGVtbyIsIFNv
+bWUoInByb2plY3Q6d3JvbmctbmFtZSIpKS5sYWJlbF9vcl9kZWZhdWx0KCksCiAgICAgICAgICAg
+ICJsaWI6ZGVtbyIKICAgICAgICApOwogICAgICAgIGFzc2VydF9lcSEoCiAgICAgICAgICAgIHBy
+b2plY3Rfcm93KCJwcm9qZWN0cy9tYW1iYS9tYW1iYWxpYnMvZGVtbyIsIFNvbWUoInByb2plY3Q6
+ZGVtbyIpKS5sYWJlbF9vcl9kZWZhdWx0KCksCiAgICAgICAgICAgICJsaWI6ZGVtbyIKICAgICAg
+ICApOwogICAgICAgIGFzc2VydF9lcSEoCiAgICAgICAgICAgIHByb2plY3Rfcm93KCJhcHBzL2Rl
+bW8iLCBTb21lKCJwcm9qZWN0OmRlbW8iKSkubGFiZWxfb3JfZGVmYXVsdCgpLAogICAgICAgICAg
+ICAiYXBwOmRlbW8iCiAgICAgICAgKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAgICAgICBw
+cm9qZWN0X3JvdygibGlicy9kZW1vIiwgU29tZSgicHJvamVjdDoiKSkubGFiZWxfb3JfZGVmYXVs
+dCgpLAogICAgICAgICAgICAibGliOmRlbW8iCiAgICAgICAgKTsKICAgICAgICBhc3NlcnRfZXEh
+KAogICAgICAgICAgICBwcm9qZWN0X3JvdygibGlicy9kZW1vIiwgTm9uZSkubGFiZWxfb3JfZGVm
+YXVsdCgpLAogICAgICAgICAgICAibGliOmRlbW8iCiAgICAgICAgKTsKICAgICAgICBhc3NlcnRf
+ZXEhKAogICAgICAgICAgICBwcm9qZWN0X3JvdygiYXBwcy9kZW1vIiwgU29tZSgiYXBwOmN1c3Rv
+bS1kZW1vIikpLmxhYmVsX29yX2RlZmF1bHQoKSwKICAgICAgICAgICAgImFwcDpjdXN0b20tZGVt
+byIKICAgICAgICApOwogICAgICAgIGFzc2VydF9lcSEoCiAgICAgICAgICAgIHByb2plY3Rfcm93
+KCJsaWJzL2RlbW8iLCBTb21lKCJsaWI6Y3VzdG9tLWRlbW8iKSkubGFiZWxfb3JfZGVmYXVsdCgp
+LAogICAgICAgICAgICAibGliOmN1c3RvbS1kZW1vIgogICAgICAgICk7CiAgICAgICAgYXNzZXJ0
+X2VxISgKICAgICAgICAgICAgcHJvamVjdF9yb3coImNyYXRlcy9kZW1vIiwgU29tZSgiY3JhdGU6
+bGVnYWN5LWRlbW8iKSkubGFiZWxfb3JfZGVmYXVsdCgpLAogICAgICAgICAgICAiY3JhdGU6bGVn
+YWN5LWRlbW8iCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiB0ZF9wYXRoX3dp
+bnNfd2hlbl9zZXQoKSB7CiAgICAgICAgbGV0IHRtcCA9IHJlcG8oKTsKICAgICAgICBsZXQgaW5w
+dXQgPSBUZFJvb3RJbnB1dCB7CiAgICAgICAgICAgIG5hbWU6ICJzZGQiLmludG8oKSwKICAgICAg
+ICAgICAgdGRfcGF0aDogU29tZSgiYXBwcy9jZ2RiL3RlY2hfZGVzaWduIi5pbnRvKCkpLAogICAg
+ICAgICAgICBzb3VyY2VfcGF0aDogImFwcHMvY2dkYiIuaW50bygpLAogICAgICAgIH07CiAgICAg
+ICAgbGV0IG91dCA9IHJlc29sdmVfdGRfcm9vdCgmaW5wdXQsIFNvbWUoInRlY2gtZGVzaWduIiks
+IHRtcC5wYXRoKCkpLnVud3JhcCgpOwogICAgICAgIGFzc2VydF9lcSEob3V0LnByZWNlZGVuY2Us
+ICJ0ZF9wYXRoIik7CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgUGF0aEJ1Zjo6ZnJv
+bSgmb3V0LnJvb3QpLAogICAgICAgICAgICB0bXAucGF0aCgpLmpvaW4oImFwcHMvY2dkYi90ZWNo
+X2Rlc2lnbiIpCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBmYWxsc19iYWNr
+X3RvX3Byb2plY3RfdGVjaF9kZXNpZ24oKSB7CiAgICAgICAgbGV0IHRtcCA9IHJlcG8oKTsKICAg
+ICAgICBsZXQgaW5wdXQgPSBUZFJvb3RJbnB1dCB7CiAgICAgICAgICAgIG5hbWU6ICJzZGQiLmlu
+dG8oKSwKICAgICAgICAgICAgdGRfcGF0aDogTm9uZSwKICAgICAgICAgICAgc291cmNlX3BhdGg6
+ICJhcHBzL2FnZW50aWMtd29ya2Zsb3ciLmludG8oKSwKICAgICAgICB9OwogICAgICAgIGxldCBv
+dXQgPSByZXNvbHZlX3RkX3Jvb3QoJmlucHV0LCBTb21lKCJ0ZWNoLWRlc2lnbiIpLCB0bXAucGF0
+aCgpKS51bndyYXAoKTsKICAgICAgICBhc3NlcnRfZXEhKG91dC5wcmVjZWRlbmNlLCAicHJvamVj
+dF9wYXRoIik7CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgUGF0aEJ1Zjo6ZnJvbSgm
+b3V0LnJvb3QpLAogICAgICAgICAgICB0bXAucGF0aCgpLmpvaW4oImFwcHMvYWdlbnRpYy13b3Jr
+Zmxvdy90ZWNoLWRlc2lnbiIpCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBk
+b2VzX25vdF9yZXF1aXJlX2dsb2JhbF9iYXNlX2Zvcl9wcm9qZWN0X2ZhbGxiYWNrKCkgewogICAg
+ICAgIGxldCB0bXAgPSByZXBvKCk7CiAgICAgICAgbGV0IGlucHV0ID0gVGRSb290SW5wdXQgewog
+ICAgICAgICAgICBuYW1lOiAieCIuaW50bygpLAogICAgICAgICAgICB0ZF9wYXRoOiBOb25lLAog
+ICAgICAgICAgICBzb3VyY2VfcGF0aDogIngiLmludG8oKSwKICAgICAgICB9OwogICAgICAgIGxl
+dCBvdXQgPSByZXNvbHZlX3RkX3Jvb3QoJmlucHV0LCBOb25lLCB0bXAucGF0aCgpKS51bndyYXAo
+KTsKICAgICAgICBhc3NlcnRfZXEhKFBhdGhCdWY6OmZyb20ob3V0LnJvb3QpLCB0bXAucGF0aCgp
+LmpvaW4oIngvdGVjaC1kZXNpZ24iKSk7CiAgICB9CgogICAgI1t0ZXN0XQogICAgZm4gZXJyb3Jz
+X3doZW5fdGRfcGF0aF9lc2NhcGVzX3JlcG9fcm9vdCgpIHsKICAgICAgICBsZXQgdG1wID0gcmVw
+bygpOwogICAgICAgIGxldCBpbnB1dCA9IFRkUm9vdElucHV0IHsKICAgICAgICAgICAgbmFtZTog
+IngiLmludG8oKSwKICAgICAgICAgICAgdGRfcGF0aDogU29tZSgiLi4vZXNjYXBlIi5pbnRvKCkp
+LAogICAgICAgICAgICBzb3VyY2VfcGF0aDogIngiLmludG8oKSwKICAgICAgICB9OwogICAgICAg
+IGxldCBlcnIgPSByZXNvbHZlX3RkX3Jvb3QoJmlucHV0LCBTb21lKCJ0ZWNoLWRlc2lnbiIpLCB0
+bXAucGF0aCgpKS51bndyYXBfZXJyKCk7CiAgICAgICAgYXNzZXJ0X2VxIShlcnIua2luZCwgInRk
+X3BhdGhfZXNjYXBlc19yZXBvX3Jvb3QiKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiByZWpl
+Y3RzX3JldGlyZWRfYXdfdGRfcGF0aF93aXRoX3Byb2plY3RfbG9jYWxfcmVtZWRpYXRpb24oKSB7
+CiAgICAgICAgbGV0IHJlcG8gPSByZXBvKCk7CiAgICAgICAgbGV0IGlucHV0ID0gVGRSb290SW5w
+dXQgewogICAgICAgICAgICBuYW1lOiAia2VlcCIuaW50bygpLAogICAgICAgICAgICB0ZF9wYXRo
+OiBTb21lKCIuYXcvdGVjaC1kZXNpZ24vcHJvamVjdHMva2VlcCIuaW50bygpKSwKICAgICAgICAg
+ICAgc291cmNlX3BhdGg6ICJhcHBzL2tlZXAiLmludG8oKSwKICAgICAgICB9OwoKICAgICAgICBs
+ZXQgZXJyID0gcmVzb2x2ZV90ZF9yb290KCZpbnB1dCwgTm9uZSwgcmVwby5wYXRoKCkpLnVud3Jh
+cF9lcnIoKTsKCiAgICAgICAgYXNzZXJ0X2VxIShlcnIua2luZCwgInJldGlyZWRfdGRfcGF0aCIp
+OwogICAgICAgIGFzc2VydCEoZXJyLm1lc3NhZ2UuY29udGFpbnMoInJlbW92ZSB0aGUgdGRfcGF0
+aCBvdmVycmlkZSIpKTsKICAgICAgICBhc3NlcnQhKGVyci5tZXNzYWdlLmNvbnRhaW5zKCJhcHBz
+L2tlZXAvdGVjaC1kZXNpZ24iKSk7CiAgICB9Cn0KLy8gQ09ERUdFTi1FTkQK
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

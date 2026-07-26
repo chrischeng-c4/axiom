@@ -4021,4 +4021,107 @@ async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and
     assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
+/// #2416: a public TD authoring command must reject a retired repo-root
+/// `.aw/` TD override before it mutates Git, the issue working copy, or either
+/// the retired/project-local TD trees. The emitted diagnostic names both a
+/// stable error kind and the exact project-local remediation.
+#[tokio::test]
+async fn td_create_rejects_retired_aw_td_path_without_mutation() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let git = agentic_workflow::git::find_git_bin()
+        .expect("production-required #2416 gate needs git on PATH");
+    let aw_bin = std::env::var("CARGO_BIN_EXE_aw")
+        .expect("production-required #2416 gate needs the real aw test binary");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "keep"
+path = "apps/keep"
+td_path = ".aw/tech-design/projects/keep"
+label = "app:keep"
+
+[[projects.workspaces]]
+name = "keep"
+paths = ["apps/keep/**", ".aw/tech-design/projects/keep/**"]
+target = "rust"
+"#,
+    )
+    .unwrap();
+    commit_all(&git, root);
+
+    let slug = "retired-keep-td-root";
+    seed_847_open_issue(root, slug, td_phase::TD_INITED, "unused.md").await;
+    let backend = LocalBackend::from_project_root(root);
+    let mut issue = backend.get(slug).await.unwrap().unwrap();
+    issue.labels = vec!["app:keep".to_string()];
+    issue.phase = None;
+    issue.implements.clear();
+    backend.write(&issue).await.unwrap();
+
+    let issue_before = format!("{:?}", backend.get(slug).await.unwrap().unwrap());
+    let head_before = git_bytes_1635(&git, root, &["rev-parse", "HEAD"]);
+    let index_before = git_bytes_1635(&git, root, &["write-tree"]);
+    let cached_before = git_bytes_1635(&git, root, &["diff", "--cached", "--raw", "-z"]);
+    let status_before = git_bytes_1635(&git, root, &["status", "--porcelain=v1", "-z"]);
+    let retired_td = root.join(".aw/tech-design/projects/keep");
+    let project_td = root.join("apps/keep/tech-design");
+    assert!(!retired_td.exists());
+    assert!(!project_td.exists());
+
+    let output = Command::new(&aw_bin)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .env("AW_DISABLE_CAP", "1")
+        .args(["td", "create", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td create");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert!(
+        !output.status.success(),
+        "retired .aw TD override must fail closed:\n{combined}"
+    );
+    assert!(
+        combined.contains("retired_td_path"),
+        "diagnostic must expose the typed retired-path error:\n{combined}"
+    );
+    assert!(
+        combined.contains("remove the td_path override")
+            && combined.contains("apps/keep/tech-design"),
+        "diagnostic must name the exact project-local remediation:\n{combined}"
+    );
+
+    assert_eq!(
+        head_before,
+        git_bytes_1635(&git, root, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(index_before, git_bytes_1635(&git, root, &["write-tree"]));
+    assert_eq!(
+        cached_before,
+        git_bytes_1635(&git, root, &["diff", "--cached", "--raw", "-z"])
+    );
+    assert_eq!(
+        status_before,
+        git_bytes_1635(&git, root, &["status", "--porcelain=v1", "-z"])
+    );
+    assert_eq!(
+        issue_before,
+        format!("{:?}", backend.get(slug).await.unwrap().unwrap())
+    );
+    assert!(!retired_td.exists(), "retired TD tree was created");
+    assert!(!project_td.exists(), "project-local TD tree was mutated");
+}
 // CODEGEN-END

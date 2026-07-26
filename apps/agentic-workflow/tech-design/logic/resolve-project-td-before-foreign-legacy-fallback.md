@@ -65,7 +65,8 @@ changes:
   - path: apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
     action: modify
     section: source
-    impl_mode: codegen
+    impl_mode: hand-written
+    description: Describe the project-before-legacy regression without claiming whole-file ownership; the td_no_merge_test source snapshot is the sole CODEGEN owner.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->

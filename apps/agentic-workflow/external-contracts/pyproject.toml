@@ -2148,6 +2148,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "keep-project-local-td-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing.py"
+promise = "Keep project-local TD routing: `python3 apps/agentic-workflow/external-contracts/src/keep_td_routing_config_oracle.py`; `cargo test -p agentic-workflow --test cli_tests td_create_rejects_retired_aw_td_path_without_mutation -- --nocapture`; `cargo test -p agentic-workflow --lib rejects_retired_aw_td_path_with_project_local_remediation -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md; the independent config oracle pins Keep's canonical root row and workspace scope, the real public TD authoring boundary rejects retired `.aw` routing without Git/TD/tracker mutation, and the shared resolver emits an exact project-local remediation"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:keep-project-local-td-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: python3 apps/agentic-workflow/external-contracts/src/keep_td_routing_config_oracle.py; cargo test -p agentic-workflow --test cli_tests td_create_rejects_retired_aw_td_path_without_mutation -- --nocapture; cargo test -p agentic-workflow --lib rejects_retired_aw_td_path_with_project_local_remediation -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing"
 artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing"
 capability_id = "project-local-td-and-ec-gates"

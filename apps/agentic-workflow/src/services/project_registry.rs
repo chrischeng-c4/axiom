@@ -93,6 +93,7 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
 }
 
 /// Root-level AW config path: `{repo}/aw.toml`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn root_aw_config_path(root: &Path) -> PathBuf {
     config_path(root)
 }
@@ -100,6 +101,7 @@ pub fn root_aw_config_path(root: &Path) -> PathBuf {
 /// Public row projection used by commands that need project identity fields
 /// (`aliases`, tracker label, capability path) without depending on the full
 /// `Project` model.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfigRow {
     pub name: String,
@@ -111,6 +113,7 @@ pub struct ProjectConfigRow {
     pub label: Option<String>,
 }
 
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 impl ProjectConfigRow {
     pub fn matches(&self, requested: &str) -> bool {
         self.name == requested || self.aliases.iter().any(|alias| alias == requested)
@@ -145,6 +148,7 @@ impl ProjectConfigRow {
 /// Load project identity rows from root `aw.toml` and discovered project-local
 /// `aw.toml` files. Later sources override earlier
 /// ones by project name, matching `load_projects`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> {
     let mut rows = Vec::new();
 
@@ -168,6 +172,7 @@ pub fn load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> {
     Ok(dedupe_project_rows(rows))
 }
 
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn resolve_project_config_row(root: &Path, requested: &str) -> Result<ProjectConfigRow> {
     load_project_config_rows(root)?
         .into_iter()
@@ -1102,6 +1107,7 @@ pub struct TdRootResult {
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdResolveError {
     /// - unknown_project: project name not in `[[projects]]` table.
+    /// - retired_td_path: `td_path` targets the retired repo-root `.aw/` tree.
     /// - td_path_escapes_repo_root: `td_path` resolves outside the repo
     ///   root after canonicalisation (e.g. `../../something`).
     /// Project-local fallback does not require global TD platform config.
@@ -1139,6 +1145,17 @@ impl TdResolveError {
             message: format!("td_path '{td_path}' resolves outside the repository root"),
         }
     }
+
+    fn retired_td_path(td_path: &str, source_path: &str) -> Self {
+        let replacement = default_project_td_path(source_path);
+        Self {
+            kind: "retired_td_path".into(),
+            message: format!(
+                "td_path '{td_path}' targets the retired repo-root .aw tree; remove the td_path override to use '{}'",
+                replacement.display()
+            ),
+        }
+    }
 }
 
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
@@ -1165,6 +1182,16 @@ pub fn resolve_td_root(
     _global_base: Option<&str>,
     repo_root: &std::path::Path,
 ) -> std::result::Result<TdRootResult, TdResolveError> {
+    if let Some(td_path) = input.td_path.as_deref() {
+        if std::path::Path::new(td_path)
+            .components()
+            .next()
+            .is_some_and(|component| component.as_os_str() == ".aw")
+        {
+            return Err(TdResolveError::retired_td_path(td_path, &input.source_path));
+        }
+    }
+
     let (candidate, precedence) = if let Some(td_path) = input.td_path.as_deref() {
         (repo_root.join(td_path), "td_path")
     } else {
@@ -1342,6 +1369,22 @@ mod resolver_tests {
         };
         let err = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap_err();
         assert_eq!(err.kind, "td_path_escapes_repo_root");
+    }
+
+    #[test]
+    fn rejects_retired_aw_td_path_with_project_local_remediation() {
+        let repo = repo();
+        let input = TdRootInput {
+            name: "keep".into(),
+            td_path: Some(".aw/tech-design/projects/keep".into()),
+            source_path: "apps/keep".into(),
+        };
+
+        let err = resolve_td_root(&input, None, repo.path()).unwrap_err();
+
+        assert_eq!(err.kind, "retired_td_path");
+        assert!(err.message.contains("remove the td_path override"));
+        assert!(err.message.contains("apps/keep/tech-design"));
     }
 }
 // CODEGEN-END

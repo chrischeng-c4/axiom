@@ -145,8 +145,8 @@ changes:
   - path: apps/agentic-workflow/src/services/project_registry.rs
     action: modify
     section: logic
-    impl_mode: codegen
-    description: "Parse, expose, and merge spec_model compatibility values without allowing them to select legacy EC/TD."
+    impl_mode: hand-written
+    description: "Describe spec_model compatibility behavior without claiming whole-file ownership; the project-registry source snapshot is the sole CODEGEN owner."
   - path: apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md
     action: modify
     section: source
