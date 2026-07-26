@@ -366,6 +366,12 @@ leader to name. Re-asking with `x-read-consistency: any` returns a document the
 follower never received directly, so the log replicated *and* the state machine
 applied it.
 
+This is now a **permanent leg of the GKE acceptance**, not a one-off kind
+session: `verify-lumen.sh` applies a `lumen-quorum` CR whose name differs from
+the binary on every `lumen sift` run and fails the run if the peer list, the
+leader/follower split, or the follower read regresses — closing the fixture
+blind spot that let the bug through. First green: run `0726053353` below.
+
 `replication_lag_ms` is deliberately not cited above. `lumen.rs:2676` stores
 `0` on a leader and `u64::MAX` on anything else unconditionally, because
 `RaftHost` exposes no peer-timing RPC and a fabricated figure would be worse
@@ -386,6 +392,77 @@ service 1, before Tape run `0723135853`). The machine-readable capability
 contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
 lands. Harness: `benchmarks/gcp-operator-acceptance` (mode noted per run).
+
+### GKE acceptance run 0726053353 (2026-07-26, PASSED — #2610 peer DNS on a managed cluster + Wave 1 rows 5/7)
+
+Full two-service digest-mode run (GHCR `sha-7745ba935d20` images, zero Cloud
+Build; harness `ACCEPTANCE_APPS='lumen sift'` at `a2a45ea9b3ea`). Every prior
+leg re-passed — reconcile 1×1, pod-restart retention, admission exposure, GCS
+backup before split, cold restore onto a fresh PVC, seed-set restart
+retention, auto-split 1→2, and the #2457 auth+CSI stack — alongside the full
+Sift phase (CRI collector, Lumen structured stdout materialized, scheduled
+backup) and both operator cells.
+
+**#2610 on a managed cluster.** The kind proof above used a CR named `quorum`;
+this run adds the case the acceptance fixtures had never covered, which is why
+the bug survived them. `lumen-quorum` — `replicasPerShard: 2`, `voterCount: 2`,
+CR name deliberately ≠ the binary name — reported:
+
+```json
+{"issue":"#2610","cr":"lumen-quorum","leader":"lumen-quorum-0",
+ "follower":"lumen-quorum-1","replicated_read":"passed"}
+```
+
+The leg asserts the peer list is exactly `["lumen-quorum-0","lumen-quorum-1"]`
+(the pre-fix build produced `lumen-0`/`lumen-1` → NXDOMAIN), then requires one
+`leader` and one `follower`, writes a document through the leader, and reads it
+back **off the follower** with `x-read-consistency: any`. Election alone would
+not have been proof; committing and replicating is. Teardown removes the CR,
+StatefulSet, and both `raft-lumen-quorum-*` PVCs.
+
+Why the acceptance was blind to this: multi-member CRs were named after the
+binary (`lumen/lumen`, `tape/tape`), and the differently-named CRs
+(`lumen-restore`, `lumen-authcsi`) are single-replica, where `--wal auto`
+picks embedded WAL and no peer is ever addressed. Neither had both properties
+at once.
+
+**Row 5 (#2601) and row 7 (#2602/#2532) re-confirmed on GKE**, not only kind.
+The `lumen` CR carried all three conditions with distinct carry-forward
+timestamps (`Ready=True/AllReplicasReady` and `ReshardInProgress` holding
+`05:35:02Z` while `Ready` moved to `05:35:32Z`), and
+`lumen-system/lumen-operator` ran `spec.replicas=2` / `readyReplicas=2` on the
+pinned digest — with the lease genuinely changing hands between two
+simultaneously-live pods (`…mbz67` → `…j4pj7`), which a single-replica
+deployment cannot exhibit.
+
+**Row 6 (#2603) is deliberately absent from this run.** The acceptance cluster
+reports `addonsConfig.networkPolicyConfig.disabled = true` and no Dataplane V2
+(re-verified this run), so it would have *accepted* a NetworkPolicy and
+enforced nothing — a green with no meaning. That row stays proven on kind +
+Calico above, and this is recorded so nobody "fixes" the gap by applying the
+object here.
+
+Cleanup: `Destroy complete! Resources: 9 destroyed`, and zero buckets, service
+accounts, secrets, or namespaces bearing the run id remain. Evidence root:
+`/tmp/axiom-gcp-operator-evidence/0726053353/`
+(`kubernetes/lumen-quorum-*`, `lumen-acceptance.json`).
+
+> **Harness trap that cost a run.** The first attempt, `0726052225`, aborted at
+> `terraform apply` having created nothing. Two defects, both introduced by the
+> tape-mode refactor `ce6635f57a` and both reachable **only** in the default
+> `lumen sift` mode — which is why the two tape runs that followed stayed green
+> and hid them: (1) `terraform_apply_var_args` was populated only in tape mode
+> and then expanded bare, and macOS bash 3.2 under `set -u` treats an *empty*
+> array expansion as an unbound variable; (2) `LUMEN_AUTHCSI_SECRET_ID` lost its
+> assignment and export while both readers survived. Fixed in `a2a45ea9b3`.
+> Before re-running, the lumen path was re-proven without spending cloud time:
+> `terraform validate` plus a read-only `terraform plan` (the cluster is a data
+> source, so the stack only creates bucket/secret/bindings), and a static
+> unbound-variable scan over the whole call chain — itself validated by
+> confirming it flags defect 2 on the pre-fix tree. Second trap, on the
+> operator side: invoking `run.sh | tee` masks its exit code, so the aborted run
+> was *reported* as exit 0 even though the harness's `run_completed` sentinel
+> had correctly forced a failure. Redirect, don't pipe.
 
 ### GKE acceptance run 0724105144 (2026-07-24, PASSED — auth+CSI Secret Manager stack proven, #2457/#2456)
 
