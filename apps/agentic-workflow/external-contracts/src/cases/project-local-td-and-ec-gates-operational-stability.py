@@ -2,10 +2,10 @@
 
 CASE_ID = "project-local-td-and-ec-gates-operational-stability"
 CAPABILITY_ID = "project-local-td-and-ec-gates"
-USE_CASE_ID = "cb-generation-and-standardize-scan-defaults"
+USE_CASE_ID = "project-local-td-and-ec-gates-operational-stability"
 DIMENSION = "stability"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
-ASSERTIONS = ("project-local-td-and-ec-gates reports identical non-zero passed and zero-failed totals across two executions",)
+ASSERTIONS = ("two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and routes",)
 
 
 def verify() -> list[str]:

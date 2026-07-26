@@ -13,9 +13,6 @@ CASE_IDS = {
     "td-cb-lifecycle-automation-chain-liveness-proof",
     "td-cb-lifecycle-automation-chain-liveness-retry",
     "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle",
-    "td-cb-lifecycle-automation-hand-written-complete-evidence-gate",
-    "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate",
-    "td-cb-lifecycle-automation-hand-written-partial-evidence-gate",
     "td-cb-lifecycle-automation-remove-td-merge-command",
     "td-generation-target-ownership-inferred-single-real-cli",
     "td-generation-target-ownership-real-cli",
@@ -66,17 +63,6 @@ def verify(case_id: str) -> list[str]:
         return [
             "aw td merge is absent from the real clap tree",
             "parsing the retired verb returns an unrecognized-subcommand failure",
-        ]
-    if case_id in {
-        "td-cb-lifecycle-automation-hand-written-complete-evidence-gate",
-        "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate",
-        "td-cb-lifecycle-automation-hand-written-partial-evidence-gate",
-    }:
-        handwrite = snapshot["ownership"]["HANDWRITE-BEGIN/END"]
-        assert handwrite["owner"] == "tech_design"
-        return [
-            "HANDWRITE ownership requires gap, tracker, and reason evidence",
-            "partial or zero implementation evidence cannot satisfy the terminal ownership contract",
         ]
     if case_id == "td-generation-target-ownership-inferred-single-real-cli":
         assert td["identity"]["artifact_path"] == td["evidence"][0]

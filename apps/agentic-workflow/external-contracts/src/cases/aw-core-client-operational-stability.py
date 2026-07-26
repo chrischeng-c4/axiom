@@ -2,10 +2,10 @@
 
 CASE_ID = "aw-core-client-operational-stability"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
-USE_CASE_ID = "agent-first-cli-product-model"
+USE_CASE_ID = "aw-core-client-operational-stability"
 DIMENSION = "stability"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability"
-ASSERTIONS = ("aw-core-client-model-workitem-first-artifact-lifecycle reports identical non-zero passed and zero-failed totals across two executions",)
+ASSERTIONS = ("two fresh native Python prompt and runner scenarios preserve identical prompt documentation and typed lifecycle invariants",)
 
 
 def verify() -> list[str]:

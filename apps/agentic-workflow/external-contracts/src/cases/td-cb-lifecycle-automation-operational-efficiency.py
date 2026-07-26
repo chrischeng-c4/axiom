@@ -2,10 +2,10 @@
 
 CASE_ID = "td-cb-lifecycle-automation-operational-efficiency"
 CAPABILITY_ID = "td-cb-lifecycle-automation"
-USE_CASE_ID = "td-lifecycle-dispatch"
+USE_CASE_ID = "td-cb-lifecycle-automation-operational-efficiency"
 DIMENSION = "efficiency"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
-ASSERTIONS = ("td-cb-lifecycle-automation completes its representative gate within 120 seconds with at least one passed and zero failed tests",)
+ASSERTIONS = ("the native Python red-to-green terminal EC scenario completes within 120 seconds without cargo delegation",)
 
 
 def verify() -> list[str]:

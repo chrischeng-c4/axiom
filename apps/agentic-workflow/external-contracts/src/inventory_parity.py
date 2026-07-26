@@ -1,93 +1,18 @@
-"""Prove the canonical Python inventory preserves every legacy EC contract."""
+"""Prove the canonical Python inventory and case sources agree exactly."""
 
 from __future__ import annotations
 
 import ast
+import json
 import tomllib
 from pathlib import Path
 
 
 EC_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = EC_ROOT.parent
+MANIFEST_PATH = Path(__file__).with_name("migration_reconciliation_manifest.json")
 RUNNER_PREFIX = (
     "python3 apps/agentic-workflow/external-contracts/src/runner.py --case "
 )
-OPERATIONAL_CONTRACTS = {
-    "aw-core-client": (
-        "aw-core-client-model-workitem-first-artifact-lifecycle",
-        "agent-first-cli-product-model",
-        "cargo test -p agentic-workflow --lib "
-        "agent_first_product_contracts_reject_removed_architecture -- --nocapture",
-    ),
-    "capability-control-plane": (
-        "capability-control-plane",
-        "markdown-capability-schema",
-        "cargo test -p agentic-workflow --lib markdown_capability_tables "
-        "-- --nocapture",
-    ),
-    "existing-project-standardization": (
-        "existing-project-standardization",
-        "brownfield-takeover-surface",
-        "cargo test -p agentic-workflow --test cli_tests "
-        "standardize_subcommands_registered -- --nocapture",
-    ),
-    "manual-evidence-artifacts": (
-        "manual-evidence-artifacts",
-        "manual-runner-output-convention",
-        "cargo test -p agentic-workflow --lib "
-        "ec_doc_gen_writes_manual_from_inventory -- --nocapture",
-    ),
-    "project-local-td-and-ec-gates": (
-        "project-local-td-and-ec-gates",
-        "cb-generation-and-standardize-scan-defaults",
-        "cargo test -p agentic-workflow --lib "
-        "cb_gen_force_regen_defaults_td_root_to_project_tech_design "
-        "-- --nocapture",
-    ),
-    "td-cb-lifecycle-automation": (
-        "td-cb-lifecycle-automation",
-        "td-lifecycle-dispatch",
-        "cargo test -p agentic-workflow --lib "
-        "td_branch_activation_only_uses_main -- --nocapture",
-    ),
-    "work-item-planning": (
-        "work-item-planning",
-        "epic-to-change-atomization",
-        "cargo test -p agentic-workflow --lib "
-        "prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture",
-    ),
-}
-REQUIRED_OPERATIONAL_CASES = {
-    f"{prefix}-operational-{dimension}"
-    for prefix in OPERATIONAL_CONTRACTS
-    for dimension in ("efficiency", "stability")
-}
-MIGRATED_LEGACY_OVERRIDES = {
-    "ec-artifact-producer-cli-fixture": {
-        "command": (
-            "cargo test -p agentic-workflow --test ec_python_inventory_check "
-            "ec_python_draft_creates_only_python_scaffold_and_checks_clean "
-            "-- --nocapture"
-        ),
-        "assertions": (
-            "aw ec draft creates the canonical Python pyproject, runner, and "
-            "bounded case module without Markdown fallback",
-            "draft emits aw.cli.v1 with the exact aw ec check continuation",
-            "the generated Python inventory preserves the requested capability "
-            "and passes structural check",
-        ),
-    },
-    "external-fixture-reports-advisory-gap": {
-        "command": (
-            "cargo test -p agentic-workflow --test cli_tests "
-            "regenerability_gaps_are_advisory_when_production_gates_clean "
-            "-- --nocapture"
-        ),
-    },
-    "jet-health-verification-dedup-smoke": {
-        "use_case_id": "project-health-no-regression",
-    },
-}
 
 
 def _case_constants(path: Path) -> dict[str, object]:
@@ -98,91 +23,87 @@ def _case_constants(path: Path) -> dict[str, object]:
             continue
         target = node.targets[0]
         if isinstance(target, ast.Name):
-            values[target.id] = ast.literal_eval(node.value)
+            try:
+                values[target.id] = ast.literal_eval(node.value)
+            except ValueError:
+                continue
     return values
 
 
 def main() -> None:
-    legacy_document = tomllib.loads(
-        (PROJECT_ROOT / "aw.toml").read_text(encoding="utf-8")
-    )
     python_document = tomllib.loads(
         (EC_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
-    legacy_cases = {
-        case["id"]: case
-        for case in legacy_document["aw"]["ec"]["generated"]["cases"]
-    }
-    python_cases = {
-        case["id"]: case
-        for case in python_document["tool"]["aw"]["python-ec"]["cases"]
-    }
-    assert legacy_cases.keys() <= python_cases.keys()
-    claim_reconciliation_cases = {
-        case_id
-        for case_id in python_cases
-        if case_id.startswith("claim-closure-")
-    }
-    assert (
-        python_cases.keys() - legacy_cases.keys()
-        == REQUIRED_OPERATIONAL_CASES | claim_reconciliation_cases
-    )
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    cases = python_document["tool"]["aw"]["python-ec"]["cases"]
+    python_cases = {str(case["id"]): case for case in cases}
+    assert len(python_cases) == len(cases), "duplicate Python EC case id"
 
-    for case_id, legacy in legacy_cases.items():
-        canonical = python_cases[case_id]
-        migration_override = MIGRATED_LEGACY_OVERRIDES.get(case_id, {})
-        expected_command = migration_override.get("command", legacy["command"])
-        expected_assertions = migration_override.get(
-            "assertions", tuple(legacy["assertions"])
-        )
-        expected_use_case_id = migration_override.get(
-            "use_case_id", legacy["claim_id"]
-        )
-        assert canonical["capability_id"] == legacy["capability_id"]
-        assert canonical["use_case_id"] == expected_use_case_id
-        assert canonical["dimension"] == legacy["category"]
-        assert canonical["promise"] == "; ".join(expected_assertions)
+    rust_invariant_ids = {
+        str(case["id"])
+        for cluster in manifest["clusters"]
+        for case in cluster["cases"]
+        if case["migration_status"] == "rust_invariant"
+    }
+    assert rust_invariant_ids.isdisjoint(python_cases)
+
+    dimensions: dict[str, int] = {}
+    for case_id, canonical in python_cases.items():
+        dimension = str(canonical["dimension"])
+        dimensions[dimension] = dimensions.get(dimension, 0) + 1
+        assert dimension in {"behavior", "efficiency", "security", "stability"}
         assert canonical["target"] == "rust"
+        assert canonical["command"] == f"{RUNNER_PREFIX}{case_id}"
+        assert "cargo test" not in canonical["command"]
+        assert not str(canonical["test_path"]).startswith(
+            "apps/agentic-workflow/tests/"
+        )
 
-        command_prefix = f"{RUNNER_PREFIX}{case_id} -- "
-        assert canonical["command"].startswith(command_prefix)
-        assert canonical["command"][len(command_prefix) :] == expected_command
-
-        source = _case_constants(EC_ROOT / canonical["test_path"])
+        source_path = EC_ROOT / str(canonical["test_path"])
+        source = _case_constants(source_path)
+        extended_constants = {
+            "CAPABILITY_ID",
+            "USE_CASE_ID",
+            "DIMENSION",
+            "TARGET_COMMAND",
+            "ASSERTIONS",
+        }
         assert source["CASE_ID"] == case_id
-        assert source["CAPABILITY_ID"] == legacy["capability_id"]
-        assert source["USE_CASE_ID"] == expected_use_case_id
-        assert source["DIMENSION"] == legacy["category"]
-        assert source["LEGACY_TEST_PATH"] == legacy["test_path"]
-        assert source["TARGET_COMMAND"] == expected_command
-        assert source["ASSERTIONS"] == expected_assertions
-
-    for prefix, (capability_id, use_case_id, target_command) in (
-        OPERATIONAL_CONTRACTS.items()
-    ):
-        for dimension in ("efficiency", "stability"):
-            case_id = f"{prefix}-operational-{dimension}"
-            canonical = python_cases[case_id]
-            assert canonical["capability_id"] == capability_id
-            assert canonical["use_case_id"] == use_case_id
-            assert canonical["dimension"] == dimension
-            command_prefix = (
-                f"{RUNNER_PREFIX}{case_id} --mode {dimension} "
-                "--threshold-seconds 120 -- "
-            )
-            assert canonical["command"] == command_prefix + target_command
-
-            source = _case_constants(EC_ROOT / canonical["test_path"])
-            assert source["CASE_ID"] == case_id
-            assert source["CAPABILITY_ID"] == capability_id
-            assert source["USE_CASE_ID"] == use_case_id
+        projected_constants = extended_constants.intersection(source)
+        assert projected_constants in (set(), extended_constants), (
+            f"{case_id} has a partial inventory projection: "
+            f"{sorted(projected_constants)}"
+        )
+        if projected_constants:
+            assert source["CAPABILITY_ID"] == canonical["capability_id"]
+            assert source["USE_CASE_ID"] == canonical["use_case_id"]
             assert source["DIMENSION"] == dimension
-            assert source["TARGET_COMMAND"] == target_command
+            assert source["TARGET_COMMAND"] == canonical["command"]
+            assert tuple(source["ASSERTIONS"])
+        assert any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "verify"
+            for node in ast.parse(
+                source_path.read_text(encoding="utf-8"),
+                filename=str(source_path),
+            ).body
+        )
 
+        if "-operational-" in case_id:
+            assert canonical["use_case_id"] == case_id, (
+                f"{case_id} operational use_case_id must be case-local, got "
+                f"{canonical['use_case_id']}"
+            )
+        if dimension in {"efficiency", "stability"}:
+            assert canonical.get("threshold")
+
+    assert dimensions.get("behavior", 0) > 0
+    assert dimensions.get("efficiency", 0) > 0
+    assert dimensions.get("stability", 0) > 0
     print(
-        f"preserved {len(legacy_cases)} legacy case identities, applied "
-        f"{len(MIGRATED_LEGACY_OVERRIDES)} explicit compatibility corrections, "
-        f"and added {len(REQUIRED_OPERATIONAL_CASES)} required operational cases"
+        f"canonical Python inventory is self-consistent: {len(python_cases)} "
+        f"cases, {len(rust_invariant_ids)} separately retained Rust invariants, "
+        f"dimensions={json.dumps(dimensions, sort_keys=True)}"
     )
 
 

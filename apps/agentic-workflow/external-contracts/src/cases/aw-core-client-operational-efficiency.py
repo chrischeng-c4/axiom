@@ -2,10 +2,10 @@
 
 CASE_ID = "aw-core-client-operational-efficiency"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
-USE_CASE_ID = "agent-first-cli-product-model"
+USE_CASE_ID = "aw-core-client-operational-efficiency"
 DIMENSION = "efficiency"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency"
-ASSERTIONS = ("aw-core-client-model-workitem-first-artifact-lifecycle completes its representative gate within 120 seconds with at least one passed and zero failed tests",)
+ASSERTIONS = ("the native Python prompt and runner scenario completes within 120 seconds with representative assertions and no cargo delegation",)
 
 
 def verify() -> list[str]:

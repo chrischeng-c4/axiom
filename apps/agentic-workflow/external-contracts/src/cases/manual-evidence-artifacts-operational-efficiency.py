@@ -2,10 +2,10 @@
 
 CASE_ID = "manual-evidence-artifacts-operational-efficiency"
 CAPABILITY_ID = "manual-evidence-artifacts"
-USE_CASE_ID = "manual-runner-output-convention"
+USE_CASE_ID = "manual-evidence-artifacts-operational-efficiency"
 DIMENSION = "efficiency"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
-ASSERTIONS = ("manual-evidence-artifacts completes its representative gate within 120 seconds with at least one passed and zero failed tests",)
+ASSERTIONS = ("the native Python EC scaffold and evidence scenario completes within 120 seconds without cargo delegation",)
 
 
 def verify() -> list[str]:

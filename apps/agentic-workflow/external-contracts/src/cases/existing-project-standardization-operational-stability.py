@@ -2,10 +2,10 @@
 
 CASE_ID = "existing-project-standardization-operational-stability"
 CAPABILITY_ID = "existing-project-standardization"
-USE_CASE_ID = "brownfield-takeover-surface"
+USE_CASE_ID = "existing-project-standardization-operational-stability"
 DIMENSION = "stability"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability"
-ASSERTIONS = ("existing-project-standardization reports identical non-zero passed and zero-failed totals across two executions",)
+ASSERTIONS = ("two fresh native Python existing-project health scenarios preserve stable readiness axes and gate identities",)
 
 
 def verify() -> list[str]:

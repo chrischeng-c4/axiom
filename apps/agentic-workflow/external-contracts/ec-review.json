@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:acb306f93156e5e738894764ee3e825e481902dee73ef4498a321524bd91fef3",
+  "source_digest": "sha256:fcecbba6397c96680534bf90ed0708d496def062c5eb5b95ddae0563b364d9d9",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:codex-review:external-2512-acb306f9",
-  "reviewed_at": "2026-07-26T15:13:18.189638+00:00",
-  "summary": "The revised claim no longer overclaims direct API coverage and the EC concretely exercises dry-run labels, courier JSON payload labels, and credential-free fallback URL labels. Inventory validation is clean for all 221 cases; reviewed assertions and independent public-boundary oracles close the prior dry-run-only false-green.",
+  "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
+  "reviewed_at": "2026-07-26T19:50:48.078134+00:00",
+  "summary": "Accepted after complete review of the 44-case Python inventory and 75 separately retained Rust invariants. All 44 case promises match their concrete native verifier scenarios; the 28 behavior, 8 efficiency, and 8 stability cases close the required dimensions. Operational evidence derives DIMENSION from case source, enforces the efficiency threshold, and records two independent stability attempts with assertion digests. Inventory parity, claim reconciliation, all 12 migration clusters, projection, guidance, structural EC check, and negative reconciliation tests are clean with zero cargo-test delegation, legacy test_path, synthetic claim cases, or projected Rust invariants.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

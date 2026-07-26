@@ -12,7 +12,6 @@ from typing import Any, Iterator
 
 from wi_contract_fixture import (
     AW_BINARY,
-    REPOSITORY_ROOT,
     _ensure_aw_binary,
     final_json,
     project_fixture,
@@ -24,10 +23,8 @@ CASE_IDS = {
     "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
     "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec",
     "terminal-ec-cross-process-single-flight-real-cli",
-    "terminal-ec-fast-green-stale-reader-real-cli",
     "terminal-ec-no-child-wrapper-real-cli",
     "terminal-ec-retry-transition-lease-real-cli",
-    "terminal-touched-codegen-red-repair-green",
     "td-cb-lifecycle-automation-operational-efficiency",
     "td-cb-lifecycle-automation-operational-stability",
 }
@@ -240,23 +237,6 @@ def _single_flight(*, with_wi: bool, mode: str) -> dict[str, Any]:
         }
 
 
-def _source_guards() -> str:
-    source = (REPOSITORY_ROOT / "apps/agentic-workflow/src/cli/cb.rs").read_text(
-        encoding="utf-8"
-    )
-    for token in (
-        "terminal_ec_single_flight",
-        "terminal_ec_timeout",
-        "AW_TEST_TERMINAL_EC_AFTER_INITIAL_ISSUE_READ_BARRIER_DIR",
-        "AW_TEST_TERMINAL_EC_AFTER_PHASE_UPDATE_BARRIER_DIR",
-        "terminal_touched_codegen_findings",
-        "terminal_touched_codegen_drift",
-        'next": { "command": format!("aw cb gen {slug}") }',
-    ):
-        assert token in source
-    return source
-
-
 def verify(case_id: str) -> list[str]:
     if case_id not in CASE_IDS:
         raise AssertionError(f"case is not owned by td-terminal: {case_id}")
@@ -286,14 +266,6 @@ def verify(case_id: str) -> list[str]:
         return [
             "two real AW processes contend on one project EC lease",
             "the duplicate returns promptly and exactly one Python EC process launches",
-        ]
-    if case_id == "terminal-ec-fast-green-stale-reader-real-cli":
-        source = _source_guards()
-        assert "terminal_ec_test_barrier_after_initial_issue_read(slug)?" in source
-        assert "backend.get(slug).await?" in source
-        return [
-            "the terminal path exposes a bounded post-read race seam",
-            "phase is re-read under the terminal lease before EC execution",
         ]
     if case_id == "terminal-ec-no-child-wrapper-real-cli":
         _ensure_aw_binary()
@@ -331,15 +303,6 @@ def verify(case_id: str) -> list[str]:
         return [
             "a retry contends on the same in-flight Python EC lease",
             "the owner alone reaches the exact WI close continuation",
-        ]
-    if case_id == "terminal-touched-codegen-red-repair-green":
-        source = _source_guards()
-        assert source.index(
-            "let codegen_findings = match terminal_touched_codegen_findings("
-        ) < source.index("// EC gate (issue #858")
-        return [
-            "touched CODEGEN parity is evaluated before terminal EC execution",
-            "drift is scoped to accepted claims and emits the exact aw cb gen repair",
         ]
     if case_id == "td-cb-lifecycle-automation-operational-efficiency":
         _red_green_snapshot()

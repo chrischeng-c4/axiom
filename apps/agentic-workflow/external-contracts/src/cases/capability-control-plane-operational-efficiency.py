@@ -2,10 +2,10 @@
 
 CASE_ID = "capability-control-plane-operational-efficiency"
 CAPABILITY_ID = "capability-control-plane"
-USE_CASE_ID = "markdown-capability-schema"
+USE_CASE_ID = "capability-control-plane-operational-efficiency"
 DIMENSION = "efficiency"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
-ASSERTIONS = ("capability-control-plane completes its representative gate within 120 seconds with at least one passed and zero failed tests",)
+ASSERTIONS = ("the native Python capability init, report, and sweep scenario completes within 120 seconds without cargo delegation",)
 
 
 def verify() -> list[str]:

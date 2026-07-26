@@ -2,10 +2,10 @@
 
 CASE_ID = "td-cb-lifecycle-automation-operational-stability"
 CAPABILITY_ID = "td-cb-lifecycle-automation"
-USE_CASE_ID = "td-lifecycle-dispatch"
+USE_CASE_ID = "td-cb-lifecycle-automation-operational-stability"
 DIMENSION = "stability"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
-ASSERTIONS = ("td-cb-lifecycle-automation reports identical non-zero passed and zero-failed totals across two executions",)
+ASSERTIONS = ("two fresh native Python terminal EC scenarios preserve red and green verdicts and close continuations",)
 
 
 def verify() -> list[str]:

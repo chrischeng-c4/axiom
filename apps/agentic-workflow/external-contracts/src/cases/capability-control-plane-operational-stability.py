@@ -2,10 +2,10 @@
 
 CASE_ID = "capability-control-plane-operational-stability"
 CAPABILITY_ID = "capability-control-plane"
-USE_CASE_ID = "markdown-capability-schema"
+USE_CASE_ID = "capability-control-plane-operational-stability"
 DIMENSION = "stability"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
-ASSERTIONS = ("capability-control-plane reports identical non-zero passed and zero-failed totals across two executions",)
+ASSERTIONS = ("two fresh native Python capability scenarios preserve the same project identity and canonical Markdown contract",)
 
 
 def verify() -> list[str]:

@@ -3760,9 +3760,9 @@ fn write_ec_lock_context_for_wi(
     Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true))
 }
 
-/// A root-owned Python WI may replace a legacy `aw.toml`/Markdown lock only
-/// after independent semantic review accepted the complete current Python
-/// bundle. Project-global locking and every other removed-contract transition
+/// A root-owned Python WI may replace a legacy or prior Python lock only after
+/// independent semantic review accepted the complete current Python bundle.
+/// Project-global locking and every unreviewed removed-contract transition
 /// keep the default fail-closed migration guard.
 fn reviewed_python_inventory_replacement_allowed(ctx: &EcProjectContext) -> Result<bool> {
     if ctx.artifact_model != crate::models::project::ProjectArtifactModel::PythonV1 {
@@ -3779,7 +3779,10 @@ fn reviewed_python_inventory_replacement_allowed(ctx: &EcProjectContext) -> Resu
         == Some("aw.toml")
         || lock.inventory_path == relative_to(&ctx.project_root, &ctx.legacy_manifest_path);
     let python_inventory = relative_to(&ctx.project_root, &ctx.ec_root.join("pyproject.toml"));
-    if !locked_inventory_is_legacy_aw || ec_effective_inventory_path(ctx)? != python_inventory {
+    let locked_inventory_is_python = lock.inventory_path == python_inventory;
+    if (!locked_inventory_is_legacy_aw && !locked_inventory_is_python)
+        || ec_effective_inventory_path(ctx)? != python_inventory
+    {
         return Ok(false);
     }
     let manifest = build_expected_manifest(ctx)?;
