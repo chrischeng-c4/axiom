@@ -859,7 +859,28 @@ pub fn looks_too_large_for_atomic_wi(issue: &Issue) -> bool {
         "business",
         "businesses",
     ];
-    let text = format!("{}\n{}", issue.title, issue.body).to_ascii_lowercase();
+    let body_with_leading_newline = format!("\n{}", issue.body);
+    let scope = body_with_leading_newline
+        .split("\n## ")
+        .find_map(|part| {
+            let (heading, content) = part.split_once('\n')?;
+            heading
+                .trim()
+                .eq_ignore_ascii_case("scope")
+                .then_some(content)
+        })
+        .unwrap_or_default();
+    let in_scope = scope
+        .split("\n### ")
+        .find_map(|part| {
+            let (heading, content) = part.split_once('\n')?;
+            heading
+                .trim()
+                .eq_ignore_ascii_case("in scope")
+                .then_some(content)
+        })
+        .unwrap_or(scope);
+    let text = format!("{}\n{}", issue.title, in_scope).to_ascii_lowercase();
     if HARD_PHRASES.iter().any(|phrase| text.contains(phrase)) {
         return true;
     }
