@@ -29,6 +29,8 @@ Surfaces:
 - CLI: `aw meta` + `aw wi` + `aw ec` + `aw td` + `aw wi run`/`aw capability run` - the single agent-first project-iteration surface.
 EC Dimensions:
 - behavior: WorkItem-first artifact admission, agent-first CLI ownership, strict validation/phase transitions, codegen, and evidence-backed rollup semantics.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture` - the representative product-model gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture` - two executions report identical non-zero passed and zero-failed totals.
 Root WI: #1496
 Status: verified
 Required Verification: smoke
@@ -114,6 +116,8 @@ Surfaces:
 - CLI: `aw capability` - report, next, draft, migrate, check, init, sweep, and contract field setters.
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --lib markdown_capability_tables` - Markdown capability-document contract parsing, migration, and readiness reporting.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture` - the capability schema gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture` - two executions report identical non-zero passed and zero-failed totals.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -144,6 +148,8 @@ Surfaces:
 - CLI: `aw wi` - inventory, validation drafting, epicization, atomization, prioritization, and issue updates.
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --lib epicize_artifact_includes_markdown_capability_roots` - capability-to-WI planning projection.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture` - the epic-to-change atomization gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture` - two atomization-gate executions report identical non-zero passed and zero-failed totals.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -180,6 +186,8 @@ Surfaces:
 - CLI: `aw td` - tech-design lifecycle plus inherited code-artifact lifecycle commands.
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main` - TD/CB lifecycle command dispatch and phase rules.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture` - the lifecycle dispatch gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture` - two executions report identical non-zero passed and zero-failed totals.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -249,7 +257,8 @@ Surfaces:
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory` - EC markdown source, aw.toml inventory, and generated tool manifest contract.
 - behavior: `cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture` - EC verification rejects cargo-test false greens that run zero tests and keeps precise cargo target selectors when known.
-- stability: `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design` - project-local TD root resolution and dirty-scope protection.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture` - the project-root gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture` - project-local TD root resolution and dirty-scope protection report identical non-zero passed and zero-failed totals across two executions.
 Root WI: #13
 Status: verified
 Required Verification: smoke
@@ -269,11 +278,12 @@ Gate Inventory:
 | EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen writes the project aw.toml EC inventory plus generated tests and rig/meter/guard/vat tool configs; arena is retained as a legacy compatibility import |
 | EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; apps/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; apps/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 | EC false-green guard | change | #694 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-green.md |
-| Agentic Workflow EC inventory consistency | change | #2184 | implemented | verified | smoke | `./target/debug/aw ec check --project agentic-workflow --json`; `./target/debug/aw ec lock --project agentic-workflow --check --json`; the 80-case generated inventory, 29-source lock, generated Rust wrappers, and TD digest agree without changing accepted contract semantics |
+| Agentic Workflow EC inventory consistency | change | #2184 | implemented | verified | smoke | `./target/debug/aw ec check --project agentic-workflow --json`; `./target/debug/aw ec lock --project agentic-workflow --check --json`; the 98-case legacy compatibility inventory, generated Rust wrappers, and TD digest agree without changing accepted contract semantics |
 | Python EC inventory check | change | #2293 | implemented | verified | smoke | `cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-inventory-check.md; every project reads a hand-authored external-contracts Python project's pyproject inventory without importing or executing EC source and requires stable capability/use-case/dimension records with TD or post-generation applicability |
 | Python EC missing-scaffold recovery | change | #2540 | implemented | verified | smoke | `cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture`; `./target/debug/aw ec --help`; apps/agentic-workflow/tech-design/core/logic/python-ec-inventory-check.md; a missing external-contracts/pyproject.toml emits an aw.cli.v1 continuation with one runnable Python scaffold command, draft creates only pyproject/src/evidence artifacts with an exact follow-up check, and help no longer teaches Markdown as the canonical authoring path |
 | Python EC review lock | change | #2294 | implemented | verified | smoke | `cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-review-lock.md; an explicit Python-v1 project binds independent agent/human/deferred EC approval and the EC lock to every normalized Python source plus declared dependency and pyproject inventory input, rejects same-author agent review, and invalidates stale evidence deterministically |
 | Reviewed legacy-to-Python EC lock replacement | change | #2541 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-review-lock.md; a root-owned Python WI may replace a legacy aw.toml/Markdown EC lock only after digest-current independent review of the canonical pyproject bundle, while project-global locking and every other removed-contract transition remain fail closed |
+| Canonical Python self-hosting EC inventory | change | #2607 | implemented | verified | smoke | `python3 apps/agentic-workflow/external-contracts/src/inventory_parity.py`; `./target/debug/aw ec check --project agentic-workflow --json`; apps/agentic-workflow/external-contracts/pyproject.toml; all 98 legacy case identities and coverage bindings are retained by ordinary Python modules, two stale compatibility oracles are explicitly corrected to the canonical Python scaffold and current integration-test target, and 14 operational cases close the required efficiency/stability dimensions for every DeveloperTool capability through measured, repeatable external commands and non-empty per-case staged evidence |
 | Python EC staged verification | change | #2295 | implemented | verified | smoke | `cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-staged-verification.md; Python EC cases declare promise, oracle, target, thresholds where applicable, and external evidence; core verifies behavior/security while operational verifies stability/efficiency and fails missing evidence |
 | EC only semantic approval | change | #1504 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; production EC generation and verification require current digest-bound human acceptance after dimension, claim, assertion, oracle-independence, loophole, and false-green inspection |
 | EC lock removal migration guard | change | #1793 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_lock_refuses_to_overwrite_when_current_ir_drops_locked_contracts`; `cargo test -p agentic-workflow --lib health_marks_ec_lock_removals_as_a_migration_hitl_blocker`; removed locked EC entries become a migration-required HITL blocker and cannot be silently dropped by `aw ec lock` |
@@ -292,7 +302,10 @@ ID: manual-evidence-artifacts
 Type: DeveloperTool
 Surfaces:
 - CLI: `aw ec doc` - generated, checked, or previewed EC-derived product documentation evidence.
-EC Dimensions: behavior: `cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory` - generated manual artifact schema and output convention
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory` - generated manual artifact schema and output convention.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture` - the manual generation gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture` - two executions report identical non-zero passed and zero-failed totals.
 Root WI: #57
 Status: verified
 Required Verification: smoke
@@ -314,6 +327,8 @@ Surfaces:
 - CLI: `aw health` (takeover-audit axis) + `aw td audit-record` - brownfield takeover guidance and readiness rollup (#1278, epic #1270 R7: `aw standardize` namespace retired, reporting folded into `aw health`, `audit record` rehomed to `aw td`).
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered` - takeover command surface and readiness reporting.
+- efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture` - the takeover surface gate executes at least one test with zero failures within 120 seconds.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture` - two executions report identical non-zero passed and zero-failed totals.
 Root WI: -
 Status: verified
 Required Verification: smoke

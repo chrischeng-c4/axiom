@@ -78,6 +78,17 @@ complete current Python bundle has a digest-current accepted independent
 review. Project-global locking, unreviewed bundles, and every other
 removed-contract transition retain the fail-closed migration guard.
 
+The Agentic Workflow self-hosting replacement is rooted at WI #2607. Its
+canonical Python bundle preserves the complete 98-case legacy case set, adds
+the 14 independently requested DeveloperTool efficiency/stability cases, and
+uses a checked parity verifier before requesting independent semantic review.
+That verifier also pins two explicit compatibility corrections: the retired
+Markdown EC draft oracle now exercises the canonical Python scaffold, and the
+advisory-health oracle runs through its current integration-test target.
+Only the digest accepted by that reviewer may replace the legacy lock, and the
+replacement lock must name `external-contracts/pyproject.toml` plus every
+normalized Python source/dependency input.
+
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 

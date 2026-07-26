@@ -1,0 +1,1600 @@
+[project]
+name = "agentic-workflow-external-contracts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "agent:codex:/root"
+efficiency_policy = "required"
+
+[[tool.aw.python-ec.cases]]
+id = "api-contract-source-passes"
+artifact_id = "artifact:agentic-workflow/api-contract-source-passes"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "api-contract-source-passes"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/api-contract-source-passes.py"
+promise = "source_backed is true; findings is empty"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case api-contract-source-passes -- cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture"
+evidence_paths = ["evidence/api-contract-source-passes.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "artifact-preflight-health-rollup"
+artifact_id = "artifact:agentic-workflow/artifact-preflight-health-rollup"
+capability_id = "existing-project-standardization"
+use_case_id = "artifact-preflight-health-rollup"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/artifact-preflight-health-rollup.py"
+promise = "missing hard evidence appears in production_blockers; missing advisory evidence appears in quality warnings; passing evidence keeps production_ready true when no other blockers exist"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-preflight-health-rollup -- cargo test -p agentic-workflow --test cli_tests preflight_ -- --nocapture"
+evidence_paths = ["evidence/artifact-preflight-health-rollup.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "artifact-quality-fixture-roundtrip"
+artifact_id = "artifact:agentic-workflow/artifact-quality-fixture-roundtrip"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-lifecycle-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/artifact-quality-fixture-roundtrip.py"
+promise = "every serialized fixture decodes, validates, and re-encodes to the same typed profile; each profile exposes intent_read, quality_dials, source_policy, and preflight_gate_set in review context"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-quality-fixture-roundtrip -- cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture"
+evidence_paths = ["evidence/artifact-quality-fixture-roundtrip.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "authoritative-fixture-blocks-on-regenerability-gap"
+artifact_id = "artifact:agentic-workflow/authoritative-fixture-blocks-on-regenerability-gap"
+capability_id = "existing-project-standardization"
+use_case_id = "authoritative-fixture-blocks-on-regenerability-gap"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
+promise = "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case authoritative-fixture-blocks-on-regenerability-gap -- cargo test -p agentic-workflow --test cli_tests authoritative_regenerability_gaps_block_project_health -- --nocapture"
+evidence_paths = ["evidence/authoritative-fixture-blocks-on-regenerability-gap.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-agent-first-cli-product-model"
+artifact_id = "artifact:agentic-workflow/aw-core-client-agent-first-cli-product-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-first-cli-product-model"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-agent-first-cli-product-model.py"
+promise = "binary orientation, README, capability contract, and canonical product TDs share one agent-first CLI model and reject removed architecture prose"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-first-cli-product-model -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+evidence_paths = ["evidence/aw-core-client-agent-first-cli-product-model.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-agent-orientation-surface"
+artifact_id = "artifact:agentic-workflow/aw-core-client-agent-orientation-surface"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-orientation-surface"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-agent-orientation-surface.py"
+promise = "agent-facing llm outline lists the registered command surface"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-agent-orientation-surface -- cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands -- --nocapture"
+evidence_paths = ["evidence/aw-core-client-agent-orientation-surface.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-core-concept-model-and-invariants"
+artifact_id = "artifact:agentic-workflow/aw-core-client-core-concept-model-and-invariants"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "core-concept-model-and-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-core-concept-model-and-invariants.py"
+promise = "from an admitted CB-generated child, the real compiled goal runner follows emitted CB commands, closes the child, rolls up its epic and capability, and terminates with completion.workflow_complete=true"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-and-invariants -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-core-concept-model-and-invariants.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-core-concept-model-ec-first-phase-table"
+artifact_id = "artifact:agentic-workflow/aw-core-client-core-concept-model-ec-first-phase-table"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "core-concept-model-and-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-core-concept-model-ec-first-phase-table.py"
+promise = "the Python Spec lifecycle has one explicit EC review, TD behavior/security, CB generation/check, and terminal all-dimension EC routing table with no phase gaps"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-ec-first-phase-table -- cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_goal_routing_uses_one_ec_first_phase_table -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-core-concept-model-ec-first-phase-table.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-core-concept-model-phase-less-admission"
+artifact_id = "artifact:agentic-workflow/aw-core-client-core-concept-model-phase-less-admission"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "core-concept-model-and-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-core-concept-model-phase-less-admission.py"
+promise = "a phase-less project WorkItem enters EC authoring before any TD authoring command"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-phase-less-admission -- cargo test -p agentic-workflow --lib cli::run::tests::phase_less_project_wi_enters_ec_before_td -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-core-concept-model-phase-less-admission.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-core-concept-model-remote-ledger-admission"
+artifact_id = "artifact:agentic-workflow/aw-core-client-core-concept-model-remote-ledger-admission"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "core-concept-model-and-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-core-concept-model-remote-ledger-admission.py"
+promise = "admitting a remote WorkItem seeds the local EC-first lifecycle ledger before dispatching artifact work"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-core-concept-model-remote-ledger-admission -- cargo test -p agentic-workflow --lib cli::run::tests::remote_wi_admission_seeds_the_local_ec_lifecycle_ledger -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-core-concept-model-remote-ledger-admission.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-lifecycle-prompt-blocker-conformance"
+artifact_id = "artifact:agentic-workflow/aw-core-client-lifecycle-prompt-blocker-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "lifecycle-prompt-migration-and-conformance"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-lifecycle-prompt-blocker-conformance.py"
+promise = "invalid oracle state routes to EC repair and decision, approval, environment, red-gate, and missing-evidence blockers remain typed with exact resume"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-blocker-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_routes_invalid_oracle_and_typed_blockers -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-blocker-conformance.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-lifecycle-prompt-rollup-conformance"
+artifact_id = "artifact:agentic-workflow/aw-core-client-lifecycle-prompt-rollup-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "lifecycle-prompt-migration-and-conformance"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-lifecycle-prompt-rollup-conformance.py"
+promise = "child dispatch, parked backlog work, and root terminal completion are distinct prompt states"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-rollup-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::prompt_contract_distinguishes_child_parked_and_root_terminal -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-rollup-conformance.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-lifecycle-prompt-stage-conformance"
+artifact_id = "artifact:agentic-workflow/aw-core-client-lifecycle-prompt-stage-conformance"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "lifecycle-prompt-migration-and-conformance"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-lifecycle-prompt-stage-conformance.py"
+promise = "every Python EC, TD, and CB phase-table row, including EC review and change close, projects exact writable and read-only scopes, verifier predicate, terminal level, and lifecycle guard; a frontend CB transition projects the complete concrete artifact-quality guard id set"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-lifecycle-prompt-stage-conformance -- cargo test -p agentic-workflow --lib cli::run::tests::python_artifact_prompt_contracts_preserve_stage_owner_and_gate -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-lifecycle-prompt-stage-conformance.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-prompt-vocabulary-and-grammar"
+artifact_id = "artifact:agentic-workflow/aw-core-client-prompt-vocabulary-and-grammar"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "prompt-vocabulary-and-grammar"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-prompt-vocabulary-and-grammar.py"
+promise = "the registered public Markdown and JSON renderers expose identical prompt content with the exact closed vocabulary, seven ASCII operators, complete EC-first Python Spec transition table, sole workflow-authority boundary, and no Unicode operator lookalikes"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-prompt-vocabulary-and-grammar -- cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-prompt-vocabulary-and-grammar.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-typed-prompt-ir-and-envelope-projection"
+artifact_id = "artifact:agentic-workflow/aw-core-client-typed-prompt-ir-and-envelope-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "typed-prompt-ir-and-envelope-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-typed-prompt-ir-and-envelope-projection.py"
+promise = "a production WorkflowEnvelope pins every typed prompt JSON field and its rendered agent_prompt from the same decoded IR; an invalid typed contract makes WorkflowEnvelope serialization fail instead of falling back to prose"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-typed-prompt-ir-and-envelope-projection -- cargo test -p agentic-workflow --lib cli::run::tests::workflow_envelope_serializes_typed_prompt_contract_from_same_ir -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-typed-prompt-ir-and-envelope-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-workitem-artifact-admission-gate"
+artifact_id = "artifact:agentic-workflow/aw-core-client-workitem-artifact-admission-gate"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "workitem-artifact-admission-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-workitem-artifact-admission-gate.py"
+promise = "the real compiled CB generator rejects an unsupported or unadmitted artifact before issue, Git, or source mutation and accepts a valid admitted WorkItem with exact generated ownership"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-artifact-admission-gate -- cargo test -p agentic-workflow --test cli_tests inplace_mode_test::workitem_artifact_admission_gate_real_cli_positive_and_negative -- --exact --nocapture"
+evidence_paths = ["evidence/aw-core-client-workitem-artifact-admission-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-workitem-loop-state-model"
+artifact_id = "artifact:agentic-workflow/aw-core-client-workitem-loop-state-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "workitem-loop-state-model"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-core-client-workitem-loop-state-model.py"
+promise = "work-item loop state serializes and parses losslessly"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-workitem-loop-state-model -- cargo test -p agentic-workflow --lib loop_state_round_trips -- --nocapture"
+evidence_paths = ["evidence/aw-core-client-workitem-loop-state-model.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-ec-zero-test-false-green"
+artifact_id = "artifact:agentic-workflow/aw-ec-zero-test-false-green"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-false-green-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-ec-zero-test-false-green.py"
+promise = "aw ec verify marks a cargo test command failed when the command exits 0 after running zero tests; generated Rust EC wrappers capture stdout and reject the same zero-test false green; ec gen keeps precise cargo test target selectors instead of relying on crate-wide filters when the source contract provides one"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-ec-zero-test-false-green -- cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture"
+evidence_paths = ["evidence/aw-ec-zero-test-false-green.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-epic-project-label-dispatch-chain"
+artifact_id = "artifact:agentic-workflow/aw-epic-project-label-dispatch-chain"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "aw-epic-project-label-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-epic-project-label-dispatch-chain.py"
+promise = "run.rs:open_epic_envelope is present in EMIT_REGISTRY; aw wi atomize --project pgpool parses through the real CLI tree; aw conf init --project-label app:workbench parses through the real CLI tree"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-chain -- cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+evidence_paths = ["evidence/aw-epic-project-label-dispatch-chain.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-epic-project-label-dispatch-focused"
+artifact_id = "artifact:agentic-workflow/aw-epic-project-label-dispatch-focused"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "aw-epic-project-label-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-epic-project-label-dispatch-focused.py"
+promise = "the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool; app:mamba and lib:pg retain their existing atomize commands; missing, empty, and whitespace-only project labels return blocked/HITL remediation; a valid unregistered app:workbench identity emits aw conf init --project-label app:workbench; no tested envelope contains --project PROJECT"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-epic-project-label-dispatch-focused -- cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture"
+evidence_paths = ["evidence/aw-epic-project-label-dispatch-focused.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-health-default-full-verification-smoke"
+artifact_id = "artifact:agentic-workflow/aw-health-default-full-verification-smoke"
+capability_id = "existing-project-standardization"
+use_case_id = "aw-health-default-full-verification-smoke"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-health-default-full-verification-smoke.py"
+promise = "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-health-default-full-verification-smoke -- cargo test -p agentic-workflow --test cli_tests health_verbose_stdout_streams_progress_before_result -- --nocapture"
+evidence_paths = ["evidence/aw-health-default-full-verification-smoke.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-td-apply-section-lookup-parity-real-cli"
+artifact_id = "artifact:agentic-workflow/aw-td-apply-section-lookup-parity-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-apply-section-lookup-parity"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/aw-td-apply-section-lookup-parity-real-cli.py"
+promise = "the already-valid fixture passes aw td check with zero findings; missing and malformed payload attempts leave the spec byte-identical; body-only Logic applies with exactly one typed Logic wrapper; the next initialized payload is applicability/unit-test.json; structured Unit Test applies and dispatches contract Logic"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-td-apply-section-lookup-parity-real-cli -- cargo test -p agentic-workflow --test cli_tests td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test -- --nocapture"
+evidence_paths = ["evidence/aw-td-apply-section-lookup-parity-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-capability-project-sweep"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-capability-project-sweep"
+capability_id = "capability-control-plane"
+use_case_id = "capability-project-sweep"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-capability-project-sweep.py"
+promise = "capability sweep groups project readiness and next actions"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-project-sweep -- cargo test -p agentic-workflow --lib capability_sweep -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-capability-project-sweep.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-capability-readiness-reporting"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-capability-readiness-reporting"
+capability_id = "capability-control-plane"
+use_case_id = "capability-readiness-reporting"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-capability-readiness-reporting.py"
+promise = "required claims can be verified by fixture references"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-readiness-reporting -- cargo test -p agentic-workflow --lib fixture_reference_can_verify_required_claim -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-capability-readiness-reporting.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-markdown-capability-schema"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-markdown-capability-schema"
+capability_id = "capability-control-plane"
+use_case_id = "markdown-capability-schema"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-markdown-capability-schema.py"
+promise = "canonical field-style capability contracts parse from Markdown"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-markdown-capability-schema.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-missing-readme-initialization"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-missing-readme-initialization"
+capability_id = "capability-control-plane"
+use_case_id = "missing-readme-initialization"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-control-plane-missing-readme-initialization.py"
+promise = "capability init renders a canonical README shell"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization -- cargo test -p agentic-workflow --lib capability_init -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-missing-readme-initialization.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "completeness-placeholder-unit-command"
+artifact_id = "artifact:agentic-workflow/completeness-placeholder-unit-command"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "cb-lifecycle-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/completeness-placeholder-unit-command.py"
+promise = "placeholder code is rejected; omitted prose is rejected; future_work_allowed TODO is accepted"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case completeness-placeholder-unit-command -- cargo test -p agentic-workflow --lib completeness_placeholder_scanner_contract -- --nocapture"
+evidence_paths = ["evidence/completeness-placeholder-unit-command.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "ec-artifact-producer-cli-fixture"
+artifact_id = "artifact:agentic-workflow/ec-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "shared-artifact-producer-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/ec-artifact-producer-cli-fixture.py"
+promise = "aw ec draft creates the canonical Python pyproject, runner, and bounded case module without Markdown fallback; draft emits aw.cli.v1 with the exact aw ec check continuation; the generated Python inventory preserves the requested capability and passes structural check"
+oracle = "The canonical Python scaffold integration test must exit zero and its assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case ec-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test ec_python_inventory_check ec_python_draft_creates_only_python_scaffold_and_checks_clean -- --nocapture"
+evidence_paths = ["evidence/ec-artifact-producer-cli-fixture.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-brownfield-takeover-surface"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-brownfield-takeover-surface"
+capability_id = "existing-project-standardization"
+use_case_id = "brownfield-takeover-surface"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-brownfield-takeover-surface.py"
+promise = "standardize command surface is registered for brownfield takeover"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-brownfield-takeover-surface -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-brownfield-takeover-surface.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-cb-and-cold-verification-gates"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-cb-and-cold-verification-gates"
+capability_id = "existing-project-standardization"
+use_case_id = "cb-and-cold-verification-gates"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-cb-and-cold-verification-gates.py"
+promise = "CB cold rebuild targets include codegen changes"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-cb-and-cold-verification-gates -- cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-cb-and-cold-verification-gates.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-managed-and-semantic-production-gates"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-managed-and-semantic-production-gates"
+capability_id = "existing-project-standardization"
+use_case_id = "managed-and-semantic-production-gates"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-managed-and-semantic-production-gates.py"
+promise = "semantic coverage prioritizes missing TD before generator gaps"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-managed-and-semantic-production-gates -- cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-managed-and-semantic-production-gates.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-connection-budget"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-shared-service-kit-connection-budget"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-connection-budget.py"
+promise = "connection admission consumes the configured budget and releases the permit after the handler finishes"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-connection-budget -- cargo test -p server-tcp --lib tests::connection_budget_releases_after_handler_finishes -- --exact --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-connection-budget.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-drain"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-shared-service-kit-drain"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-drain.py"
+promise = "a drain transition published before subscription remains durable and is observed by a late server-plane subscriber"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-drain -- cargo test -p server-lifecycle --test drain_prestart receiverless_drain_persists_for_late_subscriber -- --exact --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-drain.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-http1-h2c-options"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-shared-service-kit-http1-h2c-options"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-http1-h2c-options.py"
+promise = "the shared HTTP runtime serves HTTP/1.1 and h2c on one real listener while accepting explicit HTTP/2 stream and drain options"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-http1-h2c-options -- cargo test -p server-http --lib tests::serves_http1_and_h2c_on_one_listener_with_tunable_options -- --exact --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-http1-h2c-options.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-service-http-delegation"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-shared-service-kit-service-http-delegation"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-service-http-delegation.py"
+promise = "the service-http policy shell delegates listener ownership and request dispatch to server-http while preserving the service router response"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-service-http-delegation -- cargo test -p service-http --lib transport::delegation_tests::serve_delegates_listener_to_shared_http_runtime -- --exact --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-service-http-delegation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-shared-service-kit-substrate"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-shared-service-kit-substrate"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-substrate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-shared-service-kit-substrate.py"
+promise = "the shared TCP accept loop binds a real listener, admits a connection, invokes the closure handler, and completes without an async-trait box (#1241)"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-shared-service-kit-substrate -- cargo test -p server-tcp --lib tests::serve_accepts_closure_handler_without_async_trait_boxing -- --exact --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-shared-service-kit-substrate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-traceability-closure-gate"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-traceability-closure-gate"
+capability_id = "existing-project-standardization"
+use_case_id = "traceability-closure-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/existing-project-standardization-traceability-closure-gate.py"
+promise = "traceability tests cover command, TD, source, and CB closure behavior"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-traceability-closure-gate -- cargo test -p agentic-workflow --lib traceability -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-traceability-closure-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "external-fixture-reports-advisory-gap"
+artifact_id = "artifact:agentic-workflow/external-fixture-reports-advisory-gap"
+capability_id = "existing-project-standardization"
+use_case_id = "external-fixture-reports-advisory-gap"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/external-fixture-reports-advisory-gap.py"
+promise = "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case external-fixture-reports-advisory-gap -- cargo test -p agentic-workflow --test cli_tests regenerability_gaps_are_advisory_when_production_gates_clean -- --nocapture"
+evidence_paths = ["evidence/external-fixture-reports-advisory-gap.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "goal-backlog-drain"
+artifact_id = "artifact:agentic-workflow/goal-backlog-drain"
+capability_id = "workflow-root-runner"
+use_case_id = "goal-unified-loop-verb"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/goal-backlog-drain.py"
+promise = "a reviewed epic graph parks one blocked child and dispatches its ready sibling deterministically; the terminal envelope names the still-parked WI and its reason with no spinning or premature completion; an already-reviewed epic is never redispatched for atomization"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case goal-backlog-drain -- cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture"
+evidence_paths = ["evidence/goal-backlog-drain.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "jet-health-verification-dedup-smoke"
+artifact_id = "artifact:agentic-workflow/jet-health-verification-dedup-smoke"
+capability_id = "existing-project-standardization"
+use_case_id = "jet-health-verification-dedup-smoke"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/jet-health-verification-dedup-smoke.py"
+promise = "health command succeeds or reports only real project blockers; duplicate README gate commands do not multiply command execution inside one AW verification pass"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case jet-health-verification-dedup-smoke -- cargo test -p agentic-workflow --lib duplicate_claim_gate_commands_run_once_per_report_pass -- --nocapture"
+evidence_paths = ["evidence/jet-health-verification-dedup-smoke.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "manual-evidence-artifacts-generated-manual-ec-evidence-schema"
+artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-generated-manual-ec-evidence-schema"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "generated-manual-ec-evidence-schema"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/manual-evidence-artifacts-generated-manual-ec-evidence-schema.py"
+promise = "generated manual EC evidence metadata validates"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-generated-manual-ec-evidence-schema -- cargo test -p agentic-workflow --lib ec_generated_manual_artifact -- --nocapture"
+evidence_paths = ["evidence/manual-evidence-artifacts-generated-manual-ec-evidence-schema.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "manual-evidence-artifacts-manual-runner-output-convention"
+artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-manual-runner-output-convention"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "manual-runner-output-convention"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/manual-evidence-artifacts-manual-runner-output-convention.py"
+promise = "EC doc generation writes the manual from inventory"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-manual-runner-output-convention -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+evidence_paths = ["evidence/manual-evidence-artifacts-manual-runner-output-convention.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "missing-source-review-fails"
+artifact_id = "artifact:agentic-workflow/missing-source-review-fails"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "missing-source-review-fails"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/missing-source-review-fails.py"
+promise = "source_backed is false; finding code is missing_source_reference"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case missing-source-review-fails -- cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture"
+evidence_paths = ["evidence/missing-source-review-fails.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "placeholder-completeness-unit-gate"
+artifact_id = "artifact:agentic-workflow/placeholder-completeness-unit-gate"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "placeholder-completeness-unit-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/placeholder-completeness-unit-gate.py"
+promise = "placeholder code rejected; omitted prose rejected; explicit future TODO allowed"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case placeholder-completeness-unit-gate -- cargo test -p agentic-workflow --lib completeness_placeholder -- --nocapture"
+evidence_paths = ["evidence/placeholder-completeness-unit-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-health-no-regression"
+artifact_id = "artifact:agentic-workflow/project-health-no-regression"
+capability_id = "existing-project-standardization"
+use_case_id = "project-health-no-regression"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-health-no-regression.py"
+promise = "unrelated workflow envelope change does not regress project health reporting"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-no-regression -- cargo test -p agentic-workflow --lib project_health -- --nocapture"
+evidence_paths = ["evidence/project-health-no-regression.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "cb-generation-and-standardize-scan-defaults"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults.py"
+promise = "CB force regeneration defaults to project-local tech-design roots"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults -- cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-ec-evidence-documentation"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-ec-evidence-documentation"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-evidence-documentation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-ec-evidence-documentation.py"
+promise = "EC documentation generation and drift checks are covered"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-ec-evidence-documentation -- cargo test -p agentic-workflow --lib ec_doc -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-ec-evidence-documentation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-ec-external-contract-source"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-ec-external-contract-source"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-external-contract-source"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-ec-external-contract-source.py"
+promise = "EC draft and fill Markdown drives inventory generation"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-ec-external-contract-source -- cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-ec-external-contract-source.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-ec-tool-binding-dispatch"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-ec-tool-binding-dispatch"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-tool-binding-dispatch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-ec-tool-binding-dispatch.py"
+promise = "EC tool binding commands resolve the configured runner dispatch"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-ec-tool-binding-dispatch -- cargo test -p agentic-workflow --lib ec_binding_command -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-ec-tool-binding-dispatch.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-project-dirty-scope-protection"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-project-dirty-scope-protection"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "project-dirty-scope-protection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-project-dirty-scope-protection.py"
+promise = "semantic coverage excludes generated EC wrappers from dirty source scope"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-project-dirty-scope-protection -- cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-project-dirty-scope-protection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-project-local-td-root-resolver"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-project-local-td-root-resolver"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "project-local-td-root-resolver"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-project-local-td-root-resolver.py"
+promise = "project-local TD root resolution falls back to the project tech-design directory"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-project-local-td-root-resolver -- cargo test -p agentic-workflow --lib falls_back_to_project_tech_design -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-project-local-td-root-resolver.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "td-lock-and-external-contract-target-resolution"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution.py"
+promise = "EC context defaults TD roots to the project tech-design directory"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution -- cargo test -p agentic-workflow --lib ec_context_defaults_td_root_to_project_tech_design -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "quality-primitive-metadata-contract-test"
+artifact_id = "artifact:agentic-workflow/quality-primitive-metadata-contract-test"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "quality-primitive-metadata-contract-test"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/quality-primitive-metadata-contract-test.py"
+promise = "default profiles validate; selection citation explains a matching primitive; review finding reports an anti-pattern"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case quality-primitive-metadata-contract-test -- cargo test -p agentic-workflow --lib quality_primitives -- --nocapture"
+evidence_paths = ["evidence/quality-primitive-metadata-contract-test.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "reviewed-graph-root-parity"
+artifact_id = "artifact:agentic-workflow/reviewed-graph-root-parity"
+capability_id = "workflow-root-runner"
+use_case_id = "goal-unified-loop-verb"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/reviewed-graph-root-parity.py"
+promise = "epic and backlog roots select the same ready leaf after epic-first priority ordering; terminal child rollup closes the epic without re-atomizing; stale or invalid graph metadata fails closed with issue-specific remediation"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case reviewed-graph-root-parity -- cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture"
+evidence_paths = ["evidence/reviewed-graph-root-parity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "runtime-envelope-backward-compatibility"
+artifact_id = "artifact:agentic-workflow/runtime-envelope-backward-compatibility"
+capability_id = "workflow-root-runner"
+use_case_id = "runtime-envelope-backward-compatibility"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/runtime-envelope-backward-compatibility.py"
+promise = "legacy Dispatch JSON without artifact_quality_profile remains accepted; Dispatch JSON with artifact_quality_profile roundtrips"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case runtime-envelope-backward-compatibility -- cargo test -p agentic-workflow --lib envelope_profile -- --nocapture"
+evidence_paths = ["evidence/runtime-envelope-backward-compatibility.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-bounded-admission"
+artifact_id = "artifact:agentic-workflow/self-hosting-bounded-admission"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosting-root-runner-policy"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/self-hosting-bounded-admission.py"
+promise = "backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+threshold = "backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_backlog_rejects_before_reviewed_graph_or_state_io -- --nocapture"
+evidence_paths = ["evidence/self-hosting-bounded-admission.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-capability-admission"
+artifact_id = "artifact:agentic-workflow/self-hosting-capability-admission"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosting-root-runner-policy"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self-hosting-capability-admission.py"
+promise = "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit; the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_capability_and_backlog_roots_are_rejected_before_mutation -- --nocapture"
+evidence_paths = ["evidence/self-hosting-capability-admission.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-goal-root-parity"
+artifact_id = "artifact:agentic-workflow/self-hosting-goal-root-parity"
+capability_id = "workflow-root-runner"
+use_case_id = "goal-unified-loop-verb"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self-hosting-goal-root-parity.py"
+promise = "self-AW WI identity resolution and rollup routing reject before loop-state or dispatch touch the fixture tree"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-goal-root-parity -- cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_wi_identity_and_rollup_never_reenter_root_runner -- --nocapture"
+evidence_paths = ["evidence/self-hosting-goal-root-parity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-health-policy"
+artifact_id = "artifact:agentic-workflow/self-hosting-health-policy"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosting-root-runner-policy"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self-hosting-health-policy.py"
+promise = "health pins policy_mode, required_trailer, root_runner_allowed, direct_repair_default, and exact complete ordered hard_gates and advisory_axes arrays; health never emits any aw goal command as remediation"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
+evidence_paths = ["evidence/self-hosting-health-policy.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-identity-stability"
+artifact_id = "artifact:agentic-workflow/self-hosting-identity-stability"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosting-root-runner-policy"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/self-hosting-identity-stability.py"
+promise = "a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+threshold = "a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_wi_identity_resolution_errors_fail_closed_without_mutation -- --nocapture"
+evidence_paths = ["evidence/self-hosting-identity-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "self-hosting-wi-admission"
+artifact_id = "artifact:agentic-workflow/self-hosting-wi-admission"
+capability_id = "workflow-root-runner"
+use_case_id = "self-hosting-root-runner-policy"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/self-hosting-wi-admission.py"
+promise = "the WI root emits action self_hosting_policy before loop state or dispatch; the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture"
+evidence_paths = ["evidence/self-hosting-wi-admission.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "standardize-audit-first-contract-test"
+artifact_id = "artifact:agentic-workflow/standardize-audit-first-contract-test"
+capability_id = "existing-project-standardization"
+use_case_id = "standardize-audit-first-contract-test"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/standardize-audit-first-contract-test.py"
+promise = "audit_required is true without a preservation baseline; audit_required is false when a baseline exists; route and command surfaces are included in the fixture baseline"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test -- cargo test -p agentic-workflow --lib standardize_audit -- --nocapture"
+evidence_paths = ["evidence/standardize-audit-first-contract-test.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-artifact-producer-cli-fixture"
+artifact_id = "artifact:agentic-workflow/td-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "shared-artifact-producer-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-artifact-producer-cli-fixture.py"
+promise = "aw td create creates the durable TD skeleton and one JSON payload for the current queued section; the TD contract exposes validation, generation, evidence, and a runnable next transition; CODEGEN-BEGIN/END and HANDWRITE-BEGIN/END ownership outputs are explicit; HANDWRITE requires gap, tracker, and reason fields"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test artifact_producer_cli_test td_create_emits_cli_owned_skeleton_structured_slots_and_ownership -- --nocapture"
+evidence_paths = ["evidence/td-artifact-producer-cli-fixture.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-chain-liveness-proof"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-chain-liveness-proof"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "chain-liveness-proof"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-chain-liveness-proof.py"
+promise = "the exact driven chain reaches a terminal action within its bounded hop budget without landing on a deadlock phase (#914, refs #921)"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-proof -- cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-chain-liveness-proof.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-chain-liveness-retry"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-chain-liveness-retry"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "chain-liveness-proof"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-chain-liveness-retry.py"
+promise = "a stranded terminal retry emits the exact `aw cb check <slug>` command, remains within its tick budget, and preserves the lifecycle state until successful completion"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-retry -- cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-chain-liveness-retry.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "crrr-removal-linear-lifecycle"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-crrr-removal-linear-lifecycle.py"
+promise = "TD created phase dispatches directly to generation in the linear lifecycle"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-crrr-removal-linear-lifecycle -- cargo test -p agentic-workflow --lib td_created_dispatches_to_gen -- --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-crrr-removal-linear-lifecycle.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "hand-written-implementation-evidence-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-hand-written-complete-evidence-gate.py"
+promise = "terminal CB check accepts complete evidence only after every declared hand-written create and modify target has a committed implementation diff"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-complete-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_accepts_complete_hand_written_lifecycle_diff -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-complete-evidence-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "hand-written-implementation-evidence-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-hand-written-implementation-evidence-gate.py"
+promise = "terminal CB check refuses a hand-written modify path with zero committed implementation diff since its Td-Init baseline (#1382)"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-implementation-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-implementation-evidence-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "hand-written-implementation-evidence-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-hand-written-partial-evidence-gate.py"
+promise = "terminal CB check refuses partial evidence when any declared hand-written create or modify target still has no committed implementation diff"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-partial-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_partial_hand_written_lifecycle_diff -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-partial-evidence-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-remove-td-merge-command"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-remove-td-merge-command"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "remove-td-merge-command"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
+promise = "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command -- cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-remove-td-merge-command.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "self-ec-fixture-loop-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-self-ec-fixture-loop-gate.py"
+promise = "a configured required EC case refuses the unchanged CB-filled WorkItem while red without phase or close mutation, then permits terminal close only when green and records the consulted case in the success envelope"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-self-ec-fixture-loop-gate -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-self-ec-fixture-loop-gate.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec.py"
+promise = "the public goal runner follows CB fill and check, stops at terminal required EC while red, resumes the same CB-filled WorkItem when green, records the consulted case, and closes at the unified terminal check"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-default-section-queue-real-cli"
+artifact_id = "artifact:agentic-workflow/td-default-section-queue-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-default-section-queue-preservation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-default-section-queue-real-cli.py"
+promise = "the fresh skeleton contains logic followed by unit-test; logic applicability emits an applicability unit-test dispatch; contract authoring does not start before unit-test applicability"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-default-section-queue-real-cli -- cargo test -p agentic-workflow --test cli_tests td_create_replay_does_not_clobber_authored_logic_section -- --nocapture"
+evidence_paths = ["evidence/td-default-section-queue-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-gen-source-source-snapshot-projection-real-cli"
+artifact_id = "artifact:agentic-workflow/td-gen-source-source-snapshot-projection-real-cli"
+capability_id = "existing-project-standardization"
+use_case_id = "authoritative-source-snapshot-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-gen-source-source-snapshot-projection-real-cli.py"
+promise = "a const changes from before to after in the exact requested target; a uniquely named generated Rust test is present in exact target bytes; cargo test with that unique filter reports running 1 test and 1 passed; siblings and an unmatched existing target remain byte-identical; a second replay reports summary.wrote_files=false; the unmatched target error names the snapshot target and runnable --target remediation"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-gen-source-source-snapshot-projection-real-cli -- cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture"
+evidence_paths = ["evidence/td-gen-source-source-snapshot-projection-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-generation-target-exact-partition-real-cli"
+artifact_id = "artifact:agentic-workflow/td-generation-target-exact-partition-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "exact-generated-unit-target-ownership"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-generation-target-exact-partition-real-cli.py"
+promise = "a cold public TD generation accepts two exact Schema owners; Alpha and Beta appear only in their declared target files; the admitted lifecycle advances to cb_genned"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-exact-partition-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture"
+evidence_paths = ["evidence/td-generation-target-exact-partition-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-generation-target-generator-gap-real-cli"
+artifact_id = "artifact:agentic-workflow/td-generation-target-generator-gap-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "exact-generated-unit-target-ownership"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-generation-target-generator-gap-real-cli.py"
+promise = "the public binary emits a typed owned_generated_unit_unsupported HITL envelope; the stable unit ID, target, remediation command, and generator_gap reason are explicit; HEAD, branch, index, status, issue, and target bytes remain unchanged"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-generator-gap-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture"
+evidence_paths = ["evidence/td-generation-target-generator-gap-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-generation-target-ownership-inferred-single-real-cli"
+artifact_id = "artifact:agentic-workflow/td-generation-target-ownership-inferred-single-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "ambiguous-multi-target-generation-preflight"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-generation-target-ownership-inferred-single-real-cli.py"
+promise = "a no-Changes Schema TD with one exact managed spec ref passes caller admission; the executor selects the same inferred target and generates Widget; the lifecycle advances to cb_genned on the persistent project branch"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-inferred-single-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_no_changes_single_inferred_schema_target_remains_compatible -- --nocapture"
+evidence_paths = ["evidence/td-generation-target-ownership-inferred-single-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-generation-target-ownership-real-cli"
+artifact_id = "artifact:agentic-workflow/td-generation-target-ownership-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "ambiguous-multi-target-generation-preflight"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-generation-target-ownership-real-cli.py"
+promise = "the public binary emits exactly one stdout JSON error envelope and no second stderr error; error_kind, section, sorted targets, completion, and executable next.command are stable; HEAD, symbolic branch, index tree, porcelain-z status, issue bytes, and TD branch ref are unchanged; the prepared spec and every target blob remain byte-identical"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture"
+evidence_paths = ["evidence/td-generation-target-ownership-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-cross-process-single-flight-real-cli"
+artifact_id = "artifact:agentic-workflow/terminal-ec-cross-process-single-flight-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-cross-process-single-flight-real-cli.py"
+promise = "the first aw process owns the project lock while its EC command runs; the second same-slug aw process returns terminal_ec_single_flight promptly; both refusal envelopes point to exact aw cb check slug retry commands; the append-only EC launch marker contains exactly one line; the work item remains open in cb_filled and no terminal commit is created"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-cross-process-single-flight-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture"
+evidence_paths = ["evidence/terminal-ec-cross-process-single-flight-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-fast-green-stale-reader-real-cli"
+artifact_id = "artifact:agentic-workflow/terminal-ec-fast-green-stale-reader-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-fast-green-stale-reader-real-cli.py"
+promise = "a debug-only bounded barrier proves process B read cb_filled before process A completes; process A executes the fast-green inventory and completes the terminal transition; process B acquires afterward, re-reads td_merged, and reports terminal retry without EC; the EC launch marker contains one line and git contains one Cb-CodeCheck terminal commit"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-fast-green-stale-reader-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_fast_green_stale_reader_rechecks_phase_before_ec -- --nocapture"
+evidence_paths = ["evidence/terminal-ec-fast-green-stale-reader-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-no-child-wrapper-real-cli"
+artifact_id = "artifact:agentic-workflow/terminal-ec-no-child-wrapper-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-no-child-wrapper-real-cli.py"
+promise = "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace; the helper confirms its external child exited before the wrapper timed out; the wrapper PID no longer exists after aw returns; the envelope has terminal_ec_timeout and exact aw cb check slug next.command; the work item remains open in cb_filled and no terminal commit is created"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-no-child-wrapper-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture"
+evidence_paths = ["evidence/terminal-ec-no-child-wrapper-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-ec-retry-transition-lease-real-cli"
+artifact_id = "artifact:agentic-workflow/terminal-ec-retry-transition-lease-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-ec-process-liveness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-ec-retry-transition-lease-real-cli.py"
+promise = "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held; the second process reads retry phase and promptly receives terminal_ec_single_flight; the refusal points to the exact same-slug aw cb check retry; after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-retry-transition-lease-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture"
+evidence_paths = ["evidence/terminal-ec-retry-transition-lease-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "terminal-touched-codegen-red-repair-green"
+artifact_id = "artifact:agentic-workflow/terminal-touched-codegen-red-repair-green"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "terminal-touched-codegen-drift-gate"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/terminal-touched-codegen-red-repair-green.py"
+promise = "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged; the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted; the emitted aw cb gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command; restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-touched-codegen-red-repair-green -- cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture"
+evidence_paths = ["evidence/terminal-touched-codegen-red-repair-green.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-artifact-producer-cli-fixture"
+artifact_id = "artifact:agentic-workflow/wi-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "shared-artifact-producer-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-artifact-producer-cli-fixture.py"
+promise = "aw wi create creates the durable work-item and payload skeletons before dispatch; stdout carries aw.artifact-producer.v1 and a bounded markdown_fragment slot; the slot names its schema, payload path, apply command, validation, evidence, and next transition"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-artifact-producer-cli-fixture -- cargo test -p agentic-workflow --test artifact_producer_cli_test wi_create_emits_cli_owned_skeleton_and_bounded_markdown_slot -- --nocapture"
+evidence_paths = ["evidence/wi-artifact-producer-cli-fixture.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-close-remote-real-cli"
+artifact_id = "artifact:agentic-workflow/wi-close-remote-real-cli"
+capability_id = "work-item-planning"
+use_case_id = "wi-close-remote-rehydration"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-close-remote-real-cli.py"
+promise = "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend; --repo selects every remote read and mutation; the optional reason and close mutation each occur exactly once across a retry; a missing remote names its backend and repository and emits an executable recovery command; a local-only issue still moves from open to closed"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli -- cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture"
+evidence_paths = ["evidence/wi-close-remote-real-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-create-help-command"
+artifact_id = "artifact:agentic-workflow/wi-create-help-command"
+capability_id = "work-item-planning"
+use_case_id = "capability-to-epic-planning"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-create-help-command.py"
+promise = "help output does not list --remote"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command -- cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
+evidence_paths = ["evidence/wi-create-help-command.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-create-help-smoke"
+artifact_id = "artifact:agentic-workflow/wi-create-help-smoke"
+capability_id = "work-item-planning"
+use_case_id = "wi-create-help-smoke"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-create-help-smoke.py"
+promise = "stdout does not contain --remote"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke -- cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
+evidence_paths = ["evidence/wi-create-help-smoke.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-create-remote-flag-tests"
+artifact_id = "artifact:agentic-workflow/wi-create-remote-flag-tests"
+capability_id = "work-item-planning"
+use_case_id = "wi-create-remote-flag-tests"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-create-remote-flag-tests.py"
+promise = "create help hides remote flag; hidden remote compatibility flag parses; create behavior is config-driven"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests -- cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+evidence_paths = ["evidence/wi-create-remote-flag-tests.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-create-remote-unit-command"
+artifact_id = "artifact:agentic-workflow/wi-create-remote-unit-command"
+capability_id = "work-item-planning"
+use_case_id = "capability-to-epic-planning"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-create-remote-unit-command.py"
+promise = "help hides deprecated remote flag; compatibility flag parses; backend decision is config-driven"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command -- cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+evidence_paths = ["evidence/wi-create-remote-unit-command.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-ec-td-root-loop-fixture"
+artifact_id = "artifact:agentic-workflow/wi-ec-td-root-loop-fixture"
+capability_id = "workflow-root-runner"
+use_case_id = "wi-ec-td-root-loop"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-ec-td-root-loop-fixture.py"
+promise = "fixture root follows emitted commands until completion.workflow_complete=true; no retired lifecycle command or hidden agent-only step is required"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-fixture -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
+evidence_paths = ["evidence/wi-ec-td-root-loop-fixture.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-ec-td-root-loop-self-hosted-unit"
+artifact_id = "artifact:agentic-workflow/wi-ec-td-root-loop-self-hosted-unit"
+capability_id = "workflow-root-runner"
+use_case_id = "wi-ec-td-root-loop"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-ec-td-root-loop-self-hosted-unit.py"
+promise = "red and green EC loop states expose exact bounded TD commands; a tracker-backed root has a local lifecycle ledger before EC transitions write next_action"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-self-hosted-unit -- cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture"
+evidence_paths = ["evidence/wi-ec-td-root-loop-self-hosted-unit.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-remove-agent-estimate-build"
+artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-build"
+capability_id = "work-item-planning"
+use_case_id = "capability-to-epic-planning"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-remove-agent-estimate-build.py"
+promise = "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build -- cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture"
+evidence_paths = ["evidence/wi-remove-agent-estimate-build.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-remove-agent-estimate-spec-check"
+artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-spec-check"
+capability_id = "work-item-planning"
+use_case_id = "capability-to-epic-planning"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-remove-agent-estimate-spec-check.py"
+promise = "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check -- cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture"
+evidence_paths = ["evidence/wi-remove-agent-estimate-spec-check.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "wi-remove-agent-estimate-unit-command"
+artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-unit-command"
+capability_id = "work-item-planning"
+use_case_id = "wi-remove-agent-estimate-unit-command"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-remove-agent-estimate-unit-command.py"
+promise = "bounded non-epic validates without estimate section; legacy estimate section remains parseable; generated body and planning output omit estimate fields"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command -- cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture"
+evidence_paths = ["evidence/wi-remove-agent-estimate-unit-command.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-epic-to-change-atomization"
+artifact_id = "artifact:agentic-workflow/work-item-planning-epic-to-change-atomization"
+capability_id = "work-item-planning"
+use_case_id = "epic-to-change-atomization"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-planning-epic-to-change-atomization.py"
+promise = "prioritization routes bounded changes into the ready lane"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+evidence_paths = ["evidence/work-item-planning-epic-to-change-atomization.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "workflow-root-runner-cli-workflow-chain"
+artifact_id = "artifact:agentic-workflow/workflow-root-runner-cli-workflow-chain"
+capability_id = "workflow-root-runner"
+use_case_id = "cli-workflow-chain"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/workflow-root-runner-cli-workflow-chain.py"
+promise = "CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-cli-workflow-chain -- cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+evidence_paths = ["evidence/workflow-root-runner-cli-workflow-chain.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "workflow-root-runner-parent-rollup-routing"
+artifact_id = "artifact:agentic-workflow/workflow-root-runner-parent-rollup-routing"
+capability_id = "workflow-root-runner"
+use_case_id = "parent-rollup-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/workflow-root-runner-parent-rollup-routing.py"
+promise = "closed change roots route agents to parent inspection"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing -- cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection -- --nocapture"
+evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "workflow-root-runner-root-envelope-completion-contract"
+artifact_id = "artifact:agentic-workflow/workflow-root-runner-root-envelope-completion-contract"
+capability_id = "workflow-root-runner"
+use_case_id = "root-envelope-completion-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/workflow-root-runner-root-envelope-completion-contract.py"
+promise = "root envelope blocks on pending epicize artifacts before creating WIs"
+oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-root-envelope-completion-contract -- cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact -- --nocapture"
+evidence_paths = ["evidence/workflow-root-runner-root-envelope-completion-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/aw-core-client-operational-efficiency"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-first-cli-product-model"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/aw-core-client-operational-efficiency.py"
+promise = "The aw-core-client-model-workitem-first-artifact-lifecycle representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+evidence_paths = ["evidence/aw-core-client-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "aw-core-client-operational-stability"
+artifact_id = "artifact:agentic-workflow/aw-core-client-operational-stability"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "agent-first-cli-product-model"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/aw-core-client-operational-stability.py"
+promise = "The aw-core-client-model-workitem-first-artifact-lifecycle representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-core-client-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+evidence_paths = ["evidence/aw-core-client-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-operational-efficiency"
+capability_id = "capability-control-plane"
+use_case_id = "markdown-capability-schema"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/capability-control-plane-operational-efficiency.py"
+promise = "The capability-control-plane representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "capability-control-plane-operational-stability"
+artifact_id = "artifact:agentic-workflow/capability-control-plane-operational-stability"
+capability_id = "capability-control-plane"
+use_case_id = "markdown-capability-schema"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/capability-control-plane-operational-stability.py"
+promise = "The capability-control-plane representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+evidence_paths = ["evidence/capability-control-plane-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-operational-efficiency"
+capability_id = "existing-project-standardization"
+use_case_id = "brownfield-takeover-surface"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/existing-project-standardization-operational-efficiency.py"
+promise = "The existing-project-standardization representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "existing-project-standardization-operational-stability"
+artifact_id = "artifact:agentic-workflow/existing-project-standardization-operational-stability"
+capability_id = "existing-project-standardization"
+use_case_id = "brownfield-takeover-surface"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/existing-project-standardization-operational-stability.py"
+promise = "The existing-project-standardization representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case existing-project-standardization-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --test cli_tests standardize_subcommands_registered -- --nocapture"
+evidence_paths = ["evidence/existing-project-standardization-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "manual-evidence-artifacts-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-operational-efficiency"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "manual-runner-output-convention"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/manual-evidence-artifacts-operational-efficiency.py"
+promise = "The manual-evidence-artifacts representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+evidence_paths = ["evidence/manual-evidence-artifacts-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "manual-evidence-artifacts-operational-stability"
+artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-operational-stability"
+capability_id = "manual-evidence-artifacts"
+use_case_id = "manual-runner-output-convention"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/manual-evidence-artifacts-operational-stability.py"
+promise = "The manual-evidence-artifacts representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+evidence_paths = ["evidence/manual-evidence-artifacts-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-operational-efficiency"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "cb-generation-and-standardize-scan-defaults"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
+promise = "The project-local-td-and-ec-gates representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "project-local-td-and-ec-gates-operational-stability"
+artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-operational-stability"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "cb-generation-and-standardize-scan-defaults"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/project-local-td-and-ec-gates-operational-stability.py"
+promise = "The project-local-td-and-ec-gates representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design -- --nocapture"
+evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-operational-efficiency"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-lifecycle-dispatch"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/td-cb-lifecycle-automation-operational-efficiency.py"
+promise = "The td-cb-lifecycle-automation representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-cb-lifecycle-automation-operational-stability"
+artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-operational-stability"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-lifecycle-dispatch"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/td-cb-lifecycle-automation-operational-stability.py"
+promise = "The td-cb-lifecycle-automation representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture"
+evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-operational-efficiency"
+artifact_id = "artifact:agentic-workflow/work-item-planning-operational-efficiency"
+capability_id = "work-item-planning"
+use_case_id = "epic-to-change-atomization"
+dimension = "efficiency"
+applicability = "post-gen"
+test_path = "src/cases/work-item-planning-operational-efficiency.py"
+promise = "The work-item-planning representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
+oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+evidence_paths = ["evidence/work-item-planning-operational-efficiency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "work-item-planning-operational-stability"
+artifact_id = "artifact:agentic-workflow/work-item-planning-operational-stability"
+capability_id = "work-item-planning"
+use_case_id = "epic-to-change-atomization"
+dimension = "stability"
+applicability = "post-gen"
+test_path = "src/cases/work-item-planning-operational-stability.py"
+promise = "The work-item-planning representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
+oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
