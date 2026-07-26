@@ -42,7 +42,7 @@ changes:
   - path: apps/agentic-workflow/src/cli/cb_fill.rs
     action: modify
     section: logic
-    impl_mode: codegen
+    impl_mode: hand-written
   - path: apps/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md
     action: modify
     section: logic
