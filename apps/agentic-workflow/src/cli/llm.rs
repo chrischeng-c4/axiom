@@ -286,6 +286,22 @@ A work-item IS the loop's durable state. You operate aw by reading one JSON
 envelope (schema `aw.cli.v1`) and running the command it hands back, until the
 loop converges on ec green.
 
+## Terminology-first work-item types
+
+Each closed-enum type is defined by its terminal state:
+
+| type | terminal state |
+|------|----------------|
+| `epic` | all owned children are terminal |
+| `change` | EC is green for the generated codebase and the lifecycle closes the change |
+| `spike` | an ADR-style decision records spawned WI refs or explicit no-action; expiry converges to `gave_up` |
+| `report` | typed `triage` either accepts and links a spawned change/epic, or closes as `duplicate`, `invalid`, or `by-design` |
+
+Only `change` is executable backlog work. A `spike` is a timeboxed
+investigation, never product-source implementation. A `report` enters the
+project's intake queue until triage. Both converge by spawn-and-link rather
+than changing type in place.
+
 ## The loop state (carried in the WI)
 
 - `goal`        -- the capability gap this loop closes.

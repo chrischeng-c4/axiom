@@ -100,6 +100,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/work-item-intake-health.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "work-item-type-vocabulary"
+artifact_id = "artifact:agentic-workflow/work-item-type-vocabulary"
+capability_id = "work-item-planning"
+use_case_id = "terminology-first-work-item-vocabulary"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/work-item-type-vocabulary.py"
+promise = "aw llm and generated META-doc guidance define epic, change, spike, and report by canonical terminal states"
+oracle = "The hand-authored Python EC executes the real aw llm and meta producers, then independently checks their public output for the closed terminology-first terminal-state contract."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
+evidence_paths = ["evidence/work-item-type-vocabulary.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "api-contract-source-passes"
 artifact_id = "artifact:agentic-workflow/api-contract-source-passes"
 capability_id = "td-cb-lifecycle-automation"

@@ -13,6 +13,26 @@ from wi_contract_fixture import create, project_fixture, run_aw, show, verify_ca
 CASE_ID = "work-item-type-templates"
 
 
+def change_body(in_scope: str) -> str:
+    return (
+        "## Problem\n\nThe entire project currently exposes this message.\n\n"
+        "## Capability Alignment\n\n"
+        "Capability: Work item planning\n"
+        "Capability Gap: boundedness diagnostics are imprecise\n"
+        "Progress Evidence: the public create result is the evidence\n\n"
+        "## Requirements\n\n- R1: Fix one parser diagnostic.\n\n"
+        f"## Scope\n\n### In Scope\n- {in_scope}\n\n"
+        "### Out of Scope\n- Rework the whole suite.\n\n"
+        "## Acceptance Criteria\n\n- AC1: the bounded item is accepted.\n\n"
+        "## Reference Context\n\n### Related Specs\n"
+        "| Spec | Relevance |\n|------|-----------|\n"
+        "| complete-platform.md | describes the environment |\n\n"
+        "### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n"
+        "|---------|--------|---------------|\n"
+        "| boundedness | update | complete-platform.md |\n"
+    )
+
+
 def verify() -> list[str]:
     with project_fixture() as root:
         spike = create(root, "Which retry policy should the runner use?", "spike")
@@ -45,10 +65,34 @@ def verify() -> list[str]:
             expect_success=False,
         )
         assert "report work-item accepts only these H2 sections" in invalid.stderr
+
+        create(
+            root,
+            "Fix one parser diagnostic",
+            "change",
+            "--body",
+            change_body("Fix one parser diagnostic."),
+        )
+        oversized = run_aw(
+            root,
+            "wi",
+            "create",
+            "--title",
+            "Rewrite parser diagnostics",
+            "--type",
+            "change",
+            "--project",
+            "demo",
+            "--body",
+            change_body("Rewrite the entire project."),
+            expect_success=False,
+        )
+        assert "too-large" in oversized.stderr
     return [
         "Spike and Report expose exact type-specific profiles",
         "Report intake is exempt from Capability Alignment",
         "cross-profile sections are rejected",
+        "boundedness reads title and In Scope while ignoring descriptive and anti-scope prose",
     ]
 
 
