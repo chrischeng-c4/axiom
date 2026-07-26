@@ -1300,9 +1300,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-close-remote-real-cli.py"
 promise = "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend; --repo selects every remote read and mutation; the optional reason and close mutation each occur exactly once across a retry; a missing remote names its backend and repository and emits an executable recovery command; a local-only issue still moves from open to closed"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli -- cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture"
+oracle = "Native Python black-box assertions run the repo-built aw binary against an isolated HTTP tracker and local backend."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-close-remote-real-cli"
 evidence_paths = ["evidence/wi-close-remote-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1314,9 +1314,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-create-help-command.py"
 promise = "help output does not list --remote"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command -- cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
+oracle = "Native Python black-box assertions inspect the repo-built aw help output."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-command"
 evidence_paths = ["evidence/wi-create-help-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1328,9 +1328,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-create-help-smoke.py"
 promise = "stdout does not contain --remote"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke -- cargo test -p agentic-workflow --lib wi_create_remote_help_hides_deprecated_remote_flag -- --nocapture"
+oracle = "Native Python black-box assertions inspect the repo-built aw help output."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-help-smoke"
 evidence_paths = ["evidence/wi-create-help-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1342,9 +1342,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-create-remote-flag-tests.py"
 promise = "create help hides remote flag; hidden remote compatibility flag parses; create behavior is config-driven"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests -- cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+oracle = "Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-flag-tests"
 evidence_paths = ["evidence/wi-create-remote-flag-tests.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1356,9 +1356,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-create-remote-unit-command.py"
 promise = "help hides deprecated remote flag; compatibility flag parses; backend decision is config-driven"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command -- cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture"
+oracle = "Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-create-remote-unit-command"
 evidence_paths = ["evidence/wi-create-remote-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1398,9 +1398,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-remove-agent-estimate-build.py"
 promise = "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build -- cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_prioritize_output_omits_estimate_fields -- --exact --nocapture"
+oracle = "Native Python black-box assertions validate real work items and inspect the emitted planning artifact."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-build"
 evidence_paths = ["evidence/wi-remove-agent-estimate-build.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1412,9 +1412,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-remove-agent-estimate-spec-check.py"
 promise = "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check -- cargo test -p agentic-workflow --lib cli::issues::tests::wi_remove_agent_estimate_legacy_section_is_inert -- --exact --nocapture"
+oracle = "Native Python black-box assertions validate a bounded work item containing the legacy inert section."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-spec-check"
 evidence_paths = ["evidence/wi-remove-agent-estimate-spec-check.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1426,9 +1426,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/wi-remove-agent-estimate-unit-command.py"
 promise = "bounded non-epic validates without estimate section; legacy estimate section remains parseable; generated body and planning output omit estimate fields"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command -- cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture"
+oracle = "Native Python black-box assertions validate bounded current and legacy work-item bodies and inspect planning output."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-remove-agent-estimate-unit-command"
 evidence_paths = ["evidence/wi-remove-agent-estimate-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1440,9 +1440,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/work-item-planning-epic-to-change-atomization.py"
 promise = "prioritization routes bounded changes into the ready lane"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+oracle = "Native Python black-box assertions inspect the strict project graph produced from a bounded owned change."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-epic-to-change-atomization"
 evidence_paths = ["evidence/work-item-planning-epic-to-change-atomization.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1676,10 +1676,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/work-item-planning-operational-efficiency.py"
 promise = "The work-item-planning representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
-threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+oracle = "A monotonic clock around the native Python black-box suite enforces the elapsed-time limit."
+threshold = "elapsed <= 120 seconds; every representative Python assertion passes"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-efficiency"
 evidence_paths = ["evidence/work-item-planning-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1691,10 +1691,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/work-item-planning-operational-stability.py"
 promise = "The work-item-planning representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
-threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
+oracle = "Two fresh native Python black-box suites must return identical all-pass snapshots."
+threshold = "two attempts; identical representative assertion results"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
 evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
 
 # aw:claim-reconciliation:start

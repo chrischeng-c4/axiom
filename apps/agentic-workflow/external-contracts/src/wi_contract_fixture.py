@@ -64,11 +64,18 @@ target = "rust"
         yield root
 
 
-def run_aw(root: Path, *args: str, expect_success: bool = True) -> subprocess.CompletedProcess[str]:
+def run_aw(
+    root: Path,
+    *args: str,
+    expect_success: bool = True,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     _ensure_aw_binary()
     env = os.environ.copy()
     env["AW_FIXTURE_LOCAL_BACKEND"] = "1"
     env["AW_DISABLE_CAP"] = "1"
+    if env_overrides:
+        env.update(env_overrides)
     completed = subprocess.run(
         [str(AW_BINARY), *args],
         cwd=root,

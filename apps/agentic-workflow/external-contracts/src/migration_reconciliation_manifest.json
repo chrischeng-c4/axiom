@@ -490,68 +490,68 @@
         {
           "id": "wi-close-remote-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_close_remote_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-create-help-command",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-create-help-smoke",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-create-remote-flag-tests",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_remote_flag_tests.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-create-remote-unit-command",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_remote_unit_command.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-remove-agent-estimate-build",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_build.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-remove-agent-estimate-spec-check",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-remove-agent-estimate-unit-command",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_unit_command.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "work-item-planning-epic-to-change-atomization",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "work-item-planning-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "work-item-planning-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },

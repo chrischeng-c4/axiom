@@ -66,6 +66,24 @@ def _has_verify(case_id: str) -> bool:
     )
 
 
+def _declared_target_delegates_to_cargo(case_id: str) -> bool:
+    source = CASES_ROOT / f"{case_id}.py"
+    if not source.is_file():
+        return False
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "TARGET_COMMAND"
+            for target in node.targets
+        ):
+            continue
+        value = ast.literal_eval(node.value)
+        return isinstance(value, str) and "cargo test" in value
+    return False
+
+
 def _delegated_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -133,6 +151,7 @@ def _policy(manifest: dict[str, Any]) -> dict[str, Any]:
         and (
             entry["id"] in current_cargo
             or not _has_verify(entry["id"])
+            or _declared_target_delegates_to_cargo(entry["id"])
         )
     )
     if unexpected_rust or unexpected_cargo or regressed_native:
@@ -176,6 +195,8 @@ def _cluster(manifest: dict[str, Any], cluster_id: str) -> dict[str, Any]:
             failures.append(f"{case_id}: still delegates to cargo test")
         if not _has_verify(case_id):
             failures.append(f"{case_id}: native verify() is missing")
+        if _declared_target_delegates_to_cargo(case_id):
+            failures.append(f"{case_id}: TARGET_COMMAND still delegates to cargo test")
         if entry["migration_status"] != "native":
             failures.append(f"{case_id}: migration status is not native")
         disposition = entry["rust_disposition"]
