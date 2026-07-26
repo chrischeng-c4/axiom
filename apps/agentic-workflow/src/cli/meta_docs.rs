@@ -45,6 +45,7 @@ pub struct MetaDocContract {
 }
 
 const REPO_AGENT_HEADINGS: &[&str] = &["## Agentic Workflow CLI Surface"];
+const REPO_CLAUDE_HEADINGS: &[&str] = &["## Claude Runtime Adapter"];
 const REPO_README_HEADINGS: &[&str] = &["## Contributing"];
 const REPO_CONTRIBUTING_HEADINGS: &[&str] = &["## Meta-doc content contract"];
 const PROJECT_README_HEADINGS: &[&str] = &["## Brief", "## Contributing", "## Capability Contract"];
@@ -73,9 +74,9 @@ pub const META_DOC_OWNERSHIP_MATRIX: &[MetaDocContract] = &[
     MetaDocContract {
         layer: MetaDocLayer::Repository,
         filename: "CLAUDE.md",
-        fact_owner: "Claude checkout operations and shared agent workflow guidance",
-        required_headings: REPO_AGENT_HEADINGS,
-        inherits_from: "none",
+        fact_owner: "Claude-only adapter importing AGENTS.md and generated Claude rule projections",
+        required_headings: REPO_CLAUDE_HEADINGS,
+        inherits_from: "AGENTS.md + .claude/rules projections",
     },
     MetaDocContract {
         layer: MetaDocLayer::Repository,
@@ -169,9 +170,19 @@ pub fn render_meta_doc_ownership_table() -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetaFindingSeverity {
+    Blocker,
+    Drift,
+    Advisory,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MetaDocFinding {
     pub code: String,
+    pub axis: String,
+    pub severity: MetaFindingSeverity,
     pub path: String,
     pub message: String,
     pub remediation: String,
@@ -217,6 +228,8 @@ fn validate_contracts_at(
         if !path.is_file() {
             findings.push(MetaDocFinding {
                 code: "meta_doc_missing".to_string(),
+                axis: "documents".to_string(),
+                severity: MetaFindingSeverity::Blocker,
                 path: relative.clone(),
                 message: format!(
                     "{}-layer {} is required by the META-doc ownership matrix",
@@ -235,6 +248,8 @@ fn validate_contracts_at(
             Err(error) => {
                 findings.push(MetaDocFinding {
                     code: "meta_doc_unreadable".to_string(),
+                    axis: "documents".to_string(),
+                    severity: MetaFindingSeverity::Blocker,
                     path: relative.clone(),
                     message: format!("cannot read {relative}: {error}"),
                     remediation: format!(
@@ -250,6 +265,8 @@ fn validate_contracts_at(
             }
             findings.push(MetaDocFinding {
                 code: "meta_doc_section_missing".to_string(),
+                axis: "schema".to_string(),
+                severity: MetaFindingSeverity::Blocker,
                 path: relative.clone(),
                 message: format!(
                     "{}-layer {} is missing canonical heading `{heading}`",
@@ -291,6 +308,8 @@ fn validate_repository_allowlist(
         Err(error) => {
             findings.push(MetaDocFinding {
                 code: "meta_doc_repository_unreadable".to_string(),
+                axis: "placement".to_string(),
+                severity: MetaFindingSeverity::Blocker,
                 path: ".".to_string(),
                 message: format!("cannot read repository root: {error}"),
                 remediation: "Repair repository-root permissions and rerun the META-doc check."
@@ -313,6 +332,8 @@ fn validate_repository_allowlist(
         if filename == "CAPABILITIES.md" && !repository_is_product {
             findings.push(MetaDocFinding {
                 code: "root_capabilities_requires_product".to_string(),
+                axis: "placement".to_string(),
+                severity: MetaFindingSeverity::Blocker,
                 path: filename.to_string(),
                 message: "root CAPABILITIES.md is project-layer state, but this repository root is not declared as a product"
                     .to_string(),
@@ -324,6 +345,8 @@ fn validate_repository_allowlist(
         {
             findings.push(MetaDocFinding {
                 code: "unexpected_root_meta_doc".to_string(),
+                axis: "placement".to_string(),
+                severity: MetaFindingSeverity::Blocker,
                 path: filename.to_string(),
                 message: format!(
                     "{filename} is not owned by the repository-layer META-doc matrix"
@@ -355,6 +378,8 @@ fn validate_project_agent_doc_placement(
         let project = display_path(repository_root, project_root);
         findings.push(MetaDocFinding {
             code: "project_agent_doc_forbidden".to_string(),
+            axis: "placement".to_string(),
+            severity: MetaFindingSeverity::Blocker,
             path: path.clone(),
             message: format!(
                 "{path} is a live project-layer {filename}; AGENTS.md and CLAUDE.md belong only to the repository root"

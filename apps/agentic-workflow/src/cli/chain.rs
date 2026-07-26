@@ -606,6 +606,12 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: false,
         sunset_criterion: "",
     },
+    VerbLifecycle {
+        path: "meta.schema",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
     // -- wi (core loop: work-item inventory, linear authoring, run) -----
     VerbLifecycle {
         path: "wi.draft.init",

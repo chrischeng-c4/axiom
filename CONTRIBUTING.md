@@ -1015,7 +1015,7 @@ META-doc projector.
 | Layer | Doc | Fact owner | Required headings | Inherits |
 |---|---|---|---|---|
 | repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
-| repo | `/CLAUDE.md` | Claude checkout operations and shared agent workflow guidance | `## Agentic Workflow CLI Surface` | none |
+| repo | `/CLAUDE.md` | Claude-only adapter importing AGENTS.md and generated Claude rule projections | `## Claude Runtime Adapter` | AGENTS.md + .claude/rules projections |
 | repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
 | repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
 | project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |

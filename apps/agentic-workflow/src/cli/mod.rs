@@ -31,6 +31,7 @@ pub mod llm;
 pub mod loop_state;
 pub mod meta;
 pub mod meta_docs;
+pub mod meta_schema;
 pub mod production;
 pub mod project;
 pub mod regenerability_policy;
