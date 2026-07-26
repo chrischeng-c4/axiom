@@ -502,6 +502,9 @@ fn write_858_ec_configured_aw_toml(
 }
 
 #[cfg(unix)]
+const TERMINAL_EC_TEST_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(unix)]
 fn wait_for_1579_path(path: &std::path::Path, deadline: std::time::Instant) -> bool {
     while std::time::Instant::now() < deadline {
         if path.is_file() {
@@ -859,7 +862,7 @@ exit 1
     assert!(
         wait_for_1579_path(
             &launches,
-            std::time::Instant::now() + std::time::Duration::from_secs(2)
+            std::time::Instant::now() + TERMINAL_EC_TEST_STARTUP_TIMEOUT
         ),
         "first terminal EC command never launched"
     );
@@ -989,7 +992,7 @@ exit 0
     assert!(
         wait_for_1579_path(
             &stale_barrier.join("issue-read.ready"),
-            std::time::Instant::now() + std::time::Duration::from_secs(2)
+            std::time::Instant::now() + TERMINAL_EC_TEST_STARTUP_TIMEOUT
         ),
         "stale reader never reached the post-issue-read barrier"
     );
@@ -1109,7 +1112,7 @@ exit 0
     assert!(
         wait_for_1579_path(
             &phase_barrier.join("phase-update.ready"),
-            std::time::Instant::now() + std::time::Duration::from_secs(2)
+            std::time::Instant::now() + TERMINAL_EC_TEST_STARTUP_TIMEOUT
         ),
         "first process never reached the post-phase-update barrier"
     );

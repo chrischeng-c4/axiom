@@ -84,6 +84,9 @@ MIGRATED_LEGACY_OVERRIDES = {
             "-- --nocapture"
         ),
     },
+    "jet-health-verification-dedup-smoke": {
+        "use_case_id": "project-health-no-regression",
+    },
 }
 
 
@@ -115,7 +118,15 @@ def main() -> None:
         for case in python_document["tool"]["aw"]["python-ec"]["cases"]
     }
     assert legacy_cases.keys() <= python_cases.keys()
-    assert python_cases.keys() - legacy_cases.keys() == REQUIRED_OPERATIONAL_CASES
+    claim_reconciliation_cases = {
+        case_id
+        for case_id in python_cases
+        if case_id.startswith("claim-closure-")
+    }
+    assert (
+        python_cases.keys() - legacy_cases.keys()
+        == REQUIRED_OPERATIONAL_CASES | claim_reconciliation_cases
+    )
 
     for case_id, legacy in legacy_cases.items():
         canonical = python_cases[case_id]
@@ -124,8 +135,11 @@ def main() -> None:
         expected_assertions = migration_override.get(
             "assertions", tuple(legacy["assertions"])
         )
+        expected_use_case_id = migration_override.get(
+            "use_case_id", legacy["claim_id"]
+        )
         assert canonical["capability_id"] == legacy["capability_id"]
-        assert canonical["use_case_id"] == legacy["claim_id"]
+        assert canonical["use_case_id"] == expected_use_case_id
         assert canonical["dimension"] == legacy["category"]
         assert canonical["promise"] == "; ".join(expected_assertions)
         assert canonical["target"] == "rust"
@@ -137,7 +151,7 @@ def main() -> None:
         source = _case_constants(EC_ROOT / canonical["test_path"])
         assert source["CASE_ID"] == case_id
         assert source["CAPABILITY_ID"] == legacy["capability_id"]
-        assert source["USE_CASE_ID"] == legacy["claim_id"]
+        assert source["USE_CASE_ID"] == expected_use_case_id
         assert source["DIMENSION"] == legacy["category"]
         assert source["LEGACY_TEST_PATH"] == legacy["test_path"]
         assert source["TARGET_COMMAND"] == expected_command

@@ -565,7 +565,7 @@ evidence_paths = ["evidence/goal-backlog-drain.json"]
 id = "jet-health-verification-dedup-smoke"
 artifact_id = "artifact:agentic-workflow/jet-health-verification-dedup-smoke"
 capability_id = "existing-project-standardization"
-use_case_id = "jet-health-verification-dedup-smoke"
+use_case_id = "project-health-no-regression"
 dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/jet-health-verification-dedup-smoke.py"
@@ -1598,3 +1598,1393 @@ threshold = "two attempts; identical passed/failed totals; passed tests >= 1; fa
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
 evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
+
+# aw:claim-reconciliation:start
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "aw-goal-verifiable-condition-loop"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop.py"
+promise = "Aw goal verifiable condition loop: `cargo test -p agentic-workflow --lib cli::goal:: -- --nocapture`; `cargo test -p agentic-workflow --lib chain -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-goal-condition-loop.md; gap: aw-goal-verifiable-condition-loop; a CLI-owned ad hoc verifiable condition loop records a prose intent plus one or more machine runnable gate commands as workspace scoped state and reports deterministically done, blocked, or gave up on budget or expiry, replacing the generic Stop-hook goal-loop skill for bounded work outside the WI lifecycle (#1897)"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:aw-goal-verifiable-condition-loop must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::goal:: -- --nocapture; cargo test -p agentic-workflow --lib chain -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-aw-goal-verifiable-condition-loop.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "cli-verb-lifecycle-taxonomy-completeness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness.py"
+promise = "CLI verb lifecycle taxonomy completeness: `cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture`; every live clap leaf, including read-only review and worktree-local guard bypass controls, carries an explicit lifecycle class and tracked-state mutation classification"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:cli-verb-lifecycle-taxonomy-completeness must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cli-verb-lifecycle-taxonomy-completeness.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "cross-checkout-chat-command-and-shared-channel-removal"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal.py"
+promise = "Cross-checkout chat command and shared-channel removal: `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib test_install_skills_prunes_aw_chat_listen -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-chat-removal.md"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:cross-checkout-chat-command-and-shared-channel-removal must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture; cargo test -p agentic-workflow --lib test_install_skills_prunes_aw_chat_listen -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-cross-checkout-chat-command-and-shared-channel-removal.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-init-sync-check"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check.py"
+promise = "META-doc init sync check: `cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture`; `cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-producer.md; one producer registry owns skeleton creation, marker-only synchronization, read-only drift diagnostics, chainable output, and legacy `aw new` delegation"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:meta-doc-init-sync-check must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture; cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-init-sync-check-source"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source.py"
+promise = "META-doc init sync check source: `cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture`; apps/agentic-workflow/tech-design/surface/interfaces/src/meta.md; the source mirror implements the registered producer claim"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:meta-doc-init-sync-check-source must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-init-sync-check-source.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-ownership-matrix"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix.py"
+promise = "META-doc ownership matrix: `cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests root_doc_ -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-ownership-matrix.md; one serializable repo/project matrix drives placement, required headings, inheritance documentation, root allowlists, and actionable project-agent-doc diagnostics"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:meta-doc-ownership-matrix must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture; cargo test -p agentic-workflow --test cli_tests root_doc_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "meta-doc-ownership-matrix-source"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source.py"
+promise = "META-doc ownership matrix source: `cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture`; apps/agentic-workflow/tech-design/surface/interfaces/src/meta_docs.md; the source mirror implements the same ownership-matrix claim without inventing an unregistered claim id"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:meta-doc-ownership-matrix-source must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-meta-doc-ownership-matrix-source.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "multi-agent-change-review-skill"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill.py"
+promise = "Multi-agent change review skill: `cargo test -p agentic-workflow --lib cli::init::tests::test_install_skills_projects_aw_change_review -- --nocapture`; apps/agentic-workflow/templates/cli/mainthread/skills/aw-change-review/SKILL.md; gap: multi-agent-change-review-skill; one producer-owned skill projects to Claude Code and Codex/AGY, reviews every cohesive author-owned change set before integration, rejects same-agent approval, and requires fix verification plus focused re-review"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:multi-agent-change-review-skill must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::init::tests::test_install_skills_projects_aw_change_review -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-multi-agent-change-review-skill.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "new-project-epic-configuration-bootstrap"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap.py"
+promise = "New-project epic configuration bootstrap: `cargo test -p agentic-workflow --lib epic_project_label_dispatch_bootstraps_valid_unregistered_project -- --nocapture`; `cargo test -p agentic-workflow --lib conf_init_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md; a valid unregistered tracker identity routes through idempotent project-local configuration and META-doc producers before atomization"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:new-project-epic-configuration-bootstrap must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib epic_project_label_dispatch_bootstraps_valid_unregistered_project -- --nocapture; cargo test -p agentic-workflow --lib conf_init_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-new-project-epic-configuration-bootstrap.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "project-scoped-planner-dev-research-agent-fleet"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet.py"
+promise = "Project-scoped planner/dev/research agent fleet: `cargo test -p agentic-workflow --lib cli::init::tests::test_project_role_fleet_uses_registry_scope_and_model_matrix`; apps/agentic-workflow/tech-design/surface/interfaces/src/init.md; direct `apps/*` registry projects plus `projects/mamba` receive independently scoped planner, dev, and read-only research roles on Claude, Codex, and AGY, with the three approved model/reasoning profiles and independent EC review preserved"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:project-scoped-planner-dev-research-agent-fleet must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::init::tests::test_project_role_fleet_uses_registry_scope_and_model_matrix"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-project-scoped-planner-dev-research-agent-fleet.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "repo-view-command-and-desktop-product-removal"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal.py"
+promise = "Repo View command and desktop product removal: `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-view-removal.md"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:repo-view-command-and-desktop-product-removal must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-repo-view-command-and-desktop-product-removal.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "shared-artifact-producer-contract-source"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source.py"
+promise = "Shared artifact producer contract source: `cargo test -p agentic-workflow --lib cli::artifact_producer::tests:: -- --nocapture`; apps/agentic-workflow/tech-design/surface/interfaces/src/artifact_producer.md; the source mirror implements the registered shared producer contract"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:shared-artifact-producer-contract-source must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::artifact_producer::tests:: -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-shared-artifact-producer-contract-source.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "stale-binary-reprojection-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard.py"
+promise = "Stale-binary reprojection guard: `cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture`; `cargo test -p agentic-workflow --lib cli::drift::tests:: -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-producer.md; gap: meta-sync-stale-binary-destruction; aw meta init and aw meta sync render the repo-claude and repo-agents blocks from the live checkout copy of CLAUDE.md.tmpl when one is present instead of the binary's embedded snapshot, refuse a fallback-embedded rewrite that would delete existing projection content while the installed binary is provably behind the checkout unless --force-stale is passed, and aw meta check routes binary-stale drift to rebuild or upgrade remediation instead of aw meta sync (#1912)"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:stale-binary-reprojection-guard must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture; cargo test -p agentic-workflow --lib cli::drift::tests:: -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-binary-reprojection-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "stale-skill-retirement"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement.py"
+promise = "Stale skill retirement: `cargo test -p agentic-workflow --lib install -- --nocapture`; `cargo test -p agentic-workflow --lib cli::init:: -- --nocapture`; apps/agentic-workflow/tech-design/surface/interfaces/src/init.md; gap: stale-skill-retirement; eight lifecycle-superseded and external-model-helper aw-* skills (aw-release-patch, aw-cb-claim, aw-cb-fill, aw-td-create, aw-capability, aw-codex-review, aw-gemini-explore-codebase, aw-gemini-explore-specs) are removed from templates and pruned from both live skill-tree installers on every install, with a fixture proving a retired name present on disk is pruned on next install (#1858)"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:stale-skill-retirement must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib install -- --nocapture; cargo test -p agentic-workflow --lib cli::init:: -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-stale-skill-retirement.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "three-host-agent-fleet-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection.py"
+promise = "Three-host agent fleet projection: `cargo test -p agentic-workflow --lib cli::init:: -- --nocapture`; apps/agentic-workflow/tech-design/surface/interfaces/src/init.md; one canonical templates/cli/mainthread/agents source projects the aw-* subagent fleet to claude, codex, and agy agent dirs via a shared model-tier table, with a read-only check and a narrow producer re-run flag"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:three-host-agent-fleet-projection must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::init:: -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-three-host-agent-fleet-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract"
+artifact_id = "artifact:agentic-workflow/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+use_case_id = "typed-agent-prompt-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract.py"
+promise = "Typed agent prompt contract: three-change roadmap delivered by #2439 vocabulary/grammar, #2440 typed IR/envelope, and #2441 lifecycle migration/conformance"
+oracle = "Every executable gate declared for aw-core-client-model-workitem-first-artifact-lifecycle:typed-agent-prompt-contract must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::llm::tests::prompt_topic_public_renderer_pins_closed_language -- --exact --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract"
+evidence_paths = ["evidence/claim-closure-aw-core-client-model-workitem-first-artifact-lifecycle-typed-agent-prompt-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-agent-facing-dx-baseline-trait"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-agent-facing-dx-baseline-trait"
+capability_id = "capability-control-plane"
+use_case_id = "agent-facing-dx-baseline-trait"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-agent-facing-dx-baseline-trait.py"
+promise = "Agent-facing DX baseline trait: `cargo test -p agentic-workflow --lib agent_facing_trait_requires_developer_agent_experience_with_remediation -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-dx-trait-derivation.md; the explicit agent_facing profile trait derives developer-agent-experience, names the CONTRIBUTING DX convention as its enforced contract, and reports the normal missing-baseline remediation"
+oracle = "Every executable gate declared for capability-control-plane:agent-facing-dx-baseline-trait must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib agent_facing_trait_requires_developer_agent_experience_with_remediation -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-agent-facing-dx-baseline-trait -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-agent-facing-dx-baseline-trait"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-agent-facing-dx-baseline-trait.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+capability_id = "capability-control-plane"
+use_case_id = "capability-catalog-and-td-claim-linkage-consistency"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.py"
+promise = "Capability catalog and TD claim linkage consistency: `python3 -m unittest discover -s apps/agentic-workflow/external-contracts/tests -p test_claim_reconciliation.py`; `cargo test -p agentic-workflow --lib markdown_work_root_table_degrades_invalid_enums_to_advisory_findings -- --nocapture`; `cargo test -p agentic-workflow --lib validate_td_capability_refs_ -- --nocapture`; `python3 apps/agentic-workflow/external-contracts/src/claim_reconciliation.py`; independent negative tests perturb unsupported Work Root kinds, unresolved canonical Python TD artifact ids, missing claim cases, and stale generated modules; production validators reject unknown gap/claim references; the read-only producer remains supplemental drift evidence rather than its own sole oracle"
+oracle = "Every executable gate declared for capability-control-plane:capability-catalog-and-td-claim-linkage-consistency must run, exit zero, and every cargo test gate must execute at least one test. Gates: python3 -m unittest discover -s apps/agentic-workflow/external-contracts/tests -p test_claim_reconciliation.py; cargo test -p agentic-workflow --lib markdown_work_root_table_degrades_invalid_enums_to_advisory_findings -- --nocapture; cargo test -p agentic-workflow --lib validate_td_capability_refs_ -- --nocapture; python3 apps/agentic-workflow/external-contracts/src/claim_reconciliation.py"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-capability-catalog-and-td-claim-linkage-consistency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-ddd-context-map-contract"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-ddd-context-map-contract"
+capability_id = "capability-control-plane"
+use_case_id = "ddd-context-map-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-ddd-context-map-contract.py"
+promise = "DDD context map contract: `cargo test -p agentic-workflow --test ddd_context_map_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/ddd-context-map-contract.md; stable DDD identities, context boundaries, relation vocabulary, and projection ownership validate before narrative or source artifacts use them"
+oracle = "Every executable gate declared for capability-control-plane:ddd-context-map-contract must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ddd_context_map_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-ddd-context-map-contract -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-ddd-context-map-contract"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-ddd-context-map-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-ddd-meta-projection-contract"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-ddd-meta-projection-contract"
+capability_id = "capability-control-plane"
+use_case_id = "ddd-meta-projection-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-ddd-meta-projection-contract.py"
+promise = "DDD meta projection contract: `cargo test -p agentic-workflow --test ddd_meta_projection_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/ddd-meta-projection-contract.md; capability, README, contributing, EC, TD, and source surfaces have unique DDD narrative fact ownership independent of disposable render output"
+oracle = "Every executable gate declared for capability-control-plane:ddd-meta-projection-contract must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ddd_meta_projection_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-ddd-meta-projection-contract -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-ddd-meta-projection-contract"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-ddd-meta-projection-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md"
+capability_id = "capability-control-plane"
+use_case_id = "default-cap-path-flips-to-capabilities-md"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md.py"
+promise = "Default cap_path flips to CAPABILITIES.md: `cargo test -p agentic-workflow --lib capability_path_from_row_defaults_to_capabilities_md -- --nocapture`; `cargo test -p agentic-workflow --lib capability_path_from_row_explicit_cap_path_wins -- --nocapture`; `cargo test -p agentic-workflow --lib resolve_capability_path_override_argument_wins_over_default -- --nocapture`; `cargo test -p agentic-workflow --lib readme_capability_migration_source_detects_readme_resident_structure -- --nocapture`; `cargo test -p agentic-workflow --lib readme_capability_migration_source_none_when_capabilities_md_exists -- --nocapture`; `cargo test -p agentic-workflow --lib readme_capability_migration_source_none_when_readme_has_no_capability_structure -- --nocapture`; `cargo test -p agentic-workflow --lib capability_init_renders_capabilities_md_resident_shell_by_default -- --nocapture`; `cargo test -p agentic-workflow --lib capability_init_renders_readme_resident_shell_for_explicit_readme_override -- --nocapture`; gap: capability-doc-default-location; default cap_path resolution is CAPABILITIES.md with explicit cap_path override winning, README-resident projects degrade to an advisory location-migration finding that routes to capability migrate instead of a hard parse failure, and migrate/init produce CAPABILITIES.md-resident structure while the README keeps a human-readable Capability Contract pointer (#1848)"
+oracle = "Every executable gate declared for capability-control-plane:default-cap-path-flips-to-capabilities-md must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib capability_path_from_row_defaults_to_capabilities_md -- --nocapture; cargo test -p agentic-workflow --lib capability_path_from_row_explicit_cap_path_wins -- --nocapture; cargo test -p agentic-workflow --lib resolve_capability_path_override_argument_wins_over_default -- --nocapture; cargo test -p agentic-workflow --lib readme_capability_migration_source_detects_readme_resident_structure -- --nocapture; cargo test -p agentic-workflow --lib readme_capability_migration_source_none_when_capabilities_md_exists -- --nocapture; cargo test -p agentic-workflow --lib readme_capability_migration_source_none_when_readme_has_no_capability_structure -- --nocapture; cargo test -p agentic-workflow --lib capability_init_renders_capabilities_md_resident_shell_by_default -- --nocapture; cargo test -p agentic-workflow --lib capability_init_renders_readme_resident_shell_for_explicit_readme_override -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-default-cap-path-flips-to-capabilities-md.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-one-way-wi-reference-direction"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-one-way-wi-reference-direction"
+capability_id = "capability-control-plane"
+use_case_id = "one-way-wi-reference-direction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-one-way-wi-reference-direction.py"
+promise = "One-way WI reference direction: `cargo test -p agentic-workflow --lib work_root_table_without_wi_column_parses_and_computes_readiness -- --nocapture`; `cargo test -p agentic-workflow --lib zero_wi_ref_readiness_spans_verified_red_gate_and_unmapped_claims -- --nocapture`; `cargo test -p agentic-workflow --lib capability_wi_evidence_resolves_from_wi_body_without_doc_stored_ref -- --nocapture`; `cargo test -p agentic-workflow --lib fictitious_doc_wi_ref_degrades_to_advisory_evidence -- --nocapture`; `cargo test -p agentic-workflow --lib markdown_work_root_table_degrades_invalid_enums_to_advisory_findings -- --nocapture`; `cargo test -p agentic-workflow --lib next_action_schedules_tracker_open_wi_found_via_body_ref_without_doc_ref -- --nocapture`; `cargo test -p agentic-workflow --lib next_action_routes_red_gate_with_no_tracker_wi_to_creation -- --nocapture`; `cargo test -p agentic-workflow --lib next_action_degrades_stale_doc_ref_with_no_open_tracker_wi_to_advisory -- --nocapture`; `cargo test -p agentic-workflow --lib ensure_wi_body_capability_alignment_ref -- --nocapture`; doc-stored WI ids are optional-deprecated derived provenance (resolved from WI-body `## Capability Alignment` declarations), never a readiness precondition or parse requirement; malformed legacy cells degrade to advisory findings, not parse errors; `aw capability run` schedules from tracker-side open WI evidence, not doc rows; `aw capability set-wi-ref` writes the WI-side `## Capability Alignment` body ref (README/CAPABILITIES work-root WI cell is a deprecated compatibility path) (#1847)"
+oracle = "Every executable gate declared for capability-control-plane:one-way-wi-reference-direction must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib work_root_table_without_wi_column_parses_and_computes_readiness -- --nocapture; cargo test -p agentic-workflow --lib zero_wi_ref_readiness_spans_verified_red_gate_and_unmapped_claims -- --nocapture; cargo test -p agentic-workflow --lib capability_wi_evidence_resolves_from_wi_body_without_doc_stored_ref -- --nocapture; cargo test -p agentic-workflow --lib fictitious_doc_wi_ref_degrades_to_advisory_evidence -- --nocapture; cargo test -p agentic-workflow --lib markdown_work_root_table_degrades_invalid_enums_to_advisory_findings -- --nocapture; cargo test -p agentic-workflow --lib next_action_schedules_tracker_open_wi_found_via_body_ref_without_doc_ref -- --nocapture; cargo test -p agentic-workflow --lib next_action_routes_red_gate_with_no_tracker_wi_to_creation -- --nocapture; cargo test -p agentic-workflow --lib next_action_degrades_stale_doc_ref_with_no_open_tracker_wi_to_advisory -- --nocapture; cargo test -p agentic-workflow --lib ensure_wi_body_capability_alignment_ref -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-one-way-wi-reference-direction -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-one-way-wi-reference-direction"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-one-way-wi-reference-direction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-capability-control-plane-python-artifact-readiness"
+artifact_id = "artifact:agentic-workflow/claim-closure-capability-control-plane-python-artifact-readiness"
+capability_id = "capability-control-plane"
+use_case_id = "python-artifact-readiness"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-capability-control-plane-python-artifact-readiness.py"
+promise = "Python artifact readiness: `cargo test -p agentic-workflow --test python_artifact_readiness -- --nocapture`; apps/agentic-workflow/tech-design/logic/aw-python-artifact-readiness.md; capability and health share one read-only Python TD/EC readiness projection with executable remediation for missing inventory or evidence"
+oracle = "Every executable gate declared for capability-control-plane:python-artifact-readiness must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_artifact_readiness -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-capability-control-plane-python-artifact-readiness -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-capability-control-plane-python-artifact-readiness"
+evidence_paths = ["evidence/claim-closure-capability-control-plane-python-artifact-readiness.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection"
+capability_id = "existing-project-standardization"
+use_case_id = "aw-review-skill-and-doc-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection.py"
+promise = "Aw Review Skill And Doc Projection: `cargo test -p agentic-workflow --lib cli::review`; `cargo test -p agentic-workflow --lib cli::review_doc_projection`; `cargo test -p agentic-workflow --lib cli::init::tests::install_claude_skills_writes_aw_review_skill`; apps/agentic-workflow/tech-design/validate/review-skill-doc-trait-projection-with-drift-tests.md"
+oracle = "Every executable gate declared for existing-project-standardization:aw-review-skill-and-doc-projection must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::review; cargo test -p agentic-workflow --lib cli::review_doc_projection; cargo test -p agentic-workflow --lib cli::init::tests::install_claude_skills_writes_aw_review_skill"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-aw-review-skill-and-doc-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection"
+capability_id = "existing-project-standardization"
+use_case_id = "force-regeneration-project-root-llms-projection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection.py"
+promise = "Force-regeneration project-root llms projection: `cargo test -p agentic-workflow --lib cb_gen_force_regen_public_path_emits_td_first_project_root_llms -- --nocapture`; `cargo test -p agentic-workflow --lib cb_gen_project_root_llms -- --nocapture`; `cargo test -p agentic-workflow --lib cb_gen_force_regen_specs_do_not_format_handwritten_skips -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; the public force-regeneration path shares the TD-first project-root llms emitter used by replay/cold verification, replaces generic placeholders with one canonical CODEGEN document, and preserves HANDWRITE siblings byte-for-byte"
+oracle = "Every executable gate declared for existing-project-standardization:force-regeneration-project-root-llms-projection must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cb_gen_force_regen_public_path_emits_td_first_project_root_llms -- --nocapture; cargo test -p agentic-workflow --lib cb_gen_project_root_llms -- --nocapture; cargo test -p agentic-workflow --lib cb_gen_force_regen_specs_do_not_format_handwritten_skips -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-force-regeneration-project-root-llms-projection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-project-profile-conformance-review"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-project-profile-conformance-review"
+capability_id = "existing-project-standardization"
+use_case_id = "project-profile-conformance-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-project-profile-conformance-review.py"
+promise = "Project Profile Conformance Review: `cargo test -p agentic-workflow --lib cli::review`; `./target/debug/aw review --project agentic-workflow`; apps/agentic-workflow/tech-design/config/aw-review-resolve-project-profile-cli-report-skeleton.md"
+oracle = "Every executable gate declared for existing-project-standardization:project-profile-conformance-review must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::review"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-project-profile-conformance-review -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-project-profile-conformance-review"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-project-profile-conformance-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-service-workload-profile-derivation"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-service-workload-profile-derivation"
+capability_id = "existing-project-standardization"
+use_case_id = "service-workload-profile-derivation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-service-workload-profile-derivation.py"
+promise = "Service workload profile derivation: `cargo test -p agentic-workflow --lib stateful_storage_selects_the_statefulset_service_profile`; `cargo test -p agentic-workflow --lib known_traits_include_every_doc_mirror_trait_def`; `cargo test -p agentic-workflow --test cli_tests root_trait_coverage`"
+oracle = "Every executable gate declared for existing-project-standardization:service-workload-profile-derivation must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib stateful_storage_selects_the_statefulset_service_profile; cargo test -p agentic-workflow --lib known_traits_include_every_doc_mirror_trait_def; cargo test -p agentic-workflow --test cli_tests root_trait_coverage"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-service-workload-profile-derivation -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-service-workload-profile-derivation"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-service-workload-profile-derivation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-shared-service-kit-conformance-rules"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-shared-service-kit-conformance-rules"
+capability_id = "existing-project-standardization"
+use_case_id = "shared-service-kit-conformance-rules"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-shared-service-kit-conformance-rules.py"
+promise = "Shared Service Kit Conformance Rules: `cargo test -p agentic-workflow --lib cli::review_rules`; `cargo test -p agentic-workflow --lib cli::review`; apps/agentic-workflow/tech-design/config/aw-review-shared-service-kit-adoption-rules-profile-negative-ass.md"
+oracle = "Every executable gate declared for existing-project-standardization:shared-service-kit-conformance-rules must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::review_rules; cargo test -p agentic-workflow --lib cli::review"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-shared-service-kit-conformance-rules -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-shared-service-kit-conformance-rules"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-shared-service-kit-conformance-rules.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules"
+capability_id = "existing-project-standardization"
+use_case_id = "structured-observability-and-raft-telemetry-conformance-rules"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.py"
+promise = "Structured Observability And Raft Telemetry Conformance Rules: `cargo test -p agentic-workflow --lib cli::review_obs_rules`; `cargo test -p agentic-workflow --lib cli::review`; `./target/debug/aw review --project agentic-workflow --pretty`; apps/agentic-workflow/tech-design/validate/aw-review-structured-observability-raft-telemetry-conformance-ru.md"
+oracle = "Every executable gate declared for existing-project-standardization:structured-observability-and-raft-telemetry-conformance-rules must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::review_obs_rules; cargo test -p agentic-workflow --lib cli::review"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-structured-observability-and-raft-telemetry-conformance-rules.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle"
+artifact_id = "artifact:agentic-workflow/claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle"
+capability_id = "existing-project-standardization"
+use_case_id = "xml-handwrite-marker-fill-queue-lifecycle"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle.py"
+promise = "XML HANDWRITE marker fill-queue lifecycle: `cargo test -p agentic-workflow --lib pending_xml_handwrite_ -- --nocapture`; `cargo test -p agentic-workflow --lib xml_handwrite_marker_ -- --nocapture`; `cargo test -p agentic-workflow --lib gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source -- --nocapture`; `cargo test -p agentic-workflow --lib marker_parser_recognizes_comment_styles -- --nocapture`; apps/agentic-workflow/tech-design/core/generate/handwrite-marker.md; apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md; gap: xml-handwrite-fill-queue; an aw cb gen scaffolded XML HANDWRITE marker with tracker=pending-tracker surrounding pre-existing source stays in aw cb fill's queue, disambiguates duplicate-gap marker ids and payload paths within one active TD scope, and the touched-scope standardization gate recognizes its gap/tracker/reason attributes as valid instead of reporting them missing"
+oracle = "Every executable gate declared for existing-project-standardization:xml-handwrite-marker-fill-queue-lifecycle must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib pending_xml_handwrite_ -- --nocapture; cargo test -p agentic-workflow --lib xml_handwrite_marker_ -- --nocapture; cargo test -p agentic-workflow --lib gen_to_fill_transition_from_scaffold_handwrite_over_pre_existing_source -- --nocapture; cargo test -p agentic-workflow --lib marker_parser_recognizes_comment_styles -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle"
+evidence_paths = ["evidence/claim-closure-existing-project-standardization-xml-handwrite-marker-fill-queue-lifecycle.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "agent-first-default-review-backing-gap-ec-agent-first-default-review-backing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing.py"
+promise = "Agent-first default review backing (gap: ec-agent-first-default-review-backing): `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; apps/agentic-workflow/tech-design/surface/specs/aw-ec-agent-review-protocol.md; the unconfigured review-backing default flips from blocking human-only review to agent-first, so an unconfigured project's review command now emits a non-blocking agent review envelope and an independent agent verdict satisfies the production gate end to end, while a project that explicitly opts into human-only backing keeps the pre-flip blocking human question byte for byte, with human review always remaining valid evidence able to reopen an agent-accepted external contract"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:agent-first-default-review-backing-gap-ec-agent-first-default-review-backing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_review_ -- --nocapture; cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-agent-first-default-review-backing-gap-ec-agent-first-default-review-backing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "agentic-workflow-ec-inventory-consistency"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency.py"
+promise = "Agentic Workflow EC inventory consistency: `python3 apps/agentic-workflow/external-contracts/src/inventory_parity.py`; the canonical Python inventory preserves the 98 legacy case identities, applies only explicit compatibility corrections, and carries the required operational additions without using AW's own EC lifecycle as its oracle"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:agentic-workflow-ec-inventory-consistency must run, exit zero, and every cargo test gate must execute at least one test. Gates: python3 apps/agentic-workflow/external-contracts/src/inventory_parity.py"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-agentic-workflow-ec-inventory-consistency.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "canonical-python-self-hosting-ec-inventory"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory.py"
+promise = "Canonical Python self-hosting EC inventory: `python3 apps/agentic-workflow/external-contracts/src/inventory_parity.py`; `./target/debug/aw ec check --project agentic-workflow --json`; apps/agentic-workflow/external-contracts/pyproject.toml; all 98 legacy case identities and coverage bindings are retained by ordinary Python modules, two stale compatibility oracles are explicitly corrected to the canonical Python scaffold and current integration-test target, and 14 operational cases close the required efficiency/stability dimensions for every DeveloperTool capability through measured, repeatable external commands and non-empty per-case staged evidence"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:canonical-python-self-hosting-ec-inventory must run, exit zero, and every cargo test gate must execute at least one test. Gates: python3 apps/agentic-workflow/external-contracts/src/inventory_parity.py"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-canonical-python-self-hosting-ec-inventory.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-deferred-post-completion-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review.py"
+promise = "EC deferred post-completion review: `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib pending_ec_review -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; apps/agentic-workflow/tech-design/surface/specs/aw-ec-deferred-review-queue.md; a project's `ec_review_mode` policy (`blocking` default \\"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-deferred-post-completion-review must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_review_ -- --nocapture; cargo test -p agentic-workflow --lib pending_ec_review -- --nocapture; cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-deferred-post-completion-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-gen-post-implementation-phase-aware-handoff"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff.py"
+promise = "EC gen post-implementation phase-aware handoff: `cargo test -p agentic-workflow --lib ec_gen_next_action_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; fresh EC-first generation still hands off to TD authoring, while post-review regeneration for cb_filled WIs runs the newly current EC verifier instead of emitting an invalid td create rewind"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-gen-post-implementation-phase-aware-handoff must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_gen_next_action_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-gen-post-implementation-phase-aware-handoff.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-independent-agent-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review.py"
+promise = "EC independent agent review: `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; apps/agentic-workflow/tech-design/surface/specs/aw-ec-agent-review-protocol.md; a project's `ec_review_backing` policy (`human` default \\"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-independent-agent-review must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_review_ -- --nocapture; cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-independent-agent-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-lock-removal-migration-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard.py"
+promise = "EC lock removal migration guard: `cargo test -p agentic-workflow --lib ec_lock_refuses_to_overwrite_when_current_ir_drops_locked_contracts`; `cargo test -p agentic-workflow --lib health_marks_ec_lock_removals_as_a_migration_hitl_blocker`; removed locked EC entries become a migration-required HITL blocker and cannot be silently dropped by `aw ec lock`"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-lock-removal-migration-guard must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_lock_refuses_to_overwrite_when_current_ir_drops_locked_contracts; cargo test -p agentic-workflow --lib health_marks_ec_lock_removals_as_a_migration_hitl_blocker"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-lock-removal-migration-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-needs-revision-existing-source-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing.py"
+promise = "EC needs-revision existing-source routing: `cargo test -p agentic-workflow --lib ec_needs_revision_ -- --nocapture`; `cargo test -p agentic-workflow --lib ec_review_agent_needs_revision_routes_to_bounded_fill -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; review evidence may route only to an existing external-contract Markdown source or an existing legacy TD-derived source, so emitted `aw ec fill` commands are executable"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-needs-revision-existing-source-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_needs_revision_ -- --nocapture; cargo test -p agentic-workflow --lib ec_review_agent_needs_revision_routes_to_bounded_fill -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-needs-revision-existing-source-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "ec-only-semantic-approval"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval.py"
+promise = "EC only semantic approval: `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; production EC generation and verification require current digest-bound human acceptance after dimension, claim, assertion, oracle-independence, loophole, and false-green inspection"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:ec-only-semantic-approval must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_review_ -- --nocapture; cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-ec-only-semantic-approval.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "project-label-producer-td-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing.py"
+promise = "Project label producer TD routing: `cargo test -p agentic-workflow --lib project_label_canonicalization -- --nocapture`; `cargo test -p agentic-workflow --lib default_td_spec_path_errors_loudly_on_unrecognized_project_label -- --nocapture`; `cargo test -p agentic-workflow --lib explicit_diff_ -- --nocapture`; `cargo test -p agentic-workflow --lib rest_patch_args_distinguishes_omitted_from_explicit_empty_labels -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md; apps/agentic-workflow/tech-design/core/logic/issues-backend.md; registered library rows produce canonical lib labels that reach their project-local TD root, explicit tracker update removals retire stale project labels without deleting unrelated labels (including the final GitHub label), app routing is preserved, and raw retired project labels remain rejected"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:project-label-producer-td-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib project_label_canonicalization -- --nocapture; cargo test -p agentic-workflow --lib default_td_spec_path_errors_loudly_on_unrecognized_project_label -- --nocapture; cargo test -p agentic-workflow --lib explicit_diff_ -- --nocapture; cargo test -p agentic-workflow --lib rest_patch_args_distinguishes_omitted_from_explicit_empty_labels -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-project-label-producer-td-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-capability-claim-reconciliation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation.py"
+promise = "Python EC capability-claim reconciliation: `python3 -m unittest discover -s apps/agentic-workflow/external-contracts/tests -p test_claim_reconciliation.py`; `cargo test -p agentic-workflow --lib python_ec_inventory_projects_use_case_ids_into_claim_closure_manifest -- --nocapture`; `python3 apps/agentic-workflow/external-contracts/src/claim_reconciliation.py`; canonical Python EC cases cover every required CAPABILITIES claim through all classified executable gates, concrete claim oracles are projected into assertions, cargo selectors must execute at least one test, claim closure consumes Python `use_case_id` identities instead of the legacy aw.toml manifest, and independent negative tests plus the read-only drift check fail closed on invalid or stale reconciliation state"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:python-ec-capability-claim-reconciliation must run, exit zero, and every cargo test gate must execute at least one test. Gates: python3 -m unittest discover -s apps/agentic-workflow/external-contracts/tests -p test_claim_reconciliation.py; cargo test -p agentic-workflow --lib python_ec_inventory_projects_use_case_ids_into_claim_closure_manifest -- --nocapture; python3 apps/agentic-workflow/external-contracts/src/claim_reconciliation.py"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-python-ec-capability-claim-reconciliation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-inventory-check"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check.py"
+promise = "Python EC inventory check: `cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-inventory-check.md; every project reads a hand-authored external-contracts Python project's pyproject inventory without importing or executing EC source and requires stable capability/use-case/dimension records with TD or post-generation applicability"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:python-ec-inventory-check must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-python-ec-inventory-check.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-missing-scaffold-recovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery.py"
+promise = "Python EC missing-scaffold recovery: `cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture`; `./target/debug/aw ec --help`; apps/agentic-workflow/tech-design/core/logic/python-ec-inventory-check.md; a missing external-contracts/pyproject.toml emits an aw.cli.v1 continuation with one runnable Python scaffold command, draft creates only pyproject/src/evidence artifacts with an exact follow-up check, and help no longer teaches Markdown as the canonical authoring path"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:python-ec-missing-scaffold-recovery must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ec_python_inventory_check -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-python-ec-missing-scaffold-recovery.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-python-ec-review-lock"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-python-ec-review-lock"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-review-lock"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-python-ec-review-lock.py"
+promise = "Python EC review lock: `cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-review-lock.md; an explicit Python-v1 project binds independent agent/human/deferred EC approval and the EC lock to every normalized Python source plus declared dependency and pyproject inventory input, rejects same-author agent review, and invalidates stale evidence deterministically"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:python-ec-review-lock must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-python-ec-review-lock -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-python-ec-review-lock"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-python-ec-review-lock.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-staged-verification"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification.py"
+promise = "Python EC staged verification: `cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-staged-verification.md; Python EC cases declare promise, oracle, target, thresholds where applicable, and external evidence; core verifies behavior/security while operational verifies stability/efficiency and fails missing evidence"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:python-ec-staged-verification must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test ec_python_review_lock -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-python-ec-staged-verification.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite.py"
+promise = "Review payload survives rerun instead of being reset (gap: ec-review-payload-overwrite): `cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_rerun_without_evidence_file_refreshes_stale_workspace_payload -- --nocapture`; `cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_rerun_without_evidence_file_reaches_acceptance_for_current_payload -- --nocapture`; `cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_evidence_file_is_evaluated_not_reset -- --nocapture`; `cargo test -p agentic-workflow --lib cli::ec::tests::ensure_ec_review_payload_refreshes_an_existing_stale_workspace_payload -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; an explicit `--evidence-file` is evaluated as submitted and a current default workspace payload reaches acceptance, while a stale default workspace payload is intentionally refreshed to the new digest instead of being mistaken for current review evidence"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_rerun_without_evidence_file_refreshes_stale_workspace_payload -- --nocapture; cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_rerun_without_evidence_file_reaches_acceptance_for_current_payload -- --nocapture; cargo test -p agentic-workflow --lib cli::ec::tests::ec_review_evidence_file_is_evaluated_not_reset -- --nocapture; cargo test -p agentic-workflow --lib cli::ec::tests::ensure_ec_review_payload_refreshes_an_existing_stale_workspace_payload -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-review-payload-survives-rerun-instead-of-being-reset-gap-ec-review-payload-overwrite.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "reviewed-legacy-to-python-ec-lock-replacement"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement.py"
+promise = "Reviewed legacy-to-Python EC lock replacement: `cargo test -p agentic-workflow --lib reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-ec-review-lock.md; a root-owned Python WI may replace a legacy aw.toml/Markdown EC lock only after digest-current independent review of the canonical pyproject bundle, while project-global locking and every other removed-contract transition remain fail closed"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:reviewed-legacy-to-python-ec-lock-replacement must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib reviewed_python_wi_replaces_legacy_inventory_lock_without_weakening_global_guard -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-reviewed-legacy-to-python-ec-lock-replacement.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "root-owned-ec-production-required-verdict"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict.py"
+promise = "Root-owned EC production-required verdict: `cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture`; `cargo test -p agentic-workflow --lib lifecycle_action_for_post_fill_phases_records_ec_verdict -- --nocapture`; `cargo test -p agentic-workflow --lib ec_verify_required_only_skips_advisory_cases -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; WI/capability loop verdicts use terminal code-check's production-required case filter, while manual unscoped EC verification retains the all-cases diagnostic mode"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:root-owned-ec-production-required-verdict must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib wi_change_lifecycle_step_routes_by_phase -- --nocapture; cargo test -p agentic-workflow --lib lifecycle_action_for_post_fill_phases_records_ec_verdict -- --nocapture; cargo test -p agentic-workflow --lib ec_verify_required_only_skips_advisory_cases -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-root-owned-ec-production-required-verdict.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "stale-ec-inventory-verifier-fail-closed-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing.py"
+promise = "Stale EC inventory verifier fail-closed routing: `cargo test -p agentic-workflow --lib ec_verify_refuses_stale_inventory_before_running_commands -- --nocapture`; `cargo test -p agentic-workflow --lib ec_verify_routes_missing_semantic_review_before_running_commands -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; EC verify refuses stale or unreviewed generated inventories before command execution and routes root-owned WIs to independent EC review/regeneration instead of an unrunnable cb_filled `td gen` loop"
+oracle = "Every executable gate declared for project-local-td-and-ec-gates:stale-ec-inventory-verifier-fail-closed-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ec_verify_refuses_stale_inventory_before_running_commands -- --nocapture; cargo test -p agentic-workflow --lib ec_verify_routes_missing_semantic_review_before_running_commands -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing"
+evidence_paths = ["evidence/claim-closure-project-local-td-and-ec-gates-stale-ec-inventory-verifier-fail-closed-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "active-td-marker-reconciliation-scope"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope.py"
+promise = "Active TD marker reconciliation scope: `cargo test -p agentic-workflow --lib marker_gate_scope_prefers_active_td_changes_over_persistent_branch_history -- --nocapture`; terminal marker reconciliation treats explicit active-TD Changes paths as authoritative, so persistent branch history cannot make foreign HANDWRITE markers block an unrelated work item"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:active-td-marker-reconciliation-scope must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib marker_gate_scope_prefers_active_td_changes_over_persistent_branch_history -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-active-td-marker-reconciliation-scope.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "app-lib-handwrite-marker-discovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery.py"
+promise = "App lib HANDWRITE marker discovery: `cargo test -p agentic-workflow --test cli_tests test_apply_marker_replaces_block -- --nocapture`; whole-worktree marker discovery covers app and library roots while active fill stays scoped to declared Changes paths"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:app-lib-handwrite-marker-discovery must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests test_apply_marker_replaces_block -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-app-lib-handwrite-marker-discovery.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "async-rust-handwrite-anchors"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors.py"
+promise = "Async Rust HANDWRITE anchors: `cargo test -p agentic-workflow --lib scaffold_async_function_anchors -- --nocapture`; public, crate-visible, and private async Rust functions are valid bounded HANDWRITE anchors"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:async-rust-handwrite-anchors must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib scaffold_async_function_anchors -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-async-rust-handwrite-anchors.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "author-time-handwrite-anchor-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract.py"
+promise = "Author-time HANDWRITE anchor contract: `cargo test -p agentic-workflow --lib td_authoring_ -- --nocapture`; Changes payload guidance and apply-time validation reject markerless existing hand-written Rust modifications before TD generation, while existing non-Rust artifacts stay diff-evidenced without a Rust marker"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:author-time-handwrite-anchor-contract must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_authoring_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-author-time-handwrite-anchor-contract.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "canonical-app-lib-td-fill-scope-reconciliation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation.py"
+promise = "Canonical app/lib TD fill scope reconciliation: `cargo test -p agentic-workflow --lib canonical_td_changes_path_queues_app_marker`; `cargo test -p agentic-workflow --lib whole_worktree_walk_includes_apps_and_libs`; canonical `apps/<name>` and `libs/<name>` Changes paths queue their HANDWRITE markers and zero-marker re-entry records the normal filled lifecycle phase"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:canonical-app-lib-td-fill-scope-reconciliation must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib canonical_td_changes_path_queues_app_marker; cargo test -p agentic-workflow --lib whole_worktree_walk_includes_apps_and_libs"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-canonical-app-lib-td-fill-scope-reconciliation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "committed-td-skeleton-lifecycle"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle.py"
+promise = "Committed TD skeleton lifecycle: `cargo test -p agentic-workflow --lib td_skeleton_recovery -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_commits_fresh_numeric_skeleton_once -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_recovers_reachable_locked_legacy_skeleton_once -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_rejects_authored_tracked_staged_and_sibling_skeleton_states -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_post_gen_and_terminal_phases_reject_untracked_skeleton -- --nocapture`; apps/agentic-workflow/tech-design/logic/numeric-td-skeleton-id.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; only the sole exact untracked known-empty TD skeleton may cross authoring activation/reset/provision, and queue-start owns its canonical bytes exactly once"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:committed-td-skeleton-lifecycle must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_skeleton_recovery -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_commits_fresh_numeric_skeleton_once -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_recovers_reachable_locked_legacy_skeleton_once -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_rejects_authored_tracked_staged_and_sibling_skeleton_states -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_post_gen_and_terminal_phases_reject_untracked_skeleton -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-committed-td-skeleton-lifecycle.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "current-session-guard-off-convergence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence.py"
+promise = "Current-session guard-off convergence: `cargo test -p agentic-workflow --lib pretool_allows_current_session_callback_after_guard_off -- --nocapture`; stale Codex/Claude hook callbacks consult live hook configuration, so `aw guard off` immediately permits the current session without dropping unrelated handlers"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:current-session-guard-off-convergence must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib pretool_allows_current_session_callback_after_guard_off -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-current-session-guard-off-convergence.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "default-td-target-plan-queue"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue.py"
+promise = "Default TD target-plan queue: `cargo test -p agentic-workflow --lib target_plan -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; fresh TD applicability and contract passes dispatch an editable Logic -> Changes -> Unit Test queue whose explicit target plan reaches code generation"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:default-td-target-plan-queue must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib target_plan -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-default-td-target-plan-queue.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "existing-xml-handwrite-adoption"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption.py"
+promise = "Existing XML HANDWRITE adoption: `cargo test -p agentic-workflow --lib adopt_existing_ -- --nocapture`; existing implementations enclosed by pending XML markers use an explicit adoption payload that preserves the body and binds it to the owning work item"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:existing-xml-handwrite-adoption must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib adopt_existing_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "fixture-platform-config-rot"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot.py"
+promise = "Fixture platform config rot: cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture; cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture; cargo test -p agentic-workflow --test cli_tests self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture; apps/agentic-workflow/tech-design/surface/specs/aw-fixture-platform-config.md; e2e fixture projects declare a local issue_platform block and every spawned aw command sets AW_FIXTURE_LOCAL_BACKEND=1, restoring the mandatory repo_platform check for real projects while resolving a backend for fully offline fixture sandboxes; a companion fix skips Retired capabilities in the migrate-synthesized placeholder gap-scanning loop so a retired capability never routes to WI creation; gap: fixture-platform-config-rot"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:fixture-platform-config-rot must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests chain_liveness -- --nocapture; cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture; cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "generated-td-lock-commit-handoff"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff.py"
+promise = "Generated TD lock commit handoff: `cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; the mutating TD-lock command preflights exact in-repository path containment before any write, rejects external directory or lock symlinks without mutation, commits only the configured lock path, preserves unrelated index/worktree state, recovers legacy uncommitted locks once, keeps check/show read-only, and leaves the generated lock clean for the emitted generation command"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:generated-td-lock-commit-handoff must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "large-explicit-source-fillback-and-lossless-exact-gen-source"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source.py"
+promise = "Large explicit-source fillback and lossless exact gen-source: `cargo test -p agentic-workflow --lib explicit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_explicit_large_file_emits_single_dispatch_and_terminal_gen_source_json -- --nocapture`; repo-built `aw td create --from-source <file>` then emitted `aw cb gen-source ... --dry-run` on a 315,692-byte fixture"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:large-explicit-source-fillback-and-lossless-exact-gen-source must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib explicit_ -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_explicit_large_file_emits_single_dispatch_and_terminal_gen_source_json -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "marker-free-post-fill-evidence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence.py"
+promise = "Marker-free post-fill evidence: `cargo test -p agentic-workflow --test cli_tests cb_fill_test::test_marker_free_brief_commits_declared_evidence_and_preserves_unrelated_dirty_path -- --nocapture`; after the last marker, including re-entry from `cb_filled`, `aw cb fill` commits declared Changes evidence while preserving unrelated dirty work untouched"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:marker-free-post-fill-evidence must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests cb_fill_test::test_marker_free_brief_commits_declared_evidence_and_preserves_unrelated_dirty_path -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-marker-free-post-fill-evidence.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "markerless-hand-written-td-generation-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard.py"
+promise = "Markerless hand-written TD generation guard: `cargo test -p agentic-workflow --lib hand_written_existing_target_requires_anchor_before_lifecycle_progress -- --nocapture`; existing hand-written targets require a valid TD `anchor:` so AW scaffolds a bounded HANDWRITE payload before lifecycle progress"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:markerless-hand-written-td-generation-guard must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib hand_written_existing_target_requires_anchor_before_lifecycle_progress -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-markerless-hand-written-td-generation-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "numeric-td-skeleton-ids"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids.py"
+promise = "Numeric TD skeleton IDs: `cargo test -p agentic-workflow --lib initialize_td_spec_skeleton -- --nocapture`; apps/agentic-workflow/tech-design/logic/numeric-td-skeleton-id.md"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:numeric-td-skeleton-ids must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib initialize_td_spec_skeleton -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-numeric-td-skeleton-ids.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "persistent-guard-policy-and-agy-adapter"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter.py"
+promise = "Persistent guard policy and AGY adapter: `cargo test -p agentic-workflow --lib guard -- --nocapture`; `aw guard on/off` commit only their changed repo-tracked Codex/Claude policy files, while AGY adds a preserving user-global adapter and temporary exceptions use expiring worktree-local `aw guard bypass` state"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:persistent-guard-policy-and-agy-adapter must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib guard -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-persistent-guard-policy-and-agy-adapter.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "project-qualified-terminal-td-resolution"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution.py"
+promise = "Project-qualified terminal TD resolution: `cargo test -p agentic-workflow --test cli_tests test_code_check_prefers_project_td_when_implements_cache_is_absent -- --nocapture`; issue-owned TD resolution preserves exact workflow scope and falls back only to the configured project-qualified TD root"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:project-qualified-terminal-td-resolution must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests test_code_check_prefers_project_td_when_implements_cache_is_absent -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-project-qualified-terminal-td-resolution.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-artifact-trace-code-check"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check.py"
+promise = "Python artifact trace code-check: `cargo test -p agentic-workflow --lib python_artifact_code_check -- --nocapture`; apps/agentic-workflow/tech-design/logic/aw-python-artifact-trace-code-check.md; terminal closure must bind stable DDD identities, TD source/semantic lock, cold target digest, native unit result, EC review/lock, and required staged evidence"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-artifact-trace-code-check must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib python_artifact_code_check -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-artifact-trace-code-check.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-reference-http-db"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-reference-http-db"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-reference-http-db"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-reference-http-db.py"
+promise = "Python reference HTTP DB: `cargo test -p agentic-workflow --test python_spec_http_db_fixture -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-reference-http-db.md; a DDD FastAPI/Pydantic/SQLAlchemy/SQLite reference demonstrates Python TD boundaries without elevating the reference stack into a framework contract"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-reference-http-db must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_spec_http_db_fixture -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-reference-http-db -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-reference-http-db"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-reference-http-db.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-reference-typer-cli"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli.py"
+promise = "Python reference Typer CLI: `cargo test -p agentic-workflow --test python_spec_typer_fixture -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-reference-typer-cli.md; a DDD Typer CLI reference demonstrates direct Python command-boundary authoring without elevating Typer into a framework contract"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-reference-typer-cli must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_spec_typer_fixture -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-reference-typer-cli.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-self-health-policy-reconciliation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation.py"
+promise = "Python self-health policy reconciliation: `cargo test -p agentic-workflow --lib python_readiness_ -- --nocapture`; `cargo test -p agentic-workflow --lib claim_closure_without_td_evidence_policy_does_not_scan_td_inventory -- --nocapture`; Python artifact readiness preserves self-AW's advisory EC state unless a configured/evaluated gate fails, while claim closure does not scan legacy Markdown TD capability references when the active self-hosting policy does not require TD artifact evidence"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-self-health-policy-reconciliation must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib python_readiness_ -- --nocapture; cargo test -p agentic-workflow --lib claim_closure_without_td_evidence_policy_does_not_scan_td_inventory -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-self-health-policy-reconciliation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-td-missing-source-fail-closed-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing.py"
+promise = "Python TD missing-source fail-closed routing: `cargo test -p agentic-workflow --test python_td_compiler -- --nocapture`; configured Python projects route directory targets through the Python TD compiler even before `src/` or `pyproject.toml` exists, so a legacy Markdown directory cannot produce a false-green TD check"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-td-missing-source-fail-closed-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_td_compiler -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-td-missing-source-fail-closed-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-td-native-target-collision-safety"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety.py"
+promise = "Python TD native target collision safety: `cargo test -p agentic-workflow --test python_td_target -- --nocapture`; Rust, Python, and TypeScript native emitters preflight the complete candidate write set, reject unowned existing-file collisions before mutation, preserve unrelated project files while atomically updating explicitly generator-owned paths, and declare manifest/source/test paths in the goal prompt writable scope"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-td-native-target-collision-safety must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_td_target -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-td-native-target-collision-safety.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-td-self-hosting-discovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery.py"
+promise = "Python TD self-hosting discovery: `cargo test -p agentic-workflow --test python_td_compiler python_td_compiler_discovers_self_hosting_bootstrap_with_stable_digest -- --nocapture`; `./target/debug/aw td check apps/agentic-workflow/tech-design --project agentic-workflow --json`; apps/agentic-workflow/tech-design/src/self_hosting.py; the stable `artifact:td-cb-lifecycle-automation/python-td-missing-source-fail-closed-routing` identity binds the bounded source module to this capability and gap/claim while existing Markdown TD artifacts remain compatibility/reference input"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-td-self-hosting-discovery must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_td_compiler python_td_compiler_discovers_self_hosting_bootstrap_with_stable_digest -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-td-self-hosting-discovery.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "python-td-workspace-native-target-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing.py"
+promise = "Python TD workspace-native target routing: `cargo test -p agentic-workflow --lib python_artifact_ -- --nocapture`; `cargo test -p agentic-workflow --test python_td_compiler -- --nocapture`; Python remains the EC/TD specification model while successful TD handoff and every CB generation or remediation phase derive Rust, Python, or TypeScript materialization from the configured workspace target"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:python-td-workspace-native-target-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib python_artifact_ -- --nocapture; cargo test -p agentic-workflow --test python_td_compiler -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-python-td-workspace-native-target-routing.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "rebased-td-lifecycle-recovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery.py"
+promise = "Rebased TD lifecycle recovery: `cargo test -p agentic-workflow --lib rebased_td_lifecycle -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_rebased_lifecycle -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_on_project_branch_stays_on_current_branch -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_refuses_unchanged_hand_written_modify_paths -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; active authoring state without a reachable exact Td-Init is reset and safely re-provisioned, while a reachable baseline resumes unchanged and code-check evidence remains fail-closed"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:rebased-td-lifecycle-recovery must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib rebased_td_lifecycle -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_rebased_lifecycle -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_on_project_branch_stays_on_current_branch -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_code_check_refuses_unchanged_hand_written_modify_paths -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-rebased-td-lifecycle-recovery.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "scoped-td-fill-marker-completion"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion.py"
+promise = "Scoped TD fill marker completion: `cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_apply_marker_replaces_block -- --nocapture`; post-apply marker queues remain bounded to the active TD Changes paths, so foreign HANDWRITE gaps cannot block this work item's code-check"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:scoped-td-fill-marker-completion must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_apply_marker_replaces_block -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-scoped-td-fill-marker-completion.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "shell-text-source-unit-cold-replay"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay.py"
+promise = "Shell text-source-unit cold replay: `cargo test -p agentic-workflow --lib canonical_shell_text_source_unit_accepts_shebang_and_hash_markers`; canonical `.sh`, `.bash`, and `.zsh` whole-file text source units retain a leading shebang and exact hash-comment ownership markers without requiring shell AST parsing"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:shell-text-source-unit-cold-replay must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib canonical_shell_text_source_unit_accepts_shebang_and_hash_markers"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-shell-text-source-unit-cold-replay.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-gen-partial-write-self-deadlock-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard.py"
+promise = "TD gen partial-write self-deadlock guard: `cargo test -p agentic-workflow --lib td_gen_leaves_no_partial_write_when_later_target_fails_anchor_validation -- --nocapture`; apply preflights every hand-written entry's anchor before any target in the same spec writes, so a later-processed missing-anchor failure cannot leave an earlier-processed codegen target partially generated and self-deadlocking the next `aw cb gen`; gap: td-gen-partial-write-self-deadlock"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:td-gen-partial-write-self-deadlock-guard must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_gen_leaves_no_partial_write_when_later_target_fails_anchor_validation -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-td-gen-partial-write-self-deadlock-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-generation-project-root-precedence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence.py"
+promise = "TD generation project-root precedence: `cargo test -p agentic-workflow td_gen_prefers_issue_scope_over_foreign_legacy_discovery --lib -- --nocapture`; a hydrated project-labelled issue selects its configured project TD root before foreign legacy `.aw/tech-design` discovery"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:td-generation-project-root-precedence must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow td_gen_prefers_issue_scope_over_foreign_legacy_discovery --lib -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-td-generation-project-root-precedence.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-merged-candidate-in-memory-validation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation.py"
+promise = "TD merged candidate in memory validation: `cargo test -p agentic-workflow --lib merged_td_candidate_validation -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_apply_validates_merged_candidate_in_memory_before_write -- --nocapture`; apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-runner-rs.md; apps/agentic-workflow/tech-design/surface/interfaces/src/td.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; merged section candidates run the complete shared registry before write while completed specs remain file-backed"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:td-merged-candidate-in-memory-validation must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib merged_td_candidate_validation -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_apply_validates_merged_candidate_in_memory_before_write -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-td-merged-candidate-in-memory-validation.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "xml-adoption-source-diff-guard"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard.py"
+promise = "XML adoption source-diff guard: `cargo test -p agentic-workflow --test cli_tests cb_fill_test::test_apply_commits_current_marker_and_preserves_unrelated_dirty_path -- --nocapture`; `aw cb fill <id> --apply` commits only the active marker's declared source path while preserving unrelated dirty work untouched in the worktree"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:xml-adoption-source-diff-guard must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests cb_fill_test::test_apply_commits_current_marker_and_preserves_unrelated_dirty_path -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-xml-adoption-source-diff-guard.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "xml-handwrite-fill-protocol"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol.py"
+promise = "XML HANDWRITE fill protocol: `cargo test -p agentic-workflow --lib pending_xml_handwrite -- --nocapture`; `cargo test -p agentic-workflow --lib xml_handwrite_marker_ -- --nocapture`; pending XML scaffold markers enter a unique per-target fill queue and bind their tracker to the owning work item after payload application"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:xml-handwrite-fill-protocol must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib pending_xml_handwrite -- --nocapture; cargo test -p agentic-workflow --lib xml_handwrite_marker_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-xml-handwrite-fill-protocol.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-agent-backed-capability-plan-review"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-agent-backed-capability-plan-review"
+capability_id = "work-item-planning"
+use_case_id = "agent-backed-capability-plan-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-agent-backed-capability-plan-review.py"
+promise = "Agent-backed capability-plan review: `cargo test -p agentic-workflow --lib capability_plan_ -- --nocapture`; `cargo test -p agentic-workflow --lib legacy_human_only_plan_does_not_resurrect_as_a_review_blocker -- --nocapture`; `cargo test -p agentic-workflow --lib parse_capability_contract_facets_for_78 -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md; unconfigured/either review is agent-first and digest-bound, same-agent evidence is rejected, explicit human-only policy remains blocking, stale doc-stored WI refs stay advisory instead of suppressing replacement claim WIs, capability Root WI and claim WI remain distinct, repeated claim ids are deduplicated while retaining every capability alignment, only explicit claim WI refs or exact claim ids suppress duplicate drafts, candidates retain all same-project test targets and carry runnable gates with claim-specific observable results, linkage/prose/downgrade alone cannot close a generated WI, needs_revision is non-publishing, and accepted plans idempotently publish bounded claim WIs under their parent epic"
+oracle = "Every executable gate declared for work-item-planning:agent-backed-capability-plan-review must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib capability_plan_ -- --nocapture; cargo test -p agentic-workflow --lib legacy_human_only_plan_does_not_resurrect_as_a_review_blocker -- --nocapture; cargo test -p agentic-workflow --lib parse_capability_contract_facets_for_78 -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-agent-backed-capability-plan-review -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-agent-backed-capability-plan-review"
+evidence_paths = ["evidence/claim-closure-work-item-planning-agent-backed-capability-plan-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-agent-backed-inventory-plan-review"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-agent-backed-inventory-plan-review"
+capability_id = "work-item-planning"
+use_case_id = "agent-backed-inventory-plan-review"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-agent-backed-inventory-plan-review.py"
+promise = "Agent-backed inventory-plan review: `cargo test -p agentic-workflow --test inventory_plan_review_cli_test -- --nocapture`; epicize, atomize, and prioritize default to digest-bound independent agent review, reject same-agent evidence, preserve explicit human-only policy, and authorize only a chain-valid next command from accepted evidence"
+oracle = "Every executable gate declared for work-item-planning:agent-backed-inventory-plan-review must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test inventory_plan_review_cli_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-agent-backed-inventory-plan-review -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-agent-backed-inventory-plan-review"
+evidence_paths = ["evidence/claim-closure-work-item-planning-agent-backed-inventory-plan-review.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy"
+capability_id = "work-item-planning"
+use_case_id = "canonical-epic-change-wi-taxonomy"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy.py"
+promise = "Canonical epic/change WI taxonomy: `cargo test -p agentic-workflow --test wi_epic_change_taxonomy_cli_test -- --nocapture`; `cargo test -p agentic-workflow --lib legacy_non_epic_ -- --nocapture`; `cargo test -p agentic-workflow --lib parse_gh_issue_normalizes_legacy_types_without_mutating_labels -- --nocapture`; `cargo test -p agentic-workflow --lib parse_glab_issue_normalizes_legacy_types_without_mutating_labels -- --nocapture`; public authoring and output use only epic/change, while local/GitHub/GitLab compatibility reads preserve legacy labels and identity without mutation"
+oracle = "Every executable gate declared for work-item-planning:canonical-epic-change-wi-taxonomy must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test wi_epic_change_taxonomy_cli_test -- --nocapture; cargo test -p agentic-workflow --lib legacy_non_epic_ -- --nocapture; cargo test -p agentic-workflow --lib parse_gh_issue_normalizes_legacy_types_without_mutating_labels -- --nocapture; cargo test -p agentic-workflow --lib parse_glab_issue_normalizes_legacy_types_without_mutating_labels -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy"
+evidence_paths = ["evidence/claim-closure-work-item-planning-canonical-epic-change-wi-taxonomy.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-deterministic-staged-epic-change-planner"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-deterministic-staged-epic-change-planner"
+capability_id = "work-item-planning"
+use_case_id = "deterministic-staged-epic-change-planner"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-deterministic-staged-epic-change-planner.py"
+promise = "Deterministic staged epic/change planner: `cargo test -p agentic-workflow --test wi_two_stage_project_plan_cli_test -- --nocapture`; `cargo test -p agentic-workflow --test inventory_plan_review_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/two-stage-project-plan.md; `aw wi plan` holds one stable root id while relaying normalize, reconcile, atomize, and strict zero-diff verify; compatibility planning verbs enter that same root, review and human decisions are separate evidence steps, and only plan-apply writes the tracker"
+oracle = "Every executable gate declared for work-item-planning:deterministic-staged-epic-change-planner must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test wi_two_stage_project_plan_cli_test -- --nocapture; cargo test -p agentic-workflow --test inventory_plan_review_cli_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-deterministic-staged-epic-change-planner -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-deterministic-staged-epic-change-planner"
+evidence_paths = ["evidence/claim-closure-work-item-planning-deterministic-staged-epic-change-planner.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-digest-bound-project-planning-transaction"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-digest-bound-project-planning-transaction"
+capability_id = "work-item-planning"
+use_case_id = "digest-bound-project-planning-transaction"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-digest-bound-project-planning-transaction.py"
+promise = "Digest-bound project planning transaction: `cargo test -p agentic-workflow --lib planning_transaction::tests -- --nocapture`; `cargo test -p agentic-workflow --test wi_project_plan_transaction_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/project-plan-transaction.md; accepted project-plan review binds the exact tracker snapshot and ordered mutation manifest, fails drift before writes, preserves duplicate/superseded history, and retries through tracker idempotency markers without duplicate issues"
+oracle = "Every executable gate declared for work-item-planning:digest-bound-project-planning-transaction must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib planning_transaction::tests -- --nocapture; cargo test -p agentic-workflow --test wi_project_plan_transaction_cli_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-digest-bound-project-planning-transaction -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-digest-bound-project-planning-transaction"
+evidence_paths = ["evidence/claim-closure-work-item-planning-digest-bound-project-planning-transaction.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-epic-child-graph-terminal-rollup"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-epic-child-graph-terminal-rollup"
+capability_id = "work-item-planning"
+use_case_id = "epic-child-graph-terminal-rollup"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-epic-child-graph-terminal-rollup.py"
+promise = "Epic child graph terminal rollup: `cargo test -p agentic-workflow --lib open_epic_with_ -- --nocapture`; `cargo test -p agentic-workflow --lib epic_parent_relation_ -- --nocapture`; open epics discover tracker-backed parent relations across open and closed WIs, dispatch unfinished children, close after every child is terminal, and re-atomize only when no child graph exists"
+oracle = "Every executable gate declared for work-item-planning:epic-child-graph-terminal-rollup must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib open_epic_with_ -- --nocapture; cargo test -p agentic-workflow --lib epic_parent_relation_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-epic-child-graph-terminal-rollup -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-epic-child-graph-terminal-rollup"
+evidence_paths = ["evidence/claim-closure-work-item-planning-epic-child-graph-terminal-rollup.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants"
+capability_id = "work-item-planning"
+use_case_id = "issue-platform-epic-change-graph-invariants"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants.py"
+promise = "Issue-platform epic/change graph invariants: `cargo test -p agentic-workflow --test wi_epic_change_graph_cli_test -- --nocapture`; `cargo test -p agentic-workflow --lib issues::graph::tests -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/epic-change-graph.md; `aw wi graph` projects deterministic ownership, priority inheritance, dependency, duplicate, and sibling-supersession state without tracker writes and fails closed on invalid open-change ownership"
+oracle = "Every executable gate declared for work-item-planning:issue-platform-epic-change-graph-invariants must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test wi_epic_change_graph_cli_test -- --nocapture; cargo test -p agentic-workflow --lib issues::graph::tests -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants"
+evidence_paths = ["evidence/claim-closure-work-item-planning-issue-platform-epic-change-graph-invariants.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence"
+capability_id = "work-item-planning"
+use_case_id = "legacy-backlog-reconciliation-and-plan-convergence"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence.py"
+promise = "Legacy backlog reconciliation and plan convergence: `cargo test -p agentic-workflow --test wi_two_stage_project_plan_cli_test -- --nocapture`; `cargo test -p agentic-workflow --test wi_project_plan_transaction_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/two-stage-project-plan.md; apps/agentic-workflow/tech-design/core/logic/issues/project-plan-transaction.md; `Parent: #<epic>.` imports without mutation, unowned legacy changes require an explicit existing owner or tracker revision instead of invented bootstrap epics, and only authoritative `## Requirements` drives atomization while closed changes remain valid coverage; strict graph plus zero-diff verify is digest-stable and duplicate-free"
+oracle = "Every executable gate declared for work-item-planning:legacy-backlog-reconciliation-and-plan-convergence must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test wi_two_stage_project_plan_cli_test -- --nocapture; cargo test -p agentic-workflow --test wi_project_plan_transaction_cli_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence"
+evidence_paths = ["evidence/claim-closure-work-item-planning-legacy-backlog-reconciliation-and-plan-convergence.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection"
+capability_id = "work-item-planning"
+use_case_id = "prioritized-reviewed-graph-goal-selection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection.py"
+promise = "Prioritized reviewed-graph goal selection: `cargo test -p agentic-workflow --lib ready_graph::tests -- --nocapture`; `cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/reviewed-graph-goal-selection.md; the reviewed issue graph is the goal selector input, so epic direction, ready child order, terminal rollup, and invalid-graph remediation stay deterministic across epic and backlog roots"
+oracle = "Every executable gate declared for work-item-planning:prioritized-reviewed-graph-goal-selection must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ready_graph::tests -- --nocapture; cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection"
+evidence_paths = ["evidence/claim-closure-work-item-planning-prioritized-reviewed-graph-goal-selection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-remote-wi-create-authoring-continuity"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-remote-wi-create-authoring-continuity"
+capability_id = "work-item-planning"
+use_case_id = "remote-wi-create-authoring-continuity"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-remote-wi-create-authoring-continuity.py"
+promise = "Remote WI create authoring continuity: `cargo test -p agentic-workflow --test wi_create_remote_lifecycle_test -- --nocapture`; configured remote creation mirrors the canonical tracker id into workspace lifecycle state, the accepted fill is projected back to the tracker before validation, and validation terminates with an executable `aw.cli.v1` done envelope"
+oracle = "Every executable gate declared for work-item-planning:remote-wi-create-authoring-continuity must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test wi_create_remote_lifecycle_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-remote-wi-create-authoring-continuity -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-remote-wi-create-authoring-continuity"
+evidence_paths = ["evidence/claim-closure-work-item-planning-remote-wi-create-authoring-continuity.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-work-item-planning-wi-linear-authoring-without-crrr"
+artifact_id = "artifact:agentic-workflow/claim-closure-work-item-planning-wi-linear-authoring-without-crrr"
+capability_id = "work-item-planning"
+use_case_id = "wi-linear-authoring-without-crrr"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-work-item-planning-wi-linear-authoring-without-crrr.py"
+promise = "WI linear authoring without CRRR: `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib runtime::session -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md; WI and draft authoring terminate at validation, with generic review/arbitration/runtime roles removed and older tracker review fields retained only for compatibility"
+oracle = "Every executable gate declared for work-item-planning:wi-linear-authoring-without-crrr must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture; cargo test -p agentic-workflow --lib runtime::session -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-work-item-planning-wi-linear-authoring-without-crrr -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-work-item-planning-wi-linear-authoring-without-crrr"
+evidence_paths = ["evidence/claim-closure-work-item-planning-wi-linear-authoring-without-crrr.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-closed-workflow-lock-release"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-closed-workflow-lock-release"
+capability_id = "workflow-root-runner"
+use_case_id = "closed-workflow-lock-release"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-closed-workflow-lock-release.py"
+promise = "Closed workflow lock release: `cargo test -p agentic-workflow --lib issue_lock_view_ignores_closed_issue_with_stale_lock_projection -- --nocapture`; lock discovery reads the configured tracker so closed/rejected items cannot retain a stale local projection that blocks unrelated TD/CB work"
+oracle = "Every executable gate declared for workflow-root-runner:closed-workflow-lock-release must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib issue_lock_view_ignores_closed_issue_with_stale_lock_projection -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-closed-workflow-lock-release -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-closed-workflow-lock-release"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-closed-workflow-lock-release.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+capability_id = "workflow-root-runner"
+use_case_id = "prioritized-reviewed-graph-goal-selection"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection.py"
+promise = "Prioritized reviewed-graph goal selection: `cargo test -p agentic-workflow --lib ready_graph::tests -- --nocapture`; `cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/issues/reviewed-graph-goal-selection.md; epic and backlog roots consume the same accepted published graph, choose epic priority before ready child priority, park blocked leaves, roll terminal epics up, and fail closed on stale or invalid graph metadata without re-atomizing"
+oracle = "Every executable gate declared for workflow-root-runner:prioritized-reviewed-graph-goal-selection must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib ready_graph::tests -- --nocapture; cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture; cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-prioritized-reviewed-graph-goal-selection.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-python-artifact-goal-flow"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-python-artifact-goal-flow"
+capability_id = "workflow-root-runner"
+use_case_id = "python-artifact-goal-flow"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-python-artifact-goal-flow.py"
+promise = "Python artifact goal flow: `cargo test -p agentic-workflow --lib python_artifact_goal_routing_ -- --nocapture`; apps/agentic-workflow/tech-design/logic/aw-python-artifact-goal-flow.md; every project follows the EC-first Python progression from direct EC check through TD compilation, target generation, CB checks, and terminal EC verification"
+oracle = "Every executable gate declared for workflow-root-runner:python-artifact-goal-flow must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib python_artifact_goal_routing_ -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-python-artifact-goal-flow -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-python-artifact-goal-flow"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-python-artifact-goal-flow.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser"
+capability_id = "workflow-root-runner"
+use_case_id = "python-artifact-model-compatibility-parser"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser.py"
+promise = "Python artifact-model compatibility parser: `cargo test -p agentic-workflow --test artifact_model_config_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-artifact-model-selector.md; historical `legacy` / `python-v1` configuration remains readable without giving a local overlay or stale value authority to disable the canonical Python lifecycle"
+oracle = "Every executable gate declared for workflow-root-runner:python-artifact-model-compatibility-parser must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test artifact_model_config_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-python-artifact-model-compatibility-parser.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-python-artifact-protocol"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-python-artifact-protocol"
+capability_id = "workflow-root-runner"
+use_case_id = "python-artifact-protocol"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-python-artifact-protocol.py"
+promise = "Python artifact protocol: `cargo test -p agentic-workflow --test python_artifact_protocol_test -- --nocapture`; apps/agentic-workflow/tech-design/core/logic/python-artifact-project-protocol.md; CPython Python-v1 artifacts declare safe source, dependency, entrypoint, and evidence boundaries in pyproject.toml before later TD or EC adapters consume them"
+oracle = "Every executable gate declared for workflow-root-runner:python-artifact-protocol must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --test python_artifact_protocol_test -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-python-artifact-protocol -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-python-artifact-protocol"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-python-artifact-protocol.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "claim-closure-workflow-root-runner-python-only-artifact-model-routing"
+artifact_id = "artifact:agentic-workflow/claim-closure-workflow-root-runner-python-only-artifact-model-routing"
+capability_id = "workflow-root-runner"
+use_case_id = "python-only-artifact-model-routing"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-workflow-root-runner-python-only-artifact-model-routing.py"
+promise = "Python-only artifact-model routing: `cargo test -p agentic-workflow --lib python_artifact_goal_routing_ -- --nocapture`; `cargo test -p agentic-workflow --test artifact_model_config_test --test ec_python_inventory_check --test python_artifact_readiness`; omitted and explicit legacy values resolve to Python, and stale legacy tracker phases restart at EC-first Python authoring rather than section-payload TD"
+oracle = "Every executable gate declared for workflow-root-runner:python-only-artifact-model-routing must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib python_artifact_goal_routing_ -- --nocapture; cargo test -p agentic-workflow --test artifact_model_config_test --test ec_python_inventory_check --test python_artifact_readiness"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-workflow-root-runner-python-only-artifact-model-routing -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-workflow-root-runner-python-only-artifact-model-routing"
+evidence_paths = ["evidence/claim-closure-workflow-root-runner-python-only-artifact-model-routing.json"]
+
+# aw:claim-reconciliation:end

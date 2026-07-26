@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:569d4138e76ba8cce01a6781aa9fdeb5cdb27aef8ace4b19bc2e09a1cfee4e4d",
+  "source_digest": "sha256:7ea0ca7ec854bb69efc40e6b98efa9ac6ef1dfe8631eb97d002f01ef7f1822f5",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-26T03:03:26.719851+00:00",
-  "summary": "The two explicit compatibility corrections improve semantic accuracy without weakening the accepted 112-case bundle. ec-artifact-producer-cli-fixture now exercises the canonical Python EC scaffold through the real aw binary and concretely asserts the pyproject, runner, bounded case module, absence of Markdown fallback, exact aw.cli.v1 check continuation, capability preservation, and clean structural check. external-fixture-reports-advisory-gap retains its assertions while selecting the actual cli_tests integration target, eliminating the stale --lib zero-test false green. Parity preserves all 98 legacy case identities, confines migration differences to exactly these two reviewed overrides, pins all 14 operational mappings, and all DeveloperTool capabilities retain behavior, efficiency, and stability coverage.",
+  "reviewed_at": "2026-07-26T04:34:48.331553+00:00",
+  "summary": "The canonical Python EC inventory is semantically acceptable for this digest. All 99 reconciled required-claim cases project their concrete capability oracle into the reviewed promise and assertions, execute every classified executable gate through the independent claim_gate runner, reject zero-test Cargo selectors, and pass current verification. Independent Python negative tests and Rust production tests prevent the reconciliation producer from serving as its own sole oracle. The corrected review-payload, marker-free, XML-adoption, and root-doc gates execute real tests against the current intended semantics.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
