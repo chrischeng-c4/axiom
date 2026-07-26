@@ -1772,11 +1772,31 @@ fn render_operator_yaml(namespace: &str, image: &str) -> Result<String> {
         "lumen-system",
         namespace,
     );
-    let checked_in_image = "          image: ghcr.io/chrischeng-c4/lumen:0.4.24";
-    if !deployment.contains(checked_in_image) {
-        anyhow::bail!("checked-in operator manifest is missing its canonical image field");
+    // Derived, not hardcoded (#2532): the checked-in manifest pins this
+    // workspace's own version, so a release bump that misses `deployment.yaml`
+    // fails this render instead of silently handing out a stale image.
+    let checked_in_image = format!(
+        "          image: ghcr.io/chrischeng-c4/lumen:{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    if !deployment.contains(&checked_in_image) {
+        anyhow::bail!(
+            "checked-in operator manifest does not pin this build's image \
+             (`{checked_in_image}`) — bump k8s/operator/deployment.yaml with the release"
+        );
     }
-    out.push_str(&deployment.replacen(checked_in_image, &format!("          image: {image}"), 1));
+    out.push_str(&deployment.replacen(&checked_in_image, &format!("          image: {image}"), 1));
+    // The PDB ships with the Deployment: `replicas: 2` only survives a node
+    // drain if evictions are serialized (#2602). Render consumers get the same
+    // operator layer the kustomize consumers get.
+    out.push_str("\n---\n");
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/pdb.yaml"
+        )),
+        "lumen-system",
+        namespace,
+    ));
     Ok(cli_std::artifact::ensure_trailing_newline(&out))
 }
 
