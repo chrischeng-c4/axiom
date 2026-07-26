@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-26T07:17:50.924816+00:00"
-ir_digest = "sha256:3a000637dff88b35732b3f749f7064f2b09047d181435b3d5698621e7e556ba3"
-source_digest = "sha256:334e60623d53ab5a60ae0e2918de806e6eee7493e1cd0cb58151417ac7d49f88"
+generated_at = "2026-07-26T15:13:22.512463+00:00"
+ir_digest = "sha256:92936de597294692b61dcac46ad21eff88bae49eeb4198a625494c6112bfe7e7"
+source_digest = "sha256:389f7d989586557cc53b662711a3dbf264fefd989aa4607e49856e5cc07714bc"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:a6844b39c3ef8d2e9c125fc2c5b5a2aaa6ff07080536cb5797403097d14f47bb"
+digest = "sha256:7389ec0a80be3fc2785ff0f40ec982f5a52eafd418ec65fc9c54341d5e3502be"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/api-contract-source-passes.py"
@@ -705,6 +705,10 @@ path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-wi-admis
 digest = "sha256:fa912d1241ec5f26f8ed911d44b004e53f26789d44d825b7b9af8699f989293d"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
+digest = "sha256:486e1ff1342114916d4ee8fec16bb0041901f3809800f724d7b314a20a4f2879"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
 digest = "sha256:c32bde95047fed4b9dc03295e5743478dbb77e7bd5a6d38ba693fe38b8cddd07"
 
@@ -845,6 +849,14 @@ path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estim
 digest = "sha256:2a68558377438d197b0448719cca61ef22989ef5cd08772bb974b8cf9d906f44"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
+digest = "sha256:5b415d853873554afd42a169bde0ff3250dccff001aa522f0bc4114c1ac9da77"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
+digest = "sha256:9237a17316fe342d8cd0f4ff5a1f79ef68fa1f8a9d977c531bc69faf3ed07a52"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-epic-to-change-atomization.py"
 digest = "sha256:e39a9351afea90c17d415c5e08af3c073039f81574cf56a30b7b8f66f2dde186"
 
@@ -855,6 +867,22 @@ digest = "sha256:c182f9a3cb4a30f14be1d38e582c6db90a314defa6d809e3441df62cb10fa5f
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-planning-operational-stability.py"
 digest = "sha256:2ba1a41defce1dfd5a96bd3ee84663a5c3b6addcb01d59d6a18905c5bc8d89b6"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
+digest = "sha256:827f71e8ca4d1435df178f04e97cae9313bd00b1bc321ac72f1daece0039db06"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
+digest = "sha256:ff652aa686d5245dc987176aacac1f2d0e667e6c2cd404efd111c2121dbe4128"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
+digest = "sha256:9be9b6dcc4fe1217813d20395dd20ff8d26f31cb1c6f9012bc2703bec20c5beb"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
+digest = "sha256:74ce74cb75a5ba413c90e832a038586d2e02bce6270dab1f25c2c2fd437ac957"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/workflow-root-runner-cli-workflow-chain.py"
@@ -886,7 +914,11 @@ digest = "sha256:974ac5843dd27df2c8604d5031eec82f3eb968efa0625077b155ba5840d180d
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/runner.py"
-digest = "sha256:e69573467bf7ee2d5e097d23cb7744889f7f6dac06bab11c03d49f226b77cef3"
+digest = "sha256:d7e5d7aa81358c706b8a8ea63c886088285b1032ad5a5ad14adaa66a75544a2a"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
+digest = "sha256:bf20aa892e6bdf0afd85e0e9c0d39ffe22b36cc0c5d95c74d7c133f27c8b2f5b"
 
 [[cases]]
 id = "api-contract-source-passes"
@@ -4361,6 +4393,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:c8909c3c33c577405a0d2d7ab93f8338ee422e7159b1d3eceee7752e45840a61"
 
 [[cases]]
+id = "shared-cli-issue-report-intake"
+capability_id = "work-item-planning"
+claim_id = "shared-cli-report-intake"
+contract_id = "shared-cli-issue-report-intake"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:shared-cli-issue-report-intake"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case shared-cli-issue-report-intake"
+required_for_production = true
+assertions = [
+    "shared CLI issue create emits app identity plus type:report through its public dry-run, courier JSON transport, and credential-free fallback URL",
+    "artifact: artifact:agentic-workflow/shared-cli-issue-report-intake",
+    "oracle: The hand-authored Python EC builds and executes a real cli-std consumer, captures its courier request at the HTTP boundary, and independently inspects its public dry-run and fallback outputs.",
+    "target: rust",
+]
+evidence_digest = "sha256:996d64d677ec2c7b0bc1c3a71b2b8353d770fa13e1ec4a902311f0298aaa03eb"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4f1877dc5a60ec9784f6d6061473fbc3f4eca1f2f518748b4fac5a2fb1b5ca5d"
+
+[[cases]]
 id = "standardize-audit-first-contract-test"
 capability_id = "existing-project-standardization"
 claim_id = "standardize-audit-first-contract-test"
@@ -5063,6 +5115,46 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:5143663e4e45fa14ffca462cfe788fc32477ecb91c627a6fa1aeaa23224e846c"
 
 [[cases]]
+id = "work-item-four-type-taxonomy"
+capability_id = "work-item-planning"
+claim_id = "canonical-four-type-wi-taxonomy"
+contract_id = "work-item-four-type-taxonomy"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-four-type-taxonomy"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-four-type-taxonomy"
+required_for_production = true
+assertions = [
+    "epic, change, spike, and report round-trip through the public CLI while only change enters the executable project graph",
+    "artifact: artifact:agentic-workflow/work-item-four-type-taxonomy",
+    "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated local-backend project and asserts public envelopes and graph projection without importing production source.",
+    "target: rust",
+]
+evidence_digest = "sha256:e16d116a37f6058baea0e22f81c65247e64f13b1f692f44a6d3ed631a00a8862"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:31dcac218d05a818b4e12f7009397c607dc8d58a11e52417b7d96d0abad0b664"
+
+[[cases]]
+id = "work-item-intake-health"
+capability_id = "work-item-planning"
+claim_id = "typed-intake-health"
+contract_id = "work-item-intake-health"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-intake-health"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-intake-health.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-intake-health"
+required_for_production = true
+assertions = [
+    "health projects open Report and expired Spike counts plus the exact next typed intake remediation command",
+    "artifact: artifact:agentic-workflow/work-item-intake-health",
+    "oracle: The hand-authored Python EC creates real local-backend intake WIs, executes health, and independently checks the public intake_queue axis before and after triage.",
+    "target: rust",
+]
+evidence_digest = "sha256:52ec40dbdddd070a326ed359c353757bf1a1ac0d57d330f5f5b09f0271140136"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:906e409b65111db29ac8d5ed204483a635169f924e4d103039d86939e236ab96"
+
+[[cases]]
 id = "work-item-planning-epic-to-change-atomization"
 capability_id = "work-item-planning"
 claim_id = "epic-to-change-atomization"
@@ -5123,6 +5215,86 @@ assertions = [
 evidence_digest = "sha256:7c13a0654d3694760e7ec6154ae214f370518e91f2de9b743cc4c927df35e438"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:3d2c870376a46df004bfc8c90ca08e1a99d30206414df921442fd56e4f691104"
+
+[[cases]]
+id = "work-item-report-triage"
+capability_id = "work-item-planning"
+claim_id = "report-terminal-triage"
+contract_id = "work-item-report-triage"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-report-triage"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-report-triage.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-report-triage"
+required_for_production = true
+assertions = [
+    "Report type is immutable and typed triage either spawns linked delivery work for accepted or closes with a non-delivery verdict",
+    "artifact: artifact:agentic-workflow/work-item-report-triage",
+    "oracle: The hand-authored Python EC executes the real aw triage surface, reads persisted Report and spawned Change state, and proves type-label immutability.",
+    "target: rust",
+]
+evidence_digest = "sha256:d67f271b5cf2709f23926fd02f08b4a425b82f50e71c1af223d4d6f59a061dfc"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:370b806a402e5519c07c650ce06466354df959ba3f89205883faeaa0a67074d4"
+
+[[cases]]
+id = "work-item-spike-terminal"
+capability_id = "work-item-planning"
+claim_id = "spike-terminal-convergence"
+contract_id = "work-item-spike-terminal"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-spike-terminal"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-spike-terminal.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-spike-terminal"
+required_for_production = true
+assertions = [
+    "Spike cannot enter product source work and terminates only as decided with linked/no-action evidence or gave_up after expiry",
+    "artifact: artifact:agentic-workflow/work-item-spike-terminal",
+    "oracle: The hand-authored Python EC runs the real goal and spike commands, inspects persisted terminal records, and rejects a decision without an exit disposition.",
+    "target: rust",
+]
+evidence_digest = "sha256:cd451cafee9d19e5d03420825630ed2e9d8fa288528664f4bb343a999538bfd1"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:239cf67d268685f6b3d0ad5cf9b338aea752fb1899abb0bc09b7c964a1836350"
+
+[[cases]]
+id = "work-item-type-templates"
+capability_id = "work-item-planning"
+claim_id = "typed-work-item-authoring-profiles"
+contract_id = "work-item-type-templates"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-templates"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-templates.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-templates"
+required_for_production = true
+assertions = [
+    "Spike and Report use exact hard authoring profiles, Report intake omits Capability Alignment, and cross-profile sections fail closed",
+    "artifact: artifact:agentic-workflow/work-item-type-templates",
+    "oracle: The hand-authored Python EC drives real aw create/show commands and independently checks the emitted work-item bodies and invalid-profile failure.",
+    "target: rust",
+]
+evidence_digest = "sha256:345a92494aa0703e6128089042d076802e6c164d83e8bc498425b3f5e94140d4"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7588a2ec158c936c5d5838f53260a9c28ddf6a9876ec27d1ad802bc2f0d2c4c9"
+
+[[cases]]
+id = "work-item-type-vocabulary"
+capability_id = "work-item-planning"
+claim_id = "terminology-first-work-item-vocabulary"
+contract_id = "work-item-type-vocabulary"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:work-item-type-vocabulary"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/work-item-type-vocabulary.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-type-vocabulary"
+required_for_production = true
+assertions = [
+    "aw llm and generated META-doc guidance define epic, change, spike, and report by canonical terminal states",
+    "artifact: artifact:agentic-workflow/work-item-type-vocabulary",
+    "oracle: The hand-authored Python EC executes the real aw llm and meta producers, then independently checks their public output for the closed terminology-first terminal-state contract.",
+    "target: rust",
+]
+evidence_digest = "sha256:50407b46886d6289ddf16fd650668d9dcd295f0bceb09330df3ca4608fea3e52"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7d1d682df3a6ee790216d85fc0c01454701764f6d1af422497974fad6795f746"
 
 [[cases]]
 id = "workflow-root-runner-cli-workflow-chain"

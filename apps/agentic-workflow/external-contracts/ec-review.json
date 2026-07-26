@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:e5c2dae6b66c3c0c6236c4c894154a3149f6d377e252dc006f941cb15f4e2f59",
+  "source_digest": "sha256:acb306f93156e5e738894764ee3e825e481902dee73ef4498a321524bd91fef3",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-26T07:17:45.092590+00:00",
-  "summary": "The #2416 claim is semantically acceptable for this digest. Its implementation-independent Python tomllib oracle pins the canonical Keep project row, absent td_path, exact workspace scope, and absence of retired .aw paths. Its real aw td create fixture rejects a retired .aw override with non-zero typed retired_td_path output, exact apps/keep/tech-design remediation, and byte-identical Git HEAD/index/cached/status, tracker issue, and TD-tree sentinels. The resolver unit independently pins the shared error contract. All three gates pass and execute their assertions in the normal environment; forced removal of CARGO_BIN_EXE_aw now fails with exit 101, zero passed, and one failed, closing the prior skipped-body false-green. Claim reconciliation, inventory parity, TD/CB checks, unique whole-file CODEGEN ownership, and both source-snapshot dry-runs are clean.",
+  "reviewed_by": "agent:codex-review:external-2512-acb306f9",
+  "reviewed_at": "2026-07-26T15:13:18.189638+00:00",
+  "summary": "The revised claim no longer overclaims direct API coverage and the EC concretely exercises dry-run labels, courier JSON payload labels, and credential-free fallback URL labels. Inventory validation is clean for all 221 cases; reviewed assertions and independent public-boundary oracles close the prior dry-run-only false-green.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,6 +15,5 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/src/cases/claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing.py"
+  "findings": []
 }
