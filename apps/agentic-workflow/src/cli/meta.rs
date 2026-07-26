@@ -10,9 +10,10 @@
 
 use crate::cli::doc_mirror;
 use crate::cli::meta_docs::{
-    meta_doc_contract, render_meta_doc_ownership_table, validate_meta_doc_layout, MetaDocFinding,
-    MetaDocLayer, META_DOC_MATRIX_END, META_DOC_MATRIX_START,
+    meta_doc_contract, render_meta_doc_ownership_table, MetaDocFinding, MetaDocLayer,
+    MetaFindingSeverity, META_DOC_MATRIX_END, META_DOC_MATRIX_START,
 };
+use crate::cli::meta_schema;
 use crate::services::project_registry;
 use crate::Result;
 use anyhow::{bail, Context};
@@ -35,6 +36,10 @@ const CLAUDE_TEMPLATE_CHECKOUT_RELATIVE: &str =
     "apps/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl";
 const AW_START_MARKER: &str = "<!-- aw:start -->";
 const AW_END_MARKER: &str = "<!-- aw:end -->";
+const CLAUDE_ADAPTER_BODY: &str = "## Claude Runtime Adapter\n\n\
+- Import `@AGENTS.md` as the shared checkout authority and do not duplicate its facts here.\n\
+- Load generated `.claude/rules/**/*.md` projections; files without `paths` apply at launch and path-scoped files apply only to matching work.\n\
+- Treat skills as human-invoked entry points. Mid-loop agent protocol comes from `aw` stdout or `aw llm`.";
 const REPO_README_START: &str = "<!-- aw:meta:repo-readme:start -->";
 const REPO_README_END: &str = "<!-- aw:meta:repo-readme:end -->";
 const REPO_CONTRIBUTING_START: &str = "<!-- aw:meta:repo-contributing:start -->";
@@ -63,6 +68,15 @@ pub enum MetaCommand {
     Sync(MetaScopeArgs),
     /// Read-only META-doc ownership and managed-block drift check.
     Check(MetaScopeArgs),
+    /// Inspect the live versioned contract for one or every META-doc kind.
+    Schema(MetaSchemaArgs),
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct MetaSchemaArgs {
+    /// META-doc kind, for example `agent-rule` or `project-capabilities`.
+    #[arg(value_name = "KIND")]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -258,15 +272,40 @@ pub fn run(args: MetaArgs) -> Result<()> {
 }
 
 fn run_at_root(root: &Path, args: MetaArgs) -> Result<()> {
+    if let MetaCommand::Schema(args) = &args.command {
+        let schemas = meta_schema::schema(args.kind.as_deref())?;
+        let output = serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "event": "result",
+            "status": "done",
+            "action": "meta_schema",
+            "contract_version": meta_schema::META_SCHEMA_VERSION,
+            "schemas": schemas,
+            "next": {
+                "terminal": true,
+                "reason": "META-doc schema discovery complete"
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
     let (mode, scope_args) = match args.command {
         MetaCommand::Init(args) => (ApplyMode::Init, args),
         MetaCommand::Sync(args) => (ApplyMode::Sync, args),
         MetaCommand::Check(args) => (ApplyMode::Check, args),
+        MetaCommand::Schema(_) => unreachable!(),
     };
     let scope = resolve_scope(root, &scope_args)?;
     let output = execute(root, &scope, &scope_args, mode)?;
     println!("{}", serde_json::to_string_pretty(&output)?);
-    if mode == ApplyMode::Check && !output.findings.is_empty() {
+    if mode == ApplyMode::Check
+        && output.findings.iter().any(|finding| {
+            matches!(
+                finding.severity,
+                MetaFindingSeverity::Blocker | MetaFindingSeverity::Drift
+            )
+        })
+    {
         bail!(
             "META-doc drift detected in {} file/block finding(s); run {}",
             output.findings.len(),
@@ -341,8 +380,22 @@ fn execute_with_binary_version(
         .iter()
         .map(|project| project.path.clone())
         .collect::<Vec<_>>();
-    let mut findings =
-        validate_meta_doc_layout(root, scope.repository_is_product, &project_paths).findings;
+    if mode != ApplyMode::Check {
+        for path in meta_schema::sync_rule_projections(root)? {
+            changes.push(MetaDocChange {
+                path,
+                block: "runtime-rule-projection".to_string(),
+                status: "updated".to_string(),
+            });
+        }
+    }
+    let mut findings = meta_schema::validate(
+        root,
+        scope.repository_is_product,
+        &project_paths,
+        scope_args.projects.first().map(String::as_str),
+    )
+    .findings;
     findings.extend(projection_findings);
     findings.sort_by(|left, right| {
         (&left.path, &left.code, &left.message).cmp(&(&right.path, &right.code, &right.message))
@@ -375,12 +428,18 @@ fn execute_with_binary_version(
             }),
             None,
         ),
-        ApplyMode::Check if findings.is_empty() => (
-            "meta_check",
-            "clean",
-            None,
-            Some(TerminalMarker { status: "done" }),
-        ),
+        ApplyMode::Check
+            if findings
+                .iter()
+                .all(|finding| finding.severity == MetaFindingSeverity::Advisory) =>
+        {
+            (
+                "meta_check",
+                "clean",
+                None,
+                Some(TerminalMarker { status: "done" }),
+            )
+        }
         ApplyMode::Check if binary_stale.is_some() => {
             let staleness = match binary_stale.as_deref() {
                 Some("checkout HEAD") => "behind the checkout's live CLAUDE template".to_string(),
@@ -596,6 +655,8 @@ fn reconcile_producer(
             {
                 findings.push(MetaDocFinding {
                     code: "project_brief_placeholder".to_string(),
+                    axis: "schema".to_string(),
+                    severity: MetaFindingSeverity::Blocker,
                     path: relative,
                     message: "project README still contains the unresolved Brief placeholder"
                         .to_string(),
@@ -608,6 +669,8 @@ fn reconcile_producer(
         }
         DesiredDocument::Malformed(message) => findings.push(MetaDocFinding {
             code: "managed_block_malformed".to_string(),
+            axis: "ownership".to_string(),
+            severity: MetaFindingSeverity::Blocker,
             path: relative.clone(),
             message,
             remediation: format!(
@@ -617,6 +680,8 @@ fn reconcile_producer(
         }),
         DesiredDocument::SkewBlocked(message) => findings.push(MetaDocFinding {
             code: "content_regression_blocked".to_string(),
+            axis: "projections".to_string(),
+            severity: MetaFindingSeverity::Blocker,
             path: relative.clone(),
             message,
             remediation: format!(
@@ -633,6 +698,8 @@ fn reconcile_producer(
                 } else {
                     "managed_block_missing".to_string()
                 },
+                axis: "projections".to_string(),
+                severity: MetaFindingSeverity::Drift,
                 path: relative.clone(),
                 message: format!(
                     "{} is not the canonical `{}` projection",
@@ -1029,7 +1096,11 @@ fn upsert_agent_section(existing: &str, section: &str) -> String {
 fn render_agent_document(existing: Option<&str>, kind: ProducerKind, template: &str) -> String {
     let claude_section = rendered_claude_section(template);
     let (section, fresh) = match kind {
-        ProducerKind::RepoClaude => (claude_section, rendered_claude_document(template)),
+        ProducerKind::RepoClaude => {
+            let section = format!("{AW_START_MARKER}\n{CLAUDE_ADAPTER_BODY}\n{AW_END_MARKER}");
+            let fresh = format!("{}\n\n@AGENTS.md\n\n{section}\n", doc_mirror::CLAUDE_TITLE);
+            (section, fresh)
+        }
         ProducerKind::RepoAgents => {
             let section = doc_mirror::agents_block_from_claude_block(&claude_section);
             let fresh = format!("{}\n\n{}\n", doc_mirror::AGENTS_TITLE, section);
@@ -1066,6 +1137,13 @@ pub(crate) fn sync_repository_product_docs(root: &Path) -> Result<Vec<MetaDocCha
         &mut changes,
         &mut findings,
     )?;
+    for path in meta_schema::sync_rule_projections(root)? {
+        changes.push(MetaDocChange {
+            path,
+            block: "runtime-rule-projection".to_string(),
+            status: "updated".to_string(),
+        });
+    }
     if let Some(finding) = findings.first() {
         bail!("{}: {}", finding.path, finding.message);
     }
@@ -1338,15 +1416,21 @@ mod tests {
     }
 
     #[test]
-    fn legacy_agent_projector_uses_same_registry_and_runtime_whitelist() {
+    fn legacy_agent_projector_uses_same_registry_and_runtime_adapters() {
         let temp = tempfile::tempdir().unwrap();
         sync_repository_product_docs(temp.path()).unwrap();
         let claude = fs::read_to_string(temp.path().join("CLAUDE.md")).unwrap();
         let agents = fs::read_to_string(temp.path().join("AGENTS.md")).unwrap();
         assert!(agents.contains(doc_mirror::CODEX_TRANSLATE_PARAGRAPH));
         assert!(!claude.contains(doc_mirror::CODEX_TRANSLATE_PARAGRAPH));
-        assert!(claude.contains("| `aw meta` |"));
         assert!(agents.contains("| `aw meta` |"));
+        assert!(claude.contains("@AGENTS.md"));
+        assert!(claude.contains("## Claude Runtime Adapter"));
+        assert!(!claude.contains("## Agentic Workflow CLI Surface"));
+        assert!(temp
+            .path()
+            .join(".claude/rules/workflow/agentic-workflow.md")
+            .is_file());
     }
 
     // -- #1912: stale-binary reprojection must never destroy newer content --
@@ -1412,8 +1496,8 @@ mod tests {
         let claude = fs::read_to_string(temp.path().join("CLAUDE.md")).unwrap();
         let agents = fs::read_to_string(temp.path().join("AGENTS.md")).unwrap();
         assert!(
-            claude.contains("NEWER PROSE #1847/#1848/#1859"),
-            "CLAUDE.md must be projected from the checkout template, not the embedded snapshot"
+            !claude.contains("NEWER PROSE #1847/#1848/#1859"),
+            "CLAUDE.md is a runtime-only adapter and must not duplicate the shared AGENTS template"
         );
         assert!(agents.contains("NEWER PROSE #1847/#1848/#1859"));
         // Sanity: prove this is a meaningful, non-vacuous distinguishing

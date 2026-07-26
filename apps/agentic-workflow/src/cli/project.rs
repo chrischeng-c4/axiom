@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -30,7 +31,7 @@ use crate::models::project::EcBinding;
 #[derive(Debug, Args, Clone)]
 #[command(after_help = r#"Default output is a low-token metrics envelope.
 Use `aw health --project <project> full` for the previous detailed report, or a
-focused section: metrics, capability, gates, tests, ec, cb, cold, traceability,
+focused section: metrics, capability, meta, gates, tests, ec, cb, cold, traceability,
 regenerable, api, stack, td-lock, claims, blockers, drift-marker,
 takeover-audit.
 Use `-v/--verbose` to include progress events.
@@ -58,7 +59,7 @@ Output schema (JSON default):
   "completion": { "workflow_complete": bool, "requires_hitl": bool, "missing": [string] },
   "next": { "kind": "run_command" | "hitl" | "blocked" | "done" | "error", "command": string?, "reason": string },
   "readiness": object,
-  "axes": { "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object, "drift_marker": object },
+  "axes": { "meta": object, "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object, "drift_marker": object },
   "blockers": object,
   "payload_path": string
 }"#)]
@@ -108,6 +109,8 @@ pub enum ProjectHealthSection {
     Full,
     Metrics,
     Capability,
+    /// META-doc schema, ownership, modular-rule, and runtime-projection health.
+    Meta,
     Gates,
     Tests,
     Ec,
@@ -2004,8 +2007,33 @@ pub fn project_health_section_summary(
     if section == ProjectHealthSection::Full {
         return project_health_summary(report);
     }
+    if section == ProjectHealthSection::Meta {
+        let meta = project_meta_health(&report.project);
+        let next = match meta.next_command.as_ref() {
+            Some(command) => serde_json::json!({
+                "kind": "run_command",
+                "command": command,
+                "reason": "META-doc schema or projection remediation is required",
+            }),
+            None => serde_json::json!({
+                "kind": "done",
+                "reason": "META-doc schema and projections are clean",
+            }),
+        };
+        return serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "event": "result",
+            "status": if meta.clean { "done" } else { "blocked" },
+            "action": "health",
+            "project": &report.project,
+            "section": section,
+            "next": next,
+            "data": meta,
+        });
+    }
     let payload = match section {
         ProjectHealthSection::Full => unreachable!(),
+        ProjectHealthSection::Meta => unreachable!(),
         ProjectHealthSection::Metrics => serde_json::json!({
             "readiness": project_health_compact_readiness(report),
             "axes": project_health_axes_summary(report),
@@ -2244,9 +2272,36 @@ fn project_health_compact_readiness(report: &ProjectHealthReport) -> serde_json:
     })
 }
 
+fn project_meta_health(project: &str) -> crate::cli::meta_schema::MetaValidationReport {
+    let root = crate::find_project_root().unwrap_or_else(|_| PathBuf::from("."));
+    crate::cli::meta_schema::validate_for_project(&root, project)
+}
+
+fn apply_meta_to_report(report: &mut ProjectHealthReport) {
+    let meta = project_meta_health(&report.project);
+    if project_health_caps_ec_only(&report.project) || meta.clean {
+        return;
+    }
+    let blocker = format!(
+        "META-doc contract incomplete: {} blocker(s), {} projection drift finding(s)",
+        meta.blocker_count, meta.drift_count
+    );
+    if !report.blockers.contains(&blocker) {
+        report.blockers.push(blocker.clone());
+    }
+    if !report.global_blockers.contains(&blocker) {
+        report.global_blockers.push(blocker);
+    }
+    report.status = ProjectHealthStatus::Blocked;
+    report.production_ready = false;
+    report.production_status = ProductionStatus::Blocked;
+    report.refresh_takeover_readiness();
+}
+
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
+        "meta": project_meta_health(&report.project),
         "capability": project_health_capability_axis(report),
         "ec": project_health_ec_axis(report),
         "ec_gen": project_health_ec_gen_axis(report),
@@ -2817,6 +2872,12 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if report.production_ready || (!caps_ec_only && report.workflow_lock_count > 0) {
         return None;
     }
+    if !caps_ec_only {
+        let meta = project_meta_health(&report.project);
+        if !meta.clean {
+            return meta.next_command;
+        }
+    }
     if report.python_artifact.is_none() && !caps_ec_only && !report.td_lock.clean {
         return Some(
             if report.td_lock.status == crate::cli::td_lock::TdLockState::Missing {
@@ -2967,6 +3028,15 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
                 "workflow lock requires current owner or HITL resolution".to_string()
             });
     }
+    if !caps_ec_only {
+        let meta = project_meta_health(&report.project);
+        if !meta.clean {
+            return format!(
+                "META-doc contract has {} blocker(s) and {} projection drift finding(s)",
+                meta.blocker_count, meta.drift_count
+            );
+        }
+    }
     if report.python_artifact.is_none() && !caps_ec_only && !report.td_lock.clean {
         return report.td_lock.message.clone();
     }
@@ -3081,6 +3151,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     )?;
     apply_td_lock_to_report(&mut report)?;
     apply_workflow_locks_to_report(&mut report).await?;
+    apply_meta_to_report(&mut report);
     let payload_path = write_health_payload(&report)?;
     if args.human {
         match args.section {
@@ -3113,7 +3184,11 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
             ))?
         );
     }
-    if report.status == ProjectHealthStatus::Blocked {
+    let focused_meta_blocked = args.section == Some(ProjectHealthSection::Meta)
+        && !project_meta_health(&report.project).clean;
+    let aggregate_blocked = args.section != Some(ProjectHealthSection::Meta)
+        && report.status == ProjectHealthStatus::Blocked;
+    if focused_meta_blocked || aggregate_blocked {
         std::process::exit(1);
     }
     Ok(())
@@ -3163,6 +3238,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Stack => HealthVerificationFlags::traceability(),
             ProjectHealthSection::Metrics
             | ProjectHealthSection::Capability
+            | ProjectHealthSection::Meta
             | ProjectHealthSection::Gates
             | ProjectHealthSection::TdLock
             | ProjectHealthSection::Blockers
@@ -4811,6 +4887,25 @@ mod tests {
                 ec: true,
             }
         );
+    }
+
+    #[test]
+    fn health_meta_section_is_read_only_and_uses_shared_meta_report() {
+        let flags =
+            effective_health_verification_flags(&health_section_args(ProjectHealthSection::Meta));
+        assert_eq!(flags, HealthVerificationFlags::none());
+
+        let report = ready_project_health_report("agentic-workflow");
+        let focused = project_health_section_summary(&report, ProjectHealthSection::Meta);
+        assert_eq!(focused["section"], "meta");
+        assert_eq!(focused["status"], "done", "{focused:#}");
+        assert_eq!(focused["data"]["schema_version"], "aw.meta.schema.v1");
+        assert_eq!(focused["data"]["clean"], true);
+        assert_eq!(focused["next"]["kind"], "done");
+
+        let full = project_health_summary(&report);
+        assert_eq!(full["axes"]["meta"]["clean"], true);
+        assert_eq!(full["axes"]["meta"]["coverage_percent"], 100);
     }
 
     #[test]
