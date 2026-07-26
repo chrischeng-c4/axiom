@@ -5,5 +5,11 @@ CAPABILITY_ID = "workflow-root-runner"
 USE_CASE_ID = "runtime-envelope-backward-compatibility"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs"
-TARGET_COMMAND = "cargo test -p agentic-workflow --lib envelope_profile -- --nocapture"
+TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case runtime-envelope-backward-compatibility"
 ASSERTIONS = ('legacy Dispatch JSON without artifact_quality_profile remains accepted', 'Dispatch JSON with artifact_quality_profile roundtrips')
+
+
+def verify() -> list[str]:
+    from migration_clusters.workflow_runner import verify as verify_cluster_case
+
+    return verify_cluster_case(CASE_ID)

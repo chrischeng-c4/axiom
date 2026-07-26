@@ -655,8 +655,8 @@ applicability = "td"
 test_path = "src/cases/goal-backlog-drain.py"
 promise = "a reviewed epic graph parks one blocked child and dispatches its ready sibling deterministically; the terminal envelope names the still-parked WI and its reason with no spinning or premature completion; an already-reviewed epic is never redispatched for atomization"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case goal-backlog-drain -- cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case goal-backlog-drain"
 evidence_paths = ["evidence/goal-backlog-drain.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -865,8 +865,8 @@ applicability = "td"
 test_path = "src/cases/reviewed-graph-root-parity.py"
 promise = "epic and backlog roots select the same ready leaf after epic-first priority ordering; terminal child rollup closes the epic without re-atomizing; stale or invalid graph metadata fails closed with issue-specific remediation"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case reviewed-graph-root-parity -- cargo test -p agentic-workflow --test wi_reviewed_graph_goal_cli_test -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case reviewed-graph-root-parity"
 evidence_paths = ["evidence/reviewed-graph-root-parity.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -879,8 +879,8 @@ applicability = "td"
 test_path = "src/cases/runtime-envelope-backward-compatibility.py"
 promise = "legacy Dispatch JSON without artifact_quality_profile remains accepted; Dispatch JSON with artifact_quality_profile roundtrips"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case runtime-envelope-backward-compatibility -- cargo test -p agentic-workflow --lib envelope_profile -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case runtime-envelope-backward-compatibility"
 evidence_paths = ["evidence/runtime-envelope-backward-compatibility.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1371,8 +1371,8 @@ applicability = "td"
 test_path = "src/cases/wi-ec-td-root-loop-fixture.py"
 promise = "fixture root follows emitted commands until completion.workflow_complete=true; no retired lifecycle command or hidden agent-only step is required"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-fixture -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_drives_wi_run_to_workflow_complete -- --exact --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-fixture"
 evidence_paths = ["evidence/wi-ec-td-root-loop-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1455,8 +1455,8 @@ applicability = "td"
 test_path = "src/cases/workflow-root-runner-cli-workflow-chain.py"
 promise = "CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-cli-workflow-chain -- cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-cli-workflow-chain"
 evidence_paths = ["evidence/workflow-root-runner-cli-workflow-chain.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1469,8 +1469,8 @@ applicability = "td"
 test_path = "src/cases/workflow-root-runner-parent-rollup-routing.py"
 promise = "closed change roots route agents to parent inspection"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing -- cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-parent-rollup-routing"
 evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1483,8 +1483,8 @@ applicability = "td"
 test_path = "src/cases/workflow-root-runner-root-envelope-completion-contract.py"
 promise = "root envelope blocks on pending epicize artifacts before creating WIs"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-root-envelope-completion-contract -- cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case workflow-root-runner-root-envelope-completion-contract"
 evidence_paths = ["evidence/workflow-root-runner-root-envelope-completion-contract.json"]
 
 [[tool.aw.python-ec.cases]]

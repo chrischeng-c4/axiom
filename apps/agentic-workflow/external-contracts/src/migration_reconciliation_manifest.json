@@ -742,44 +742,44 @@
         {
           "id": "goal-backlog-drain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_goal_backlog_drain.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "reviewed-graph-root-parity",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_reviewed_graph_root_parity.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "runtime-envelope-backward-compatibility",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-ec-td-root-loop-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "workflow-root-runner-cli-workflow-chain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "workflow-root-runner-parent-rollup-routing",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_parent_rollup_routing.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "workflow-root-runner-root-envelope-completion-contract",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_root_envelope_completion_contract.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },
