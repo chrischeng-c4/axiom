@@ -1144,6 +1144,26 @@ fn explicit_requirement_verification(
     verification
 }
 
+pub(crate) fn validate_requirement_verification_inventory(issue: &Issue) -> Vec<String> {
+    let requirements = extract_requirements(issue);
+    if requirements.is_empty() {
+        return Vec::new();
+    }
+    let verification = explicit_requirement_verification(issue);
+    requirements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, _)| {
+            (!verification.contains_key(&index)).then(|| {
+                format!(
+                    "verification: ## Verification Inventory must map R{} to a runnable Gate and observable Oracle",
+                    index + 1
+                )
+            })
+        })
+        .collect()
+}
+
 fn numeric_references(text: &str, prefix: char) -> Vec<String> {
     let canonical_prefix = prefix.to_ascii_lowercase();
     let chars = text.chars().collect::<Vec<_>>();

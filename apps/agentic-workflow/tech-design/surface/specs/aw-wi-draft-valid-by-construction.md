@@ -20,7 +20,14 @@ capability_refs:
 publish work-item bodies that immediately fail the required structured
 work-item format. The authoring path owns the mechanical shape: R-id
 requirement bullets, Scope subsections, publishable default template content,
-and hard validation before tracker creation.
+and hard validation before tracker creation or draft promotion.
+
+Epic authoring additionally owns the planner's requirement-level verification
+contract. Its full-section fill template includes a `## Verification
+Inventory` table, and terminal WI validation requires every `R<n>` requirement
+to map to at least one non-placeholder runnable Gate and observable Oracle.
+This keeps `aw wi plan` reviewable by construction instead of producing
+children whose verification must be invented after atomization.
 
 The CLI may normalize known draft shapes that are safe and deterministic:
 free-form body text becomes the Problem section inside the structured template,
@@ -44,6 +51,8 @@ draft_authoring_contract:
     - "Scope contains both In Scope and Out of Scope subsections before validation."
     - "Create blocks invalid draft bodies before remote tracker publication."
     - "Validation errors list the exact section/format problems."
+    - "Epic full-section fills include a Verification Inventory table."
+    - "Every epic Requirement maps to a runnable Gate and observable Oracle before draft promotion."
   normalized_shapes:
     free_text_body: "wrap as ## Problem inside the structured template"
     unnumbered_requirement_list: "rewrite each item as - R<n>: ..."
@@ -52,6 +61,7 @@ draft_authoring_contract:
     missing_reference_context_tables: "hard validation error"
     missing_capability_alignment_fields: "hard validation error"
     missing_acceptance_criteria: "hard validation error"
+    missing_epic_requirement_verification: "hard validation error naming each uncovered R-id"
     invalid_agent_estimate: "hard validation error"
 ```
 
@@ -89,6 +99,17 @@ scenarios:
       - "the CLI exits with validation status"
       - "the tracker issue is not created"
       - "the response lists actionable section errors"
+
+  - id: S4
+    title: "epic verification is complete before planning"
+    given:
+      - "an epic contains R1 and R2"
+      - "the author fills the canonical all-section payload"
+    then:
+      - "the payload schema admits exactly one Verification Inventory H2 alongside the normal epic sections"
+      - "validation rejects a missing or placeholder Gate or Oracle for either R1 or R2"
+      - "validation passes only after both requirement ids have runnable gates and observable oracles"
+      - "aw wi plan receives requirement-specific verification without an out-of-schema workaround"
 ```
 
 ## Changes
@@ -102,7 +123,15 @@ changes:
     impl_mode: hand-written
     description: |
       Add draft-body normalization, publish validation, valid default template
-      content, and regression tests for draft init/fill/create behavior.
+      content, epic Verification Inventory authoring, and regression tests for
+      draft init/fill/create behavior.
+  - path: apps/agentic-workflow/src/issues/planner.rs
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: |
+      Reuse the planner's Verification Inventory parser as the epic
+      requirement-coverage validation oracle.
   - path: apps/agentic-workflow/tech-design/surface/specs/aw-wi-draft-valid-by-construction.md
     action: create
     section: overview

@@ -4103,6 +4103,7 @@ mod tests {
                 },
             ec: crate::cli::project::ProjectEcGateReport::not_evaluated(project),
             claim_closure: crate::cli::project::ProjectClaimClosureReport::not_evaluated(project),
+            intake_queue: crate::cli::project::IntakeQueueHealthReport::default(),
             preflight_gate_reports: Vec::new(),
             optional_quality_warnings: Vec::new(),
             managed_percent: 100.0,

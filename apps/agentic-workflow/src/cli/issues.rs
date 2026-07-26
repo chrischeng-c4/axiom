@@ -2030,6 +2030,9 @@ fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
     if let Err(e) = validate_structured_issue(&issue.body, IssueState::Open) {
         errors.push(e.error);
     }
+    if issue.issue_type == IssueType::Epic && issue.state != IssueState::Draft {
+        errors.extend(crate::issues::planner::validate_requirement_verification_inventory(issue));
+    }
     errors
 }
 
@@ -2771,7 +2774,7 @@ fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Re
             )
             .to_string());
         }
-        return Ok(concat!(
+        let mut template = concat!(
             "## Problem\n\n",
             "(fill)\n\n",
             "## Capability Alignment\n\n",
@@ -2787,6 +2790,17 @@ fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Re
             "- (fill)\n\n",
             "## Acceptance Criteria\n\n",
             "- AC1: (fill)\n\n",
+        )
+        .to_string();
+        if issue_type == IssueType::Epic {
+            template.push_str(concat!(
+                "## Verification Inventory\n\n",
+                "| Requirement | Gate | Oracle |\n",
+                "|-------------|------|--------|\n",
+                "| R1 | (fill) | (fill) |\n\n",
+            ));
+        }
+        template.push_str(concat!(
             "## Reference Context\n\n",
             "### Related Specs\n",
             "| Spec | Relevance |\n",
@@ -2796,8 +2810,8 @@ fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Re
             "| Spec ID | Action | Main Spec Ref |\n",
             "|---------|--------|---------------|\n",
             "| (fill) | create | (fill) |\n",
-        )
-        .to_string());
+        ));
+        return Ok(template);
     }
 
     let sections = parse_section_arg(section_arg)?;
@@ -2903,10 +2917,13 @@ async fn run_fill_section_brief(
         (IssueType::Report, "all") => {
             println!("Fill the exact Report profile (Repro, Diagnostics, Expected vs Actual).");
         }
-        (_, "all") => {
+        (IssueType::Epic, "all") => {
             println!(
-                "Fill every structured section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Reference Context)."
+                "Fill every Epic section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Verification Inventory, Reference Context)."
             );
+        }
+        (_, "all") => {
+            println!("Fill every structured section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Reference Context).");
         }
         (_, other) => {
             println!(
@@ -2932,6 +2949,11 @@ async fn run_fill_section_brief(
             println!("- Capability Alignment MUST include Capability, Capability Gap, and Progress Evidence.");
             println!("- Scope MUST contain both `### In Scope` and `### Out of Scope`.");
             println!("- Acceptance Criteria MUST contain at least one real list item.");
+            if issue.issue_type == IssueType::Epic {
+                println!(
+                    "- Verification Inventory MUST map every Requirement to a runnable Gate and observable Oracle."
+                );
+            }
             println!(
                 "- Reference Context MUST contain `### Related Specs` and `### Spec Plan` tables."
             );
@@ -3154,6 +3176,17 @@ fn validate_wi_fill_payload_scope(
             IssueType::Report => ["## Repro", "## Diagnostics", "## Expected vs Actual"]
                 .into_iter()
                 .collect::<BTreeSet<_>>(),
+            IssueType::Epic => [
+                "## Problem",
+                "## Capability Alignment",
+                "## Requirements",
+                "## Scope",
+                "## Acceptance Criteria",
+                "## Verification Inventory",
+                "## Reference Context",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
             _ => [
                 "## Problem",
                 "## Capability Alignment",
@@ -8481,7 +8514,14 @@ async fn run_validate_legacy(
     backend: &dyn IssueBackend,
     issue: &Issue,
 ) -> Result<()> {
-    let quality_errors = validate_publishable_issue_body(issue);
+    let quality_errors = if issue.issue_type == IssueType::Epic && issue.state == IssueState::Draft
+    {
+        let mut publish_candidate = issue.clone();
+        publish_candidate.state = IssueState::Open;
+        validate_publishable_issue_body(&publish_candidate)
+    } else {
+        validate_publishable_issue_body(issue)
+    };
 
     if !quality_errors.is_empty() {
         let patch = IssuePatch {
@@ -10780,6 +10820,107 @@ labels:\n\
         assert!(template.contains("(fill)"));
         assert!(template.contains("### Related Specs"));
         assert!(template.contains("### Spec Plan"));
+    }
+
+    #[test]
+    fn fill_section_epic_template_requires_planner_verification_inventory() {
+        let template = fill_section_payload_template(IssueType::Epic, "all").unwrap();
+        for fragment in [
+            "## Verification Inventory",
+            "| Requirement | Gate | Oracle |",
+            "| R1 | (fill) | (fill) |",
+        ] {
+            assert!(
+                template.contains(fragment),
+                "epic template missing {fragment}"
+            );
+        }
+        validate_wi_fill_payload_scope(IssueType::Epic, "all", &template, &[]).unwrap();
+
+        let without_inventory = template.replace(
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle |\n|-------------|------|--------|\n| R1 | (fill) | (fill) |\n\n",
+            "",
+        );
+        let error = validate_wi_fill_payload_scope(IssueType::Epic, "all", &without_inventory, &[])
+            .unwrap_err();
+        assert!(error.to_string().contains("## Verification Inventory"));
+
+        let error =
+            validate_wi_fill_payload_scope(IssueType::Change, "all", &template, &[]).unwrap_err();
+        assert!(error.to_string().contains("outside requested slot `all`"));
+    }
+
+    #[test]
+    fn epic_publish_validation_requires_verification_for_every_requirement() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            19,
+        );
+        epic.body = epic.body.replace(
+            "- R1: Deliver Retire app-level Rust EC tests.",
+            "- R1: Inventory delegated EC cases.\n- R2: Migrate delegated EC cases.",
+        );
+
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            errors.iter().any(|error| error.contains("map R1")),
+            "missing R1 verification error: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("map R2")),
+            "missing R2 verification error: {errors:?}"
+        );
+
+        epic.body = epic.body.replace(
+            "## Reference Context",
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle |\n|-------------|------|--------|\n| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |\n\n## Reference Context",
+        );
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            !errors.iter().any(|error| error.contains("map R1")),
+            "R1 should be verified: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("map R2")),
+            "R2 should remain unverified: {errors:?}"
+        );
+
+        epic.body = epic.body.replace(
+            "| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |",
+            "| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |\n| R2 | `aw ec verify --project agentic-workflow` | Native Python EC cases pass without cargo delegation. |",
+        );
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.starts_with("verification:")),
+            "all requirements should be verified: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn epic_draft_validation_enforces_inventory_before_promotion() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            20,
+        );
+        epic.state = IssueState::Draft;
+        assert!(
+            validate_publishable_issue_body(&epic)
+                .iter()
+                .all(|error| !error.starts_with("verification:")),
+            "draft creation must remain valid by construction"
+        );
+
+        let mut publish_candidate = epic;
+        publish_candidate.state = IssueState::Open;
+        assert!(validate_publishable_issue_body(&publish_candidate)
+            .iter()
+            .any(|error| error.contains("map R1")));
     }
 
     #[test]
