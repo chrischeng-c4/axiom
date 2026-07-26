@@ -10049,7 +10049,7 @@ target = "python"
     }
 
     #[test]
-    fn regenerable_routes_rust_test_helpers_to_cli_promotion() {
+    fn regenerable_routes_source_owned_rust_invariants_to_cli_promotion() {
         let inv = Inventory {
             coverage: StandardizationCoverage {
                 scope: vec!["apps/agentic-workflow/**".into()],
@@ -10064,8 +10064,10 @@ target = "python"
                 uncovered_files: vec![],
             },
             files: vec![SourceFile {
-                rel: "apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs".into(),
-                abs: PathBuf::from("apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"),
+                rel: "apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs".into(),
+                abs: PathBuf::from(
+                    "apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs",
+                ),
                 language: "rust".into(),
                 markers: FileMarkers {
                     handwrite: true,
@@ -10080,7 +10082,7 @@ target = "python"
         semantic
             .generator_primitive_gaps
             .push(GeneratorPrimitiveGap {
-                target: "apps/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs".into(),
+                target: "apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs".into(),
                 primitive: "service_method".into(),
                 reason:
                     "semantic TD coverage exists, but source still contains HANDWRITE ownership"

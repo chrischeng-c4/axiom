@@ -179,7 +179,7 @@
           "id": "artifact-preflight-health-rollup",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/project_health_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/project.rs"
         },
         {
           "id": "authoritative-fixture-blocks-on-regenerability-gap",
@@ -197,7 +197,7 @@
           "id": "existing-project-standardization-brownfield-takeover-surface",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/standardize_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/standardize.rs"
         },
         {
           "id": "existing-project-standardization-cb-and-cold-verification-gates",
@@ -233,7 +233,7 @@
           "id": "td-gen-source-source-snapshot-projection-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_gen_source_source_snapshot_projection_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/cb_claim_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
         }
       ]
     },
@@ -251,7 +251,7 @@
           "id": "existing-project-standardization-shared-service-kit-drain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_drain.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:libs/server-lifecycle/tests/drain_prestart.rs"
+          "rust_disposition": "relocated:libs/server-lifecycle/src/drain.rs"
         },
         {
           "id": "existing-project-standardization-shared-service-kit-http1-h2c-options",
@@ -317,7 +317,7 @@
           "id": "aw-td-apply-section-lookup-parity-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         },
         {
           "id": "completeness-placeholder-unit-command",
@@ -347,19 +347,19 @@
           "id": "td-default-section-queue-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         },
         {
           "id": "td-generation-target-exact-partition-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         },
         {
           "id": "td-generation-target-generator-gap-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         }
       ]
     },
@@ -371,13 +371,13 @@
           "id": "td-cb-lifecycle-automation-chain-liveness-proof",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-chain-liveness-retry",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_retry.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle",
@@ -389,19 +389,19 @@
           "id": "td-cb-lifecycle-automation-hand-written-complete-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_complete_evidence_gate.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-hand-written-partial-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_partial_evidence_gate.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-remove-td-merge-command",
@@ -413,13 +413,13 @@
           "id": "td-generation-target-ownership-inferred-single-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         },
         {
           "id": "td-generation-target-ownership-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         }
       ]
     },
@@ -431,43 +431,43 @@
           "id": "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/fixture_loop_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/fixture_loop_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "terminal-ec-cross-process-single-flight-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_cross_process_single_flight_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "terminal-ec-fast-green-stale-reader-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_fast_green_stale_reader_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "terminal-ec-no-child-wrapper-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_no_child_wrapper_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "terminal-ec-retry-transition-lease-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_retry_transition_lease_real_cli.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "terminal-touched-codegen-red-repair-green",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_touched_codegen_red_repair_green.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "td-cb-lifecycle-automation-operational-efficiency",
@@ -713,7 +713,7 @@
           "id": "self-hosting-health-policy",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/self_hosting_runner_policy_cli_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
         },
         {
           "id": "self-hosting-identity-stability",
@@ -743,13 +743,13 @@
           "id": "goal-backlog-drain",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_goal_backlog_drain.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/goal_backlog_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/goal.rs"
         },
         {
           "id": "reviewed-graph-root-parity",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_reviewed_graph_root_parity.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/wi_reviewed_graph_goal_cli_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/goal.rs"
         },
         {
           "id": "runtime-envelope-backward-compatibility",
@@ -761,7 +761,7 @@
           "id": "wi-ec-td-root-loop-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/fixture_loop_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "workflow-root-runner-cli-workflow-chain",
@@ -803,7 +803,7 @@
           "id": "aw-core-client-core-concept-model-and-invariants",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/fixture_loop_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
         },
         {
           "id": "aw-core-client-core-concept-model-ec-first-phase-table",
@@ -827,7 +827,7 @@
           "id": "aw-core-client-workitem-artifact-admission-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_artifact_admission_gate.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
         },
         {
           "id": "aw-core-client-workitem-loop-state-model",
@@ -887,7 +887,7 @@
           "id": "ec-artifact-producer-cli-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_ec_artifact_producer_cli_fixture.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/artifact_producer_cli_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/artifact_producer.rs"
         },
         {
           "id": "td-artifact-producer-cli-fixture",
@@ -899,7 +899,7 @@
           "id": "wi-artifact-producer-cli-fixture",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_artifact_producer_cli_fixture.rs",
           "migration_status": "rust_invariant",
-          "rust_disposition": "relocated:apps/agentic-workflow/tests/artifact_producer_cli_test.rs"
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/artifact_producer.rs"
         },
         {
           "id": "aw-core-client-operational-efficiency",

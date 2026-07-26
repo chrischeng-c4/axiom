@@ -423,11 +423,11 @@ mod tests {
     #[test]
     fn artifact_quality_fixture_roundtrip() {
         let fixtures = [
-            include_str!("../../tests/fixtures/artifact_quality_profiles/frontend_page.json"),
-            include_str!("../../tests/fixtures/artifact_quality_profiles/documentation.json"),
-            include_str!("../../tests/fixtures/artifact_quality_profiles/cli_surface.json"),
-            include_str!("../../tests/fixtures/artifact_quality_profiles/api_surface.json"),
-            include_str!("../../tests/fixtures/artifact_quality_profiles/code_artifact.json"),
+            include_str!("fixtures/artifact_quality_profiles/frontend_page.json"),
+            include_str!("fixtures/artifact_quality_profiles/documentation.json"),
+            include_str!("fixtures/artifact_quality_profiles/cli_surface.json"),
+            include_str!("fixtures/artifact_quality_profiles/api_surface.json"),
+            include_str!("fixtures/artifact_quality_profiles/code_artifact.json"),
         ];
 
         for raw in fixtures {

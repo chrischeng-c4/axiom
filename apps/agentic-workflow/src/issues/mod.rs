@@ -104,7 +104,7 @@ pub fn make_backend(
 /// rejecting it. Namespaced under `AW_FIXTURE_*` so it reads as
 /// test-harness-only at the call site and cannot be tripped by a real
 /// `aw.toml`; production code paths never set it. Test-harness-set only
-/// (e.g. `tests/cli/tests/fixture_loop_test.rs`'s runner-driven case) —
+/// (e.g. an `external-contracts/src/cases/*.py` runner-driven case) —
 /// never read from `aw.toml` itself, so a checked-in config can never
 /// enable it.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/issues/issues_module_runtime_source.md#source

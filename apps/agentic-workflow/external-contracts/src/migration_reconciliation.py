@@ -47,6 +47,7 @@ def _arguments() -> argparse.Namespace:
     selection.add_argument("--cluster")
     selection.add_argument("--projections", action="store_true")
     selection.add_argument("--guidance", action="store_true")
+    selection.add_argument("--retired-tree", action="store_true")
     return parser.parse_args()
 
 
@@ -520,6 +521,85 @@ def _guidance(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _retired_candidate_rejected(candidate: Path) -> bool:
+    """Whether a proposed artifact would recreate the retired app test tree."""
+    try:
+        relative = candidate.resolve().relative_to(LEGACY_TEST_ROOT.resolve())
+    except ValueError:
+        return False
+    return relative != Path(".")
+
+
+def _retired_tree(manifest: dict[str, Any]) -> dict[str, Any]:
+    frozen_paths = [REPOSITORY_ROOT / path for path in manifest["legacy_rust_files"]]
+    surviving_frozen_paths = sorted(
+        str(path.relative_to(REPOSITORY_ROOT))
+        for path in frozen_paths
+        if path.exists()
+    )
+    entries = _delegated_entries(manifest)
+    unresolved: list[str] = []
+    colocated_rust = 0
+    for entry in entries:
+        case_id = entry["id"]
+        legacy_value = entry["legacy_test_path"]
+        if legacy_value is not None and (REPOSITORY_ROOT / legacy_value).exists():
+            unresolved.append(f"{case_id}:legacy-path-still-exists")
+        status = entry["migration_status"]
+        disposition = entry["rust_disposition"]
+        if status == "rust_invariant":
+            if not disposition.startswith("relocated:"):
+                unresolved.append(f"{case_id}:missing-relocated-owner")
+                continue
+            owner_value = disposition.removeprefix("relocated:")
+            owner = REPOSITORY_ROOT / owner_value
+            if (
+                "/src/" not in owner_value
+                or "/tests/" in owner_value
+                or not owner.is_file()
+            ):
+                unresolved.append(f"{case_id}:invalid-source-owner:{owner_value}")
+                continue
+            colocated_rust += 1
+        elif status == "native":
+            if disposition == "pending":
+                unresolved.append(f"{case_id}:pending-disposition")
+        else:
+            unresolved.append(f"{case_id}:unsupported-status:{status}")
+
+    recreation_fixture = LEGACY_TEST_ROOT / "recreated.rs"
+    recreation_rejected = _retired_candidate_rejected(recreation_fixture)
+    if (
+        LEGACY_TEST_ROOT.exists()
+        or surviving_frozen_paths
+        or unresolved
+        or not recreation_rejected
+        or len(frozen_paths) != 164
+    ):
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "legacy_tree_exists": LEGACY_TEST_ROOT.exists(),
+                    "surviving_frozen_paths": surviving_frozen_paths,
+                    "unresolved_dispositions": unresolved,
+                    "recreation_fixture_rejected": recreation_rejected,
+                    "frozen_path_count": len(frozen_paths),
+                },
+                sort_keys=True,
+            )
+        )
+    return {
+        "schema": manifest["schema"],
+        "status": "clean",
+        "legacy_tree": "absent",
+        "resolved_legacy_rust_files": len(frozen_paths),
+        "resolved_migration_cases": len(entries),
+        "colocated_rust_invariants": colocated_rust,
+        "recreation_fixture": "rejected",
+        "manifest_digest": _manifest_digest(manifest),
+    }
+
+
 def main() -> int:
     args = _arguments()
     manifest = _load_manifest()
@@ -531,6 +611,8 @@ def main() -> int:
         result = _projections(manifest)
     elif args.guidance:
         result = _guidance(manifest)
+    elif args.retired_tree:
+        result = _retired_tree(manifest)
     else:
         result = _cluster(manifest, args.cluster)
     print(json.dumps(result, sort_keys=True))
