@@ -423,6 +423,10 @@ fi
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
+# #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
+# plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
+# same deterministic string from RUN_ID (see environment/secretmanager.tf).
+LUMEN_AUTHCSI_SECRET_ID="axo-${RUN_ID}-lumen-tokens"
 export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
@@ -431,6 +435,7 @@ if [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
 else
   export LUMEN_CLI LUMEN_IMAGE SIFT_CLI SIFT_IMAGE
+  export LUMEN_AUTHCSI_SECRET_ID
 fi
 "$SCRIPT_DIR/render-manifests.sh" || {
   echo "manifest rendering failed" >&2
@@ -442,9 +447,17 @@ mkdir -p "$TERRAFORM_ENVIRONMENT_DIR"
 cp "$ACCEPTANCE_ROOT/environment"/*.tf "$TERRAFORM_ENVIRONMENT_DIR/"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" init -input=false
-terraform_apply_var_args=()
+# Pass acceptance_apps unconditionally rather than appending to an array only in
+# tape mode.  Under macOS bash 3.2 (`set -u`), expanding an *empty* array as
+# "${arr[@]}" is an unbound-variable error, so the lumen-sift path — the default
+# — aborted the whole run at terraform apply while the tape path, which always
+# populated the array, kept passing (run 0726052225 died exactly here).  Naming
+# the value outright removes the empty-array case instead of quoting around it,
+# and keeps apply symmetric with cleanup.sh's destroy args.
 if [[ "$acceptance_mode" == "tape" ]]; then
-  terraform_apply_var_args+=(-var="acceptance_apps=tape")
+  terraform_acceptance_apps=tape
+else
+  terraform_acceptance_apps=lumen-sift
 fi
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" apply \
@@ -457,7 +470,7 @@ TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -var="run_id=$RUN_ID" \
   -var="artifact_registry_repository=$ARTIFACT_REGISTRY_REPOSITORY" \
   -var="image_tag=$IMAGE_TAG" \
-  "${terraform_apply_var_args[@]}"
+  -var="acceptance_apps=$terraform_acceptance_apps"
 TF_DATA_DIR="$STATE_DIR/.terraform-environment" terraform \
   -chdir="$TERRAFORM_ENVIRONMENT_DIR" output \
   -state="$STATE_DIR/environment.tfstate" -json > "$EVIDENCE_DIR/terraform-output.json"
