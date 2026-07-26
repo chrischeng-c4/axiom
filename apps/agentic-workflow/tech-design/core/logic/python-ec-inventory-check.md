@@ -69,6 +69,23 @@ CPython project with direct `src/*.py` ownership. It then reads
 `[tool.aw.python-ec]` in `pyproject.toml`; it never imports a module, runs a
 case, or writes generated case entries to project `aw.toml`.
 
+Agentic Workflow's self-hosting inventory exercises this boundary with one
+ordinary Python case module for each of the 98 contracts in its retained
+legacy compatibility inventory. A parity verifier pins the one-for-one case,
+capability, claim, dimension, assertion, legacy test-path, and target-command
+mapping so the migration cannot collapse accepted coverage. Two explicit
+compatibility corrections replace an obsolete Markdown EC draft oracle with
+the canonical Python scaffold integration test and route an advisory-health
+test through its current integration-test target; the parity verifier pins
+both corrections rather than silently weakening them. Fourteen
+additional operational cases close the efficiency and stability dimensions
+required by the seven DeveloperTool capabilities that previously exposed only
+behavior cases. The external runner executes each preserved target command
+without importing the case module; efficiency uses a monotonic 120-second
+limit plus non-zero test counts, stability requires identical non-zero
+passed/failed totals across two executions, and both write one non-empty JSON
+evidence artifact.
+
 The `aw.python-ec.v1` inventory uses one `[[tool.aw.python-ec.cases]]` record
 per hand-authored source module. Each record requires stable lowercase
 hyphenated `id`, `capability_id`, and `use_case_id`, one four-dimensional
