@@ -151,6 +151,10 @@ pub struct CbClaimArgs {
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-recovery-verbs-non-interactive.md#cli
     #[arg(long)]
     pub non_interactive: bool,
+    // Commit only exact generated TD artifact files. Directory fillback is
+    // never accepted as a commit path because it is not a file-granular scope.
+    #[arg(long)]
+    pub commit: bool,
     // Project name whose configured tech-design root the generated spec
     // must target (#1243 fix). Inferred from `code_path` against the
     // configured project scopes (`configured_project_name_for_path`) when
@@ -4806,6 +4810,13 @@ pub fn signature_only() -> Result<()>
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
+    fn claim_test_generated_artifact(root: &std::path::Path) -> std::path::PathBuf {
+        let artifact = root.join("tech-design/logic/adopted.md");
+        std::fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+        std::fs::write(&artifact, "# adopted\n").unwrap();
+        artifact
+    }
+
     #[test]
     fn commit_cb_claim_trailer_without_issue_omits_claim_issue_trailer() {
         if !git_available() {
@@ -4813,7 +4824,8 @@ pub fn signature_only() -> Result<()>
         }
         let dir = tempfile::tempdir().unwrap();
         init_claim_test_git_repo(dir.path());
-        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", None).unwrap();
+        let artifact = claim_test_generated_artifact(dir.path());
+        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", None, &[artifact]).unwrap();
         let body = claim_test_git_log_body(dir.path());
         assert!(body.contains("Lifecycle-Stage: Cb-Claim"), "body:\n{body}");
         assert!(!body.contains("Claim-Issue:"), "body:\n{body}");
@@ -4830,7 +4842,15 @@ pub fn signature_only() -> Result<()>
             slug: "adopted-lib".to_string(),
             number: Some(42),
         };
-        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", Some(&issue_ref)).unwrap();
+        let artifact = claim_test_generated_artifact(dir.path());
+        commit_cb_claim_trailer(
+            dir.path(),
+            "demo-slug",
+            "src/lib.rs",
+            Some(&issue_ref),
+            &[artifact],
+        )
+        .unwrap();
         let body = claim_test_git_log_body(dir.path());
         assert!(body.contains("Claim-Issue: #42"), "body:\n{body}");
     }
@@ -4846,9 +4866,96 @@ pub fn signature_only() -> Result<()>
             slug: "adopted-lib".to_string(),
             number: None,
         };
-        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", Some(&issue_ref)).unwrap();
+        let artifact = claim_test_generated_artifact(dir.path());
+        commit_cb_claim_trailer(
+            dir.path(),
+            "demo-slug",
+            "src/lib.rs",
+            Some(&issue_ref),
+            &[artifact],
+        )
+        .unwrap();
         let body = claim_test_git_log_body(dir.path());
         assert!(body.contains("Claim-Issue: adopted-lib"), "body:\n{body}");
+    }
+
+    #[test]
+    fn commit_cb_claim_trailer_commits_only_generated_artifacts() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_claim_test_git_repo(dir.path());
+        let artifact = claim_test_generated_artifact(dir.path());
+        std::fs::write(dir.path().join("staged-user.bin"), b"user staged").unwrap();
+        std::fs::write(dir.path().join("untracked-user.bin"), b"user untracked").unwrap();
+        let staged = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["add", "staged-user.bin"])
+            .output()
+            .unwrap();
+        assert!(staged.status.success());
+
+        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", None, &[artifact]).unwrap();
+
+        let committed = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["show", "--format=", "--name-only", "HEAD"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&committed.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>(),
+            vec!["tech-design/logic/adopted.md"]
+        );
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["status", "--short"])
+            .output()
+            .unwrap();
+        let status = String::from_utf8_lossy(&status.stdout);
+        assert!(status.contains("A  staged-user.bin"), "{status}");
+        assert!(status.contains("?? untracked-user.bin"), "{status}");
+    }
+
+    #[test]
+    fn commit_cb_claim_trailer_rejects_directory_artifact_scope() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_claim_test_git_repo(dir.path());
+        let artifact_dir = dir.path().join("tech-design/logic");
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+        std::fs::write(artifact_dir.join("adopted.md"), "# adopted\n").unwrap();
+        let head_before = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+
+        let error = commit_cb_claim_trailer(dir.path(), "demo-slug", "src", None, &[artifact_dir])
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires exact generated artifact files"),
+            "{error:#}"
+        );
+        let head_after = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert_eq!(head_after.stdout, head_before.stdout);
     }
 
     // #1276 AC2/AC3b: a bare, slug-less `aw td code-check` must print a
@@ -7040,18 +7147,41 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         }
     };
 
-    // 4. Commit a Cb-Claim trailer in the current checkout when possible.
-    let mut committed = false;
-    if let Err(e) = commit_cb_claim_trailer(
-        &project_root,
-        &derived_slug,
-        &args.code_path,
-        claim_issue.as_ref(),
-    ) {
-        eprintln!("warning: failed to commit Cb-Claim trailer: {}", e);
+    // 4. Commit a Cb-Claim trailer only when the caller explicitly requests
+    //    it. The exact generated artifact paths are the complete commit scope.
+    let committed = if args.commit {
+        if let Err(error) = commit_cb_claim_trailer(
+            &project_root,
+            &derived_slug,
+            &args.code_path,
+            claim_issue.as_ref(),
+            &fillback_outcome.artifact_paths,
+        ) {
+            let message = format!("failed to commit generated Cb-Claim artifacts: {error}");
+            let env = serde_json::json!({
+                "schema_version": "aw.cli.v1",
+                "status": "blocked",
+                "action": "error",
+                "slug": derived_slug,
+                "message": message,
+                "artifacts": fillback_outcome.artifact_paths.iter()
+                    .map(|path| path.strip_prefix(&project_root).unwrap_or(path).to_string_lossy().replace('\\', "/"))
+                    .collect::<Vec<_>>(),
+                "next": fillback_error_next("aw td create --help", &message),
+                "requires_hitl": false,
+                "completion": {
+                    "root_complete": false,
+                    "workflow_complete": false,
+                    "requires_hitl": false,
+                },
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            anyhow::bail!(message);
+        }
+        true
     } else {
-        committed = true;
-    }
+        false
+    };
 
     // 5. Emit result envelope.
     let next_command = fillback_outcome
@@ -7090,7 +7220,7 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         "message": if committed {
             "td create --from-source: spec written; Cb-Claim trailer committed"
         } else {
-            "td create --from-source: spec written (no trailer committed)"
+            "td create --from-source: spec written (staging and commit left to caller)"
         },
     });
     println!("{}", serde_json::to_string(&env)?);
@@ -7164,6 +7294,9 @@ fn fillback_resume_command(args: &CbClaimArgs) -> String {
     }
     if args.no_issue {
         command.push_str(" --no-issue");
+    }
+    if args.commit {
+        command.push_str(" --commit");
     }
     command
 }
@@ -7423,22 +7556,55 @@ fn claim_issue_create_args(title: &str, project_name: String) -> crate::cli::iss
 }
 
 // Commit a `Lifecycle-Stage: Cb-Claim` trailer in the current checkout.
-// Best-effort: a missing git binary or non-git tree returns Err and the
-// caller logs a warning. `claim_issue`, when set, carries the published
-// tracker issue (issue #925) as a `Claim-Issue:` trailer.
+// This is called only for explicit `--commit`, so any failure is returned to
+// the caller instead of being downgraded to a warning. `claim_issue`, when set,
+// carries the published tracker issue (issue #925) as a `Claim-Issue:` trailer.
 fn commit_cb_claim_trailer(
     checkout_root: &std::path::Path,
     slug: &str,
     code_path: &str,
     claim_issue: Option<&ClaimIssueRef>,
+    artifact_paths: &[std::path::PathBuf],
 ) -> Result<()> {
+    if artifact_paths.is_empty() {
+        anyhow::bail!("Cb-Claim --commit has no generated artifact paths");
+    }
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let _ = std::process::Command::new(&git_bin)
+    let mut relative_paths = Vec::with_capacity(artifact_paths.len());
+    for path in artifact_paths {
+        if !path
+            .symlink_metadata()
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+        {
+            anyhow::bail!(
+                "Cb-Claim --commit requires exact generated artifact files; got non-file path {}",
+                path.display()
+            );
+        }
+        let relative = path.strip_prefix(checkout_root).map_err(|_| {
+            anyhow::anyhow!(
+                "generated Cb-Claim artifact is outside checkout: {}",
+                path.display()
+            )
+        })?;
+        relative_paths.push(relative.to_path_buf());
+    }
+    let add = std::process::Command::new(&git_bin)
+        .arg("--literal-pathspecs")
         .arg("-C")
         .arg(checkout_root)
-        .args(["add", "-A"])
-        .output()?;
+        .args(["add", "--"])
+        .args(&relative_paths)
+        .output()
+        .context("git add generated Cb-Claim artifacts")?;
+    if !add.status.success() {
+        anyhow::bail!(
+            "git add generated Cb-Claim artifacts failed: {}",
+            String::from_utf8_lossy(&add.stderr).trim()
+        );
+    }
     let mut msg = format!(
         "cb({slug}) \u{2014} adopted code at {code_path}\n\n\
          Lifecycle-Slug: {slug}\n\
@@ -7451,10 +7617,13 @@ fn commit_cb_claim_trailer(
         msg.push_str(&format!("\nClaim-Issue: {}", issue.trailer_value()));
     }
     let commit = std::process::Command::new(&git_bin)
+        .arg("--literal-pathspecs")
         .arg("-C")
         .arg(checkout_root)
-        .args(["commit", "--allow-empty", "-m", &msg])
-        .output()?;
+        .args(["commit", "--only", "-m", &msg, "--"])
+        .args(&relative_paths)
+        .output()
+        .context("git commit generated Cb-Claim artifacts")?;
     if !commit.status.success() {
         anyhow::bail!(
             "git commit failed: {}",

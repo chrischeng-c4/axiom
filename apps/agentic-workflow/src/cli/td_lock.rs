@@ -22,6 +22,10 @@ pub struct TdLockArgs {
     /// Show current lock status without rewriting it.
     #[arg(long)]
     pub show: bool,
+    /// Commit only the generated lock path. Without this flag, the command
+    /// writes the lock and leaves staging and committing to the caller.
+    #[arg(long, conflicts_with_all = ["check", "show"])]
+    pub commit: bool,
     /// Emit JSON status.
     #[arg(long)]
     pub json: bool,
@@ -131,6 +135,7 @@ struct TdLockTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TdLockWriteAction {
+    Wrote,
     WroteAndCommitted,
     RecoveredAndCommitted,
     AlreadyClean,
@@ -178,12 +183,13 @@ pub fn run(project: Option<&str>, args: TdLockArgs) -> Result<()> {
         return Ok(());
     }
 
-    let result = write_project_td_lock(project)?;
+    let result = write_project_td_lock(project, args.commit)?;
     let status = result.status;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
         let action = match result.action {
+            TdLockWriteAction::Wrote => "wrote (not committed)",
             TdLockWriteAction::WroteAndCommitted => "wrote and committed",
             TdLockWriteAction::RecoveredAndCommitted => "recovered and committed",
             TdLockWriteAction::AlreadyClean => "already clean",
@@ -233,17 +239,25 @@ pub(crate) fn check_project_td_lock_for_spec_at_root(
     )
 }
 
-fn write_project_td_lock(project: &str) -> Result<TdLockWriteResult> {
+fn write_project_td_lock(project: &str, commit: bool) -> Result<TdLockWriteResult> {
     let project_root = crate::find_project_root()?;
-    write_project_td_lock_at_root(&project_root, project)
+    write_project_td_lock_at_root(&project_root, project, commit)
 }
 
-fn write_project_td_lock_at_root(project_root: &Path, project: &str) -> Result<TdLockWriteResult> {
+fn write_project_td_lock_at_root(
+    project_root: &Path,
+    project: &str,
+    commit: bool,
+) -> Result<TdLockWriteResult> {
     let target = resolve_td_lock_target(project_root, project)?;
     let lock_path = preflight_repo_relative_td_lock_path(project_root, &target.lock_path)?;
     let (status, wrote) = write_project_td_lock_file_at_root(project_root, &target)?;
-    let committed = commit_td_lock_update(project_root, &target, &lock_path)?;
-    if wrote && !committed {
+    let committed = if commit {
+        commit_td_lock_update(project_root, &target, &lock_path)?
+    } else {
+        false
+    };
+    if commit && wrote && !committed {
         anyhow::bail!(
             "td lock wrote {} but could not commit the generated lock",
             target.lock_path_display
@@ -253,7 +267,7 @@ fn write_project_td_lock_at_root(project_root: &Path, project: &str) -> Result<T
         (true, true) => TdLockWriteAction::WroteAndCommitted,
         (false, true) => TdLockWriteAction::RecoveredAndCommitted,
         (false, false) => TdLockWriteAction::AlreadyClean,
-        (true, false) => unreachable!("changed TD lock must fail before returning"),
+        (true, false) => TdLockWriteAction::Wrote,
     };
     Ok(TdLockWriteResult { status, action })
 }
@@ -1130,6 +1144,37 @@ path = "projects/demo"
     }
 
     #[test]
+    fn td_lock_default_writes_without_staging_or_committing() {
+        if !git_available() {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        write_td_lock_repo(root);
+        let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
+
+        let result = write_project_td_lock_at_root(root, "demo", false).unwrap();
+
+        assert_eq!(result.action, TdLockWriteAction::Wrote);
+        assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
+        assert_eq!(
+            git_stdout(
+                root,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--",
+                    "projects/demo/tech-design/td.lock",
+                ],
+            )
+            .trim(),
+            "?? projects/demo/tech-design/td.lock"
+        );
+    }
+
+    #[test]
     fn td_lock_commit_preserves_unrelated_staged_unstaged_and_untracked_state() {
         if !git_available() {
             return;
@@ -1150,7 +1195,7 @@ path = "projects/demo"
         .stdout;
         let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
 
-        let result = write_project_td_lock_at_root(root, "demo").unwrap();
+        let result = write_project_td_lock_at_root(root, "demo", true).unwrap();
 
         assert_eq!(result.action, TdLockWriteAction::WroteAndCommitted);
         assert!(result.status.clean);
@@ -1180,7 +1225,7 @@ path = "projects/demo"
         );
 
         let committed_head = git_stdout(root, &["rev-parse", "HEAD"]);
-        let repeat = write_project_td_lock_at_root(root, "demo").unwrap();
+        let repeat = write_project_td_lock_at_root(root, "demo", true).unwrap();
         assert_eq!(repeat.action, TdLockWriteAction::AlreadyClean);
         assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), committed_head);
         assert_eq!(
@@ -1223,7 +1268,7 @@ path = "projects/demo"
         );
         let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
 
-        let recovered = write_project_td_lock_at_root(root, "demo").unwrap();
+        let recovered = write_project_td_lock_at_root(root, "demo", true).unwrap();
 
         assert_eq!(recovered.action, TdLockWriteAction::RecoveredAndCommitted);
         assert_ne!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
@@ -1235,7 +1280,7 @@ path = "projects/demo"
             vec!["projects/demo/tech-design/td.lock"]
         );
         let recovered_head = git_stdout(root, &["rev-parse", "HEAD"]);
-        let repeat = write_project_td_lock_at_root(root, "demo").unwrap();
+        let repeat = write_project_td_lock_at_root(root, "demo", true).unwrap();
         assert_eq!(repeat.action, TdLockWriteAction::AlreadyClean);
         assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), recovered_head);
     }
@@ -1275,7 +1320,7 @@ td_path = "projects/demo/tech-design"
         )
         .stdout;
 
-        let error = write_project_td_lock_at_root(root, "demo").unwrap_err();
+        let error = write_project_td_lock_at_root(root, "demo", true).unwrap_err();
 
         assert!(
             error.to_string().contains("outside repository root")
@@ -1341,7 +1386,7 @@ path = "projects/demo"
         )
         .stdout;
 
-        let error = write_project_td_lock_at_root(root, "demo").unwrap_err();
+        let error = write_project_td_lock_at_root(root, "demo", true).unwrap_err();
 
         assert!(
             error.to_string().contains("non-symlink regular file"),
