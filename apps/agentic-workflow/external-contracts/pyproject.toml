@@ -1006,9 +1006,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-chain-liveness-proof.py"
 promise = "the exact driven chain reaches a terminal action within its bounded hop budget without landing on a deadlock phase (#914, refs #921)"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-proof -- cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_claim_never_lands_on_deadlock_phase -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-proof"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-chain-liveness-proof.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1020,9 +1020,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-chain-liveness-retry.py"
 promise = "a stranded terminal retry emits the exact `aw cb check <slug>` command, remains within its tick budget, and preserves the lifecycle state until successful completion"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-retry -- cargo test -p agentic-workflow --test cli_tests chain_liveness_test::chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-chain-liveness-retry"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-chain-liveness-retry.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1034,9 +1034,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-crrr-removal-linear-lifecycle.py"
 promise = "TD created phase dispatches directly to generation in the linear lifecycle"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-crrr-removal-linear-lifecycle -- cargo test -p agentic-workflow --lib td_created_dispatches_to_gen -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-crrr-removal-linear-lifecycle"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-crrr-removal-linear-lifecycle.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1048,9 +1048,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-hand-written-complete-evidence-gate.py"
 promise = "terminal CB check accepts complete evidence only after every declared hand-written create and modify target has a committed implementation diff"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-complete-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_accepts_complete_hand_written_lifecycle_diff -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-complete-evidence-gate"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-complete-evidence-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1062,9 +1062,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-hand-written-implementation-evidence-gate.py"
 promise = "terminal CB check refuses a hand-written modify path with zero committed implementation diff since its Td-Init baseline (#1382)"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-implementation-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_unchanged_hand_written_modify_paths -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-implementation-evidence-gate"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-implementation-evidence-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1076,9 +1076,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-hand-written-partial-evidence-gate.py"
 promise = "terminal CB check refuses partial evidence when any declared hand-written create or modify target still has no committed implementation diff"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-partial-evidence-gate -- cargo test -p agentic-workflow --test cli_tests td_no_merge_test::test_code_check_refuses_partial_hand_written_lifecycle_diff -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-hand-written-partial-evidence-gate"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-hand-written-partial-evidence-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1090,9 +1090,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
 promise = "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command -- cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test::test_td_merge_subcommand_is_removed -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-remove-td-merge-command"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-remove-td-merge-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1188,9 +1188,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-generation-target-ownership-inferred-single-real-cli.py"
 promise = "a no-Changes Schema TD with one exact managed spec ref passes caller admission; the executor selects the same inferred target and generates Widget; the lifecycle advances to cb_genned on the persistent project branch"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-inferred-single-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_no_changes_single_inferred_schema_target_remains_compatible -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-inferred-single-real-cli"
 evidence_paths = ["evidence/td-generation-target-ownership-inferred-single-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1202,9 +1202,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-generation-target-ownership-real-cli.py"
 promise = "the public binary emits exactly one stdout JSON error envelope and no second stderr error; error_kind, section, sorted targets, completion, and executable next.command are stable; HEAD, symbolic branch, index tree, porcelain-z status, issue bytes, and TD branch ref are unchanged; the prepared spec and every target blob remain byte-identical"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-ownership-real-cli"
 evidence_paths = ["evidence/td-generation-target-ownership-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]

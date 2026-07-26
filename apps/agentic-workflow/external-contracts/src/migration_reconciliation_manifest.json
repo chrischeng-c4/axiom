@@ -370,56 +370,56 @@
         {
           "id": "td-cb-lifecycle-automation-chain-liveness-proof",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-chain-liveness-retry",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_retry.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_crrr_removal_linear_lifecycle.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-hand-written-complete-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_complete_evidence_gate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-hand-written-partial-evidence-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_partial_evidence_gate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-cb-lifecycle-automation-remove-td-merge-command",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_remove_td_merge_command.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-generation-target-ownership-inferred-single-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-generation-target-ownership-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },
