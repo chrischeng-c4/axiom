@@ -102,23 +102,28 @@ ARTIFACT_REGISTRY_REPOSITORY=courier \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
-To verify Lumen before the deferred Sift collection phase, select the
-Lumen-only mode and provide the exact immutable Lumen image. This mode does
-not build, render, deploy, or query Sift; it proves only Lumen reconcile,
-PVC-backed restart persistence, GCS backup readback, the bounded disk-triggered
-split, and cleanup.
+`ACCEPTANCE_APPS` selects the mode and its value set is closed: `lumen sift`
+(the default) or `tape`. The earlier `LUMEN_ONLY=1` mode no longer exists —
+it was removed when the harness gained Tape mode, and this section documented
+it for several commits afterwards. Passing it today does nothing at all; the
+run proceeds in full `lumen sift` mode, which is not what the caller asked
+for. To skip Lumen's phases entirely, hand a completed Lumen proof to
+`LUMEN_PRIOR_ACCEPTANCE` instead.
+
+Either mode accepts prebuilt images. Supply them as immutable `@sha256`
+digest references — a mutable tag is rejected, because an acceptance run has
+to name the exact bytes it proved:
 
 ```bash
 PROJECT_ID=axiom-502607 \
-LUMEN_ONLY=1 \
 LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
+SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
 benchmarks/gcp-operator-acceptance/scripts/run.sh
 ```
 
-`LUMEN_ONLY=1` rejects a mutable or omitted image reference and rejects
-`LUMEN_PRIOR_ACCEPTANCE`: a current GKE run is required. The terminal
-`acceptance.json` records `mode: lumen-only` and explicitly excludes Sift
-collection, CPU/memory actuator, and live replica-membership claims.
+Omit both to build from the working tree via Cloud Build. That path requires
+a **clean** tree: `run.sh` refuses to upload a dirty source, so the image can
+always be traced back to a commit.
 
 To prove Tape in isolation, select Tape-only mode and provide the exact immutable
 Tape image (or omit it to trigger a local Cloud Build). This mode does not build,

@@ -15,7 +15,7 @@ jq empty "$ACCEPTANCE_ROOT/evidence/schema.json"
 for terraform_dir in environment cluster; do
   terraform -chdir="$ACCEPTANCE_ROOT/$terraform_dir" fmt -check -recursive
 done
-bash "$ACCEPTANCE_ROOT/tests/lumen_only_mode.sh"
+bash "$ACCEPTANCE_ROOT/tests/acceptance_mode_selection.sh"
 
 # Validate in a disposable copy so provider initialization never writes a
 # lock/cache artifact into the source tree.
@@ -33,3 +33,9 @@ for terraform_dir in environment cluster; do
   TF_DATA_DIR="$validate_root/.terraform-$terraform_dir" terraform \
     -chdir="$validate_root/$terraform_dir" validate
 done
+
+# A gate that says nothing when it passes is indistinguishable from one that
+# did not run -- and this gate was silently red for several commits before
+# anyone noticed. Say so out loud, and name what comes next.
+echo "static acceptance gate: ok"
+echo "next: PROJECT_ID=<project> benchmarks/gcp-operator-acceptance/scripts/run.sh"
