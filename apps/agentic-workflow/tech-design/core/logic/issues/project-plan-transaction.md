@@ -77,6 +77,11 @@ Requirement dependencies from that same inventory are rendered as symbolic
 `depends-on:<proposal-id>` labels in the reviewed manifest. Create mutations
 are ordered by dependency depth, and the apply transaction resolves each
 symbolic proposal id to the real tracker id before creating a dependent issue.
+Resolution is token-safe for prefix-overlapping ids such as `requirement-1`
+and `requirement-10`: the complete longest symbolic id is replaced first.
+On retry, a transaction-marker-owned create whose managed graph labels differ
+from the exact reviewed mutation is repaired in place and checkpointed instead
+of being accepted as reconciled or duplicated.
 
 ## Requirements
 <!-- type: requirements lang: yaml -->
@@ -117,6 +122,8 @@ requirements:
     text: Proposed change bodies preserve every requirement-specific runnable gate and observable oracle from the epic Verification Inventory.
   - id: R17
     text: Proposed change mutations preserve requirement dependency edges, create prerequisites first, and resolve symbolic proposal ids to real tracker labels.
+  - id: R18
+    text: Prefix-overlapping symbolic proposal ids resolve longest-first, and retry repairs transaction-marker-owned creates to the exact reviewed managed graph labels without creating duplicates.
 ```
 
 ## Behavior
@@ -152,6 +159,14 @@ Feature: publish one reviewed project planning transaction
     Given every reviewed mutation is already present on the tracker
     When the same accepted review is applied again
     Then the result is complete with no_op true and applied_count zero
+
+  Scenario: retry repairs a corrupted marker-owned dependency
+    Given a prior apply created requirement-1 and requirement-10 changes
+    And the requirement-10 marker-owned issue carries a prefix-corrupted dependency label
+    When the same accepted review is applied again
+    Then symbolic proposal ids are resolved longest-first
+    And the existing issue is repaired to the exact reviewed managed graph labels
+    And no duplicate work item is created
 
   Scenario: forged deterministic normalize evidence is rejected
     Given a normalize manifest was edited to add a self-declared deterministic update

@@ -73,8 +73,8 @@ The normalized graph contains:
 
 Validation fails closed for unowned or multiply-owned open changes,
 change-as-parent, missing parent, cross-project parent, invalid priority
-cardinality, missing/non-change/cross-project supersession targets, and
-non-sibling supersession.
+cardinality, missing/non-change/cross-project dependency or supersession
+targets, and non-sibling supersession.
 
 ## CLI
 <!-- type: cli lang: yaml -->
@@ -101,7 +101,7 @@ invalid_graph:
 - A valid fixture proves canonical and legacy parent forms normalize to one graph.
 - A child with its own priority proves explicit override; a sibling without one proves epic inheritance.
 - Supersession proves the original and replacements remain siblings and the mapping is bidirectional.
-- Invalid fixtures prove exact diagnostics for unowned, multiply-owned, missing, cross-project, and change-as-parent relations.
+- Invalid fixtures prove exact diagnostics for unowned, multiply-owned, missing, cross-project, change-as-parent, and unresolved dependency relations.
 - Two unchanged reads prove byte-equivalent JSON and digest stability.
 - Before/after issue-file snapshots prove the CLI performs no backend writes.
 

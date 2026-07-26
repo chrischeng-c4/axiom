@@ -290,9 +290,25 @@ pub fn build_work_item_graph(
                 unset_priority()
             };
 
-            let mut dependencies = relation_labels(issue, "depends-on:");
-            dependencies.extend(body_dependency_references(issue));
-            dependencies = resolve_relation_list(&dependencies, &indexed, &aliases);
+            let mut raw_dependencies = relation_labels(issue, "depends-on:");
+            raw_dependencies.extend(body_dependency_references(issue));
+            let mut dependencies = raw_dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    resolve_relation_target(
+                        &id,
+                        dependency,
+                        "depends-on",
+                        project_label,
+                        &indexed,
+                        &aliases,
+                        &mut diagnostics,
+                    )
+                })
+                .collect::<Vec<_>>();
+            dependencies
+                .sort_by(|left, right| reference_sort_key(left).cmp(&reference_sort_key(right)));
+            dependencies.dedup();
 
             let duplicates =
                 resolve_relation_list(&relation_labels(issue, "duplicate-of:"), &indexed, &aliases);
@@ -836,6 +852,37 @@ mod tests {
         assert_eq!(graph.changes[1].dependencies, vec!["2"]);
         assert_eq!(graph.changes[1].priority.source, "explicit");
         assert_eq!(graph.changes[1].priority.value.as_deref(), Some("p0"));
+    }
+
+    #[test]
+    fn missing_dependency_target_fails_graph_closed() {
+        let graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[
+                issue(
+                    1,
+                    "epic",
+                    "open",
+                    &["type:epic", "app:demo", "priority:p1"],
+                    "",
+                ),
+                issue(
+                    2,
+                    "change",
+                    "open",
+                    &["type:change", "app:demo", "epic:1", "depends-on:26570"],
+                    "",
+                ),
+            ],
+        );
+
+        assert!(!graph.valid);
+        assert!(graph.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "missing_relation_target"
+                && diagnostic.issue == "2"
+                && diagnostic.related.as_deref() == Some("26570")
+        }));
     }
 
     #[test]
