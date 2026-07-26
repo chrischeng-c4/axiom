@@ -304,62 +304,62 @@
         {
           "id": "api-contract-source-passes",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_api_contract_source_passes.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "artifact-quality-fixture-roundtrip",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "aw-td-apply-section-lookup-parity-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "completeness-placeholder-unit-command",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_completeness_placeholder_unit_command.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "missing-source-review-fails",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_missing_source_review_fails.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "placeholder-completeness-unit-gate",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_placeholder_completeness_unit_gate.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "quality-primitive-metadata-contract-test",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_quality_primitive_metadata_contract_test.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-default-section-queue-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-generation-target-exact-partition-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "td-generation-target-generator-gap-real-cli",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },

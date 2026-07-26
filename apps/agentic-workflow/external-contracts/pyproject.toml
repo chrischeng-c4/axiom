@@ -122,9 +122,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/api-contract-source-passes.py"
 promise = "source_backed is true; findings is empty"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case api-contract-source-passes -- cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case api-contract-source-passes"
 evidence_paths = ["evidence/api-contract-source-passes.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -150,9 +150,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/artifact-quality-fixture-roundtrip.py"
 promise = "every serialized fixture decodes, validates, and re-encodes to the same typed profile; each profile exposes intent_read, quality_dials, source_policy, and preflight_gate_set in review context"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-quality-fixture-roundtrip -- cargo test -p agentic-workflow --lib artifact_quality_fixture_roundtrip -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case artifact-quality-fixture-roundtrip"
 evidence_paths = ["evidence/artifact-quality-fixture-roundtrip.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -416,9 +416,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/aw-td-apply-section-lookup-parity-real-cli.py"
 promise = "the already-valid fixture passes aw td check with zero findings; missing and malformed payload attempts leave the spec byte-identical; body-only Logic applies with exactly one typed Logic wrapper; the next initialized payload is applicability/unit-test.json; structured Unit Test applies and dispatches contract Logic"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-td-apply-section-lookup-parity-real-cli -- cargo test -p agentic-workflow --test cli_tests td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case aw-td-apply-section-lookup-parity-real-cli"
 evidence_paths = ["evidence/aw-td-apply-section-lookup-parity-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -486,9 +486,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/completeness-placeholder-unit-command.py"
 promise = "placeholder code is rejected; omitted prose is rejected; future_work_allowed TODO is accepted"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case completeness-placeholder-unit-command -- cargo test -p agentic-workflow --lib completeness_placeholder_scanner_contract -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case completeness-placeholder-unit-command"
 evidence_paths = ["evidence/completeness-placeholder-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -710,9 +710,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/missing-source-review-fails.py"
 promise = "source_backed is false; finding code is missing_source_reference"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case missing-source-review-fails -- cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case missing-source-review-fails"
 evidence_paths = ["evidence/missing-source-review-fails.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -724,9 +724,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/placeholder-completeness-unit-gate.py"
 promise = "placeholder code rejected; omitted prose rejected; explicit future TODO allowed"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case placeholder-completeness-unit-gate -- cargo test -p agentic-workflow --lib completeness_placeholder -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case placeholder-completeness-unit-gate"
 evidence_paths = ["evidence/placeholder-completeness-unit-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -850,9 +850,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/quality-primitive-metadata-contract-test.py"
 promise = "default profiles validate; selection citation explains a matching primitive; review finding reports an anti-pattern"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case quality-primitive-metadata-contract-test -- cargo test -p agentic-workflow --lib quality_primitives -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case quality-primitive-metadata-contract-test"
 evidence_paths = ["evidence/quality-primitive-metadata-contract-test.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1132,9 +1132,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-default-section-queue-real-cli.py"
 promise = "the fresh skeleton contains logic followed by unit-test; logic applicability emits an applicability unit-test dispatch; contract authoring does not start before unit-test applicability"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-default-section-queue-real-cli -- cargo test -p agentic-workflow --test cli_tests td_create_replay_does_not_clobber_authored_logic_section -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-default-section-queue-real-cli"
 evidence_paths = ["evidence/td-default-section-queue-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1160,9 +1160,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-generation-target-exact-partition-real-cli.py"
 promise = "a cold public TD generation accepts two exact Schema owners; Alpha and Beta appear only in their declared target files; the admitted lifecycle advances to cb_genned"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-exact-partition-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-exact-partition-real-cli"
 evidence_paths = ["evidence/td-generation-target-exact-partition-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1174,9 +1174,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-generation-target-generator-gap-real-cli.py"
 promise = "the public binary emits a typed owned_generated_unit_unsupported HITL envelope; the stable unit ID, target, remediation command, and generator_gap reason are explicit; HEAD, branch, index, status, issue, and target bytes remain unchanged"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-generator-gap-real-cli -- cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-generation-target-generator-gap-real-cli"
 evidence_paths = ["evidence/td-generation-target-generator-gap-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
