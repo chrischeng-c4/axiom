@@ -106,7 +106,7 @@ pub enum Commands {
     /// Codebase materialization lifecycle: generate, fill, check, and promote.
     Cb(crate::cli::cb::CbArgs),
 
-    /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
+    /// Python EC lifecycle: scaffold/check source, independently review, then verify.
     Ec(ec::EcArgs),
 
     /// Read-only project-profile resolution + report (kind/surface,
