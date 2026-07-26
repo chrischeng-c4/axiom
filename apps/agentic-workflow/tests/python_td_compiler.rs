@@ -27,6 +27,36 @@ fn python_td_compiler_reference_projects_compile_without_execution() {
 }
 
 #[test]
+fn python_td_compiler_discovers_self_hosting_bootstrap_with_stable_digest() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tech-design");
+    let pyproject = fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    assert!(pyproject.contains("name = \"agentic-workflow-tech-design\""));
+
+    let first = compile_python_td_project(&root).unwrap();
+    let second = compile_python_td_project(&root).unwrap();
+
+    assert_eq!(first.schema_version, "aw.python-td-ir.v1");
+    assert_eq!(first.semantic_digest, second.semantic_digest);
+    assert!(first.semantic_digest.starts_with("sha256:"));
+    let module = first
+        .modules
+        .iter()
+        .find(|module| {
+            module.artifact_id.as_deref()
+                == Some(concat!(
+                    "artifact:td-cb-lifecycle-automation/",
+                    "python-td-missing-source-fail-closed-routing"
+                ))
+        })
+        .expect("self-hosting Python TD artifact must be discoverable");
+    assert_eq!(module.path, "src/self_hosting.py");
+    assert!(module
+        .declarations
+        .iter()
+        .any(|declaration| { declaration.name == "python_td_missing_source_fail_closed_routing" }));
+}
+
+#[test]
 fn python_td_compiler_digest_ignores_formatting_only_edits() {
     let temporary = tempfile::tempdir().unwrap();
     fs::create_dir_all(temporary.path().join("src/demo/application")).unwrap();
