@@ -2414,6 +2414,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-existing-xml-handwrite-adoption.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "explicit-td-artifact-commit-ownership"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership.py"
+promise = "Explicit TD artifact commit ownership: `cargo test -p agentic-workflow --lib td_lock_default_writes_without_staging_or_committing -- --nocapture`; `cargo test -p agentic-workflow --lib commit_cb_claim_trailer_rejects_directory_artifact_scope -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_from_source_default_leaves_head_and_index_ownership_to_caller -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_from_source_explicit_commit_is_exact_and_preserves_unrelated_git_state -- --nocapture`; mutating TD lock and source-adoption verbs never stage or commit by default, while explicit `--commit` accepts only literal generated file paths and path-limited commits without absorbing unrelated staged, unstaged, or untracked files"
+oracle = "Every executable gate declared for td-cb-lifecycle-automation:explicit-td-artifact-commit-ownership must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_lock_default_writes_without_staging_or_committing -- --nocapture; cargo test -p agentic-workflow --lib commit_cb_claim_trailer_rejects_directory_artifact_scope -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_from_source_default_leaves_head_and_index_ownership_to_caller -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_from_source_explicit_commit_is_exact_and_preserves_unrelated_git_state -- --nocapture"
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+evidence_paths = ["evidence/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
 artifact_id = "artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
 capability_id = "td-cb-lifecycle-automation"
@@ -2435,7 +2449,7 @@ use_case_id = "generated-td-lock-commit-handoff"
 dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff.py"
-promise = "Generated TD lock commit handoff: `cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; the mutating TD-lock command preflights exact in-repository path containment before any write, rejects external directory or lock symlinks without mutation, commits only the configured lock path, preserves unrelated index/worktree state, recovers legacy uncommitted locks once, keeps check/show read-only, and leaves the generated lock clean for the emitted generation command"
+promise = "Generated TD lock commit handoff: `cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; TD lock preflights exact in-repository path containment before any write, keeps check/show read-only, writes without committing by default, and lets explicit `--commit` create a lock-path-only commit while preserving unrelated index/worktree state"
 oracle = "Every executable gate declared for td-cb-lifecycle-automation:generated-td-lock-commit-handoff must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture"
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff"

@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:7ea0ca7ec854bb69efc40e6b98efa9ac6ef1dfe8631eb97d002f01ef7f1822f5",
+  "source_digest": "sha256:4982d71dee748cea51950673bb7868f0d19e76f70cb206340a1df88aca90c1ba",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-26T04:34:48.331553+00:00",
-  "summary": "The canonical Python EC inventory is semantically acceptable for this digest. All 99 reconciled required-claim cases project their concrete capability oracle into the reviewed promise and assertions, execute every classified executable gate through the independent claim_gate runner, reject zero-test Cargo selectors, and pass current verification. Independent Python negative tests and Rust production tests prevent the reconciliation producer from serving as its own sole oracle. The corrected review-payload, marker-free, XML-adoption, and root-doc gates execute real tests against the current intended semantics.",
+  "reviewed_at": "2026-07-26T05:50:46.572310+00:00",
+  "summary": "The #2534 canonical Python EC delta is semantically acceptable for this digest. The revised TD-lock handoff case proves default write-only ownership before a separate explicit lock-only commit, and the explicit TD artifact ownership case exercises both public from-source modes while preserving unrelated staged, tracked-unstaged, and untracked state. Exact generated file scope is independently pinned by the public commit envelope and a directory-scope fail-closed test. Both complete claim gates pass with non-zero test counts, reconciliation is clean, and no assertion depends on the EC producer as its oracle.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

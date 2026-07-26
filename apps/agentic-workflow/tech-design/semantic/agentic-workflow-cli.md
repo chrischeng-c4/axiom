@@ -109,7 +109,13 @@ capability_refs:
     gap: generated-td-lock-commit-handoff
     claim: generated-td-lock-commit-handoff
     coverage: full
-    rationale: "TD lock preflights lexical and canonical repository containment before any write, then fresh writes and legacy uncommitted-lock recovery create one lock-path-only lifecycle commit while preserving unrelated index and worktree state; read-only lock modes never commit."
+    rationale: "TD lock preflights lexical and canonical repository containment before any write, writes without staging or committing by default, and only an explicit commit request creates one lock-path-only lifecycle commit while preserving unrelated index and worktree state; read-only lock modes never commit."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: explicit-td-artifact-commit-ownership
+    claim: explicit-td-artifact-commit-ownership
+    coverage: full
+    rationale: "TD lock and source adoption keep commit ownership with the caller by default; explicit commit mode accepts only literal generated file paths and uses path-limited commits so unrelated staged, unstaged, and untracked files remain untouched, while directory adoption remains caller-committed."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: ambiguous-multi-target-generation-preflight

@@ -2051,17 +2051,57 @@ type = "local"
         String::from_utf8_lossy(&lock.stdout),
         String::from_utf8_lossy(&lock.stderr),
     );
-    let lock_head = Command::new(&git)
+    let default_lock_head = Command::new(&git)
         .arg("-C")
         .arg(root)
         .args(["rev-parse", "HEAD"])
         .output()
         .expect("read lock HEAD");
+    assert!(default_lock_head.status.success());
+    let default_lock_head = String::from_utf8_lossy(&default_lock_head.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(
+        default_lock_head, pre_lock_head,
+        "default aw td lock must leave commit ownership to the caller"
+    );
+    assert_eq!(
+        git_status(&git, root).trim(),
+        "?? tech-design/td.lock",
+        "default aw td lock must write only an untracked lock without staging it"
+    );
+
+    let explicit_lock = Command::new(&bin)
+        .env(AW_FIXTURE_LOCAL_BACKEND_ENV, "1")
+        .env(
+            agentic_workflow::models::project::TEST_ONLY_LEGACY_ARTIFACT_MODEL_ENV,
+            "1",
+        )
+        .env("AW_DISABLE_CAP", "1")
+        .args(["td", "lock", "--project", "agentic-workflow", "--commit"])
+        .current_dir(root)
+        .output()
+        .expect("commit fixture TD IR lock explicitly");
+    assert!(
+        explicit_lock.status.success(),
+        "explicit fixture TD lock commit should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&explicit_lock.stdout),
+        String::from_utf8_lossy(&explicit_lock.stderr),
+    );
+    let lock_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read explicit lock HEAD");
     assert!(lock_head.status.success());
     let lock_head = String::from_utf8_lossy(&lock_head.stdout)
         .trim()
         .to_string();
-    assert_ne!(lock_head, pre_lock_head, "aw td lock must create a commit");
+    assert_ne!(
+        lock_head, pre_lock_head,
+        "aw td lock --commit must create a commit"
+    );
     let lock_commit_count = Command::new(&git)
         .arg("-C")
         .arg(root)
@@ -2076,7 +2116,7 @@ type = "local"
     assert_eq!(
         String::from_utf8_lossy(&lock_commit_count.stdout).trim(),
         "1",
-        "aw td lock must add exactly one lifecycle commit"
+        "aw td lock --commit must add exactly one lifecycle commit"
     );
     let lock_commit_paths = Command::new(&git)
         .arg("-C")
@@ -2107,7 +2147,7 @@ type = "local"
     assert_eq!(
         git_status(&git, root),
         "",
-        "aw td lock must leave its generated lock committed and clean"
+        "aw td lock --commit must leave its generated lock committed and clean"
     );
 
     for read_only_flag in ["--check", "--show"] {
@@ -3475,7 +3515,7 @@ definitions:
             "1",
         )
         .env("AW_DISABLE_CAP", "1")
-        .args(["td", "lock", "--project", "agentic-workflow"])
+        .args(["td", "lock", "--project", "agentic-workflow", "--commit"])
         .current_dir(root)
         .output()
         .expect("lock inferred Schema TD");
@@ -3624,7 +3664,7 @@ changes:
             "1",
         )
         .env("AW_DISABLE_CAP", "1")
-        .args(["td", "lock", "--project", "agentic-workflow"])
+        .args(["td", "lock", "--project", "agentic-workflow", "--commit"])
         .current_dir(root)
         .output()
         .expect("lock exact ownership TD");

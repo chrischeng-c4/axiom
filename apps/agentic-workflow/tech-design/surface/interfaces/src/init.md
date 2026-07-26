@@ -395,7 +395,7 @@ fn determine_platform_update(
     project_root: &Path,
     existing_config: Option<&str>,
 ) -> Result<PlatformTomlUpdate> {
-    if !io::stdin().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
         if existing_config
             .map(|content| content.contains("[agentic_workflow.issue_platform]"))
             .unwrap_or(false)
@@ -417,7 +417,7 @@ fn determine_platform_update(
 ///
 // Returns the TOML text for the `[platform]` section, or None if user chose None.
 fn determine_platform(project_root: &Path) -> Result<Option<String>> {
-    if !io::stdin().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
         println!("   ℹ Non-interactive init: skipping issue platform selection");
         return Ok(None);
     }

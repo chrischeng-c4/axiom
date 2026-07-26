@@ -194,6 +194,11 @@ pub struct CreateArgs {
     /// Required for non-TTY environments such as agent dispatch and CI.
     #[arg(long)]
     pub non_interactive: bool,
+    /// With a file `--from-source`: commit only the exact generated TD artifact
+    /// file. Directory adoption remains caller-committed because a directory
+    /// path is not a safe exact commit scope.
+    #[arg(long, requires = "from_source")]
+    pub commit: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3539,6 +3544,7 @@ async fn run_create_from_source(
         group: args.group.clone(),
         json: true,
         non_interactive: args.non_interactive,
+        commit: args.commit,
         project: project.map(str::to_string),
     };
     super::cb::run_claim(claim_args).await

@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-26T04:34:55.889018+00:00"
-ir_digest = "sha256:8ce25468294b73fc1b48c80bbf287434af91c7bbb7ec944bd8a78e09418ff830"
-source_digest = "sha256:eba2857808ec66c32ae044341b837617647b80c683e5fd2f3cf11333c086501d"
+generated_at = "2026-07-26T05:51:54.615585+00:00"
+ir_digest = "sha256:5bb4ed9993345a00ef186619696b90390eedb598e77603b54e111e358bad3e51"
+source_digest = "sha256:97a14c8fa29eb974a863966b612f9ef7a5c40d7676e681fe9b5cb2a0374b162e"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:6286bc03aef830a5132a298bb5bf108e1173fab1d299f2254b8bfaadb2a58e08"
+digest = "sha256:d18f4fc0d8840b3647c0d7f4268ca632f0b864fa02541909471608e0371c4597"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/api-contract-source-passes.py"
@@ -365,12 +365,16 @@ path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-l
 digest = "sha256:be85219e8a25385136816597d50bfc2c9d20124247cffd0db09dddc18794e6a4"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership.py"
+digest = "sha256:c81c155d2ea24975d8063695b1d9a76a3a59b14cc7f6ad5d54d11d219352da1e"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot.py"
 digest = "sha256:754bbbbaf4acab71e7c2b7f3295b0fb558effb7af56c75a5beaf68ad4290feff"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff.py"
-digest = "sha256:c48b426da453bc786792074217565a16d5f3d2990873424cab64eb63090d40b7"
+digest = "sha256:bcfd3ab8c07a47fdd603b8f4346aca044823a33de8680476ac27fa8e46bc1085"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source.py"
@@ -2637,6 +2641,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:9f4b44c80650fae91400a4ee6dda69e96bb46009db5a0960725f2c125e6ea5f9"
 
 [[cases]]
+id = "claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "explicit-td-artifact-commit-ownership"
+contract_id = "claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership"
+required_for_production = true
+assertions = [
+    "Explicit TD artifact commit ownership: `cargo test -p agentic-workflow --lib td_lock_default_writes_without_staging_or_committing -- --nocapture`; `cargo test -p agentic-workflow --lib commit_cb_claim_trailer_rejects_directory_artifact_scope -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_from_source_default_leaves_head_and_index_ownership_to_caller -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_from_source_explicit_commit_is_exact_and_preserves_unrelated_git_state -- --nocapture`; mutating TD lock and source-adoption verbs never stage or commit by default, while explicit `--commit` accepts only literal generated file paths and path-limited commits without absorbing unrelated staged, unstaged, or untracked files",
+    "artifact: artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-explicit-td-artifact-commit-ownership",
+    "oracle: Every executable gate declared for td-cb-lifecycle-automation:explicit-td-artifact-commit-ownership must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_lock_default_writes_without_staging_or_committing -- --nocapture; cargo test -p agentic-workflow --lib commit_cb_claim_trailer_rejects_directory_artifact_scope -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_from_source_default_leaves_head_and_index_ownership_to_caller -- --nocapture; cargo test -p agentic-workflow --test cli_tests test_from_source_explicit_commit_is_exact_and_preserves_unrelated_git_state -- --nocapture",
+    "target: rust",
+]
+evidence_digest = "sha256:bc52ecb97003cbdee2cb69b0a0592115524c50413a5ade01705fee8698d57945"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0cb37171dd0cd92b65b91d277df13a3eff6443efe83475e5c8253617da971603"
+
+[[cases]]
 id = "claim-closure-td-cb-lifecycle-automation-fixture-platform-config-rot"
 capability_id = "td-cb-lifecycle-automation"
 claim_id = "fixture-platform-config-rot"
@@ -2667,14 +2691,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/claim-closure-td
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff -- python3 apps/agentic-workflow/external-contracts/src/claim_gate.py --case claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff"
 required_for_production = true
 assertions = [
-    "Generated TD lock commit handoff: `cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; the mutating TD-lock command preflights exact in-repository path containment before any write, rejects external directory or lock symlinks without mutation, commits only the configured lock path, preserves unrelated index/worktree state, recovers legacy uncommitted locks once, keeps check/show read-only, and leaves the generated lock clean for the emitted generation command",
+    "Generated TD lock commit handoff: `cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md; TD lock preflights exact in-repository path containment before any write, keeps check/show read-only, writes without committing by default, and lets explicit `--commit` create a lock-path-only commit while preserving unrelated index/worktree state",
     "artifact: artifact:agentic-workflow/claim-closure-td-cb-lifecycle-automation-generated-td-lock-commit-handoff",
     "oracle: Every executable gate declared for td-cb-lifecycle-automation:generated-td-lock-commit-handoff must run, exit zero, and every cargo test gate must execute at least one test. Gates: cargo test -p agentic-workflow --lib td_lock_commit_ -- --nocapture; cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture",
     "target: rust",
 ]
 evidence_digest = "sha256:0a44c499eed081a0288063b7b5ffd68dd0af7c8cadc200f5ea2b08014c2b31a4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:23f2ad347eda3644332c4c72853e2cc12cda4af91213b085255584dab9c1d024"
+digest = "sha256:3232ec85fdb952b96b1ec605ea4bcb25e17dab1dd5de7e944a7e33ac6b0d3ba3"
 
 [[cases]]
 id = "claim-closure-td-cb-lifecycle-automation-large-explicit-source-fillback-and-lossless-exact-gen-source"

@@ -184,6 +184,42 @@ fn run_from_source(
     }
 }
 
+fn git_output(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("git {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn prepare_from_source_git_isolation_fixture(root: &std::path::Path) {
+    write_from_source_fixture(root, "demo", "CommitIsolation");
+    std::fs::write(root.join("user-staged.txt"), "staged baseline\n").unwrap();
+    std::fs::write(root.join("user-unstaged.txt"), "unstaged baseline\n").unwrap();
+    git_output(root, &["init", "--initial-branch=main"]);
+    git_output(root, &["config", "user.email", "aw-test@example.com"]);
+    git_output(root, &["config", "user.name", "AW Test"]);
+    git_output(root, &["add", "."]);
+    git_output(root, &["commit", "-m", "bootstrap from-source fixture"]);
+
+    std::fs::write(root.join("user-staged.txt"), "staged user change\n").unwrap();
+    git_output(root, &["add", "user-staged.txt"]);
+    std::fs::write(root.join("user-unstaged.txt"), "unstaged user change\n").unwrap();
+    std::fs::write(root.join("user-untracked.txt"), "untracked user change\n").unwrap();
+}
+
+fn git_stdout(root: &std::path::Path, args: &[&str]) -> String {
+    String::from_utf8(git_output(root, args).stdout).expect("git stdout utf8")
+}
+
 fn nonempty_stdout_lines(output: &std::process::Output) -> Vec<&str> {
     std::str::from_utf8(&output.stdout)
         .expect("stdout utf8")
@@ -215,6 +251,164 @@ fn run_emitted_aw_command(
         .current_dir(root)
         .output()
         .expect("run emitted aw command")
+}
+
+/// #2534: public source adoption writes its exact generated artifact but leaves
+/// HEAD and the existing index entirely under caller ownership by default.
+#[test]
+fn test_from_source_default_leaves_head_and_index_ownership_to_caller() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    if std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: git not available");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    prepare_from_source_git_isolation_fixture(root);
+    let head_before = git_stdout(root, &["rev-parse", "HEAD"]).trim().to_string();
+    let index_before = git_output(root, &["diff", "--cached", "--binary"]).stdout;
+    let status_before = git_stdout(root, &["status", "--porcelain=v1", "--untracked-files=all"]);
+
+    let output = run_from_source(
+        &aw_bin,
+        root,
+        &[
+            "--from-source",
+            "demo/src/lib.rs",
+            "--project",
+            "demo",
+            "--no-issue",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "default from-source failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope = single_stdout_envelope(&output);
+    let artifact = envelope["artifacts"][0].as_str().expect("artifact path");
+
+    assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]).trim(), head_before);
+    assert_eq!(
+        git_output(root, &["diff", "--cached", "--binary"]).stdout,
+        index_before,
+        "default from-source must not alter the existing index"
+    );
+    let status_after = git_stdout(root, &["status", "--porcelain=v1", "--untracked-files=all"]);
+    for unrelated in status_before.lines() {
+        assert!(
+            status_after.lines().any(|line| line == unrelated),
+            "default from-source changed unrelated git state `{unrelated}`:\n{status_after}"
+        );
+    }
+    assert!(
+        status_after
+            .lines()
+            .any(|line| line == format!("?? {artifact}")),
+        "generated artifact must remain untracked and unstaged by default:\n{status_after}"
+    );
+}
+
+/// #2534: explicit public source-adoption commit owns only the generated
+/// artifact and preserves unrelated staged, tracked-unstaged, and untracked
+/// caller state byte-for-byte.
+#[test]
+fn test_from_source_explicit_commit_is_exact_and_preserves_unrelated_git_state() {
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    if std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: git not available");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    prepare_from_source_git_isolation_fixture(root);
+    let head_before = git_stdout(root, &["rev-parse", "HEAD"]).trim().to_string();
+    let index_before = git_output(root, &["diff", "--cached", "--binary"]).stdout;
+    let status_before = git_output(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )
+    .stdout;
+
+    let output = run_from_source(
+        &aw_bin,
+        root,
+        &[
+            "--from-source",
+            "demo/src/lib.rs",
+            "--project",
+            "demo",
+            "--no-issue",
+            "--commit",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "explicit from-source commit failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope = single_stdout_envelope(&output);
+    let artifact = envelope["artifacts"][0].as_str().expect("artifact path");
+    assert_eq!(
+        envelope["message"],
+        "td create --from-source: spec written; Cb-Claim trailer committed"
+    );
+
+    let head_after = git_stdout(root, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_ne!(head_after, head_before);
+    assert_eq!(
+        git_stdout(
+            root,
+            &[
+                "rev-list",
+                "--count",
+                &format!("{head_before}..{head_after}")
+            ]
+        )
+        .trim(),
+        "1"
+    );
+    assert_eq!(
+        git_stdout(root, &["show", "--format=", "--name-only", "HEAD"])
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>(),
+        vec![artifact],
+        "explicit commit must contain only the exact generated artifact"
+    );
+    assert!(git_stdout(root, &["log", "-1", "--format=%B"]).contains("Lifecycle-Stage: Cb-Claim"));
+    assert_eq!(
+        git_output(root, &["diff", "--cached", "--binary"]).stdout,
+        index_before,
+        "explicit commit must preserve the caller's staged bytes"
+    );
+    assert_eq!(
+        git_output(
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .stdout,
+        status_before,
+        "explicit commit must preserve unrelated staged, unstaged, and untracked state"
+    );
 }
 
 /// #1243 regression proof: `aw td create --from-source <path> --project
