@@ -27,6 +27,7 @@ def _arguments() -> argparse.Namespace:
     verify = subcommands.add_parser("verify")
     selection = verify.add_mutually_exclusive_group(required=True)
     selection.add_argument("--baseline", action="store_true")
+    selection.add_argument("--policy", action="store_true")
     selection.add_argument("--cluster")
     return parser.parse_args()
 
@@ -113,6 +114,49 @@ def _baseline(manifest: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _policy(manifest: dict[str, Any]) -> dict[str, Any]:
+    configured = _configured_cases()
+    entries = _delegated_entries(manifest)
+    expected_legacy = set(manifest["legacy_rust_files"])
+    expected_cases = {entry["id"] for entry in entries}
+    unexpected_rust = sorted(_legacy_files() - expected_legacy)
+    current_cargo = {
+        case_id
+        for case_id, case in configured.items()
+        if "cargo test" in case.get("command", "")
+    }
+    unexpected_cargo = sorted(current_cargo - expected_cases)
+    regressed_native = sorted(
+        entry["id"]
+        for entry in entries
+        if entry["migration_status"] == "native"
+        and (
+            entry["id"] in current_cargo
+            or not _has_verify(entry["id"])
+        )
+    )
+    if unexpected_rust or unexpected_cargo or regressed_native:
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "unexpected_rust_wrappers": unexpected_rust,
+                    "unexpected_cargo_oracles": unexpected_cargo,
+                    "regressed_native_cases": regressed_native,
+                },
+                sort_keys=True,
+            )
+        )
+    return {
+        "schema": manifest["schema"],
+        "policy": "pass",
+        "legacy_ceiling": len(expected_legacy),
+        "delegated_ceiling": len(expected_cases),
+        "current_legacy": len(_legacy_files()),
+        "current_delegated": len(current_cargo),
+        "manifest_digest": _manifest_digest(manifest),
+    }
+
+
 def _cluster(manifest: dict[str, Any], cluster_id: str) -> dict[str, Any]:
     configured = _configured_cases()
     cluster = next(
@@ -172,6 +216,8 @@ def main() -> int:
     manifest = _load_manifest()
     if args.baseline:
         result = _baseline(manifest)
+    elif args.policy:
+        result = _policy(manifest)
     else:
         result = _cluster(manifest, args.cluster)
     print(json.dumps(result, sort_keys=True))
