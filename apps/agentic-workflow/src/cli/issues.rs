@@ -5439,11 +5439,25 @@ async fn run_plan_apply(args: PlanApplyArgs) -> Result<()> {
             None,
         )
     };
-    let manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let mut manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let mut plan_body = std::fs::read_to_string(&plan_path)?;
+    let mut actual_source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+    if actual_source_digest != source_digest {
+        if let Some(decision) = decision.as_ref() {
+            let immutable_plan_path =
+                digest_bound_project_plan_path(&plan_path, decision.stage, &source_digest)?;
+            let immutable_manifest_path =
+                capability_plan_sidecar_path(&immutable_plan_path, "manifest.json");
+            if immutable_plan_path.is_file() && immutable_manifest_path.is_file() {
+                plan_body = std::fs::read_to_string(&immutable_plan_path)?;
+                manifest_body = std::fs::read_to_string(&immutable_manifest_path)?;
+                actual_source_digest =
+                    planning_transaction_source_digest(&plan_body, &manifest_body);
+            }
+        }
+    }
     let manifest: PlanningTransactionManifest = serde_json::from_str(&manifest_body)?;
-    let plan_body = std::fs::read_to_string(&plan_path)?;
     let plan: ProjectPlan = serde_json::from_str(&plan_body)?;
-    let actual_source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
     if manifest.plan_digest != plan.digest
         || manifest.root_id != plan.root_id
         || manifest.stage != plan.stage
@@ -5470,7 +5484,12 @@ async fn run_plan_apply(args: PlanApplyArgs) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("atomize apply requires agent review evidence"))?;
             let review: CapabilityPlanReviewRecord =
                 serde_json::from_str(&std::fs::read_to_string(review_path)?)?;
-            validate_capability_plan_review_record(&project_root, &review)?;
+            validate_capability_plan_review_record_with_artifacts(
+                &project_root,
+                &review,
+                &plan_body,
+                &manifest_body,
+            )?;
             if review.decision != CapabilityPlanReviewDecision::Accepted
                 || review.source_digest != decision.source_digest
                 || !matches!(review.reviewer_kind.as_str(), "agent" | "human")
@@ -5570,6 +5589,26 @@ fn validate_capability_plan_review_record(
     project_root: &Path,
     record: &CapabilityPlanReviewRecord,
 ) -> Result<()> {
+    let plan_path = PathBuf::from(&record.plan_path);
+    let manifest_path = PathBuf::from(&record.manifest_path);
+    let plan_body = std::fs::read_to_string(&plan_path)
+        .with_context(|| format!("read reviewed plan {}", plan_path.display()))?;
+    let manifest_body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read reviewed manifest {}", manifest_path.display()))?;
+    validate_capability_plan_review_record_with_artifacts(
+        project_root,
+        record,
+        &plan_body,
+        &manifest_body,
+    )
+}
+
+fn validate_capability_plan_review_record_with_artifacts(
+    project_root: &Path,
+    record: &CapabilityPlanReviewRecord,
+    plan_body: &str,
+    manifest_body: &str,
+) -> Result<()> {
     if record.version != CAPABILITY_PLAN_REVIEW_VERSION {
         anyhow::bail!(
             "capability-plan review version {} is unsupported; expected {}",
@@ -5598,10 +5637,6 @@ fn validate_capability_plan_review_record(
     }
     resolve_project_label(project_root, &record.project)
         .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
-    let plan_body = std::fs::read_to_string(&plan_path)
-        .with_context(|| format!("read reviewed plan {}", plan_path.display()))?;
-    let manifest_body = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("read reviewed manifest {}", manifest_path.display()))?;
     let actual_digest = capability_plan_source_digest(&plan_body, &manifest_body);
     if actual_digest != record.source_digest {
         anyhow::bail!(
@@ -5928,6 +5963,16 @@ fn prepare_inventory_plan_review(
     };
     write_file_atomically(&manifest_path, &manifest_body)?;
     let source_digest = capability_plan_source_digest(&plan_body, &manifest_body);
+    if kind == "project_plan" {
+        let plan: ProjectPlan = serde_json::from_str(&plan_body)
+            .context("decode project plan for immutable review snapshot")?;
+        let immutable_plan_path =
+            digest_bound_project_plan_path(plan_path, plan.stage, &source_digest)?;
+        let immutable_manifest_path =
+            capability_plan_sidecar_path(&immutable_plan_path, "manifest.json");
+        write_file_atomically(&immutable_plan_path, &plan_body)?;
+        write_file_atomically(&immutable_manifest_path, &manifest_body)?;
+    }
     let review_path = capability_plan_sidecar_path(plan_path, "review.json");
     let author_path = capability_plan_sidecar_path(plan_path, "author.json");
     let author_record = CapabilityPlanAuthorRecord {
@@ -6048,6 +6093,18 @@ fn capability_plan_source_digest(plan_body: &str, manifest_body: &str) -> String
 
 fn capability_plan_sidecar_path(plan_path: &Path, extension: &str) -> PathBuf {
     plan_path.with_extension(extension)
+}
+
+fn digest_bound_project_plan_path(
+    plan_path: &Path,
+    stage: PlanningStage,
+    source_digest: &str,
+) -> Result<PathBuf> {
+    let stem = plan_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow::anyhow!("project-plan path has no UTF-8 file stem"))?;
+    Ok(plan_path.with_file_name(format!("{stem}.{}.{source_digest}.json", stage.as_str())))
 }
 
 fn write_project_plan_decision_payload(

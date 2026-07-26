@@ -82,6 +82,10 @@ and `requirement-10`: the complete longest symbolic id is replaced first.
 On retry, a transaction-marker-owned create whose managed graph labels differ
 from the exact reviewed mutation is repaired in place and checkpointed instead
 of being accepted as reconciled or duplicated.
+Independent review also writes immutable, stage-and-source-digest-scoped plan
+and manifest snapshots. A later planning stage may replace the canonical
+working files without invalidating replay of the previously accepted
+authorization unit.
 
 ## Requirements
 <!-- type: requirements lang: yaml -->
@@ -123,7 +127,7 @@ requirements:
   - id: R17
     text: Proposed change mutations preserve requirement dependency edges, create prerequisites first, and resolve symbolic proposal ids to real tracker labels.
   - id: R18
-    text: Prefix-overlapping symbolic proposal ids resolve longest-first, and retry repairs transaction-marker-owned creates to the exact reviewed managed graph labels without creating duplicates.
+    text: Prefix-overlapping symbolic proposal ids resolve longest-first, accepted plan and manifest bytes remain available in immutable digest-scoped snapshots, and retry repairs transaction-marker-owned creates to the exact reviewed managed graph labels without creating duplicates.
 ```
 
 ## Behavior
@@ -167,6 +171,13 @@ Feature: publish one reviewed project planning transaction
     Then symbolic proposal ids are resolved longest-first
     And the existing issue is repaired to the exact reviewed managed graph labels
     And no duplicate work item is created
+
+  Scenario: retry survives canonical plan advancement
+    Given an accepted transaction has immutable digest-scoped plan and manifest snapshots
+    And a later planning stage replaced the canonical working files
+    When the accepted decision is replayed
+    Then apply validates and uses the immutable reviewed authorization unit
+    And the replay converges without duplicate work items
 
   Scenario: forged deterministic normalize evidence is rejected
     Given a normalize manifest was edited to add a self-declared deterministic update

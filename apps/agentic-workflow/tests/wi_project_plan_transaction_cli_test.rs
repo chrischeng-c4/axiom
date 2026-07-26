@@ -318,6 +318,16 @@ fn accepted_project_plan_applies_once_and_reapply_is_clean_noop() {
         serde_json::to_string_pretty(&post_manifest).unwrap()
     );
 
+    let replay_after_canonical_overwrite = run_aw(
+        root.path(),
+        &["wi", "plan-apply", "--evidence-file", &evidence, "--json"],
+    );
+    successful_json(
+        &replay_after_canonical_overwrite,
+        "reapply accepted transaction after canonical plan overwrite",
+    );
+    assert_eq!(open_issue_bodies(root.path()).len(), 2);
+
     let unchanged = plan_atomize(root.path());
     assert_eq!(unchanged["plan"]["digest"], post_apply["plan"]["digest"]);
 }

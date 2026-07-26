@@ -292,20 +292,24 @@ pub fn build_work_item_graph(
 
             let mut raw_dependencies = relation_labels(issue, "depends-on:");
             raw_dependencies.extend(body_dependency_references(issue));
-            let mut dependencies = raw_dependencies
-                .iter()
-                .filter_map(|dependency| {
-                    resolve_relation_target(
-                        &id,
-                        dependency,
-                        "depends-on",
-                        project_label,
-                        &indexed,
-                        &aliases,
-                        &mut diagnostics,
-                    )
-                })
-                .collect::<Vec<_>>();
+            let mut dependencies = if issue.state == IssueState::Open {
+                raw_dependencies
+                    .iter()
+                    .filter_map(|dependency| {
+                        resolve_relation_target(
+                            &id,
+                            dependency,
+                            "depends-on",
+                            project_label,
+                            &indexed,
+                            &aliases,
+                            &mut diagnostics,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                resolve_relation_list(&raw_dependencies, &indexed, &aliases)
+            };
             dependencies
                 .sort_by(|left, right| reference_sort_key(left).cmp(&reference_sort_key(right)));
             dependencies.dedup();
