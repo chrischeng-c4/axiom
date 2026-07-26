@@ -125,6 +125,7 @@ dependencies = [
  "indexmap 2.14.0",
  "jsonschema 0.29.1",
  "libc",
+ "openapi-codegen",
  "pulldown-cmark",
  "ra_ap_syntax",
  "rayon",

@@ -17,6 +17,7 @@ path = "src/bin/aw.rs"
 [dependencies]
 # Code intelligence (extracted to separate crate in #1164)
 cclab-compass = { path = "../../libs/compass" }
+openapi-codegen = { path = "../../libs/openapi-codegen", version = "=0.5.0" }
 
 # LLM agent framework
 agent = { path = "../../projects/mamba/mambalibs/agentkit/core" }

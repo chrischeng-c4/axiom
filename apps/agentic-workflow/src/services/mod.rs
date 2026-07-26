@@ -23,6 +23,7 @@ pub mod python_artifact_code_check;
 pub mod python_artifact_readiness;
 pub mod python_ec;
 pub mod python_td;
+pub mod python_td_openapi_target;
 pub mod python_td_rust_target;
 pub mod python_td_target;
 pub mod python_td_typescript_target;

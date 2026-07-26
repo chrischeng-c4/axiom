@@ -27,6 +27,54 @@ fn python_td_compiler_reference_projects_compile_without_execution() {
 }
 
 #[test]
+fn python_td_compiler_captures_openapi_document_and_versioned_targets() {
+    let first = compile_python_td_project(&fixture("python_td_openapi")).unwrap();
+    let second = compile_python_td_project(&fixture("python_td_openapi")).unwrap();
+    assert_eq!(first, second);
+
+    let module = first
+        .modules
+        .iter()
+        .find(|module| module.codegen.is_some())
+        .expect("OpenAPI TD module");
+    let codegen = serde_json::to_value(module.codegen.as_ref().unwrap()).unwrap();
+    assert_eq!(codegen["source"], "open_api");
+    assert_eq!(codegen["document_path"], "openapi/pet.json");
+    assert_eq!(codegen["python_target"], "python-3.12");
+    assert_eq!(codegen["typescript_target"], "typescript-5.0");
+    assert_eq!(codegen["rust_target"], "rust-2024");
+    let document: serde_json::Value =
+        serde_json::from_str(codegen["document"].as_str().unwrap()).unwrap();
+    assert_eq!(document["openapi"], "3.1.0");
+}
+
+#[test]
+fn python_td_compiler_rejects_cross_language_openapi_profiles() {
+    let temporary = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temporary.path().join("src/demo/interface")).unwrap();
+    fs::create_dir_all(temporary.path().join("openapi")).unwrap();
+    fs::write(
+        temporary.path().join("openapi/api.json"),
+        r#"{"openapi":"3.1.0","info":{"title":"demo","version":"1"},"paths":{}}"#,
+    )
+    .unwrap();
+    fs::write(
+        temporary.path().join("src/demo/interface/api.py"),
+        r#"@openapi_client(source="openapi/api.json", python="rust-2024", typescript="typescript-5.0", rust="rust-2024")
+class DemoApi:
+    pass
+"#,
+    )
+    .unwrap();
+
+    let error = compile_python_td_project(temporary.path())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("[invalid-openapi-target]"));
+    assert!(error.contains("rust-2024"));
+}
+
+#[test]
 fn python_td_compiler_discovers_self_hosting_bootstrap_with_stable_digest() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tech-design");
     let pyproject = fs::read_to_string(root.join("pyproject.toml")).unwrap();

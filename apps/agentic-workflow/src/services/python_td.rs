@@ -220,6 +220,24 @@ pub struct PythonTdModule {
     pub role: PythonTdRole,
     pub imports: Vec<String>,
     pub declarations: Vec<PythonTdDeclaration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codegen: Option<PythonTdCodegen>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum PythonTdCodegen {
+    OpenApi(PythonTdOpenApiCodegen),
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PythonTdOpenApiCodegen {
+    pub document_path: String,
+    pub document: String,
+    pub client_name: String,
+    pub python_target: String,
+    pub typescript_target: String,
+    pub rust_target: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -409,6 +427,7 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
     imports.sort();
     imports.dedup();
     declarations.sort_by(|left, right| left.id.cmp(&right.id));
+    let codegen = compile_codegen_contract(root, path, &declarations)?;
     Ok(PythonTdModule {
         id,
         artifact_id,
@@ -416,7 +435,193 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         role: role_for_path(&rel),
         imports,
         declarations,
+        codegen,
     })
+}
+
+fn compile_codegen_contract(
+    root: &Path,
+    module_path: &Path,
+    declarations: &[PythonTdDeclaration],
+) -> Result<Option<PythonTdCodegen>> {
+    let candidates = declarations
+        .iter()
+        .flat_map(|declaration| {
+            declaration
+                .decorators
+                .iter()
+                .filter(|decorator| decorator.starts_with("@openapi_client("))
+                .map(move |decorator| (declaration, decorator.as_str()))
+        })
+        .collect::<Vec<_>>();
+    let Some((declaration, decorator)) = candidates.first().copied() else {
+        return Ok(None);
+    };
+    if candidates.len() != 1 {
+        bail!(
+            "Python TD diagnostic [duplicate-openapi-codegen] {}: declare exactly one @openapi_client contract per module",
+            module_path.display()
+        );
+    }
+    if declaration.kind != PythonTdDeclarationKind::Class {
+        bail!(
+            "Python TD diagnostic [invalid-openapi-codegen] {}: @openapi_client must decorate one class",
+            module_path.display()
+        );
+    }
+    let body = decorator
+        .strip_prefix("@openapi_client(")
+        .and_then(|value| value.strip_suffix(')'))
+        .with_context(|| {
+            format!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: malformed @openapi_client decorator",
+                module_path.display()
+            )
+        })?;
+    let mut values = BTreeMap::new();
+    for raw in body
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let (key, value) = raw.split_once('=').with_context(|| {
+            format!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: every @openapi_client argument must be key=\"value\"",
+                module_path.display()
+            )
+        })?;
+        if !matches!(key, "source" | "python" | "typescript" | "rust") {
+            bail!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: unknown @openapi_client argument `{key}`",
+                module_path.display()
+            );
+        }
+        let value = quoted_literal(value).with_context(|| {
+            format!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: @openapi_client `{key}` must be one quoted string",
+                module_path.display()
+            )
+        })?;
+        if values.insert(key, value).is_some() {
+            bail!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: duplicate @openapi_client argument `{key}`",
+                module_path.display()
+            );
+        }
+    }
+    let required = |key| {
+        values.get(key).copied().with_context(|| {
+            format!(
+                "Python TD diagnostic [invalid-openapi-codegen] {}: @openapi_client is missing `{key}`",
+                module_path.display()
+            )
+        })
+    };
+    let document_path = required("source")?;
+    let source_path = Path::new(document_path);
+    if source_path.is_absolute()
+        || source_path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        bail!(
+            "Python TD diagnostic [invalid-openapi-source] {}: OpenAPI source must stay below the TD root",
+            module_path.display()
+        );
+    }
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("resolve Python TD root {}", root.display()))?;
+    let resolved = canonical_root
+        .join(source_path)
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "Python TD diagnostic [missing-openapi-source] {}: cannot resolve `{document_path}`",
+                module_path.display()
+            )
+        })?;
+    if !resolved.starts_with(&canonical_root) {
+        bail!(
+            "Python TD diagnostic [invalid-openapi-source] {}: OpenAPI source escapes the TD root",
+            module_path.display()
+        );
+    }
+    let document = fs::read_to_string(&resolved).with_context(|| {
+        format!(
+            "Python TD diagnostic [missing-openapi-source] {}: read `{document_path}`",
+            module_path.display()
+        )
+    })?;
+    let json: serde_json::Value = serde_json::from_str(&document).with_context(|| {
+        format!(
+            "Python TD diagnostic [invalid-openapi-source] {}: `{document_path}` must be JSON",
+            module_path.display()
+        )
+    })?;
+    if json
+        .get("openapi")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+    {
+        bail!(
+            "Python TD diagnostic [invalid-openapi-source] {}: `{document_path}` is missing an OpenAPI version",
+            module_path.display()
+        );
+    }
+    let document = serde_json::to_string(&json).context("normalize OpenAPI JSON document")?;
+    let python_target =
+        validate_openapi_target(required("python")?, openapi_codegen::Lang::Py, module_path)?;
+    let typescript_target = validate_openapi_target(
+        required("typescript")?,
+        openapi_codegen::Lang::Ts,
+        module_path,
+    )?;
+    let rust_target =
+        validate_openapi_target(required("rust")?, openapi_codegen::Lang::Rust, module_path)?;
+    Ok(Some(PythonTdCodegen::OpenApi(PythonTdOpenApiCodegen {
+        document_path: document_path.to_string(),
+        document,
+        client_name: declaration.name.clone(),
+        python_target,
+        typescript_target,
+        rust_target,
+    })))
+}
+
+fn quoted_literal(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+}
+
+fn validate_openapi_target(
+    value: &str,
+    expected: openapi_codegen::Lang,
+    module_path: &Path,
+) -> Result<String> {
+    let target = openapi_codegen::TargetProfile::from_id(value).with_context(|| {
+        format!(
+            "Python TD diagnostic [invalid-openapi-target] {}: invalid target `{value}`",
+            module_path.display()
+        )
+    })?;
+    if target.lang() != expected {
+        bail!(
+            "Python TD diagnostic [invalid-openapi-target] {}: target `{value}` does not match {:?}",
+            module_path.display(),
+            expected
+        );
+    }
+    Ok(value.to_string())
 }
 
 fn explicit_artifact_id(source: &str, path: &Path) -> Result<Option<String>> {
