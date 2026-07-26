@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:cccfc2f507612ef11ebd0c804694f8841a7bce329b9b93e6f02e1847008ff3d3",
+  "source_digest": "sha256:e5c2dae6b66c3c0c6236c4c894154a3149f6d377e252dc006f941cb15f4e2f59",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-26T06:35:47.332721+00:00",
-  "summary": "The canonical remote-cb-fill-hydration claim is semantically acceptable for this digest. The authoritative WI phase-routing gate independently pins cb_genned to `aw cb fill <id>`, and the fake-GitHub real-CLI gate starts without a local projection, executes that canonical public surface, verifies configured-remote hydration and canonical issue state, and reaches marker dispatch. Both gates execute non-zero tests and pass, the generated claim inventory is drift-free, and the prior nonexistent `aw td fill` assertion and case identity have been removed from this claim.",
+  "reviewed_at": "2026-07-26T07:17:45.092590+00:00",
+  "summary": "The #2416 claim is semantically acceptable for this digest. Its implementation-independent Python tomllib oracle pins the canonical Keep project row, absent td_path, exact workspace scope, and absence of retired .aw paths. Its real aw td create fixture rejects a retired .aw override with non-zero typed retired_td_path output, exact apps/keep/tech-design remediation, and byte-identical Git HEAD/index/cached/status, tracker issue, and TD-tree sentinels. The resolver unit independently pins the shared error contract. All three gates pass and execute their assertions in the normal environment; forced removal of CARGO_BIN_EXE_aw now fails with exit 101, zero passed, and one failed, closing the prior skipped-body false-green. Claim reconciliation, inventory parity, TD/CB checks, unique whole-file CODEGEN ownership, and both source-snapshot dry-runs are clean.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/pyproject.toml"
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/claim-closure-project-local-td-and-ec-gates-keep-project-local-td-routing.py"
 }

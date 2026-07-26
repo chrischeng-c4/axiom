@@ -265,24 +265,24 @@ changes:
     symbol: ProjectConfigRow::label_or_default
     action: modify
     section: logic
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
       Issue #1519 prevents the registered-row producer from emitting the
       retired `project:` family. Preserve supported explicit app/lib/crate
       labels; otherwise derive app versus lib from the registered path and use
       the registered name before the strict TD resolver receives the issue
       identity. Cover project-local stale-label override of a label-free root
-      row.
+      row. The project-registry source snapshot remains the sole whole-file
+      CODEGEN owner.
   - path: apps/agentic-workflow/src/services/project_registry.rs
     symbol: TdRootInput, TdRootResult, TdResolveError
     action: modify
     section: schema
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      Codegen emits `TdRootInput`, `TdRootResult`, `TdResolveError` types and
-      their derives from the schema section above. Wrap in CODEGEN-BEGIN /
-      CODEGEN-END blocks with `@spec` markers referencing this file's
-      #schema anchor.
+      Define `TdRootInput`, `TdRootResult`, and `TdResolveError` semantics
+      without claiming whole-file ownership; the project-registry source
+      snapshot emits the concrete types and derives.
   - path: apps/agentic-workflow/src/spec_store.rs
     symbol: FileSystemSpecStore::specs_base
     action: modify
