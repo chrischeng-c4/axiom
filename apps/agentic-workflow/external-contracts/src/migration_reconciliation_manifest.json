@@ -628,62 +628,62 @@
         {
           "id": "aw-ec-zero-test-false-green",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_ec_zero_test_false_green.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-ec-evidence-documentation",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_evidence_documentation.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-ec-external-contract-source",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_external_contract_source.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-ec-tool-binding-dispatch",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_tool_binding_dispatch.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-project-dirty-scope-protection",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_dirty_scope_protection.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-project-local-td-root-resolver",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_local_td_root_resolver.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_td_lock_and_external_contract_target_resolution.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "project-local-td-and-ec-gates-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },
