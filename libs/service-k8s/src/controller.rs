@@ -10,16 +10,18 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
 use kube::runtime::controller::{Action, Controller};
+use kube::runtime::events::{Event, EventType, Recorder, Reporter};
 use kube::runtime::watcher;
 use kube::{Client, ResourceExt};
 use serde_json::Value;
 
 use crate::lease::{self, Election};
+use crate::metrics::{self, ControllerMetrics};
 use crate::service::{self, ManagedService, ReadyFacts};
 
 /// Reconcile errors: `kube` + serde failures plus a guard for malformed rendered
@@ -42,6 +44,8 @@ pub enum Error {
 struct Ctx {
     client: Client,
     election: Arc<Election>,
+    metrics: Arc<ControllerMetrics>,
+    recorder: Recorder,
 }
 
 /// This replica's leader-election identity (pod name in k8s, else the manager).
@@ -69,13 +73,40 @@ pub async fn run<S: ManagedService>() -> anyhow::Result<()> {
         S::MANAGER.to_string(),
         election.clone(),
     );
+
+    // Control-plane observability (#2620). The scrape listener runs alongside
+    // the controller rather than inside it: leadership is read at scrape time,
+    // so a follower replica publishes an honest `_leader 0` instead of going
+    // dark, and every replica is independently scrapeable.
+    let controller_metrics = Arc::new(ControllerMetrics::new(S::MANAGER));
+    {
+        let election = election.clone();
+        tokio::spawn(metrics::serve(
+            metrics::metrics_addr(),
+            controller_metrics.clone(),
+            move || election.is_leader.load(Ordering::Relaxed),
+        ));
+    }
+    let recorder = Recorder::new(
+        client.clone(),
+        Reporter {
+            controller: S::MANAGER.to_string(),
+            instance: Some(election.identity.clone()),
+        },
+    );
+
     let objs = Api::<S>::all(client.clone());
     tracing::info!(identity = %election.identity, manager = S::MANAGER, "operator starting; watching CR cluster-wide");
     Controller::new(objs, watcher::Config::default())
         .run(
-            reconcile::<S>,
+            reconcile_entry::<S>,
             error_policy::<S>,
-            Arc::new(Ctx { client, election }),
+            Arc::new(Ctx {
+                client,
+                election,
+                metrics: controller_metrics,
+                recorder,
+            }),
         )
         .for_each(|res| async move {
             match res {
@@ -214,11 +245,26 @@ async fn ready_replicas(client: &Client, ns: &str, kind: &str, name: &str) -> Re
 }
 
 // <HANDWRITE gap="missing-generator:logic:async-anchor" tracker="#1855" reason="AW cannot currently match async Rust functions as hand-write anchors; implement the TD-owned plan/apply/readiness/status sequence under the filed blocker.">
-async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Action, Error> {
-    // Leader-election gate: a follower watches but never applies.
+/// The instrumented entry point the controller actually calls (#2620).
+///
+/// The leader gate lives here rather than in [`reconcile`] on purpose: a
+/// follower replica does no work, so counting its no-ops would inflate
+/// `_reconcile_total` on the one replica that never touched the cluster and
+/// dilute the error ratio of the one that did.
+async fn reconcile_entry<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Action, Error> {
     if !ctx.election.is_leader.load(Ordering::Relaxed) {
         return Ok(Action::requeue(Duration::from_secs(10)));
     }
+    let started = Instant::now();
+    let result = reconcile::<S>(obj, ctx.clone()).await;
+    // Failures are timed too: a reconcile that fails after a 30s apiserver
+    // timeout is a different problem from one that fails instantly, and a
+    // histogram that only records successes cannot tell them apart.
+    ctx.metrics.observe(started.elapsed());
+    result
+}
+
+async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Action, Error> {
     let ns = obj
         .namespace()
         .ok_or(Error::Missing("metadata.namespace"))?;
@@ -267,10 +313,38 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     // server-side unless it is re-sent.
     let facts = obj.conditions(&ready, &plan.context);
     if !facts.is_empty() {
+        let prior = obj.observed_conditions();
+        let generation = obj.meta().generation.unwrap_or(0);
+
+        // Tell the CR's owner, once, that their edit was picked up (#2620).
+        //
+        // The trigger is a generation the operator has not converged yet, which
+        // makes the event fire on the first reconcile of a new CR and on every
+        // spec change, and stay silent through the 30s steady-state requeues in
+        // between. Publishing unconditionally would instead mean one apiserver
+        // write per CR per requeue forever, deduplicated into an ever-counting
+        // `EventSeries` that says nothing.
+        let converged = prior
+            .iter()
+            .filter_map(|c| c.observed_generation)
+            .max()
+            .is_some_and(|observed| observed == generation);
+        if !converged {
+            publish(
+                &ctx.recorder,
+                obj.as_ref(),
+                EventType::Normal,
+                "Reconciled",
+                "Reconcile",
+                format!("applied spec generation {generation}"),
+            )
+            .await;
+        }
+
         let projected = service::project(
-            &obj.observed_conditions(),
+            &prior,
             facts,
-            obj.meta().generation.unwrap_or(0),
+            generation,
             &service::now_rfc3339(),
         );
         status
@@ -292,7 +366,69 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
 }
 // </HANDWRITE>
 
-fn error_policy<S: ManagedService>(_obj: Arc<S>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
+/// Publish one Event against the CR, best-effort.
+///
+/// Best-effort is deliberate: an operator that fails its reconcile *and* then
+/// fails to say so must still requeue and retry. Losing the narration is a
+/// smaller harm than a controller that stops because its own event write was
+/// rejected — and the failure is not silent, because the reconcile-error
+/// counter has already moved and the log carries both errors.
+///
+/// Requires the `events.k8s.io` / `events` `create,patch` grant in the
+/// operator's ClusterRole.
+async fn publish<S: ManagedService>(
+    recorder: &Recorder,
+    obj: &S,
+    type_: EventType,
+    reason: &str,
+    action: &str,
+    note: String,
+) {
+    let event = Event {
+        type_,
+        reason: reason.to_string(),
+        note: Some(note),
+        action: action.to_string(),
+        secondary: None,
+    };
+    if let Err(error) = recorder.publish(&event, &obj.object_ref(&())).await {
+        tracing::warn!(%error, reason, "failed to publish event");
+    }
+}
+
+/// What the controller does with a failed reconcile.
+///
+/// Until #2620 this discarded the error entirely and returned a bare requeue,
+/// which made a CR failing every single round externally identical to one
+/// converging fine: nothing counted the failure, and the object's owner was
+/// never told. Both halves of that are fixed here — the counter feeds the
+/// error-rate alert, the Event feeds `kubectl describe`.
+fn error_policy<S: ManagedService>(obj: Arc<S>, err: &Error, ctx: Arc<Ctx>) -> Action {
+    ctx.metrics.observe_error();
+    tracing::warn!(
+        error = %err,
+        object = %obj.name_any(),
+        namespace = obj.namespace().unwrap_or_default(),
+        "reconcile failed"
+    );
+
+    // `error_policy` is synchronous by the controller's contract, so the write
+    // is detached. The `Recorder`'s 6-minute dedup window collapses a
+    // repeatedly failing reconcile into one counted series rather than a flood.
+    let recorder = ctx.recorder.clone();
+    let note = err.to_string();
+    tokio::spawn(async move {
+        publish(
+            &recorder,
+            obj.as_ref(),
+            EventType::Warning,
+            "ReconcileFailed",
+            "Reconcile",
+            note,
+        )
+        .await;
+    });
+
     Action::requeue(Duration::from_secs(15))
 }
 
@@ -454,6 +590,130 @@ mod tests {
         prune_object(&client, "acme", "uid-1234", &np_target())
             .await
             .expect("racing GC is success");
+    }
+
+    #[derive(
+        kube::CustomResource, Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+    )]
+    #[kube(
+        group = "service-k8s.test",
+        version = "v1",
+        kind = "CountedService",
+        namespaced
+    )]
+    struct CountedServiceSpec {
+        replicas: u32,
+    }
+
+    impl ManagedService for CountedService {
+        const MANAGER: &'static str = "counted-operator";
+
+        fn render(&self) -> Vec<Value> {
+            vec![json!({
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": { "name": "counted" },
+                "spec": { "replicas": self.spec.replicas },
+            })]
+        }
+
+        fn readiness_targets(&self) -> Vec<service::ReadinessTarget> {
+            Vec::new()
+        }
+
+        fn status_patch(&self, _ready: &ReadyFacts) -> Value {
+            json!({ "status": {} })
+        }
+    }
+
+    fn counted_ctx(client: Client, leader: bool) -> Arc<Ctx> {
+        let election = Election::new("test-identity".to_string());
+        election.is_leader.store(leader, Ordering::Relaxed);
+        let recorder = Recorder::new(
+            client.clone(),
+            Reporter {
+                controller: CountedService::MANAGER.to_string(),
+                instance: Some("test-identity".to_string()),
+            },
+        );
+        Arc::new(Ctx {
+            client,
+            election,
+            metrics: Arc::new(ControllerMetrics::new(CountedService::MANAGER)),
+            recorder,
+        })
+    }
+
+    fn counted_obj() -> Arc<CountedService> {
+        let mut obj = CountedService::new("counted", CountedServiceSpec { replicas: 1 });
+        obj.metadata.namespace = Some("acme".to_string());
+        Arc::new(obj)
+    }
+
+    /// The error counter is the numerator of the alert that pages a human when
+    /// a control plane stops converging. Before #2620 `error_policy` discarded
+    /// the error and returned the same `Action` either way — so asserting on
+    /// the return value alone would pass against the unfixed code, and the
+    /// counter is the only observation that actually distinguishes them.
+    #[tokio::test]
+    async fn a_failed_reconcile_is_counted_rather_than_discarded() {
+        let (client, _) = fake_apiserver(vec![(200, json!({}))]);
+        let ctx = counted_ctx(client, true);
+        assert_eq!(ctx.metrics.reconcile_errors_total(), 0);
+
+        let action = error_policy::<CountedService>(
+            counted_obj(),
+            &Error::Missing("metadata.namespace"),
+            ctx.clone(),
+        );
+
+        assert_eq!(ctx.metrics.reconcile_errors_total(), 1);
+        assert_eq!(action, Action::requeue(Duration::from_secs(15)));
+    }
+
+    /// Both operator replicas run the watch loop, but only the leader applies.
+    /// If a follower's no-op counted as a reconcile, the idle replica would
+    /// report a steadily climbing `_reconcile_total` with zero errors — which
+    /// is exactly what a healthy working operator looks like, on the replica
+    /// that has never touched the cluster.
+    #[tokio::test]
+    async fn a_follower_replica_records_no_reconcile_at_all() {
+        let (client, seen) = fake_apiserver(vec![]);
+        let ctx = counted_ctx(client, false);
+
+        let action = reconcile_entry::<CountedService>(counted_obj(), ctx.clone())
+            .await
+            .expect("a follower short-circuits successfully");
+
+        assert_eq!(action, Action::requeue(Duration::from_secs(10)));
+        assert_eq!(ctx.metrics.reconcile_total(), 0);
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a follower must not talk to the apiserver: {:?}",
+            seen.lock().unwrap()
+        );
+    }
+
+    /// The denominator counts attempts, not successes. A reconcile that fails
+    /// against the apiserver still took time and still happened, so it has to
+    /// land in `_reconcile_total` and in the duration histogram — otherwise an
+    /// operator failing everything divides by zero.
+    #[tokio::test]
+    async fn a_leader_counts_the_attempt_even_when_it_fails() {
+        let (client, _) = fake_apiserver(vec![(
+            500,
+            json!({ "kind": "Status", "status": "Failure", "code": 500 }),
+        )]);
+        let ctx = counted_ctx(client, true);
+
+        let result = reconcile_entry::<CountedService>(counted_obj(), ctx.clone()).await;
+
+        assert!(result.is_err(), "the fake apiserver rejected the apply");
+        assert_eq!(ctx.metrics.reconcile_total(), 1);
+        assert!(ctx
+            .metrics
+            .render(true)
+            .contains("counted_operator_reconcile_duration_seconds_count 1"));
     }
 
     #[test]

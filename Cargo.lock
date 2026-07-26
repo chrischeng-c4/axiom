@@ -12215,12 +12215,14 @@ name = "service-k8s"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum 0.8.9",
  "chrono",
  "cli-std",
  "futures",
  "http 1.4.0",
  "k8s-openapi",
  "kube",
+ "metrics-prometheus",
  "schemars",
  "serde",
  "serde_json",
