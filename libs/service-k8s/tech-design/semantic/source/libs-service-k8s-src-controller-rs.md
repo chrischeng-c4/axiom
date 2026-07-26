@@ -22,7 +22,7 @@ Public API manifest for `libs/service-k8s/src/controller.rs` captured during lib
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Error` | libs/service-k8s/src/controller.rs | enum | pub | 26 | pub enum Error { |
-| `run` | libs/service-k8s/src/controller.rs | function | pub | 55 | pub async fn run<S: ManagedService>() -> anyhow::Result<()> { |
+| `run` | libs/service-k8s/src/controller.rs | function | pub | 57 | pub async fn run<S: ManagedService>() -> anyhow::Result<()> { |
 
 
 ## Source
@@ -49,7 +49,7 @@ use kube::{Client, ResourceExt};
 use serde_json::Value;
 
 use crate::lease::{self, Election};
-use crate::service::{ManagedService, ReadyFacts};
+use crate::service::{self, ManagedService, ReadyFacts};
 
 /// Reconcile errors: `kube` + serde failures plus a guard for malformed rendered
 /// objects (an operator bug, not a cluster condition).
@@ -61,6 +61,8 @@ pub enum Error {
     Serde(#[from] serde_json::Error),
     #[error("rendered object missing required field: {0}")]
     Missing(&'static str),
+    #[error("service reconcile plan failed: {0}")]
+    Plan(String),
 }
 
 struct Ctx {
@@ -123,6 +125,10 @@ fn plural_for(kind: &str) -> String {
         "StatefulSet" => "statefulsets",
         "ServiceMonitor" => "servicemonitors",
         "PrometheusRule" => "prometheusrules",
+        // The fallback would yield `networkpolicys` — a plural no apiserver
+        // serves, so every apply of a rendered NetworkPolicy would 404 at
+        // runtime with nothing failing at build time (#2603).
+        "NetworkPolicy" => "networkpolicies",
         other => return format!("{}s", other.to_lowercase()),
     }
     .to_string()
@@ -171,6 +177,56 @@ async fn apply_object(client: &Client, ns: &str, manager: &str, value: Value) ->
     Ok(())
 }
 
+/// Delete one object the service no longer renders (#2603) — but only if this
+/// CR owns it.
+///
+/// The ownership re-check is the whole safety story. `prunes()` hands back a
+/// name, and a name in a namespace is not proof of authorship: another
+/// controller, a Helm chart, or a human could have created a NetworkPolicy at
+/// exactly the CR's name. Matching the live object's controller
+/// `ownerReference` UID against the CR's own UID is proof, because only the
+/// apiserver writes that link and only for objects we submitted with it.
+///
+/// Absent object → no-op, and a 404 racing the delete → success, so a prune
+/// that runs on every requeue converges once and then costs one GET.
+async fn prune_object(
+    client: &Client,
+    ns: &str,
+    owner_uid: &str,
+    target: &service::PruneTarget,
+) -> Result<(), Error> {
+    let ar = api_resource(target.api_version, target.kind);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
+    let Some(live) = api.get_opt(&target.name).await? else {
+        return Ok(());
+    };
+    let owned = live
+        .metadata
+        .owner_references
+        .iter()
+        .flatten()
+        .any(|r| r.uid == owner_uid && r.controller.unwrap_or(false));
+    if !owned {
+        tracing::warn!(
+            kind = %target.kind, name = %target.name, namespace = %ns,
+            "prune: an object of this kind exists at the CR's name but is not \
+             controller-owned by it — leaving it alone"
+        );
+        return Ok(());
+    }
+    match api.delete(&target.name, &Default::default()).await {
+        Ok(_) => {
+            tracing::info!(
+                kind = %target.kind, name = %target.name, namespace = %ns,
+                "prune: deleted a child the spec no longer asks for"
+            );
+            Ok(())
+        }
+        Err(kube::Error::Api(e)) if e.code == 404 => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// Read `.status.readyReplicas` off a workload, or 0 if absent.
 async fn ready_replicas(client: &Client, ns: &str, kind: &str, name: &str) -> Result<i64, Error> {
     let ar = api_resource("apps/v1", kind);
@@ -193,9 +249,26 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     let name = obj.name_any();
     let client = &ctx.client;
 
-    // 1. Render + apply every child object.
-    for child in obj.render() {
+    // 1. Let the service perform async admission/observation, then apply the
+    // planned children through the shared SSA path.
+    let plan = obj
+        .reconcile_plan(client.clone())
+        .await
+        .map_err(|error| Error::Plan(error.to_string()))?;
+    for child in plan.children {
         apply_object(client, &ns, S::MANAGER, child).await?;
+    }
+
+    // 1b. Remove children a previous spec rendered and this one does not
+    // (#2603). Server-side apply cannot express "this object should no longer
+    // exist", so without this step a conditional child is opt-in only. Failing
+    // here fails the reconcile on purpose: if the spec says an enforcement
+    // object should be gone and we could not remove it, the CR has not
+    // converged and its status must not claim otherwise.
+    if let Some(uid) = obj.meta().uid.as_deref() {
+        for target in obj.prunes() {
+            prune_object(client, &ns, uid, &target).await?;
+        }
     }
 
     // 2. Observe readiness for the service's declared targets.
@@ -206,7 +279,34 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     }
 
     // 3. Write the status subresource (Merge avoids managed-field conflicts).
-    let status = obj.status_patch(&ReadyFacts { ready });
+    let ready = ReadyFacts { ready };
+    let mut status = obj.status_patch_with_context(&ready, &plan.context);
+
+    // 3b. `status.conditions[]` (#2601). `lastTransitionTime` is a clock read,
+    // which is why it cannot live in the service's synchronous, I/O-free status
+    // projection — the service hands back clock-free facts and the reconcile
+    // loop, already async, stamps them. Prior transition times are carried
+    // forward from the watched object rather than left to the API server:
+    // `Patch::Merge` replaces the array wholesale, so nothing survives
+    // server-side unless it is re-sent.
+    let facts = obj.conditions(&ready, &plan.context);
+    if !facts.is_empty() {
+        let projected = service::project(
+            &obj.observed_conditions(),
+            facts,
+            obj.meta().generation.unwrap_or(0),
+            &service::now_rfc3339(),
+        );
+        status
+            .as_object_mut()
+            .ok_or(Error::Missing("status patch root object"))?
+            .entry("status")
+            .or_insert_with(|| Value::Object(Default::default()))
+            .as_object_mut()
+            .ok_or(Error::Missing("status patch `status` object"))?
+            .insert("conditions".to_string(), serde_json::to_value(projected)?);
+    }
+
     let api: Api<S> = Api::namespaced(client.clone(), &ns);
     api.patch_status(&name, &PatchParams::default(), &Patch::Merge(&status))
         .await?;
@@ -217,6 +317,180 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
 
 fn error_policy<S: ManagedService>(_obj: Arc<S>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(15))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    /// The naive `lower(kind) + "s"` fallback is right for every kind the
+    /// toolkit rendered until now, and silently wrong for a kind ending in
+    /// `-y`. A wrong plural is invisible until an apply 404s against a live
+    /// apiserver — exactly the class of bug a unit test should catch instead
+    /// of a cluster run.
+    #[test]
+    fn irregular_plurals_are_pinned_rather_than_derived() {
+        assert_eq!(plural_for("NetworkPolicy"), "networkpolicies");
+        assert_ne!(
+            plural_for("NetworkPolicy"),
+            "networkpolicys",
+            "the fallback's plural for a -y kind is not served by any apiserver"
+        );
+
+        // Kinds the fallback happens to get right are still pinned, so a future
+        // rewrite of the table cannot quietly drop one.
+        for (kind, plural) in [
+            ("PodDisruptionBudget", "poddisruptionbudgets"),
+            ("HorizontalPodAutoscaler", "horizontalpodautoscalers"),
+            ("StatefulSet", "statefulsets"),
+        ] {
+            assert_eq!(plural_for(kind), plural);
+        }
+
+        // Unlisted regular kinds must keep flowing through the fallback;
+        // pinning every kind by hand is how the table goes stale.
+        assert_eq!(plural_for("Secret"), "secrets");
+    }
+
+    /// A fake apiserver that replays `responses` in order and records the
+    /// method+path of every request, so a test can assert on the call that was
+    /// *not* made — which is the whole point of an ownership guard.
+    fn fake_apiserver(responses: Vec<(u16, Value)>) -> (Client, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let queue = Arc::new(Mutex::new(responses.into_iter()));
+        let service = tower::service_fn(move |req: http::Request<kube::client::Body>| {
+            let log = log.clone();
+            let queue = queue.clone();
+            async move {
+                log.lock()
+                    .unwrap()
+                    .push(format!("{} {}", req.method(), req.uri().path()));
+                let (code, body) = queue.lock().unwrap().next().unwrap_or((500, json!({})));
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(code)
+                        .header("content-type", "application/json")
+                        .body(kube::client::Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        (Client::new(service, "acme"), seen)
+    }
+
+    fn np_target() -> service::PruneTarget {
+        service::PruneTarget {
+            api_version: "networking.k8s.io/v1",
+            kind: "NetworkPolicy",
+            name: "search".to_string(),
+        }
+    }
+
+    fn live_policy(owner_uid: &str, controller: bool) -> Value {
+        json!({
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {
+                "name": "search",
+                "namespace": "acme",
+                "ownerReferences": [{
+                    "apiVersion": "lumen.dev/v1alpha1",
+                    "kind": "Lumen",
+                    "name": "search",
+                    "uid": owner_uid,
+                    "controller": controller,
+                }],
+            },
+        })
+    }
+
+    fn not_found() -> (u16, Value) {
+        (
+            404,
+            json!({ "kind": "Status", "status": "Failure", "message": "not found",
+                    "reason": "NotFound", "code": 404 }),
+        )
+    }
+
+    /// The happy path: our own child gets deleted, so flipping a toggle off
+    /// actually stops the enforcement it turned on (#2603).
+    #[tokio::test]
+    async fn prune_deletes_a_child_this_cr_controls() {
+        let (client, seen) = fake_apiserver(vec![
+            (200, live_policy("uid-1234", true)),
+            (200, live_policy("uid-1234", true)),
+        ]);
+        prune_object(&client, "acme", "uid-1234", &np_target())
+            .await
+            .expect("prune succeeds");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "expected a GET then a DELETE: {seen:?}");
+        assert!(seen[1].starts_with("DELETE"), "{seen:?}");
+    }
+
+    /// The guard: a name is not proof of authorship. Another controller, a Helm
+    /// chart, or a human can own an object at exactly this CR's name, and
+    /// deleting it would be this operator destroying something it never made.
+    #[tokio::test]
+    async fn prune_leaves_an_object_this_cr_does_not_own() {
+        let (client, seen) = fake_apiserver(vec![(200, live_policy("uid-somebody-else", true))]);
+        prune_object(&client, "acme", "uid-1234", &np_target())
+            .await
+            .expect("a foreign object is a no-op, not an error");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "must stop after the GET: {seen:?}");
+        assert!(seen[0].starts_with("GET"), "{seen:?}");
+    }
+
+    /// A plain (non-controller) owner reference is a weaker link than the one
+    /// the apiserver writes for a controlled child — Kubernetes' own garbage
+    /// collector distinguishes them, and so must this.
+    #[tokio::test]
+    async fn prune_leaves_a_non_controller_owner_reference_alone() {
+        let (client, seen) = fake_apiserver(vec![(200, live_policy("uid-1234", false))]);
+        prune_object(&client, "acme", "uid-1234", &np_target())
+            .await
+            .expect("no-op");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    /// Prune runs on every requeue, so the steady state after it converges is
+    /// "object already gone" — that has to be a cheap no-op rather than an
+    /// error that fails the reconcile forever.
+    #[tokio::test]
+    async fn prune_of_an_absent_object_is_a_silent_no_op() {
+        let (client, seen) = fake_apiserver(vec![not_found()]);
+        prune_object(&client, "acme", "uid-1234", &np_target())
+            .await
+            .expect("absent is success");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    /// Losing the delete race against the CR's own garbage collection must not
+    /// fail the reconcile: both wanted the object gone and it is gone.
+    #[tokio::test]
+    async fn prune_treats_a_404_on_delete_as_success() {
+        let (client, _) = fake_apiserver(vec![(200, live_policy("uid-1234", true)), not_found()]);
+        prune_object(&client, "acme", "uid-1234", &np_target())
+            .await
+            .expect("racing GC is success");
+    }
+
+    #[test]
+    fn api_resource_splits_group_and_version_for_a_networking_child() {
+        let ar = api_resource("networking.k8s.io/v1", "NetworkPolicy");
+        assert_eq!(ar.group, "networking.k8s.io");
+        assert_eq!(ar.version, "v1");
+        assert_eq!(ar.plural, "networkpolicies");
+
+        // Core-group kinds carry an empty group, not the literal "v1".
+        let core = api_resource("v1", "ConfigMap");
+        assert_eq!(core.group, "");
+        assert_eq!(core.version, "v1");
+    }
 }
 ````
 

@@ -235,6 +235,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
             ..Default::default()
         },
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
     };

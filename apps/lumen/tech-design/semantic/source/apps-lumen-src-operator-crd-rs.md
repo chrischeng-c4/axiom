@@ -20,27 +20,27 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 162 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 376 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 515 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 353 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 567 |  |
-| `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 539 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 320 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 219 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 254 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 490 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 471 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 403 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 191 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 364 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 391 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 330 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 339 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 644 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 729 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 625 | storage_pod_count(&self) -> i32 |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 168 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 382 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 525 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 359 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 587 |  |
+| `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 549 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 326 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 225 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 260 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 500 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 477 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 409 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 197 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 370 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 397 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 336 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 345 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 664 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 749 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 645 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -79,6 +79,10 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Ready","type":"integer","jsonPath":".status.servingReadyReplicas"}"#,
     printcolumn = r#"{"name":"Shards","type":"integer","jsonPath":".status.shardCount"}"#,
+    // #2601: the `Ready` condition's status. Named `Converged` because the
+    // `Ready` column above is already the ready *pod count*; renaming that
+    // would change what every existing operator's `kubectl get lumen` prints.
+    printcolumn = r#"{"name":"Converged","type":"string","jsonPath":".status.conditions[?(@.type==\"Ready\")].status"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
@@ -190,6 +194,21 @@ pub struct LumenSpec {
     /// CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
     #[serde(default)]
     pub observability: bool,
+
+    /// Emit a NetworkPolicy isolating this instance (#2603): the client API
+    /// (`7373`) stays reachable from any namespace, while the Raft port
+    /// (`7374`) is reachable only from this instance's own pods, and egress is
+    /// narrowed to DNS, TLS, and sibling Raft.
+    ///
+    /// Opt-in rather than default-on for one reason: a NetworkPolicy is inert
+    /// unless the cluster runs a CNI that enforces it. On GKE that means
+    /// Dataplane V2 or the Calico add-on; on a plain kind cluster (default
+    /// kindnet) the object applies cleanly and enforces nothing, which would
+    /// otherwise read as "isolation is on" when it is not. Defaulting it on
+    /// would also break any cluster whose scrapers or clients live outside the
+    /// pod network, with no signal beyond dropped packets.
+    #[serde(default)]
+    pub network_policy: bool,
 
     /// Optional in-process request admission (bounded token-bucket rate
     /// limiting per endpoint class), mirroring the `LUMEN_ADMISSION_*` env
@@ -612,6 +631,16 @@ pub struct LumenStatus {
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
+    /// Kubernetes-convention convergence conditions (#2601): `Ready`,
+    /// `Progressing`, `ReshardInProgress`. This is the surface
+    /// `kubectl wait --for=condition=Ready`, Argo CD health assessment, and Flux
+    /// readiness gates read; `phase` and `reshard.blockingConditions` are
+    /// unchanged and still populated, so nothing already consuming them breaks.
+    ///
+    /// `lastTransitionTime` is stamped by the reconcile loop, not here — see
+    /// [`super::reconcile`]'s no-I/O `status_patch` contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<service_k8s::Condition>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

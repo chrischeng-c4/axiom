@@ -52,6 +52,12 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Per-instance isolation (only used when spec.networkPolicy=true, #2603).
+  # networking.k8s.io is a built-in group, so this grant is always resolvable
+  # even where the cluster's CNI does not enforce the objects.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Observability objects (only used when spec.observability=true; harmless to
   # grant always — the CRDs may be absent on dev clusters).
   - apiGroups: ["monitoring.coreos.com"]

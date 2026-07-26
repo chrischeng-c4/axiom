@@ -13,9 +13,10 @@ use lumen::operator::crd::{
     AuthMode, Autoscaling, LogFormat, ReshardPhase, ReshardPolicy, ReshardWorkflowSpec,
     ServingBootstrapSpec, ServingSpec, ShardMapSpec,
 };
-use lumen::operator::render::render;
+use lumen::operator::render::{prunes, render};
 use lumen::operator::{Lumen, LumenSpec};
 use serde_json::Value;
+use service_k8s::service::PruneTarget;
 
 /// A `Lumen` with metadata set the way a real CR (and owner references) need.
 fn lumen(name: &str, spec: LumenSpec) -> Lumen {
@@ -54,6 +55,7 @@ fn dev_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: false,
+        network_policy: false,
         admission: None,
         service_account_name: None,
     }
@@ -86,6 +88,7 @@ fn prod_spec() -> LumenSpec {
         },
         reshard_policy: ReshardPolicy::default(),
         observability: true,
+        network_policy: true,
         admission: None,
         service_account_name: None,
     }
@@ -160,6 +163,9 @@ fn dev_renders_full_managed_set() {
     // No observability when the flag is off.
     assert!(!has(&objs, "ServiceMonitor", "search"));
     assert!(!has(&objs, "PrometheusRule", "search"));
+    // Nor isolation: a NetworkPolicy only enforces where the CNI supports it,
+    // so #2603 keeps it opt-in and this fixture leaves it off.
+    assert!(!has(&objs, "NetworkPolicy", "search"));
 
     // Everything lands in the CR's namespace and carries the owner reference.
     for o in &objs {
@@ -554,6 +560,38 @@ fn prod_wires_auth_and_observability() {
     // observability=true → monitoring objects present.
     assert!(has(&objs, "ServiceMonitor", "lumen"));
     assert!(has(&objs, "PrometheusRule", "lumen"));
+
+    // networkPolicy=true → isolation present, and the client API stays open to
+    // the whole cluster while the Raft port never appears in a rule sourced
+    // from `namespaceSelector` (#2603). The namespace/ownerReference sweep
+    // below covers this object too, so it is GC'd with the CR.
+    let np = find(&objs, "NetworkPolicy", "lumen");
+    let cluster_facing = np["spec"]["ingress"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["from"][0]["namespaceSelector"].is_object())
+        .expect("a cluster-facing ingress rule");
+    let open_ports: Vec<i64> = cluster_facing["ports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["port"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        open_ports,
+        vec![7373],
+        "only the client API is cluster-open"
+    );
+
+    for o in &objs {
+        assert_eq!(
+            o["metadata"]["namespace"], "acme",
+            "wrong ns for {}",
+            o["kind"]
+        );
+        assert_eq!(o["metadata"]["ownerReferences"][0]["kind"], "Lumen");
+    }
 }
 
 /// #2475: the rendered PrometheusRule covers more than just the
@@ -1381,6 +1419,81 @@ fn admission_spec_absent_renders_no_admission_env() {
                 "no spec.admission must render no {absent}: {names:?}"
             );
         }
+    }
+}
+
+/// #2603: turning `networkPolicy` off must *remove* the policy, not merely stop
+/// rendering it.
+///
+/// Server-side apply reconciles fields, never object lifetime, so a child that
+/// drops out of `render` keeps running until the CR is deleted. For a
+/// NetworkPolicy that made the field opt-in only: enforcement started and could
+/// never be stopped. `prunes` is the inverse of the render branch, and this
+/// pins both directions.
+#[test]
+fn network_policy_off_prunes_the_policy_render_no_longer_emits() {
+    let mut spec = prod_spec();
+    spec.network_policy = true;
+    let on = lumen("search", spec.clone());
+    assert!(
+        has(&render(&on), "NetworkPolicy", "search"),
+        "networkPolicy=true must render the policy"
+    );
+    assert!(
+        prunes(&on).is_empty(),
+        "a CR that still wants the policy must never nominate it for deletion"
+    );
+
+    spec.network_policy = false;
+    let off = lumen("search", spec);
+    assert!(
+        !has(&render(&off), "NetworkPolicy", "search"),
+        "networkPolicy=false must stop rendering the policy"
+    );
+    assert_eq!(
+        prunes(&off),
+        vec![PruneTarget {
+            api_version: "networking.k8s.io/v1",
+            kind: "NetworkPolicy",
+            name: "search".to_string(),
+        }],
+        "networkPolicy=false must nominate exactly the policy for deletion"
+    );
+}
+
+/// #2603 anti-drift: the pruned name is the rendered name.
+///
+/// The prune target is built from the CR name independently of
+/// `serving_network_policy`, so a future change to how the policy is named
+/// would silently orphan every policy already in a cluster — render would emit
+/// the new name while prune kept deleting the old one, and neither side would
+/// fail to compile. Deriving both from a real render and comparing is what
+/// makes that a test failure instead of a production surprise.
+#[test]
+fn pruned_network_policy_name_matches_the_rendered_one() {
+    for name in ["search", "lumen", "a-much-longer-instance-name"] {
+        let mut spec = prod_spec();
+        spec.network_policy = true;
+        let rendered = render(&lumen(name, spec.clone()));
+        let policy = rendered
+            .iter()
+            .find(|o| o["kind"] == "NetworkPolicy")
+            .expect("networkPolicy=true renders one");
+
+        spec.network_policy = false;
+        let targets = prunes(&lumen(name, spec));
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            Value::from(targets[0].name.clone()),
+            policy["metadata"]["name"],
+            "prune must target the name render actually uses"
+        );
+        assert_eq!(
+            Value::from(targets[0].api_version),
+            policy["apiVersion"],
+            "prune must target the apiVersion render actually uses"
+        );
+        assert_eq!(Value::from(targets[0].kind), policy["kind"]);
     }
 }
 // CODEGEN-END

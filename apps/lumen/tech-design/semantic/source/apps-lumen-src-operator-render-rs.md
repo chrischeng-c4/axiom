@@ -87,6 +87,7 @@ use serde_json::{json, Value};
 
 use super::crd::Lumen;
 use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::service::PruneTarget;
 
 const APP: &str = "lumen";
 const MANAGER: &str = "lumen-operator";
@@ -240,6 +241,9 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ]);
     out.push(render::pdb(&cx, &name, COMPONENT, 1));
+    if lumen.spec.network_policy {
+        out.push(serving_network_policy(&cx, &name));
+    }
     if lumen.spec.observability {
         out.push(service_monitor(&cx));
         out.push(prometheus_rule(&cx));
@@ -249,6 +253,59 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(cj);
     }
     out
+}
+
+/// Children a previous spec rendered that this one no longer wants (#2603).
+///
+/// Only the NetworkPolicy qualifies today, and it qualifies because it is the
+/// one conditional child whose *presence* changes runtime behavior rather than
+/// just adding an object. Leaving a stale ServiceMonitor around scrapes a
+/// metric nobody reads; leaving a stale NetworkPolicy around keeps dropping
+/// traffic the spec has stopped asking to drop. Flipping `networkPolicy` to
+/// `false` therefore has to actively remove it, or the field is opt-in only.
+///
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
+    if lumen.spec.network_policy {
+        return Vec::new();
+    }
+    vec![PruneTarget {
+        api_version: "networking.k8s.io/v1",
+        kind: "NetworkPolicy",
+        // Resolved through the same `instance` helper `render` uses, so this is
+        // the exact inverse of the branch that creates it rather than an
+        // independent guess at the name.
+        name: instance(lumen),
+    }]
+}
+
+/// The optional per-instance NetworkPolicy (#2603), rendered only when
+/// `spec.networkPolicy` is set.
+///
+/// Lumen's two ports have genuinely different audiences: `7373` is the search
+/// API any workload may call, `7374` carries Raft — append entries, vote
+/// requests, snapshot transfer — and must be reachable only from this
+/// instance's own pods. The shared helper expresses exactly that split, so the
+/// isolation posture is one contract across every service that adopts it
+/// rather than six hand-written policies that drift.
+///
+/// The backup CronJob is deliberately *not* selected: it runs under its own
+/// `<instance>-backup` component label, calls the client Service like any other
+/// in-cluster client, and needs egress to object storage — the serving pods'
+/// posture would be wrong for it in both directions.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
+    render::common::network_policy(render::common::NetworkPolicy {
+        cx,
+        name,
+        component: COMPONENT,
+        client_ports: vec![CLIENT_PORT],
+        peer_ports: vec![RAFT_PORT],
+        // Lumen's operator path never configures the NATS WAL relay; backups
+        // reach object storage over TLS, which the shared baseline already
+        // allows.
+        extra_egress: vec![],
+    })
 }
 
 /// A stable, per-instance identity for scheduled backup jobs.
