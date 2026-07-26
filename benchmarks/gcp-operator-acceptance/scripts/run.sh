@@ -271,7 +271,18 @@ echo ">> persistent Standard GKE cluster bootstrap or reuse"
 PROJECT_ID="$PROJECT_ID" REGION="$REGION" GKE_ZONE="$GKE_ZONE" \
   PERSISTENT_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME" \
   "$SCRIPT_DIR/bootstrap-cluster.sh" > "$EVIDENCE_DIR/persistent-cluster-name.txt"
-test "$(sed -n '1p' "$EVIDENCE_DIR/persistent-cluster-name.txt")" = "$PERSISTENT_CLUSTER_NAME"
+# The whole file, not just its first line: bootstrap-cluster.sh contracts to
+# emit the cluster name and nothing else, so anything extra means its stdout
+# got polluted and the name we are about to trust is not the name it produced.
+# A bare `test` here used to swallow that -- it prints nothing on failure, so
+# the run aborted mute after paying for a full ~10-minute cluster creation.
+bootstrapped_cluster="$(cat "$EVIDENCE_DIR/persistent-cluster-name.txt")"
+[[ "$bootstrapped_cluster" == "$PERSISTENT_CLUSTER_NAME" ]] || {
+  echo "bootstrap-cluster.sh must emit exactly '$PERSISTENT_CLUSTER_NAME' on stdout" >&2
+  echo "got $(wc -l < "$EVIDENCE_DIR/persistent-cluster-name.txt" | tr -d ' ') line(s); first and last:" >&2
+  sed -n '1p;$p' "$EVIDENCE_DIR/persistent-cluster-name.txt" >&2
+  exit 1
+}
 gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE" --format=json \
   > "$EVIDENCE_DIR/persistent-cluster.json"

@@ -16,6 +16,7 @@ RENDER_SCRIPT="$ACCEPTANCE_ROOT/scripts/render-manifests.sh"
 CLEANUP_SCRIPT="$ACCEPTANCE_ROOT/scripts/cleanup.sh"
 VERIFY_CLEAN_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-clean.sh"
 CELL_SCRIPT="$ACCEPTANCE_ROOT/scripts/verify-operator-cell.sh"
+BOOTSTRAP_SCRIPT="$ACCEPTANCE_ROOT/scripts/bootstrap-cluster.sh"
 SCHEMA="$ACCEPTANCE_ROOT/evidence/schema.json"
 
 fail() {
@@ -43,7 +44,8 @@ line_of() { # line_of <pattern> <file>
   rg -n -F -- "$1" "$2" | head -1 | cut -d: -f1
 }
 
-for script in "$RUN_SCRIPT" "$RENDER_SCRIPT" "$CLEANUP_SCRIPT" "$VERIFY_CLEAN_SCRIPT" "$CELL_SCRIPT"; do
+for script in "$RUN_SCRIPT" "$RENDER_SCRIPT" "$CLEANUP_SCRIPT" "$VERIFY_CLEAN_SCRIPT" \
+              "$CELL_SCRIPT" "$BOOTSTRAP_SCRIPT"; do
   bash -n "$script" || fail "shell syntax error in ${script##*/}"
 done
 jq empty "$SCHEMA" || fail "evidence schema is not valid JSON"
@@ -94,6 +96,25 @@ present "the leader gauge is no longer cross-checked against the lease" \
 # one port -- two pods then return byte-identical metrics.
 present "the metrics port counter stopped being file-backed" \
   'printf '"'"'%s\n'"'"' "$p" > "$metrics_port_state"' "$CELL_SCRIPT"
+
+# --- bootstrap-cluster.sh's stdout is a one-line contract ------------------
+# Its two branches are asymmetric: reuse prints the name and returns, create
+# runs terraform first. When terraform's chatter went to stdout, the create
+# branch wrote ~19KB of plan output into the file the caller asserts on, and
+# the run died mute AFTER paying for the cluster. Every earlier run reused an
+# existing cluster, so the create branch had never been exercised -- which is
+# exactly the shape of bug a static oracle has to hold, because reproducing it
+# costs ten minutes of GKE.
+bootstrap_terraform_lines="$(rg -c -F 'terraform \' "$BOOTSTRAP_SCRIPT" || echo 0)"
+(( bootstrap_terraform_lines == 2 )) \
+  || fail "expected 2 terraform invocations in bootstrap-cluster.sh, found $bootstrap_terraform_lines"
+redirected="$(rg -c -F '>&2' "$BOOTSTRAP_SCRIPT" || echo 0)"
+(( redirected >= 2 )) \
+  || fail "bootstrap-cluster.sh must send terraform output to stderr; only $redirected redirect(s) found — its stdout is the cluster name and nothing else"
+present "the cluster-name check went back to a mute bare test" \
+  "bootstrap-cluster.sh must emit exactly" "$RUN_SCRIPT"
+absent "the cluster-name check is back to inspecting only line 1" \
+  "test \"\$(sed -n '1p' \"\$EVIDENCE_DIR/persistent-cluster-name.txt\")\"" "$RUN_SCRIPT"
 
 echo "acceptance-mode oracle: ok"
 # HANDWRITE-END

@@ -16,13 +16,24 @@ if gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME" \
   exit 0
 fi
 
+# stdout is a CONTRACT: exactly the cluster name, one line, nothing else.
+# The caller captures it into an evidence file and asserts on it, so terraform's
+# plan and progress chatter goes to stderr where a human still sees it.
+#
+# It used to go to stdout, and only on this branch -- the reuse branch above
+# prints the name and nothing more. So the run that had to create a cluster
+# wrote ~19KB of terraform plan into persistent-cluster-name.txt, the caller's
+# `test` on line 1 compared "Initializing the backend..." against the cluster
+# name, and the run died with NO message at all (`test` prints nothing on
+# failure) -- after paying the full ~10 minutes of cluster creation. Every
+# prior run reused an existing cluster, so this path had never once run.
 mkdir -p "$PERSISTENT_CLUSTER_STATE_DIR"
 TF_DATA_DIR="$PERSISTENT_CLUSTER_STATE_DIR/.terraform" terraform \
-  -chdir="$ACCEPTANCE_ROOT/cluster" init -input=false
+  -chdir="$ACCEPTANCE_ROOT/cluster" init -input=false >&2
 TF_DATA_DIR="$PERSISTENT_CLUSTER_STATE_DIR/.terraform" terraform \
   -chdir="$ACCEPTANCE_ROOT/cluster" apply \
   -state="$PERSISTENT_CLUSTER_STATE_DIR/cluster.tfstate" -auto-approve \
   -var="project_id=$PROJECT_ID" -var="region=$REGION" -var="gke_zone=$GKE_ZONE" \
   -var="cluster_name=$PERSISTENT_CLUSTER_NAME" \
-  -var="node_service_account_id=$NODE_SERVICE_ACCOUNT_ID"
+  -var="node_service_account_id=$NODE_SERVICE_ACCOUNT_ID" >&2
 printf '%s\n' "$PERSISTENT_CLUSTER_NAME"
