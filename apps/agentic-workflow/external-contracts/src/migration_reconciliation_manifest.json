@@ -562,62 +562,62 @@
         {
           "id": "capability-control-plane-capability-project-sweep",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_project_sweep.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "capability-control-plane-capability-readiness-reporting",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_readiness_reporting.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "capability-control-plane-markdown-capability-schema",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "capability-control-plane-missing-readme-initialization",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_missing_readme_initialization.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "capability-control-plane-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "capability-control-plane-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "manual-evidence-artifacts-generated-manual-ec-evidence-schema",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_generated_manual_ec_evidence_schema.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "manual-evidence-artifacts-manual-runner-output-convention",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "manual-evidence-artifacts-operational-efficiency",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "manual-evidence-artifacts-operational-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },

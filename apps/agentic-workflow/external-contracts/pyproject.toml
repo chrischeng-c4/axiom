@@ -430,9 +430,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-capability-project-sweep.py"
 promise = "capability sweep groups project readiness and next actions"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-project-sweep -- cargo test -p agentic-workflow --lib capability_sweep -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-project-sweep"
 evidence_paths = ["evidence/capability-control-plane-capability-project-sweep.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -444,9 +444,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-capability-readiness-reporting.py"
 promise = "required claims can be verified by fixture references"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-readiness-reporting -- cargo test -p agentic-workflow --lib fixture_reference_can_verify_required_claim -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-capability-readiness-reporting"
 evidence_paths = ["evidence/capability-control-plane-capability-readiness-reporting.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -458,9 +458,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-markdown-capability-schema.py"
 promise = "canonical field-style capability contracts parse from Markdown"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-markdown-capability-schema"
 evidence_paths = ["evidence/capability-control-plane-markdown-capability-schema.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -472,9 +472,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/capability-control-plane-missing-readme-initialization.py"
 promise = "capability init renders a canonical README shell"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization -- cargo test -p agentic-workflow --lib capability_init -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-missing-readme-initialization"
 evidence_paths = ["evidence/capability-control-plane-missing-readme-initialization.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -682,9 +682,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/manual-evidence-artifacts-generated-manual-ec-evidence-schema.py"
 promise = "generated manual EC evidence metadata validates"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-generated-manual-ec-evidence-schema -- cargo test -p agentic-workflow --lib ec_generated_manual_artifact -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-generated-manual-ec-evidence-schema"
 evidence_paths = ["evidence/manual-evidence-artifacts-generated-manual-ec-evidence-schema.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -696,9 +696,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/manual-evidence-artifacts-manual-runner-output-convention.py"
 promise = "EC doc generation writes the manual from inventory"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-manual-runner-output-convention -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-manual-runner-output-convention"
 evidence_paths = ["evidence/manual-evidence-artifacts-manual-runner-output-convention.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1526,10 +1526,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/capability-control-plane-operational-efficiency.py"
 promise = "The capability-control-plane representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-efficiency"
 evidence_paths = ["evidence/capability-control-plane-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1541,10 +1541,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/capability-control-plane-operational-stability.py"
 promise = "The capability-control-plane representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib markdown_capability_tables -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-control-plane-operational-stability"
 evidence_paths = ["evidence/capability-control-plane-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1586,10 +1586,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/manual-evidence-artifacts-operational-efficiency.py"
 promise = "The manual-evidence-artifacts representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-efficiency"
 evidence_paths = ["evidence/manual-evidence-artifacts-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1601,10 +1601,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/manual-evidence-artifacts-operational-stability.py"
 promise = "The manual-evidence-artifacts representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case manual-evidence-artifacts-operational-stability"
 evidence_paths = ["evidence/manual-evidence-artifacts-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
