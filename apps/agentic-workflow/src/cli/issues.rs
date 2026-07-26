@@ -272,7 +272,7 @@ pub struct CreateArgs {
     #[arg(long, required_unless_present = "draft_path")]
     pub title: Option<String>,
 
-    /// Work-item type. Closed enum: epic | change.
+    /// Work-item type. Closed enum: epic | change | spike | report.
     /// Emits a canonical `type:<value>` label.
     #[arg(long = "type", required_unless_present = "draft_path")]
     pub issue_type: Option<TypeFilter>,
@@ -699,6 +699,8 @@ impl From<StateFilter> for IssueState {
 pub enum TypeFilter {
     Epic,
     Change,
+    Spike,
+    Report,
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
@@ -707,6 +709,8 @@ impl From<TypeFilter> for IssueType {
         match t {
             TypeFilter::Epic => IssueType::Epic,
             TypeFilter::Change => IssueType::Change,
+            TypeFilter::Spike => IssueType::Spike,
+            TypeFilter::Report => IssueType::Report,
         }
     }
 }
@@ -3143,7 +3147,7 @@ fn canonicalize_type_label_for_write(label: &str) -> Result<String> {
     };
     let issue_type = IssueType::parse(raw_type).ok_or_else(|| {
         anyhow::anyhow!(
-            "unsupported issue type label `{label}`; canonical values are type:epic or type:change"
+            "unsupported issue type label `{label}`; canonical values are type:epic, type:change, type:spike, or type:report"
         )
     })?;
     Ok(format!("type:{}", issue_type.as_str()))
@@ -5567,6 +5571,8 @@ fn priority_label(issue: &Issue) -> &'static str {
 fn type_rank(issue_type: IssueType) -> u8 {
     match issue_type {
         IssueType::Epic => 1,
+        IssueType::Spike => 2,
+        IssueType::Report => 3,
         IssueType::Change
         | IssueType::Bug
         | IssueType::Enhancement
@@ -5807,6 +5813,7 @@ fn group_issues_for_epicize(issues: &[Issue]) -> EpicizeGroups<'_> {
         match issue.issue_type {
             IssueType::Epic => groups.existing_epics.push(issue),
             IssueType::Change => groups.capability_work.push(issue),
+            IssueType::Spike | IssueType::Report => groups.needs_triage.push(issue),
             IssueType::Bug if priority_rank(issue) <= 1 => groups.urgent_fixes.push(issue),
             IssueType::Bug => groups.quality.push(issue),
             IssueType::Enhancement => groups.capability_work.push(issue),

@@ -134,7 +134,7 @@ pub fn build_work_item_graph(
     for issue in relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
     {
         let id = issue_key(issue);
         let resolution =
@@ -170,7 +170,7 @@ pub fn build_work_item_graph(
     for issue in relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
     {
         let source = issue_key(issue);
         for raw_target in relation_labels(issue, "supersedes:") {
@@ -266,7 +266,7 @@ pub fn build_work_item_graph(
     let mut changes = relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
         .map(|issue| {
             let id = issue_key(issue);
             let parent = parent_by_change.get(&id).and_then(Clone::clone);
@@ -499,12 +499,12 @@ fn resolve_relation_target(
         return None;
     };
     let target_id = issue_key(target);
-    if target.issue_type == IssueType::Epic {
+    if !target.issue_type.is_change() {
         diagnostics.push(diagnostic(
             "relation_target_not_change",
             source,
             Some(target_id.clone()),
-            format!("change `{source}` has {relation} relation to epic `{target_id}`"),
+            format!("change `{source}` has {relation} relation to non-change `{target_id}`"),
             format!("change target replacing {relation}:{target_id} on {source}"),
         ));
         return None;
