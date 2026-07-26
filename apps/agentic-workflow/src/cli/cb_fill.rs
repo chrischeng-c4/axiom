@@ -2520,10 +2520,8 @@ pub fn before() {}\n\
 
     #[test]
     fn marker_gate_scope_prefers_active_td_changes_over_persistent_branch_history() {
-        let Some(git) = crate::git::find_git_bin() else {
-            eprintln!("skipping: git binary not on PATH");
-            return;
-        };
+        let git = crate::git::find_git_bin()
+            .expect("production-required #2424 gate needs the real git binary");
         let tmp = tempfile::tempdir().unwrap();
         let run = |args: &[&str]| {
             let output = std::process::Command::new(&git)
@@ -2563,6 +2561,11 @@ pub fn before() {}\n\
             resolve_marker_gate_scope(tmp.path(), &declared),
             declared,
             "a current TD must not inherit persistent-branch marker ownership"
+        );
+        assert_eq!(
+            resolve_marker_gate_scope(tmp.path(), &[]),
+            vec![foreign.to_string()],
+            "without concrete TD Changes, marker reconciliation must retain the branch-diff fallback"
         );
     }
 }
