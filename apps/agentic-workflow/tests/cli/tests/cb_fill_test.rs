@@ -358,10 +358,10 @@ fn test_scope_missing_spec_uses_legacy_all_markers() {
 }
 
 /// #2535: `aw goal wi` may resolve a GitHub WI after the ephemeral local
-/// projection was lost. The exact emitted `aw td fill <id>` command must
+/// projection was lost. The canonical emitted `aw cb fill <id>` command must
 /// hydrate that projection before creating the marker-fill lock.
 #[tokio::test]
-async fn td_fill_brief_hydrates_missing_remote_projection() {
+async fn cb_fill_brief_hydrates_missing_remote_projection() {
     use agentic_workflow::issues::{IssueBackend, LocalBackend};
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
