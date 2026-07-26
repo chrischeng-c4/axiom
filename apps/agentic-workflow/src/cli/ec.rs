@@ -63,7 +63,7 @@ pub fn ec_categories() -> &'static [&'static str] {
 }
 
 #[derive(Debug, Args)]
-/// External-contract lifecycle: draft/fill, independent semantic review, then generate/verify.
+/// External-contract lifecycle: scaffold/check Python EC source, independently review, then verify.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct EcArgs {
     /// Project name or alias from aw.toml.
@@ -76,13 +76,13 @@ pub struct EcArgs {
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Subcommand)]
 pub enum EcCommand {
-    /// Create a project-local EC markdown draft under external-contracts/.
+    /// Scaffold a project-local Python EC source/inventory under external-contracts/.
     Draft(EcDraftArgs),
-    /// Fill one section in an EC markdown draft.
+    /// Fill one section in a compatibility Markdown EC draft.
     Fill(EcFillArgs),
-    /// Generate aw.toml EC inventory, tests, and tool configs from external-contracts/ markdown.
+    /// Generate compatibility inventory/tests/tool configs from Markdown EC source.
     Gen(EcGenArgs),
-    /// Check aw.toml EC inventory/list drift and generated test-file presence.
+    /// Check the Python pyproject.toml EC inventory or compatibility inventory drift.
     Check(EcCheckArgs),
     /// Write or verify the canonical EC IR lock.
     Lock(EcLockArgs),
@@ -101,10 +101,10 @@ pub enum EcCommand {
 pub struct EcDraftArgs {
     /// Contract id / file slug.
     pub id: String,
-    /// Contract category: behavior, efficiency, security, or stability.
+    /// Contract dimension: behavior, efficiency, security, or stability.
     #[arg(long, default_value = "behavior")]
     pub category: String,
-    /// Human title for the markdown heading.
+    /// Human title/promise seed for the scaffold.
     #[arg(long)]
     pub title: Option<String>,
     /// README capability id protected by this contract.
@@ -122,7 +122,7 @@ pub struct EcDraftArgs {
     /// Also scaffold a tool-contract section for this native integration tool.
     #[arg(long)]
     pub tool: Vec<String>,
-    /// Overwrite an existing draft.
+    /// Overwrite existing scaffold files.
     #[arg(long)]
     pub force: bool,
     /// Local lifecycle work-item that owns this EC-first root transition.
@@ -773,8 +773,8 @@ impl TerminalEcGateSession {
 pub struct EcProjectContext {
     pub project_root: PathBuf,
     pub project: String,
-    /// Explicit opt-in to the direct Python EC inventory adapter. Legacy
-    /// projects remain on the Markdown/generated-manifest implementation.
+    /// Effective specification model. Public project configuration always
+    /// resolves to Python; legacy remains only for isolated compatibility tests.
     pub artifact_model: crate::models::project::ProjectArtifactModel,
     pub source_root: PathBuf,
     pub ec_root: PathBuf,
@@ -1234,6 +1234,328 @@ pub fn project_pending_ec_review(project: &str) -> Result<Option<String>> {
     Ok(Some(outstanding.join("; ")))
 }
 
+fn print_ec_protocol_value(value: &serde_json::Value, pretty: bool) -> Result<()> {
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{}", serde_json::to_string(value)?);
+    }
+    Ok(())
+}
+
+fn python_ec_scaffold_id(ctx: &EcProjectContext, wi: Option<&str>) -> String {
+    let candidate = wi
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&ctx.project);
+    let candidate = slugify(candidate);
+    if candidate
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_lowercase)
+    {
+        candidate
+    } else {
+        format!("ec-{candidate}")
+    }
+}
+
+fn emit_python_ec_scaffold_required(
+    project_root: &Path,
+    ctx: &EcProjectContext,
+    args: &EcCheckArgs,
+) -> Result<()> {
+    let inventory_path = ctx.ec_root.join("pyproject.toml");
+    let inventory_rel = relative_to(&ctx.project_root, &inventory_path);
+    let scaffold_id = python_ec_scaffold_id(ctx, args.wi.as_deref());
+    let command = command_with_wi(
+        format!(
+            "aw ec draft {} --project {} --json",
+            shell_quote_ec_arg(&scaffold_id),
+            shell_quote_ec_arg(&ctx.project)
+        ),
+        args.wi.as_deref(),
+    );
+    if let Some(wi) = args.wi.as_deref() {
+        persist_ec_first_next_action(project_root, wi, command.clone())?;
+    }
+    let reason = format!(
+        "Python EC inventory `{inventory_rel}` is missing; create the canonical Python scaffold before checking it"
+    );
+    print_ec_protocol_value(
+        &serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "status": "continue",
+            "action": "python_ec_scaffold_required",
+            "root": {
+                "kind": "ec",
+                "id": ctx.project,
+            },
+            "current": {
+                "kind": "ec_authoring",
+                "id": scaffold_id,
+            },
+            "artifacts": [],
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": false,
+                "criteria": [
+                    "external-contracts/pyproject.toml declares aw.python-artifact.v1 and aw.python-ec.v1",
+                    "at least one Python EC case names its source, capability, oracle, command, and evidence",
+                ],
+                "missing": [inventory_rel],
+            },
+            "next": {
+                "kind": "run_command",
+                "command": command,
+                "reason": reason,
+                "payload_path": serde_json::Value::Null,
+            },
+            "invoke": {
+                "command": command,
+            },
+            "agent_prompt": format!(
+                "Run `{command}`. Author the generated Python EC source and inventory at its exact payload path, then follow the emitted check command; do not create a Markdown EC fallback."
+            ),
+            "requires_hitl": false,
+            "persistence": {
+                "status": "pending",
+                "reason": reason,
+            },
+        }),
+        args.json,
+    )
+}
+
+fn python_ec_toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
+}
+
+fn render_python_ec_pyproject(
+    ctx: &EcProjectContext,
+    args: &EcDraftArgs,
+    id: &str,
+    category: &str,
+) -> String {
+    let project_slug = slugify(&ctx.project);
+    let artifact_name = if id.as_bytes().first().is_some_and(u8::is_ascii_lowercase) {
+        id.to_string()
+    } else {
+        format!("ec-{id}")
+    };
+    let target = match ctx.target.as_str() {
+        "python" | "rust" | "typescript" | "javascript" => ctx.target.as_str(),
+        _ => "python",
+    };
+    let capability_id = args
+        .capability_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("replace-with-capability-id");
+    let evidence_path = format!("evidence/{id}-{category}.json");
+    let repository_evidence_path =
+        relative_to(&ctx.project_root, &ctx.ec_root.join(&evidence_path));
+    let command = args
+        .command
+        .clone()
+        .unwrap_or_else(|| format!("test -s {repository_evidence_path}"));
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| format!("Replace this scaffold with the {id} external contract."));
+    let applicability = if matches!(category, "stability" | "efficiency") {
+        "post-gen"
+    } else {
+        "td"
+    };
+    let threshold = if matches!(category, "stability" | "efficiency") {
+        "threshold = \"replace-with-measurable-threshold\"\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"[project]
+name = {package_name}
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = {author}
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = {case_id}
+artifact_id = {artifact_id}
+capability_id = {capability_id}
+use_case_id = {use_case_id}
+dimension = {dimension}
+applicability = {applicability}
+test_path = {test_path}
+promise = {promise}
+oracle = "replace-with-independent-oracle"
+{threshold}target = {target}
+command = {command}
+evidence_paths = [{evidence_path}]
+"#,
+        package_name = python_ec_toml_string(&format!(
+            "{}-external-contracts",
+            if project_slug.is_empty() {
+                "project"
+            } else {
+                &project_slug
+            }
+        )),
+        author = python_ec_toml_string(&current_actor_identity()),
+        case_id = python_ec_toml_string(&format!("{id}-{category}")),
+        artifact_id = python_ec_toml_string(&format!("artifact:{project_slug}/{artifact_name}")),
+        capability_id = python_ec_toml_string(capability_id),
+        use_case_id = python_ec_toml_string(id),
+        dimension = python_ec_toml_string(category),
+        applicability = python_ec_toml_string(applicability),
+        test_path = python_ec_toml_string(&format!("src/{id}.py")),
+        promise = python_ec_toml_string(&title),
+        target = python_ec_toml_string(target),
+        command = python_ec_toml_string(&command),
+        evidence_path = python_ec_toml_string(&evidence_path),
+    )
+}
+
+fn run_python_ec_draft(
+    project_root: &Path,
+    ctx: &EcProjectContext,
+    args: EcDraftArgs,
+    id: &str,
+    category: &str,
+) -> Result<()> {
+    if args.claim_id.is_some() || args.contract_id.is_some() || !args.tool.is_empty() {
+        bail!(
+            "Python EC scaffolds do not accept legacy --claim-id, --contract-id, or --tool fields; author the pyproject.toml case inventory directly"
+        );
+    }
+    let inventory_path = ctx.ec_root.join("pyproject.toml");
+    let runner_path = ctx.ec_root.join("src/runner.py");
+    let case_path = ctx.ec_root.join("src").join(format!("{id}.py"));
+    for path in [&inventory_path, &runner_path, &case_path] {
+        if path.exists() && !args.force {
+            bail!(
+                "{} already exists; pass --force to overwrite the Python EC scaffold",
+                relative_to(&ctx.project_root, path)
+            );
+        }
+    }
+    fs::create_dir_all(ctx.ec_root.join("src"))
+        .with_context(|| format!("create {}", ctx.ec_root.join("src").display()))?;
+    fs::create_dir_all(ctx.ec_root.join("evidence"))
+        .with_context(|| format!("create {}", ctx.ec_root.join("evidence").display()))?;
+    fs::write(
+        &inventory_path,
+        render_python_ec_pyproject(ctx, &args, id, category),
+    )
+    .with_context(|| format!("write {}", inventory_path.display()))?;
+    fs::write(
+        &runner_path,
+        r#"from __future__ import annotations
+
+
+def main() -> None:
+    raise SystemExit(
+        "Python EC scaffold is incomplete; implement an artifact runner before execution"
+    )
+
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .with_context(|| format!("write {}", runner_path.display()))?;
+    fs::write(
+        &case_path,
+        format!(
+            r#"from __future__ import annotations
+
+
+def verify_{id}() -> None:
+    """Implement the {id} external contract without importing production source."""
+    raise NotImplementedError("replace this Python EC scaffold")
+"#,
+            id = id.replace('-', "_")
+        ),
+    )
+    .with_context(|| format!("write {}", case_path.display()))?;
+
+    let inventory_rel = relative_to(&ctx.project_root, &inventory_path);
+    let runner_rel = relative_to(&ctx.project_root, &runner_path);
+    let case_rel = relative_to(&ctx.project_root, &case_path);
+    let next = command_with_wi(
+        format!(
+            "aw ec check --project {} --json",
+            shell_quote_ec_arg(&ctx.project)
+        ),
+        args.wi.as_deref(),
+    );
+    if let Some(wi) = args.wi.as_deref() {
+        persist_ec_first_next_action(project_root, wi, next.clone())?;
+    }
+    let reason = "author the generated Python EC source/inventory, then run its structural check";
+    print_ec_protocol_value(
+        &serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "status": "continue",
+            "action": "python_ec_scaffold_created",
+            "root": {
+                "kind": "ec",
+                "id": ctx.project,
+            },
+            "current": {
+                "kind": "ec_authoring",
+                "id": id,
+            },
+            "artifacts": [inventory_rel, runner_rel, case_rel],
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": false,
+                "criteria": [
+                    "replace scaffold placeholders with a capability-bound external contract",
+                    "aw ec check accepts the Python inventory",
+                ],
+                "missing": [
+                    "implemented Python EC case and independent oracle",
+                    "external evidence emitted by the declared command",
+                ],
+            },
+            "next": {
+                "kind": "dispatch",
+                "command": next,
+                "reason": reason,
+                "payload_path": inventory_rel,
+            },
+            "invoke": {
+                "command": next,
+            },
+            "agent_prompt": format!(
+                "Author `{inventory_rel}` and `{case_rel}` in place, replacing every scaffold placeholder. Then run `{next}` and follow its emitted next command. Do not create Markdown EC source."
+            ),
+            "requires_hitl": false,
+            "persistence": {
+                "status": "pending",
+                "reason": reason,
+            },
+        }),
+        args.json,
+    )
+}
+
 fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
@@ -1242,6 +1564,9 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
         bail!("EC draft id cannot be empty");
     }
     let category = normalize_external_category(Some(&args.category), "behavior")?;
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
+        return run_python_ec_draft(&project_root, &ctx, args, &id, &category);
+    }
     let path = ctx.ec_root.join(&category).join(format!("{id}.md"));
     if path.exists() && !args.force {
         bail!(
@@ -1851,6 +2176,11 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
 fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1
+        && !ctx.ec_root.join("pyproject.toml").is_file()
+    {
+        return emit_python_ec_scaffold_required(&project_root, &ctx, &args);
+    }
     let summary = check_ec_context(&ctx)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);

@@ -43,7 +43,7 @@ capability_refs:
     gap: ec-external-contract-source
     claim: ec-external-contract-source
     coverage: partial
-    rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
+    rationale: "The CLI semantic domain covers canonical Python EC scaffold/check behavior plus compatibility Markdown fill/gen behavior in src/cli/ec.rs."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: stale-ec-inventory-verifier-fail-closed-routing
@@ -3487,6 +3487,15 @@ changes:
       as-yet-unbuilt runner binary) into `ec_binding_warnings`.
       `run_check`'s non-JSON branch prints each warning to stderr regardless
       of `clean`. See `chain.md#changes` for the validator implementation.
+      #2540: public project configuration is Python-first. `run_check` treats
+      a missing `external-contracts/pyproject.toml` as a recoverable authoring
+      state and emits an `aw.cli.v1` envelope with one runnable `aw ec draft`
+      command instead of propagating a raw filesystem error. The Python draft
+      path creates only `pyproject.toml`, `src/runner.py`, one bounded
+      `src/<id>.py` contract source, and `evidence/`; it emits the exact
+      follow-up check and never creates a Markdown fallback. Clap help names
+      the Python/pyproject contract while retaining fill/gen as compatibility
+      surfaces.
       #1469: `verify_ec_context` gained a `required_only: bool` execution-time
       filter parameter. When `true`, a `required_for_production: false` case
       is never executed — it still gets a `status: "skipped"` entry in
