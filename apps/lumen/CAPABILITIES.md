@@ -464,6 +464,32 @@ accounts, secrets, or namespaces bearing the run id remain. Evidence root:
 > was *reported* as exit 0 even though the harness's `run_completed` sentinel
 > had correctly forced a failure. Redirect, don't pipe.
 
+**Full teardown after this run, including the shared cluster.** `cleanup.sh`
+reclaims only run-scoped resources; the persistent `axiom-operator-acceptance`
+cluster is a Terraform *data* source to the per-run stack and survives by
+design. It was torn down separately here — 5 resources destroyed (node pool,
+cluster, node service account, and its two project IAM bindings) — leaving zero
+clusters, zero `axo-` buckets/secrets/service accounts, and zero residual IAM
+bindings in `axiom-502607`.
+
+> **Teardown trap: a silent, billing no-op.** `destroy-cluster.sh` reads state
+> from `/tmp/axiom-gcp-operator-cluster/cluster.tfstate`, but the cluster
+> outlives `/tmp`. With that state gone, `terraform destroy` destroyed an empty
+> state, printed `Resources: 0 destroyed`, and would have **exited 0 while the
+> cluster kept billing**. `bootstrap-cluster.sh` cannot regenerate the state
+> either: it short-circuits on `clusters describe` before reaching Terraform, so
+> a surviving cluster is permanently stateless. Recovery is to import all five
+> resources and destroy for real. Two follow-on traps found doing that:
+> `deletion_protection` is imported as the provider default `true` rather than
+> `main.tf`'s `false`, and it is **client-side-only metadata** — no API field, no
+> `gcloud --no-deletion-protection` flag, and `terraform apply` cannot reconcile
+> it (it emits an empty update, `Error 400: Must specify a field to update`), so
+> it must be flipped in the state file. `destroy-cluster.sh` now refuses this
+> case: it compares real cluster existence against state presence and exits 3
+> with the exact import recipe rather than reporting a false success (exit 0
+> only when the cluster is genuinely absent). All three paths — absent cluster,
+> present-cluster-missing-state, and missing confirmation — verified.
+
 ### GKE acceptance run 0724105144 (2026-07-24, PASSED — auth+CSI Secret Manager stack proven, #2457/#2456)
 
 Full two-service digest-mode run (GHCR `sha-54742a8d6e40` images — zero
