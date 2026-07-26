@@ -694,44 +694,44 @@
         {
           "id": "self-hosting-bounded-admission",
           "legacy_test_path": "apps/agentic-workflow/tests/efficiency_self_hosting_bounded_admission.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "self-hosting-capability-admission",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "self-hosting-goal-root-parity",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_goal_root_parity.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "self-hosting-health-policy",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "self-hosting-identity-stability",
           "legacy_test_path": "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "self-hosting-wi-admission",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         },
         {
           "id": "wi-ec-td-root-loop-self-hosted-unit",
           "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_self_hosted_unit.rs",
-          "migration_status": "pending",
-          "rust_disposition": "pending"
+          "migration_status": "native",
+          "rust_disposition": "removed"
         }
       ]
     },

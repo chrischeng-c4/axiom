@@ -894,8 +894,8 @@ test_path = "src/cases/self-hosting-bounded-admission.py"
 promise = "backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 threshold = "backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_backlog_rejects_before_reviewed_graph_or_state_io -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
 evidence_paths = ["evidence/self-hosting-bounded-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -908,8 +908,8 @@ applicability = "td"
 test_path = "src/cases/self-hosting-capability-admission.py"
 promise = "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit; the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_capability_and_backlog_roots_are_rejected_before_mutation -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 evidence_paths = ["evidence/self-hosting-capability-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -922,8 +922,8 @@ applicability = "td"
 test_path = "src/cases/self-hosting-goal-root-parity.py"
 promise = "self-AW WI identity resolution and rollup routing reject before loop-state or dispatch touch the fixture tree"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-goal-root-parity -- cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_wi_identity_and_rollup_never_reenter_root_runner -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-goal-root-parity"
 evidence_paths = ["evidence/self-hosting-goal-root-parity.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -936,8 +936,8 @@ applicability = "td"
 test_path = "src/cases/self-hosting-health-policy.py"
 promise = "health pins policy_mode, required_trailer, root_runner_allowed, direct_repair_default, and exact complete ordered hard_gates and advisory_axes arrays; health never emits any aw goal command as remediation"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
 evidence_paths = ["evidence/self-hosting-health-policy.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -951,8 +951,8 @@ test_path = "src/cases/self-hosting-identity-stability.py"
 promise = "a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
 threshold = "a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_wi_identity_resolution_errors_fail_closed_without_mutation -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
 evidence_paths = ["evidence/self-hosting-identity-stability.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -965,8 +965,8 @@ applicability = "td"
 test_path = "src/cases/self-hosting-wi-admission.py"
 promise = "the WI root emits action self_hosting_policy before loop state or dispatch; the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission -- cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
 evidence_paths = ["evidence/self-hosting-wi-admission.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1385,8 +1385,8 @@ applicability = "td"
 test_path = "src/cases/wi-ec-td-root-loop-self-hosted-unit.py"
 promise = "red and green EC loop states expose exact bounded TD commands; a tracker-backed root has a local lifecycle ledger before EC transitions write next_action"
 oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-self-hosted-unit -- cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-ec-td-root-loop-self-hosted-unit"
 evidence_paths = ["evidence/wi-ec-td-root-loop-self-hosted-unit.json"]
 
 [[tool.aw.python-ec.cases]]
