@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
@@ -22,8 +23,21 @@ def _ensure_aw_binary() -> None:
     global _AW_READY
     if _AW_READY:
         return
+    rustup = shutil.which("rustup")
+    if rustup is None:
+        raise AssertionError("rustup is required to build the AW EC fixture binary")
     completed = subprocess.run(
-        ["cargo", "build", "-p", "agentic-workflow", "--bin", "aw"],
+        [
+            rustup,
+            "run",
+            "stable",
+            "cargo",
+            "build",
+            "-p",
+            "agentic-workflow",
+            "--bin",
+            "aw",
+        ],
         cwd=REPOSITORY_ROOT,
         text=True,
         capture_output=True,

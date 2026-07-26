@@ -3217,6 +3217,75 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
 fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    // Python-v1 terminal verification runs as a separate `aw ec verify --wi`
+    // process after `aw cb check` dispatches it. Keep the same project-scoped
+    // process/fs2 lease that guarded the legacy in-process terminal gate;
+    // otherwise two root-runner retries can execute the same required EC
+    // inventory concurrently.
+    let _python_terminal_lock = if let Some(wi) = args.wi.as_deref().filter(|_| {
+        ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1
+    }) {
+        let mut retry = format!("aw ec verify --project {}", ctx.project);
+        if args.required_only {
+            retry.push_str(" --required-only");
+        }
+        if let Some(stage) = args.stage.as_deref() {
+            retry.push_str(&format!(" --stage {stage}"));
+        }
+        retry.push_str(&format!(" --wi {wi}"));
+        match try_acquire_terminal_ec_gate_lock(&ctx.project_root, &ctx.project) {
+            Ok(Some(lock)) => Some(lock),
+            Ok(None) => {
+                let summary = terminal_ec_gate_blocked_summary(
+                    &ctx,
+                    "terminal-ec-single-flight",
+                    EcVerifyFailureKind::SingleFlight,
+                    "another terminal EC evaluation is already running; wait for it to finish, then retry the same EC verification command",
+                );
+                persist_ec_first_next_action(&project_root, wi, retry.clone())?;
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "summary": summary,
+                            "next": retry,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "ec verify {}: terminal evaluation already running",
+                        ctx.project
+                    );
+                    println!("next: {retry}");
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                let summary = terminal_ec_gate_blocked_summary(
+                    &ctx,
+                    "terminal-ec-lock-error",
+                    EcVerifyFailureKind::RunnerError,
+                    &format!("could not acquire the terminal EC single-flight lock: {error}"),
+                );
+                persist_ec_first_next_action(&project_root, wi, retry.clone())?;
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "summary": summary,
+                            "next": retry,
+                        }))?
+                    );
+                } else {
+                    println!("ec verify {}: terminal lock error", ctx.project);
+                    println!("next: {retry}");
+                }
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     // #2084: never execute commands from a generated inventory that no longer
     // matches the current EC sources. Besides being unsafe, recording those
     // stale failures as a normal red verifier result routes a cb_filled,

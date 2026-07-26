@@ -1104,9 +1104,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-self-ec-fixture-loop-gate.py"
 promise = "a configured required EC case refuses the unchanged CB-filled WorkItem while red without phase or close mutation, then permits terminal close only when green and records the consulted case in the success envelope"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-self-ec-fixture-loop-gate -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_required_ec_refuses_red_then_records_green_terminal_completion -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-self-ec-fixture-loop-gate"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-self-ec-fixture-loop-gate.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1118,9 +1118,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec.py"
 promise = "the public goal runner follows CB fill and check, stops at terminal required EC while red, resumes the same CB-filled WorkItem when green, records the consulted case, and closes at the unified terminal check"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec -- cargo test -p agentic-workflow --test cli_tests fixture_loop_test::fixture_loop_goal_converges_through_cb_to_required_ec_red_green_terminal -- --exact --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1216,9 +1216,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/terminal-ec-cross-process-single-flight-real-cli.py"
 promise = "the first aw process owns the project lock while its EC command runs; the second same-slug aw process returns terminal_ec_single_flight promptly; both refusal envelopes point to exact aw cb check slug retry commands; the append-only EC launch marker contains exactly one line; the work item remains open in cb_filled and no terminal commit is created"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-cross-process-single-flight-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-cross-process-single-flight-real-cli"
 evidence_paths = ["evidence/terminal-ec-cross-process-single-flight-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1230,9 +1230,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/terminal-ec-fast-green-stale-reader-real-cli.py"
 promise = "a debug-only bounded barrier proves process B read cb_filled before process A completes; process A executes the fast-green inventory and completes the terminal transition; process B acquires afterward, re-reads td_merged, and reports terminal retry without EC; the EC launch marker contains one line and git contains one Cb-CodeCheck terminal commit"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-fast-green-stale-reader-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_fast_green_stale_reader_rechecks_phase_before_ec -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-fast-green-stale-reader-real-cli"
 evidence_paths = ["evidence/terminal-ec-fast-green-stale-reader-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1244,9 +1244,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/terminal-ec-no-child-wrapper-real-cli.py"
 promise = "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace; the helper confirms its external child exited before the wrapper timed out; the wrapper PID no longer exists after aw returns; the envelope has terminal_ec_timeout and exact aw cb check slug next.command; the work item remains open in cb_filled and no terminal commit is created"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-no-child-wrapper-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-no-child-wrapper-real-cli"
 evidence_paths = ["evidence/terminal-ec-no-child-wrapper-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1258,9 +1258,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/terminal-ec-retry-transition-lease-real-cli.py"
 promise = "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held; the second process reads retry phase and promptly receives terminal_ec_single_flight; the refusal points to the exact same-slug aw cb check retry; after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-retry-transition-lease-real-cli -- cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-ec-retry-transition-lease-real-cli"
 evidence_paths = ["evidence/terminal-ec-retry-transition-lease-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1272,9 +1272,9 @@ dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/terminal-touched-codegen-red-repair-green.py"
 promise = "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged; the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted; the emitted aw cb gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command; restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit"
-oracle = "The preserved external Rust test command must exit zero and its original assertions remain the independent oracle."
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-touched-codegen-red-repair-green -- cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture"
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case terminal-touched-codegen-red-repair-green"
 evidence_paths = ["evidence/terminal-touched-codegen-red-repair-green.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1646,10 +1646,10 @@ dimension = "efficiency"
 applicability = "post-gen"
 test_path = "src/cases/td-cb-lifecycle-automation-operational-efficiency.py"
 promise = "The td-cb-lifecycle-automation representative gate executes at least one Rust test with zero failures and completes within 120 seconds."
-oracle = "A monotonic clock and parsed cargo test summary independently enforce the elapsed-time and non-zero-test limits."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "elapsed <= 120 seconds; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency --mode efficiency --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-efficiency"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
@@ -1661,10 +1661,10 @@ dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/td-cb-lifecycle-automation-operational-stability.py"
 promise = "The td-cb-lifecycle-automation representative gate produces identical non-zero passed and zero-failed test totals across two independent executions."
-oracle = "Two fresh subprocess executions are independently parsed and must report identical non-zero passed and zero-failed totals."
+oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
-target = "rust"
-command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability --mode stability --threshold-seconds 120 -- cargo test -p agentic-workflow --lib td_branch_activation_only_uses_main -- --nocapture"
+target = "python"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-cb-lifecycle-automation-operational-stability"
 evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
