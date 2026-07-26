@@ -241,6 +241,87 @@ capture_authcsi_diagnostics() {
     >> "$EVIDENCE_DIR/kubernetes/lumen-authcsi-pods.log" 2>&1 || true
 }
 
+# ---- lumen-quorum: multi-voter membership on a CR NOT named after the binary
+# (#2610) helpers ----
+#
+# Every pre-existing leg misses this bug at the intersection of two conditions.
+# The multi-member cases (`lumen/lumen` here, `tape/tape` in verify-tape.sh)
+# name their CR after the binary, so the peer prefix the binary hardcoded
+# happened to equal the one derived from POD_NAME. The differently-named cases
+# (`lumen-restore`, `lumen-authcsi`) run replicasPerShard:1, where `--wal auto`
+# selects the embedded backend and no raft peer is ever addressed. Only a CR
+# that is BOTH multi-member AND named something other than `lumen` addresses a
+# peer by a name the operator did not create.
+quorum_forward_pid=""
+stop_quorum_forward() {
+  if [[ -n "$quorum_forward_pid" ]]; then
+    kill "$quorum_forward_pid" >/dev/null 2>&1 || true
+    wait "$quorum_forward_pid" >/dev/null 2>&1 || true
+    quorum_forward_pid=""
+  fi
+}
+
+# Forwards to a specific POD, not the Service: this leg has to address
+# individual members to tell a leader from a follower, which a load-balanced
+# Service endpoint deliberately hides.
+start_quorum_forward() {
+  local pod="$1"
+  stop_quorum_forward
+  local deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if [[ -z "$quorum_forward_pid" ]] || ! kill -0 "$quorum_forward_pid" >/dev/null 2>&1; then
+      stop_quorum_forward
+      kubectl -n lumen port-forward "pod/$pod" 17376:7373 \
+        >>"$EVIDENCE_DIR/kubernetes/lumen-quorum-port-forward.log" 2>&1 &
+      quorum_forward_pid="$!"
+      sleep 1
+    fi
+    if curl --max-time 5 --silent --show-error --fail \
+      http://127.0.0.1:17376/readyz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for $pod readiness through port-forward" >&2
+  return 1
+}
+
+quorum_cluster_json() { # pod  outfile
+  start_quorum_forward "$1" || return 1
+  curl --max-time 10 --silent --show-error --fail-with-body \
+    http://127.0.0.1:17376/debug/cluster > "$2"
+}
+
+capture_quorum_diagnostics() {
+  kubectl -n lumen get lumen/lumen-quorum statefulset/lumen-quorum -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-quorum-failure.yaml" 2>&1 || true
+  kubectl -n lumen describe pods -l app.kubernetes.io/instance=lumen-quorum \
+    > "$EVIDENCE_DIR/kubernetes/lumen-quorum-pods-describe.txt" 2>&1 || true
+  for pod in lumen-quorum-0 lumen-quorum-1; do
+    kubectl -n lumen logs "pod/$pod" --all-containers --tail=200 --prefix \
+      >> "$EVIDENCE_DIR/kubernetes/lumen-quorum-pods.log" 2>&1 || true
+  done
+}
+
+wait_ready_quorum_cr() {
+  local expected_generation observed_generation phase ready
+  local deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    expected_generation="$(kubectl -n lumen get lumen/lumen-quorum -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed_generation="$(kubectl -n lumen get lumen/lumen-quorum -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    phase="$(kubectl -n lumen get lumen/lumen-quorum -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    ready="$(kubectl -n lumen get statefulset/lumen-quorum -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    if [[ -n "$expected_generation" && "$observed_generation" == "$expected_generation" \
+      && "$phase" == "Ready" && "$ready" == "2" ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "timed out waiting for lumen/lumen-quorum to reach Ready with 2 ready replicas" >&2
+  capture_quorum_diagnostics
+  return 1
+}
+
 # Mirrors deploy.sh's wait_ready_cr / wait_ready_restore_cr, scoped to the
 # lumen-authcsi CR.
 wait_ready_authcsi_cr() {
@@ -604,6 +685,127 @@ EOF
   kubectl -n lumen delete secretproviderclass/lumen-authcsi-tokens --ignore-not-found
 fi
 
+# ---- lumen-quorum: live multi-voter membership, CR name != binary name (#2610)
+#
+# Runs BEFORE the 1->2 reshard so the node pool is carrying one lumen shard
+# rather than two. The required per-instance hostname anti-affinity puts these
+# two pods on separate nodes; they only repel each other, so they share the
+# nodes the split leg would otherwise need simultaneously.
+cat <<EOF | kubectl apply -f - > "$EVIDENCE_DIR/kubernetes/lumen-quorum-cr-apply.txt"
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: lumen-quorum
+  namespace: lumen
+spec:
+  image: ${main_cr_image}
+  imagePullPolicy: IfNotPresent
+  shardCount: 1
+  replicasPerShard: 2
+  voterCount: 2
+  logFormat: json
+  serving:
+    cpu: 250m
+    memory: 512Mi
+    raftStorage: 1Gi
+EOF
+wait_ready_quorum_cr
+kubectl -n lumen get lumen/lumen-quorum -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-quorum-after-apply.json"
+
+# Assertion 1 — the peers are named after the CR, not after the binary.
+# This is the direct #2610 signature: the pre-fix response named ITSELF
+# `lumen-quorum-0` and its peers `lumen-0`/`lumen-1` in the same object.
+quorum_cluster_json lumen-quorum-0 "$EVIDENCE_DIR/kubernetes/lumen-quorum-debug-cluster-0.json" || {
+  echo "could not read /debug/cluster from lumen-quorum-0" >&2
+  capture_quorum_diagnostics
+  exit 1
+}
+jq -e '[.peers[].pod_name] == ["lumen-quorum-0","lumen-quorum-1"]' \
+  "$EVIDENCE_DIR/kubernetes/lumen-quorum-debug-cluster-0.json" >/dev/null || {
+  echo "lumen-quorum peers are not named after the CR — #2610 regression" >&2
+  jq '{pod_name, role, peers}' "$EVIDENCE_DIR/kubernetes/lumen-quorum-debug-cluster-0.json" >&2 || true
+  capture_quorum_diagnostics
+  exit 1
+}
+
+# Assertion 2 — a leader actually exists. Pod readiness and `status.phase`
+# never consult raft, so both members can sit Candidate forever while the CR
+# reports Ready 2/2 CONVERGED=True. Roles are the only signal that separates
+# a formed quorum from a permanently deadlocked one.
+quorum_leader=""
+quorum_follower=""
+quorum_role_deadline=$((SECONDS + 180))
+while (( SECONDS < quorum_role_deadline )); do
+  quorum_leaders=0
+  for pod in lumen-quorum-0 lumen-quorum-1; do
+    quorum_cluster_json "$pod" "$EVIDENCE_DIR/kubernetes/lumen-quorum-debug-cluster-${pod##*-}.json" || continue
+    role="$(jq -r '.role' "$EVIDENCE_DIR/kubernetes/lumen-quorum-debug-cluster-${pod##*-}.json" 2>/dev/null || true)"
+    if [[ "$role" == "leader" ]]; then
+      quorum_leaders=$((quorum_leaders + 1))
+      quorum_leader="$pod"
+    elif [[ "$role" == "follower" ]]; then
+      quorum_follower="$pod"
+    fi
+  done
+  [[ "$quorum_leaders" == "1" && -n "$quorum_follower" ]] && break
+  sleep 5
+done
+if [[ "$quorum_leaders" != "1" || -z "$quorum_leader" || -z "$quorum_follower" ]]; then
+  echo "lumen-quorum never settled on exactly one leader and one follower (leaders=$quorum_leaders) — the #2610 deadlock signature" >&2
+  capture_quorum_diagnostics
+  exit 1
+fi
+printf '%s\n' "$quorum_leader" > "$EVIDENCE_DIR/kubernetes/lumen-quorum-leader.txt"
+
+# Assertion 3 — the log actually commits and replicates. Election alone is not
+# the contract. `applied_index` is read off the raft applied watch channel;
+# `replication_lag_ms` deliberately cannot serve here (it is a hardcoded 0 on a
+# leader and u64::MAX on anything else, #1349), so it is not consulted.
+start_quorum_forward "$quorum_leader"
+curl --silent --show-error --fail-with-body -X PUT \
+  http://127.0.0.1:17376/collections/acceptance-quorum \
+  -H 'content-type: application/json' \
+  --data '{"fields":{"message":{"type":"keyword"}}}' \
+  > "$EVIDENCE_DIR/kubernetes/lumen-quorum-create-collection.json"
+curl --silent --show-error --fail-with-body -X POST \
+  http://127.0.0.1:17376/collections/acceptance-quorum/index \
+  -H 'content-type: application/json' \
+  --data "{\"items\":[{\"external_id\":\"${RUN_ID}\",\"field\":\"message\",\"value\":\"gke-quorum-${RUN_ID}\"}]}" \
+  > "$EVIDENCE_DIR/kubernetes/lumen-quorum-index.json"
+
+# Assertion 4 — the FOLLOWER serves a document it never received directly.
+# `x-read-consistency: any` is required: the default `leader` level makes a
+# follower reject rather than serve a possibly-stale local copy, so without
+# this header the read would prove routing, not replication.
+quorum_replicated_deadline=$((SECONDS + 120))
+until start_quorum_forward "$quorum_follower" \
+  && curl --max-time 10 --silent --show-error --fail-with-body -X POST \
+    http://127.0.0.1:17376/collections/acceptance-quorum/search \
+    -H 'content-type: application/json' \
+    -H 'x-read-consistency: any' \
+    --data "{\"query\":{\"term\":{\"field\":\"message\",\"value\":\"gke-quorum-${RUN_ID}\"}},\"limit\":10}" \
+    > "$EVIDENCE_DIR/kubernetes/lumen-quorum-follower-search.json" 2>/dev/null \
+  && jq -e '.total >= 1' "$EVIDENCE_DIR/kubernetes/lumen-quorum-follower-search.json" >/dev/null 2>&1; do
+  if (( SECONDS >= quorum_replicated_deadline )); then
+    echo "the document written through $quorum_leader never became readable on $quorum_follower — replication did not reach the follower" >&2
+    cat "$EVIDENCE_DIR/kubernetes/lumen-quorum-follower-search.json" >&2 || true
+    capture_quorum_diagnostics
+    exit 1
+  fi
+  sleep 3
+done
+quorum_cluster_json "$quorum_follower" "$EVIDENCE_DIR/kubernetes/lumen-quorum-follower-applied.json" || true
+stop_quorum_forward
+
+# Teardown ordering mirrors the legs above: CR first, or drift repair recreates
+# the StatefulSet before the owner-ref cascade GC catches up.
+kubectl -n lumen delete lumen/lumen-quorum --wait=true --timeout=120s
+kubectl -n lumen delete statefulset/lumen-quorum --wait=true --timeout=180s \
+  --cascade=foreground --ignore-not-found
+kubectl -n lumen delete pvc -l app.kubernetes.io/instance=lumen-quorum \
+  --wait=true --timeout=300s --ignore-not-found
+
 # One byte is an acceptance-only pressure threshold. It exercises the existing
 # disk policy without creating a chargeable GiB of test data.
 kubectl -n lumen patch lumen/lumen --type=merge --patch \
@@ -643,5 +845,7 @@ jq -n \
   --argjson bytes "$object_size" \
   --arg authcsi_status "$authcsi_status" \
   --arg authcsi_skip_reason "$authcsi_skip_reason" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, auth_csi_gke_leg:$authcsi_status, auth_csi_gke_leg_skip_reason:$authcsi_skip_reason, cpu_memory_actuator:"not_claimed", live_replica_membership:"not_claimed"}' \
+  --arg quorum_leader "$quorum_leader" \
+  --arg quorum_follower "$quorum_follower" \
+  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, auth_csi_gke_leg:$authcsi_status, auth_csi_gke_leg_skip_reason:$authcsi_skip_reason, cpu_memory_actuator:"not_claimed", live_replica_membership:"passed", peer_dns_follows_cr_name:{issue:"#2610", cr:"lumen-quorum", leader:$quorum_leader, follower:$quorum_follower, replicated_read:"passed"}}' \
   > "$EVIDENCE_DIR/lumen-acceptance.json"
