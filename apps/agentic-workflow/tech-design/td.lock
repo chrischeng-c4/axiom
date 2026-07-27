@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T11:56:15.693874+00:00"
-digest = "sha256:266caee39bbec7217828932193ea9b9e441cfac35115bd082e75669f35220f0e"
-source_digest = "sha256:266caee39bbec7217828932193ea9b9e441cfac35115bd082e75669f35220f0e"
-ir_digest = "sha256:e8c105b46d38e2ddac5ca4c73e3cf8273ad2798b1f795adf5801aa8b8119304f"
+generated_at = "2026-07-27T12:06:23.035784+00:00"
+digest = "sha256:d7e7b196cb80c424b84de60f63ec289006089ed92f4fba354950dc8ae6957d36"
+source_digest = "sha256:d7e7b196cb80c424b84de60f63ec289006089ed92f4fba354950dc8ae6957d36"
+ir_digest = "sha256:f45719e3049c9b9d41a05d749f43c51310625f6511075d1781bd8d26aa8f6143"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -606,6 +606,10 @@ digest = "sha256:279a9e30e826f2c75fb3513b74dad93380b2321f7ab591695b3f7aae0d202fa
 [[files]]
 path = "src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
 digest = "sha256:2425f1dbc4ddddd605a2deffc91e0f17a32d17529540a7cde826bcab4a11f57f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/commands/proposal.py"
+digest = "sha256:f3648ea742903b99656e505290fda7a2406082ad9bdfc74cac538586a60d8ffd"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"

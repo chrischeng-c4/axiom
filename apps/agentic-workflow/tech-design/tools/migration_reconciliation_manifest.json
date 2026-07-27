@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:e12f037f231fd04a720e9fb1184dad2fedf14bc00c99262cb74e4d34ec2575d1",
+  "digest": "sha256:0a010d85421431362010c98789fad7f9d16c6a3df6734a4a4e119c75f9611b55",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10815,7 +10815,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/proposal.md",
       "role": "generated_mirror",
       "sha256": "sha256:ece1072dd5577c911b5b4f6fe98cb55fa985159cb956e38e5ce45fbd364206f5",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/proposal.py"
     },
     {
