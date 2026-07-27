@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:5bf3d93aaedf0145821b97f885c132bb75bc4f6044ad7a317fc515079ba64eca",
+  "digest": "sha256:6cadc79fcae781d4bc660101188d2f774e63ce6d30b6943f2a59e9ef80af374f",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -4055,7 +4055,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/jsonl-str-primitives.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:b3cb9d334895a3c672d205ea4d446e270ebd30b0400e1061ff9b80d475aca65c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/jsonl_str_primitives.py"
     },
     {
@@ -4085,7 +4085,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/mindmap_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:c87088014a9ee83270ab9e25fecdfa70bb10ed290726d0c99d94ffcd0f56fbe1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/mindmap_types.py"
     },
     {
@@ -4095,7 +4095,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/mod.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:64639e78657fa59a00d2f6a82dbc5a9b775dd645cc11702e707c6b3b1aa694a7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/mod.py"
     },
     {
@@ -4125,7 +4125,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/module-facade.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:2ba6e788eb8bc223a32401af982906bcc123c89651d23354ced2159146216703",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/module_facade.py"
     },
     {
@@ -4155,7 +4155,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/overview_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:93432812a70e91331c9ecd5247933d1d33fcf54c9a2f31f84c7e53031e7f4722",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/overview_types.py"
     },
     {
@@ -4185,7 +4185,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/react.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:d14038dea087d24f8dce842a496c3b21d7c14f309c2995138d92db04d6578104",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/react.py"
     },
     {
@@ -4225,7 +4225,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/requirements_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:e38876d1135b47b6c6b84e5b8c91bb2d50e5cf11a89b9e548f680e81fa86d51d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/requirements_types.py"
     },
     {
@@ -4245,7 +4245,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/rest_api_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:d589b4c500bd10e99c1601955779da052557f2ad08911aa3bee8496072df8e6b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/rest_api_types.py"
     },
     {
@@ -4265,7 +4265,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/rpc_api_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:b0f4c753ab201265a4d1906790fb31c3a1f29ed2b9c5804e39aaeccc3e5f1e6e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/rpc_api_types.py"
     },
     {
@@ -4285,7 +4285,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/scenarios_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:0946ba836a43c414da5aa92b2e185b7bf28aec9a342c0a8e66e8973771bc33cc",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/scenarios_types.py"
     },
     {
@@ -4295,7 +4295,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/sequence_plus_gen.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:e15dc0fa7d8806707083e707884e85fabc17d7c1aaa3ff60dfbb42a1f2d83922",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/sequence_plus_gen.py"
     },
     {
@@ -4335,7 +4335,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/sequence_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:326e985bc609680cfe0565fd5607ab25c6409f149ab1ff6382561211e31fe18a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/sequence_types.py"
     },
     {
@@ -4355,7 +4355,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/serverless_workflow_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:2f972b2bcb34053d98032da9943e1d5033a8b92d5e276545848039547a62b4ae",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/serverless_workflow_types.py"
     },
     {
@@ -4365,7 +4365,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/state_machine_gen.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:006b11fdf8fe8e61ec87374ee8f4add9a528d8a9914dccf0f95e0b83cd7a1581",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/state_machine_gen.py"
     },
     {
@@ -4405,7 +4405,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/state_machine_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:f8854f0d3d0b7410071434a05e4b76f1b9a492fa9c2412b81c429b56cdb54f8d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/state_machine_types.py"
     },
     {
@@ -4415,7 +4415,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/test_generator.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:025c8c7bc6e1ff34f715cff5b9b9ef6d085801de4784be5db21eb2bbcd35155e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/test_generator.py"
     },
     {
@@ -4455,7 +4455,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/generators/test_plan_types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:77da52cd91c57a8bc2e3c3d9809a524761798b43364e4a113f14312f2221d88d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/generators/test_plan_types.py"
     },
     {
@@ -4475,7 +4475,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/handwrite-marker.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:af686250887d8a337b1838ce26fe16eb5d042c66ec887c7620389ebfcc82711d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/handwrite_marker.py"
     },
     {
@@ -4495,7 +4495,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/json-schema-core.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:adacc130a19a6c645a0efdcc3a77167de7509b753852b1fae8b5abad2157bdac",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/json_schema_core.py"
     },
     {
@@ -4505,7 +4505,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/language-layout-profiles.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:c701da7dbe3d44614544865a836bbd04891e4b66a39dd2e6fb6573cb529e8901",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/language_layout_profiles.py"
     },
     {
@@ -4555,7 +4555,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/mermaid-plus-conversion.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:7ef8e4f6453892d5752cbad3fc5e8eb02ac4ad296a786f0b73d84ef369b6390d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/mermaid_plus_conversion.py"
     },
     {
@@ -4565,7 +4565,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/mermaid-plus-format.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:b3ee25dbe42b2514f3b889a93910517d225f1c60a1d0f106eb8b164fce48a32e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/mermaid_plus_format.py"
     },
     {
@@ -4585,7 +4585,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/path-b-pattern-2-5-expression-decision.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:18d430be7823ff80fbe8f209beaf7af26c90ebf6b99a255df621ec04d0681f4f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/path_b_pattern_2_5_expression_decision.py"
     },
     {
@@ -4595,7 +4595,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/path-b-pattern-2-decisions.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:7c612b82a86a58a20b0fbf1cff6b243133b0892821f3a0e5dc5b13f4cae273f5",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/path_b_pattern_2_decisions.py"
     },
     {
@@ -4605,7 +4605,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/path-b-pattern-3b-result-propagation.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:7e1dbaa5e2a260f4207f856dea42f25ce9dd2ee4ae4a6d8dbb266c81e000aad2",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/path_b_pattern_3b_result_propagation.py"
     },
     {
@@ -4635,7 +4635,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/patterns/types.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:32ea02d92ab173390b60f10b9cc57666a836bb4fe1a7afd0751a11b8819bbeb2",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/patterns/types.py"
     },
     {
@@ -4655,7 +4655,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/requirement-plus-enhancement.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:1075c09ff40173d450625d1180cc16dccdad229eadb17b0ce6163ff20612648e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/requirement_plus_enhancement.py"
     },
     {
@@ -4665,7 +4665,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/rust-layout-profile.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:68a30c0d5505af1caf11d8728c91057e23ac472fa06640b0575fdd7a172761d3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/rust_layout_profile.py"
     },
     {
@@ -4705,7 +4705,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/schema-rs-gaps.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:102aa386b6912f2c0ba7b30d52061ac077d1512bb922ef1c7854216075da0735",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/schema_rs_gaps.py"
     },
     {
@@ -4715,7 +4715,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/source-fragment-composition.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:8e47849d2447da2e8960e226f0bb73e80087a096cfff2acae4f45cec18847f7e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/source_fragment_composition.py"
     },
     {
@@ -4725,7 +4725,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/spec-ir-contract.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:1387e1010ad5f7c7fb0114045b519ee90537320c4d46db0a68c87e41a1bf16fb",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/spec_ir_contract.py"
     },
     {
@@ -4735,7 +4735,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/spec-ir-evaluation.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:f5f5730f980254fe6eb2d8c049f68a0b4999bbd3f0182bf6a79057840f71e4a8",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/spec_ir_evaluation.py"
     },
     {
@@ -4745,7 +4745,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/spec-ir-schema.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:fd628bc89cfbd86f936ac8b61555f13363129f59a655d5d0a52534fcbeb5f6ae",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/spec_ir_schema.py"
     },
     {
@@ -4755,7 +4755,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/spec-model.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:f1b9471e83c44eb83a9a8e32e3a1a67642ea69da4b55eea68aba19e06e65be80",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/spec_model.py"
     },
     {
@@ -4765,7 +4765,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/spec-validator.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:2c7e3ac763d0f07a40754fdc4f63d68f45932aa9489a222abc032e60cc8f7db6",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/spec_validator.py"
     },
     {
@@ -4845,7 +4845,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/template-claude-md.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:e8b771c938c1dba66e78c4c0870326a87f5f56dce279daa40f1063c21062e9b7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/template_claude_md.py"
     },
     {
@@ -4855,7 +4855,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/template-engine.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:a95b62afc8937c0abb733327562637c972c4404a3093cea6b77fa7ca3067bfac",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/template_engine.py"
     },
     {
@@ -4865,7 +4865,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/template-knowledge-index.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:4d715b4102fc69df2c14a1b76c2893de0f0dcae9047ec8752ef3056796fdf287",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/template_knowledge_index.py"
     },
     {
@@ -4875,7 +4875,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/test-generation.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:da3f56faca1b24d99cd775d32a6f89f974b51c261e532b2a63ad478855bc063d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/test_generation.py"
     },
     {
@@ -4905,7 +4905,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/ux-pattern-library.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:58ada7241d2981bf6975ea3bd221b67b6108ab3c4a2c26b9a422502384d1ed07",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/ux_pattern_library.py"
     },
     {
@@ -4915,7 +4915,7 @@
       "path": "apps/agentic-workflow/tech-design/core/generate/validate/validate-audit-split.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:6219845fb224001b397d397791dbacebf1964ad7055798ffb49bbfb4efa93b36",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/generate/validate/validate_audit_split.py"
     },
     {
