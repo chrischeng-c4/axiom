@@ -42,9 +42,9 @@ For goal roots, completion means `completion.workflow_complete=true`.
 `action=done` can finish only the current child. A HITL envelope requires real
 human input; never fabricate approval.
 
-Agentic Workflow itself uses the sanctioned self-hosting path: capability work
-root, direct implementation commit with `Refs #<issue>`, and focused evidence.
-Do not make a potentially broken AW lifecycle repair itself.
+Agentic Workflow dogfoods the same Python-first `aw goal` roots as every other
+project. Use a bounded direct implementation commit with `Refs #<issue>` only
+when the exact worker verb required by the current root is itself broken.
 
 Codex should translate Claude slash-command references such as `/aw:td` or
 `/aw:wi` to the equivalent `aw ...` CLI command unless the user
@@ -63,12 +63,6 @@ explicitly asks for Claude-specific behavior.
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 <!-- aw:cli-table:workflow:end -->
-
-For Agentic Workflow, external behavior belongs in the canonical Python EC
-project under `apps/agentic-workflow/external-contracts/`. A Python EC must
-exercise the observable contract directly and must not delegate to Cargo.
-Implementation-only rules are colocated Rust invariants under their semantic
-`src/**` owner and are verified separately by the library test gate.
 
 The lifecycle is linear: `aw wi` → `aw ec` → `aw td` → `aw cb`. Drive one
 root with `aw goal wi <id>`, `aw goal capability --project <project>`, or

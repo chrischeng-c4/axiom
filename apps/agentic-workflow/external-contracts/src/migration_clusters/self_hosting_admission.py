@@ -1,4 +1,4 @@
-"""Native Python ECs for AW self-hosting root admission."""
+"""Native Python ECs for Python-first AW self-hosting root admission."""
 
 from __future__ import annotations
 
@@ -24,19 +24,19 @@ CASE_IDS = {
 ISSUE_BODY = """\
 ## Problem
 
-The fixture observes self-hosting admission without entering the lifecycle.
+The fixture observes self-hosting entering the normal Python-first lifecycle.
 
 ## Capability Alignment
 
-Capability: Self-hosting policy
-Capability Gap: root runners must not deadlock AW
-Progress Evidence: policy envelope is stable
+Capability: Workflow root runner
+Capability Gap: self-hosting roots must dogfood the Python lifecycle
+Progress Evidence: normal root envelopes are machine-actionable
 
 ## Scope
 
 ### In Scope
 
-- inspect self-hosting admission
+- enter self-hosting admission
 
 ### Out of Scope
 
@@ -44,7 +44,7 @@ Progress Evidence: policy envelope is stable
 
 ## Acceptance Criteria
 
-- AC1: root admission returns sanctioned direct-commit policy
+- AC1: root admission returns the normal lifecycle continuation
 
 ## Reference Context
 
@@ -84,9 +84,9 @@ def _runtime_root(root: Path) -> Path:
     return Path("/tmp/aw/workspaces") / "".join(slug).strip("-")
 
 
-def _write_fixture(root: Path) -> str:
+def _write_fixture(root: Path, project: str = "agentic-workflow") -> str:
     (root / "aw.toml").write_text(
-        """\
+        f"""\
 [agentic_workflow.workspace]
 mode = "in_place"
 
@@ -94,15 +94,45 @@ mode = "in_place"
 type = "local"
 
 [[projects]]
-name = "agentic-workflow"
-label = "app:agentic-workflow"
+name = "{project}"
+label = "app:{project}"
 path = "."
 tech_design_path = "tech-design"
 
 [[projects.workspaces]]
-name = "agentic-workflow"
+name = "{project}"
 paths = ["**"]
 target = "rust"
+""",
+        encoding="utf-8",
+    )
+    (root / "CAPABILITIES.md").write_text(
+        """\
+# Agentic Workflow Fixture
+
+## Brief
+
+Self-hosting admission contract.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | ID | Status | Evidence |
+|------------|----|--------|----------|
+| Workflow root runner | workflow-root-runner | implemented | `true` |
+
+### Workflow root runner
+
+Capability ID: workflow-root-runner
+Status: implemented
+Summary: Drive Python-first lifecycle roots.
+
+#### Work Roots
+
+| Type | ID | Status | Verification |
+|------|----|--------|--------------|
+| change | self-hosted-fixture | implemented | `true` |
 """,
         encoding="utf-8",
     )
@@ -116,7 +146,7 @@ target = "rust"
             "--type",
             "change",
             "--project",
-            "agentic-workflow",
+            project,
             "--body",
             ISSUE_BODY,
         )
@@ -124,13 +154,27 @@ target = "rust"
     return created["slug"]
 
 
-def _policy(payload: dict[str, Any]) -> None:
-    assert payload["action"] == "self_hosting_policy"
-    assert payload["policy_mode"] == "sanctioned_direct_commit"
-    assert payload["root_runner_allowed"] is False
-    assert payload["required_trailer"] == "Refs #<issue>"
-    assert "invoke" not in payload
-    assert payload["completion"]["workflow_complete"] is False
+def _normal_root(payload: dict[str, Any]) -> None:
+    assert payload["action"] != "self_hosting_policy"
+    assert payload.get("policy_mode") != "sanctioned_direct_commit"
+    assert payload["next"]["kind"] != "policy"
+
+
+def _health_policy_snapshot(project: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(
+        prefix=f"aw-python-ec-self-hosting-health-{project}-"
+    ) as raw_root:
+        root = Path(raw_root)
+        _write_fixture(root, project)
+        return final_json(
+            run_aw(
+                root,
+                "health",
+                "--project",
+                project,
+                expect_success=False,
+            )
+        )
 
 
 def _snapshot() -> dict[str, Any]:
@@ -144,31 +188,35 @@ def _snapshot() -> dict[str, Any]:
         before = _tree_digest(root)
         runtime_before = _tree_digest(runtime)
         wi_first = final_json(run_aw(root, "goal", "wi", slug))
+        runtime_after_first = _tree_digest(runtime)
         wi_second = final_json(run_aw(root, "goal", "wi", slug))
         capability = final_json(
-            run_aw(root, "goal", "capability", "--project", "agentic-workflow")
+            run_aw(
+                root,
+                "goal",
+                "capability",
+                "workflow-root-runner",
+                "--project",
+                "agentic-workflow",
+            )
         )
         backlog = final_json(
             run_aw(root, "goal", "backlog", "--project", "agentic-workflow")
         )
         after = _tree_digest(root)
         for payload in (wi_first, wi_second, capability, backlog):
-            _policy(payload)
+            _normal_root(payload)
         assert wi_first == wi_second
         assert before == after
-        assert runtime_before == _tree_digest(runtime)
+        assert runtime_before == runtime_after_first
+        assert runtime_after_first == _tree_digest(runtime)
 
         issue_path = next(runtime.glob(f"issues/*/{slug}.md"))
         issue_path.write_text("not valid issue frontmatter", encoding="utf-8")
         malformed_before = _tree_digest(runtime)
-        malformed = run_aw(
-            root,
-            "goal",
-            "wi",
-            slug,
-            expect_success=False,
-        )
-        assert "frontmatter" in malformed.stderr
+        malformed = final_json(run_aw(root, "goal", "wi", slug))
+        assert malformed["action"] == "blocked"
+        assert "inventory unavailable" in malformed["next"]["reason"]
         assert before == _tree_digest(root)
         assert malformed_before == _tree_digest(runtime)
         return {
@@ -176,55 +224,112 @@ def _snapshot() -> dict[str, Any]:
             "wi": wi_first,
             "capability": capability,
             "backlog": backlog,
-            "malformed_stderr": malformed.stderr,
+            "malformed": malformed,
         }
 
 
 def verify(case_id: str) -> list[str]:
     if case_id not in CASE_IDS:
         raise AssertionError(f"case is not owned by workflow-admission: {case_id}")
+    if case_id == "self-hosting-health-policy":
+        self_hosted = _health_policy_snapshot("agentic-workflow")
+        control = _health_policy_snapshot("demo")
+        assert self_hosted["action"] == "health"
+        assert self_hosted["policy_mode"] == "python_first_lifecycle"
+        assert self_hosted["root_runner_allowed"] is True
+        assert self_hosted["direct_repair_default"] is False
+        assert self_hosted["direct_repair_fallback"] == "bounded_direct_repair"
+        assert self_hosted["fallback_trigger"] == "current_worker_verb_broken"
+        assert self_hosted["required_trailer"] == "Refs #<issue>"
+        for field in (
+            "policy_mode",
+            "root_runner_allowed",
+            "direct_repair_default",
+            "direct_repair_fallback",
+            "fallback_trigger",
+            "required_trailer",
+        ):
+            assert field not in control
+        return [
+            "public AW health enables Python-first self-hosting roots",
+            "bounded direct repair is conditional self-hosting fallback metadata",
+        ]
     snapshot = _snapshot()
     if case_id == "self-hosting-bounded-admission":
+        assert snapshot["backlog"]["action"] == "blocked"
+        assert snapshot["backlog"]["next"]["command"].startswith("aw wi plan ")
         return [
-            "self-hosted backlog admission emits sanctioned direct-commit policy",
-            "repeat admission is byte-stable and leaves the fixture tree unchanged",
+            "self-hosted backlog admission reaches reviewed-graph preflight",
+            "repeat WI admission is byte-stable and does not mutate lifecycle state",
         ]
     if case_id == "self-hosting-capability-admission":
-        assert snapshot["capability"]["root"]["kind"] == "project"
-        assert snapshot["backlog"]["root"]["kind"] == "backlog"
+        capability = snapshot["capability"]
+        assert capability["status"] == "continue"
+        assert capability["action"] == "dispatch"
+        assert capability["root"] == {
+            "kind": "capability",
+            "id": "workflow-root-runner",
+        }
+        assert capability["prompt_contract"]["state"] == "ec.authoring"
+        assert (
+            capability["next"]["command"]
+            == "aw ec check --project agentic-workflow"
+        )
+        assert (
+            capability["next"]["reason"]
+            == "Python artifact inventory or digest-bound evidence is not ready"
+        )
+        backlog = snapshot["backlog"]
+        assert backlog["status"] == "blocked"
+        assert backlog["action"] == "blocked"
+        assert backlog["root"] == {
+            "kind": "backlog",
+            "id": "agentic-workflow",
+        }
+        assert (
+            backlog["next"]["command"]
+            == "aw wi plan --project agentic-workflow --json"
+        )
+        assert backlog["next"]["reason"].startswith(
+            "current reviewed project graph is unavailable:"
+        )
+        assert "project-plan.json cannot be read" in backlog["next"]["reason"]
         return [
-            "capability and backlog roots reject the self-hosted root runner",
-            "both policies expose no invoke command or lifecycle mutation",
+            "capability dispatches the exact EC structural worker",
+            "backlog fail-closes on the missing reviewed graph with exact planning remediation",
         ]
     if case_id == "self-hosting-goal-root-parity":
         return [
-            "WI, capability, and backlog roots share the same self-hosting policy",
-            "admission rejects before loop-state dispatch",
-        ]
-    if case_id == "self-hosting-health-policy":
-        policy = snapshot["wi"]
-        assert policy["hard_gates"] == [
-            "capability_work_root_alignment",
-            "closing_work_item_and_td_refs",
-            "configured_ec_claim_verification",
-        ]
-        assert policy["advisory_axes"]
-        return [
-            "self-hosting policy pins its ordered hard gates and advisory axes",
-            "root_runner_allowed remains false and no aw goal remediation is emitted",
+            "WI, capability, and backlog roots share normal lifecycle admission",
+            "no root returns the retired self-hosting policy envelope",
         ]
     if case_id == "self-hosting-identity-stability":
         return [
-            "malformed self-hosted WI identity returns a process error",
-            "failed identity resolution leaves the fixture tree unchanged",
+            "malformed self-hosted WI state returns a normal blocked envelope",
+            "failed identity resolution leaves repository and runtime state unchanged",
         ]
     if case_id == "self-hosting-wi-admission":
-        assert snapshot["wi"]["root"]["kind"] == "wi"
+        wi = snapshot["wi"]
+        assert wi["status"] == "continue"
+        assert wi["action"] == "dispatch"
+        assert wi["root"] == {
+            "kind": "change",
+            "id": snapshot["slug"],
+        }
+        assert wi["prompt_contract"]["state"] == "ec.authoring"
+        assert (
+            wi["next"]["command"]
+            == f"aw ec check --project agentic-workflow --wi {snapshot['slug']}"
+        )
+        assert (
+            wi["next"]["reason"]
+            == "the Python artifact lifecycle starts EC-first: author external-contracts Python source, then structurally check its contract"
+        )
         return [
-            "self-hosted WI root emits policy before dispatch",
-            "the envelope exposes no invoke command and causes no repository mutation",
+            "self-hosted WI root enters the normal EC-first lifecycle",
+            "the envelope dispatches the exact project-and-WI-scoped EC check",
         ]
     return [
-        "self-hosted WI admission remains outside the EC-TD-CB child loop",
-        "the policy names focused artifacts and health as the sanctioned continuation",
+        "self-hosted WI admission enters the EC-TD-CB child loop",
+        "normal lifecycle gates remain fail-closed",
     ]

@@ -2273,9 +2273,9 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in project.rs is hand-written pending codegen support">
-/// Self-AW health remains a read-only policy report. Agentic Workflow repairs
-/// use the sanctioned direct-commit path because requiring a potentially
-/// broken lifecycle to repair itself would deadlock self-hosting.
+/// Self-AW health remains a read-only policy report. Agentic Workflow dogfoods
+/// its Python-first roots; bounded direct repair is reserved for the exact
+/// worker verb that is broken, rather than being the default admission path.
 fn add_self_hosting_policy_fields(
     report: &ProjectHealthReport,
     mut summary: serde_json::Value,
@@ -2296,11 +2296,19 @@ fn add_self_hosting_policy_fields(
     );
     object.insert(
         "root_runner_allowed".to_string(),
-        serde_json::Value::Bool(false),
+        serde_json::Value::Bool(true),
     );
     object.insert(
         "direct_repair_default".to_string(),
-        serde_json::Value::Bool(true),
+        serde_json::Value::Bool(false),
+    );
+    object.insert(
+        "direct_repair_fallback".to_string(),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_FALLBACK_MODE.to_string()),
+    );
+    object.insert(
+        "fallback_trigger".to_string(),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_FALLBACK_TRIGGER.to_string()),
     );
     object.insert(
         "hard_gates".to_string(),
@@ -5185,6 +5193,19 @@ mod tests {
         let full = project_health_summary(&report);
         assert_eq!(full["axes"]["meta"]["clean"], true);
         assert_eq!(full["axes"]["meta"]["coverage_percent"], 100);
+    }
+
+    #[test]
+    fn self_hosting_health_allows_python_roots_and_scopes_direct_repair_to_fallback() {
+        let report = ready_project_health_report("agentic-workflow");
+        let summary = project_health_summary(&report);
+
+        assert_eq!(summary["policy_mode"], "python_first_lifecycle");
+        assert_eq!(summary["root_runner_allowed"], true);
+        assert_eq!(summary["direct_repair_default"], false);
+        assert_eq!(summary["direct_repair_fallback"], "bounded_direct_repair");
+        assert_eq!(summary["fallback_trigger"], "current_worker_verb_broken");
+        assert_eq!(summary["required_trailer"], "Refs #<issue>");
     }
 
     #[test]

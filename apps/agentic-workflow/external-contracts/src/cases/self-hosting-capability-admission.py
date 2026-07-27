@@ -6,7 +6,7 @@ USE_CASE_ID = "self-hosting-root-runner-policy"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
-ASSERTIONS = ('project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit', 'the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical')
+ASSERTIONS = ('capability dispatches the exact EC structural worker', 'backlog fail-closes on the missing reviewed graph with exact planning remediation')
 
 
 def verify() -> list[str]:

@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:c567f445d56d5962318488b1f527636f12984a7e17cea20b9ce0c30d0b936e46",
+  "source_digest": "sha256:b74d294fb37e48a05750dd23ba14c45460422b1931af1b7318cd9b4fe158c5c5",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T06:34:19.559262+00:00",
-  "summary": "Accepted after independent review of WI #2712 at digest sha256:c567f445d56d5962318488b1f527636f12984a7e17cea20b9ce0c30d0b936e46. The new python-ec-only-authoring behavior case is fully projected into the canonical inventory and capability contract, uses a hand-authored black-box oracle, and directly drives a legacy-configured temporary project through Python-only EC help/orientation, draft, structural check, independent agent review, lock, and verification while proving retired fill/gen commands fail and no Markdown artifact is created. Its direct verifier completed successfully. The resulting 45-case inventory covers 29 behavior, 8 efficiency, and 8 stability cases; all 75 Rust invariants remain source-owned outside the Python inventory. EC check, inventory parity, claim reconciliation, migration baseline/policy/guidance/retired-tree, and negative reconciliation tests are clean with zero Cargo-test delegation, legacy test_path, synthetic claim cases, or surviving legacy app-test files.",
+  "reviewed_at": "2026-07-27T08:57:04.617220+00:00",
+  "summary": "Accepted. The native Python EC inventory exercises the complete `self-hosting-root-runner-policy` claim through independent public fixtures: WI and capability roots dispatch exact EC-first workers, backlog admission fails closed with exact reviewed-graph planning remediation, malformed identity is mutation-free, repeated admission is byte-stable, and public health exposes the exact self-hosting-only bounded-repair policy while a non-self-hosting control exposes none of its fields. Structural, inventory, claim, migration-cluster, and retired-tree reconciliation guards are clean.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

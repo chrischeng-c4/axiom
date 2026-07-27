@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T06:34:19.663079+00:00"
-ir_digest = "sha256:d6e3fc85319a552e7cdb3b650d13fbdc7d3982d9956e7563b2dd8a17d8d3492f"
-source_digest = "sha256:6e10750d38dd92b88ec647b6d79ea007fafe5a3f2bfceab94fb19dbb5f5f2b59"
+generated_at = "2026-07-27T08:50:22.049270+00:00"
+ir_digest = "sha256:cdd510babb44fb7a6f62309bf7a2057444d26e357c06cc2058f71c469a3af4ba"
+source_digest = "sha256:3af17eb8f546b3f0df0e6ee0736d1a789db4e522280e5f557f9007135eb3ba76"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:e7e7a1d3a89f7d3eef9aa8c72bc9d19ef406d100a757e47d3e7c44e63e27191d"
+digest = "sha256:2084fd731b1a1801d30b14a65c9d011806380eed47217535bc59800e56811ef5"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -82,19 +82,23 @@ digest = "sha256:005bf721f757c81955d3a1cbfd3144280aa34ba702dbec911e1e23d3ff5f47a
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
-digest = "sha256:9eeef97ce5d83dbc41a682368360ca1542b3c135cf59d5bdee9762afabe53477"
+digest = "sha256:494da34273e75538163cd47d3d2cf3b4a7ce6608464cd6f9302844b4d2346fc1"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-capability-admission.py"
-digest = "sha256:c023445a0e0b444d6b578252be65d995ec9fe787b9c528ca472d8b14dd8a41a4"
+digest = "sha256:95b45d566564f2aa078f8365e2d3f1ed750f5dad6557f0f3ba8ed72cb78a0b20"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-health-policy.py"
+digest = "sha256:ab5cc6dcf18f2568ea7d6701822e9bea666dda97cb99062a567d59965d109f3d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-identity-stability.py"
-digest = "sha256:642df3206e5a5d1980bcb51790430ec8ad0a24c8a5b706bcf8305f52857b020e"
+digest = "sha256:970122b4fb265a01449df3a9420fa4b7cdca6113447a4322259920333ce1ffb6"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-wi-admission.py"
-digest = "sha256:68f9306c51580e193ce53d2014536737c6f7ed57e4577ce98001393280478efd"
+digest = "sha256:ad2a148120577ae5732d8dd2e03a86a86d3b90821ac533c4521fc1276c6623f2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/shared-cli-issue-report-intake.py"
@@ -234,7 +238,7 @@ digest = "sha256:f0bb6f46004459c52eafb00d5e8c1b9cdeac1d33cf3e5a571790a0046c6ccaa
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py"
-digest = "sha256:1073d7079588f12be02784ed7150bd78034be5df3da80c3b8b3dec975405e824"
+digest = "sha256:d543a8477b45bee3c6e3c3256925f36f4de0ea56b1b6af5e06c2c837d8a287a0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py"
@@ -629,15 +633,15 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bou
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-bounded-admission"
 required_for_production = true
 assertions = [
-    "backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical",
+    "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
     "artifact: artifact:agentic-workflow/self-hosting-bounded-admission",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
-    "threshold: backlog admission succeeds without a reviewed graph and never creates backlog state; repeated invocations emit byte-identical envelopes and leave both the repository tree and sentinel-seeded resolved runtime workspace byte-identical",
+    "oracle: A local fixture with no reviewed graph independently requires the public backlog root to emit planning remediation; repeated public WI envelopes and filesystem digests prove bounded admission.",
+    "threshold: backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
     "target: rust",
 ]
-evidence_digest = "sha256:7daf969984c7e5675aa4856cefe546c5d04172f019a937bf6419f4de7f565069"
+evidence_digest = "sha256:757a27c0098bcc389ba3befd3d96b9160d4c303ae95452338cec334f05595169"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3a9f65c27a0616aae747f37ed93e67b687bc814df9f297cb73505d8e22c1e915"
+digest = "sha256:0b30ee6a4db2b45e7aaaccece8a3f289e1e8a9e5bee5d3b126f30a5a24d94d06"
 
 [[cases]]
 id = "self-hosting-capability-admission"
@@ -650,14 +654,34 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-cap
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 required_for_production = true
 assertions = [
-    "project, capability, and backlog roots emit action self_hosting_policy and policy_mode sanctioned_direct_commit; the envelopes expose no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
+    "capability admission dispatches the exact EC structural worker; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation",
     "artifact: artifact:agentic-workflow/self-hosting-capability-admission",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: The canonical capability document independently requires an EC check, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons.",
     "target: rust",
 ]
-evidence_digest = "sha256:64a22fde7c06dcc44552f00b9514ff0e6507e9886fedc5d0fc28f92193e28556"
+evidence_digest = "sha256:9041873b3ed34f4e84783d9ab62cf204bd0c74edf714348ec198ad110a4425e1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3a9127667061d8b0bf263f91ada2a4c136e333b592e58d379610f1d4a7b50ad4"
+digest = "sha256:fc222f1987ed3fb13e2cdf40b792b979cd5bd54a788ce6865590127470baa817"
+
+[[cases]]
+id = "self-hosting-health-policy"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-health-policy"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:self-hosting-health-policy"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-health-policy.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-health-policy"
+required_for_production = true
+assertions = [
+    "public AW health declares Python-first root admission and limits bounded direct repair to a self-hosting-only fallback for a broken current worker verb",
+    "artifact: artifact:agentic-workflow/self-hosting-health-policy",
+    "oracle: Independent self-hosting and non-self-hosting fixtures invoke the public health command; the self-hosting result must expose every exact policy field while the control must expose none of them.",
+    "target: rust",
+]
+evidence_digest = "sha256:b84b2229ba14143089eff46cfb5978bef27959aa70fa5ae6ea0a9140eb6150f0"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c73add08f90deefbe5af59e2e0e47b05008c4cbf9623e022f0e31d727b8ba724"
 
 [[cases]]
 id = "self-hosting-identity-stability"
@@ -670,15 +694,15 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-ide
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-identity-stability"
 required_for_production = true
 assertions = [
-    "a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical",
+    "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
     "artifact: artifact:agentic-workflow/self-hosting-identity-stability",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
-    "threshold: a malformed self-hosting WI identity returns a process error instead of entering the root runner; the failed resolution creates no loop state and leaves both the repository tree and resolved runtime workspace byte-identical",
+    "oracle: The verifier corrupts local WI frontmatter after a valid admission snapshot and compares repository/runtime digests around the public CLI call.",
+    "threshold: a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
     "target: rust",
 ]
-evidence_digest = "sha256:1be6b58b8a1e9ad3281ed8dc11a43bb7e50bd931f2d9ef3a2900538fdf54417e"
+evidence_digest = "sha256:72843a95e598b8220e9eefed3aeb8cceb26bbfdce6c0f6043ac4b22a30cc233f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9c34c8642a12bb6b0de0a0a2de60f3cf8683b73f93d12477895cf4e1608bbfd5"
+digest = "sha256:6bf1cd710f0cbdc9b33b2f2286d455b466e30ca261e06739da9d4c8afeca6899"
 
 [[cases]]
 id = "self-hosting-wi-admission"
@@ -691,14 +715,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-wi-
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-wi-admission"
 required_for_production = true
 assertions = [
-    "the WI root emits action self_hosting_policy before loop state or dispatch; the envelope exposes no invoke command and both the repository tree and resolved runtime workspace remain byte-identical",
+    "the self-hosted WI root enters EC authoring and dispatches the exact project-and-WI-scoped EC check as its first worker command",
     "artifact: artifact:agentic-workflow/self-hosting-wi-admission",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: A valid local AW-owned change with no lifecycle phase independently requires the public WI root to emit the exact EC-first action, state, reason, and command.",
     "target: rust",
 ]
-evidence_digest = "sha256:16124498d7452d1a62051a25599d755fff01923fef9817edb02ae922d47863ad"
+evidence_digest = "sha256:0d4c82f140f915ec8526408dd45263c78b1053f163a4ce929e2154aa66e10297"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dd511bd9f9b9b5a727323fed96494f654d984df21973cb9e5587df6ce43c8279"
+digest = "sha256:404fdd387986cae4bdbc5e7b60d9787b7317060faaa47008fd4f11382fc69dc2"
 
 [[cases]]
 id = "shared-cli-issue-report-intake"

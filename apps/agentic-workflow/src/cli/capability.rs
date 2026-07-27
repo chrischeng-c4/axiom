@@ -5410,18 +5410,6 @@ fn upsert_capability_field_in_contract_table(
 }
 
 pub(crate) async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
-    if crate::cli::run::is_self_hosting_project(project) {
-        return crate::cli::run::emit_self_hosting_policy_error(
-            project,
-            "project",
-            project,
-            crate::cli::run::RunPrintOptions {
-                human: args.human,
-                pretty: args.pretty,
-                goal: false,
-            },
-        );
-    }
     if !args.non_interactive {
         anyhow::bail!("aw goal capability requires --non-interactive");
     }

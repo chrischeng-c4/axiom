@@ -31,7 +31,7 @@ capability_refs:
     gap: self-hosting-root-runner-policy
     claim: self-hosting-root-runner-policy
     coverage: full
-    rationale: "Runner admission rejects Agentic Workflow's own project, capability, and WI roots before mutation, while self-health exposes the sanctioned direct-commit gate partition."
+    rationale: "Runner admission lets Agentic Workflow dogfood its own Python-first project, capability, backlog, and WI roots while self-health exposes the bounded broken-worker fallback."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -1315,15 +1315,6 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
-          - name: "SelfHostingPolicyEnvelope"
-            kind: "struct"
-            public: false
-          - name: "self_hosting_policy_envelope"
-            kind: "function"
-            public: false
-          - name: "emit_self_hosting_policy_error"
-            kind: "function"
-            public: true
           - name: "RunPrintOptions"
             kind: "struct"
             public: true
@@ -4602,9 +4593,9 @@ changes:
       command. Lifecycle state and non-graph metadata may advance normally.
       `probe_wi_root_envelope` builds the same `ResolvedRunRoot::Wi`
       envelope `aw goal wi <id>` would emit, with progress streaming
-      disabled (a silent probe, not a real tick). `run_backlog_root`:
-      short-circuits self-hosting projects via
-      `emit_self_hosting_policy_error`; drops parked entries whose change
+      disabled (a silent probe, not a real tick). `run_backlog_root` admits
+      self-hosting through the same reviewed-graph path as every other project,
+      then drops parked entries whose change
       closed since the last drain; asks the shared selector for one ready
       leaf, probes it, parks (never emits) any leaf that reports
       `requires_hitl`/`action == "blocked"`, and reselects so a blocked
@@ -4628,13 +4619,10 @@ changes:
     action: modify
     section: unit-test
     description: |
-      #1899 assertion repair: `self_hosting_policy_envelope_is_terminal_
-      and_has_no_root_retry` previously banned the substring `aw goal
-      capability` anywhere in the serialized policy envelope, which the
-      post-retirement policy prose legitimately names. The gate is now
-      structural: a recursive `has_command_key` walk asserts no `command`
-      key exists anywhere in the envelope JSON, so no executable root
-      retry can be handed back while prose may reference the goal forms.
+      #2446 replaces the terminal self-hosting policy envelope with normal
+      Python-first root admission. Focused invariants pin the policy mode,
+      enabled root runner, non-default bounded fallback, and exact
+      current-worker failure trigger.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/llm.rs"
     action: modify

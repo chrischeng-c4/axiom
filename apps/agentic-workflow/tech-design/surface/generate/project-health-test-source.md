@@ -1147,7 +1147,14 @@ fn project_health_next_command_stays_off_verify_ec_for_self_health_without_confi
     let summary = project_health_summary(&report);
 
     assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("advisory"));
-    assert_eq!(summary["policy_mode"], "sanctioned_direct_commit");
+    assert_eq!(summary["policy_mode"], "python_first_lifecycle");
+    assert_eq!(summary["root_runner_allowed"], true);
+    assert_eq!(summary["direct_repair_default"], false);
+    assert_eq!(summary["direct_repair_fallback"], "bounded_direct_repair");
+    assert_eq!(
+        summary["fallback_trigger"],
+        "current_worker_verb_broken"
+    );
     assert!(summary["hard_gates"].as_array().is_some_and(|gates| gates
         .iter()
         .any(|gate| gate == "capability_work_root_alignment")));

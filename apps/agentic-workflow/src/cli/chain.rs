@@ -331,7 +331,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     EmitSite {
         source: "project.rs:project_health_next_command (self-hosting capability verification)",
         sample: "aw capability check --project agentic-workflow --verify",
-        note: "self-hosting health verifies capability work roots without re-entering a root runner",
+        note: "self-hosting health remains read-only while Python-first goal roots stay enabled",
     },
     EmitSite {
         source: "standardize.rs:takeover_audit_health_worker_command (unrecorded)",
@@ -411,15 +411,14 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "#1899: canonical `aw goal capability <capability-id> --project <project>` \
                replacement for the retired `aw capability run <capability-id> --project \
                <project>` verb (itself #917's replacement for the earlier `aw run --root \
-               capability:<project>:<id>` forms); Agentic Workflow self-hosting is \
-               rejected at admission",
+               capability:<project>:<id>` forms); Agentic Workflow uses the same \
+               Python-first admission",
     },
     EmitSite {
         source: "run.rs:project_capability_rollup_command",
-        sample: "aw health --project agentic-workflow claims",
-        note: "self-hosting rollup is a read-only health inspection; other projects use the \
-               project-scoped `aw goal capability --project <project> --non-interactive \
-               --max-ticks 1` rollup form (#1899)",
+        sample: "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1",
+        note: "self-hosting and ordinary projects use the same project-scoped \
+               Python-first capability rollup form (#1899, #2446)",
     },
     EmitSite {
         source: "cb.rs:bare_code_check_guidance_envelope",
@@ -1825,6 +1824,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn self_hosting_project_rollup_emit_is_chain_valid() {
+        assert!(validate_aw_command_string(
+            "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1"
+        )
+        .is_ok());
     }
 
     // #844: the exact bug — bare `aw td code-check` passes clap but is
