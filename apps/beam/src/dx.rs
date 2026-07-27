@@ -107,14 +107,9 @@ pub fn render_crd_yaml() -> String {
 }
 
 pub fn render_operator_yaml(namespace: &str) -> String {
-    let rbac = replace_operator_namespace(
-        include_str!("../k8s/operator/rbac.yaml"),
-        namespace,
-    );
-    let deploy = replace_operator_namespace(
-        include_str!("../k8s/operator/deployment.yaml"),
-        namespace,
-    );
+    let rbac = replace_operator_namespace(include_str!("../k8s/operator/rbac.yaml"), namespace);
+    let deploy =
+        replace_operator_namespace(include_str!("../k8s/operator/deployment.yaml"), namespace);
     let mut out = String::new();
     out.push_str(&rbac);
     out.push_str("\n---\n");

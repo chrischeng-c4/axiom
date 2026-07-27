@@ -17,9 +17,9 @@
 //! in here too — at the cost of the GPU story, which is the whole point of
 //! *not* taking that path on Apple Silicon.
 
+pub mod microvm;
 pub mod process;
 pub mod seatbelt;
-pub mod microvm;
 
 use std::path::Path;
 

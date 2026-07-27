@@ -20,7 +20,7 @@ use std::process::{Child, ChildStderr, ChildStdout, Command, ExitCode, ExitStatu
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 /// Short, stable command corpus surfaced by `docker --help` when the shim is
 /// installed.  Keep this list narrow: it is a promise that each verb is
@@ -784,7 +784,10 @@ fn fresh_docker_run_json_ownership() -> Result<DockerRunJsonOwnership> {
         anyhow::anyhow!("read OS CSPRNG for docker run JSON owner identity: {error}")
     })?;
     Ok(DockerRunJsonOwnership {
-        name: format!("vat-docker-run-{}", hex_encode(&bytes[..DOCKER_RUN_OWNER_TOKEN_BYTES])),
+        name: format!(
+            "vat-docker-run-{}",
+            hex_encode(&bytes[..DOCKER_RUN_OWNER_TOKEN_BYTES])
+        ),
         token: format!(
             "vat-run-{}",
             hex_encode(&bytes[DOCKER_RUN_OWNER_TOKEN_BYTES..])
@@ -1820,9 +1823,9 @@ fn parse_docker_logs_json_tail(value: &str) -> Result<usize> {
             "VAT's docker logs JSON snapshot --tail requires a positive whole decimal line count"
         );
     }
-    let tail_lines = value.parse::<usize>().with_context(
-        || "VAT's docker logs JSON snapshot --tail requires a positive whole line count",
-    )?;
+    let tail_lines = value.parse::<usize>().with_context(|| {
+        "VAT's docker logs JSON snapshot --tail requires a positive whole line count"
+    })?;
     if !(1..=MAX_DOCKER_LOGS_JSON_TAIL_LINES).contains(&tail_lines) {
         bail!(
             "VAT's docker logs JSON snapshot --tail must be between 1 and {MAX_DOCKER_LOGS_JSON_TAIL_LINES} lines"
@@ -2030,9 +2033,9 @@ fn parse_docker_exec_json_timeout(value: &str) -> Result<u64> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         bail!("VAT's docker exec JSON snapshot --timeout requires positive whole decimal seconds");
     }
-    let timeout_seconds = value.parse::<u64>().with_context(
-        || "VAT's docker exec JSON snapshot --timeout requires positive whole decimal seconds",
-    )?;
+    let timeout_seconds = value.parse::<u64>().with_context(|| {
+        "VAT's docker exec JSON snapshot --timeout requires positive whole decimal seconds"
+    })?;
     if !(1..=MAX_DOCKER_EXEC_JSON_TIMEOUT_SECONDS).contains(&timeout_seconds) {
         bail!(
             "VAT's docker exec JSON snapshot --timeout must be between 1 and {MAX_DOCKER_EXEC_JSON_TIMEOUT_SECONDS} seconds"
@@ -2214,9 +2217,9 @@ fn parse_docker_run_json_timeout(value: &str) -> Result<u64> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         bail!("VAT's docker run JSON one-shot --timeout requires positive whole decimal seconds");
     }
-    let timeout_seconds = value.parse::<u64>().with_context(
-        || "VAT's docker run JSON one-shot --timeout requires positive whole decimal seconds",
-    )?;
+    let timeout_seconds = value.parse::<u64>().with_context(|| {
+        "VAT's docker run JSON one-shot --timeout requires positive whole decimal seconds"
+    })?;
     if !(1..=MAX_DOCKER_RUN_JSON_TIMEOUT_SECONDS).contains(&timeout_seconds) {
         bail!(
             "VAT's docker run JSON one-shot --timeout must be between 1 and {MAX_DOCKER_RUN_JSON_TIMEOUT_SECONDS} seconds"
@@ -2402,7 +2405,9 @@ fn validate_docker_pull_json_image_reference(image_reference: &str) -> Result<()
 /// Identify only direct `docker build` requests that explicitly opt into the
 /// bounded receipt grammar. Raw Docker-build translations without either
 /// selector continue unchanged through the generic translator below.
-fn docker_build_json_request_from_argv(args: &[OsString]) -> Result<Option<DockerBuildJsonRequest>> {
+fn docker_build_json_request_from_argv(
+    args: &[OsString],
+) -> Result<Option<DockerBuildJsonRequest>> {
     let args = utf8_args(args)?;
     let Some((verb, build_args)) = args.split_first() else {
         return Ok(None);
@@ -2441,9 +2446,7 @@ fn parse_docker_build_json_args(args: &[String]) -> Result<DockerBuildJsonReques
                     "VAT's docker build JSON receipt requires every option before exactly one local directory CONTEXT"
                 );
             }
-            bail!(
-                "VAT's docker build JSON receipt accepts exactly one local directory CONTEXT"
-            );
+            bail!("VAT's docker build JSON receipt accepts exactly one local directory CONTEXT");
         }
 
         match argument.as_str() {
@@ -2744,9 +2747,7 @@ fn canonical_docker_build_json_context(context: &str) -> Result<String> {
     }
     let path = Path::new(context);
     if !path.is_dir() {
-        bail!(
-            "VAT's docker build JSON receipt requires one existing local directory CONTEXT"
-        );
+        bail!("VAT's docker build JSON receipt requires one existing local directory CONTEXT");
     }
     let canonical = std::fs::canonicalize(path)
         .with_context(|| "canonicalize Docker build JSON local context")?;
@@ -3552,7 +3553,9 @@ fn capture_docker_native_json_stream_with_limit(
 /// Continuously drain an arbitrary Apple Container text pipe while retaining
 /// only its newest bounded suffix. Byte and JSON-serialization caps remain
 /// necessary because command output has no bounded record shape.
-fn capture_docker_bounded_text_stream(reader: impl Read) -> Result<DockerBoundedTextCapturedStream> {
+fn capture_docker_bounded_text_stream(
+    reader: impl Read,
+) -> Result<DockerBoundedTextCapturedStream> {
     capture_docker_bounded_text_stream_with_limits(
         reader,
         MAX_DOCKER_BOUNDED_TEXT_STREAM_CAPTURE_BYTES,
@@ -3636,10 +3639,8 @@ fn cap_docker_bounded_text_json_string(
         }
     }
     let suffix = text[boundaries[lower]..].to_string();
-    debug_assert!(
-        docker_bounded_text_json_string_len(&suffix)
-            .is_ok_and(|length| length <= json_string_limit)
-    );
+    debug_assert!(docker_bounded_text_json_string_len(&suffix)
+        .is_ok_and(|length| length <= json_string_limit));
     Ok((suffix, true))
 }
 
@@ -4460,15 +4461,15 @@ fn print_compose_exec_result(project: &str, service: &str, status: &ExitStatus) 
         "failed"
     };
     print_compose_terminal_record(serde_json::json!({
-            "type": "vat_docker_compose",
-            "command": "exec",
-            "project": project,
-            "service": service,
-            "backend": "apple-container",
-            "outcome": outcome,
-            "child_exit_code": child_exit_code,
-            "next": format!("docker compose -p {project} ps"),
-        }));
+        "type": "vat_docker_compose",
+        "command": "exec",
+        "project": project,
+        "service": service,
+        "backend": "apple-container",
+        "outcome": outcome,
+        "child_exit_code": child_exit_code,
+        "next": format!("docker compose -p {project} ps"),
+    }));
 }
 
 /// Emit one bounded, VAT-native capture for an explicitly agent-facing
@@ -4925,9 +4926,9 @@ fn parse_docker_compose_up_options(remaining: &[String]) -> Result<DockerCompose
 }
 
 fn parse_docker_compose_wait_timeout(value: &str) -> Result<u64> {
-    let seconds = value.parse::<u64>().with_context(
-        || "VAT's docker compose up `--wait-timeout` requires positive integer seconds",
-    )?;
+    let seconds = value.parse::<u64>().with_context(|| {
+        "VAT's docker compose up `--wait-timeout` requires positive integer seconds"
+    })?;
     if !(1..=MAX_COMPOSE_WAIT_TIMEOUT_SECONDS).contains(&seconds) {
         bail!(
             "VAT's docker compose up `--wait-timeout` must be between 1 and {MAX_COMPOSE_WAIT_TIMEOUT_SECONDS} seconds"
@@ -6366,17 +6367,39 @@ mod tests {
             ["--format=json", "--timeout=2", "agent-web", "--"].as_slice(),
             ["--format=json", "--timeout=2", "--", "echo"].as_slice(),
             ["--format=table", "--timeout=2", "agent-web", "--", "echo"].as_slice(),
-            ["--format=json", "--format=json", "--timeout=2", "agent-web", "--", "echo"]
-                .as_slice(),
-            ["--format=json", "--timeout=2", "--timeout=3", "agent-web", "--", "echo"]
-                .as_slice(),
+            [
+                "--format=json",
+                "--format=json",
+                "--timeout=2",
+                "agent-web",
+                "--",
+                "echo",
+            ]
+            .as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "--timeout=3",
+                "agent-web",
+                "--",
+                "echo",
+            ]
+            .as_slice(),
             ["--format=json", "--timeout=0", "agent-web", "--", "echo"].as_slice(),
             ["--format=json", "--timeout=1201", "agent-web", "--", "echo"].as_slice(),
             ["--format=json", "--timeout=+2", "agent-web", "--", "echo"].as_slice(),
             ["--format=json", "--timeout=2", "agent-web", "echo"].as_slice(),
             ["--format=json", "--timeout=2", "agent/web", "--", "echo"].as_slice(),
             ["--format=json", "--timeout=2", "-agent-web", "--", "echo"].as_slice(),
-            ["--format=json", "--timeout=2", "agent-web", "-i", "--", "echo"].as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "agent-web",
+                "-i",
+                "--",
+                "echo",
+            ]
+            .as_slice(),
         ] {
             assert!(
                 parse(values).is_err(),
@@ -6471,8 +6494,16 @@ mod tests {
                 "json",
             ]
             .as_slice(),
-            ["image", "exec", "--format=json", "--timeout=2", "agent-web", "--", "echo"]
-                .as_slice(),
+            [
+                "image",
+                "exec",
+                "--format=json",
+                "--timeout=2",
+                "agent-web",
+                "--",
+                "echo",
+            ]
+            .as_slice(),
         ] {
             assert!(
                 docker_exec_json_request_from_argv(&args(values))
@@ -6539,7 +6570,10 @@ mod tests {
             Some("vat.docker.exec.v1")
         );
         assert_eq!(result.get("format"), Some(&serde_json::json!("vat_json")));
-        assert_eq!(result.get("container"), Some(&serde_json::json!("agent-web")));
+        assert_eq!(
+            result.get("container"),
+            Some(&serde_json::json!("agent-web"))
+        );
         assert_eq!(
             result.get("requested_timeout_seconds"),
             Some(&serde_json::json!(17))
@@ -6554,8 +6588,14 @@ mod tests {
             result.get("stdout"),
             Some(&serde_json::json!("untrusted command output"))
         );
-        assert_eq!(result.get("stdout_truncated"), Some(&serde_json::json!(true)));
-        assert_eq!(result.get("stdout_utf8_lossy"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            result.get("stdout_truncated"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            result.get("stdout_utf8_lossy"),
+            Some(&serde_json::json!(true))
+        );
         assert_eq!(
             result.get("stderr"),
             Some(&serde_json::json!("backend diagnostic"))
@@ -6645,15 +6685,16 @@ mod tests {
                 "https://registry.example/agent:latest",
             ]
             .as_slice(),
+            ["--format=json", "--timeout=2", "git@registry.example:agent"].as_slice(),
+            ["agent:latest", "--format=json", "--timeout=2"].as_slice(),
+            ["--format=json", "agent:latest", "--timeout=2"].as_slice(),
             [
                 "--format=json",
                 "--timeout=2",
-                "git@registry.example:agent",
+                "agent:latest",
+                "other:latest",
             ]
             .as_slice(),
-            ["agent:latest", "--format=json", "--timeout=2"].as_slice(),
-            ["--format=json", "agent:latest", "--timeout=2"].as_slice(),
-            ["--format=json", "--timeout=2", "agent:latest", "other:latest"].as_slice(),
         ] {
             assert!(
                 parse(values).is_err(),
@@ -6686,7 +6727,14 @@ mod tests {
         for values in [
             ["pull", "agent:latest"].as_slice(),
             ["image", "pull", "agent:latest"].as_slice(),
-            ["image", "pull", "--format=json", "--timeout=2", "agent:latest"].as_slice(),
+            [
+                "image",
+                "pull",
+                "--format=json",
+                "--timeout=2",
+                "agent:latest",
+            ]
+            .as_slice(),
         ] {
             assert!(
                 docker_pull_json_request_from_argv(&args(values))
@@ -6748,10 +6796,16 @@ mod tests {
         assert_eq!(success_result["format"], "vat_json");
         assert_eq!(success_result["image"], "agent's-image:latest");
         assert_eq!(success_result["requested_timeout_seconds"], 17);
-        assert_eq!(success_result["timeout_scope"], "host-container-client-observation");
+        assert_eq!(
+            success_result["timeout_scope"],
+            "host-container-client-observation"
+        );
         assert_eq!(success_result["stdout_truncated"], true);
         assert_eq!(success_result["stdout_utf8_lossy"], true);
-        assert_eq!(success_result["image_lifecycle"], "not_owned_no_auto_cleanup");
+        assert_eq!(
+            success_result["image_lifecycle"],
+            "not_owned_no_auto_cleanup"
+        );
         assert_eq!(success_result["registry_management_implemented"], false);
         assert_eq!(success_result["image_state_verified"], false);
         assert_eq!(success_result["secret_redaction_guaranteed"], false);
@@ -6759,8 +6813,7 @@ mod tests {
         assert_eq!(success_result["download_completion_guaranteed"], false);
         assert_eq!(success_result["rollback_guaranteed"], false);
         assert_eq!(
-            success_result["next"],
-            "docker image inspect --format json 'agent'\\''s-image:latest'",
+            success_result["next"], "docker image inspect --format json 'agent'\\''s-image:latest'",
             "success handoff must quote the image as one shell argv element"
         );
 
@@ -6863,7 +6916,12 @@ mod tests {
             .to_string();
         let invalid_cases = vec![
             vec!["--format=json", "--timeout=2", "--tag=agent:latest"],
-            vec!["--format=table", "--timeout=2", "--tag=agent:latest", &context],
+            vec![
+                "--format=table",
+                "--timeout=2",
+                "--tag=agent:latest",
+                &context,
+            ],
             vec![
                 "--format=json",
                 "--format=json",
@@ -7157,16 +7215,21 @@ mod tests {
         assert_eq!(success_result["context"], "/private/tmp/vat-build-context");
         assert_eq!(success_result["dockerfile"], "Dockerfile.agent");
         assert_eq!(success_result["requested_timeout_seconds"], 17);
-        assert_eq!(success_result["timeout_scope"], "host-container-client-observation");
+        assert_eq!(
+            success_result["timeout_scope"],
+            "host-container-client-observation"
+        );
         assert_eq!(success_result["stdout_truncated"], true);
         assert_eq!(success_result["stdout_utf8_lossy"], true);
-        assert_eq!(success_result["image_lifecycle"], "retained_no_auto_cleanup");
+        assert_eq!(
+            success_result["image_lifecycle"],
+            "retained_no_auto_cleanup"
+        );
         assert_eq!(success_result["secret_redaction_guaranteed"], false);
         assert_eq!(success_result["cancellation_guaranteed"], false);
         assert_eq!(success_result["rollback_guaranteed"], false);
         assert_eq!(
-            success_result["next"],
-            "docker image inspect --format json 'agent'\\''s-image:latest'",
+            success_result["next"], "docker image inspect --format json 'agent'\\''s-image:latest'",
             "success handoff must quote the tag as one shell argv element"
         );
 
@@ -7238,10 +7301,38 @@ mod tests {
             ["--format=json", "--timeout=0", "agent:latest"].as_slice(),
             ["--format=json", "--timeout=1201", "agent:latest"].as_slice(),
             ["--format=json", "--timeout=2", "--detach", "agent:latest"].as_slice(),
-            ["--format=json", "--timeout=2", "--name", "caller", "agent:latest"].as_slice(),
-            ["--format=json", "--timeout=2", "--label", "caller=x", "agent:latest"].as_slice(),
-            ["--format=json", "--timeout=2", "--publish", "8080:80", "agent:latest"].as_slice(),
-            ["--format=json", "--timeout=2", "--env", "A=B", "agent:latest"].as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "--name",
+                "caller",
+                "agent:latest",
+            ]
+            .as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "--label",
+                "caller=x",
+                "agent:latest",
+            ]
+            .as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "--publish",
+                "8080:80",
+                "agent:latest",
+            ]
+            .as_slice(),
+            [
+                "--format=json",
+                "--timeout=2",
+                "--env",
+                "A=B",
+                "agent:latest",
+            ]
+            .as_slice(),
             ["--format=json", "--timeout=2", "--", "agent:latest"].as_slice(),
             [
                 "--format=json",
@@ -7271,15 +7362,7 @@ mod tests {
                 "fixture-command",
             ]
             .as_slice(),
-            [
-                "run",
-                "--timeout",
-                "17",
-                "--format",
-                "json",
-                "agent:latest",
-            ]
-            .as_slice(),
+            ["run", "--timeout", "17", "--format", "json", "agent:latest"].as_slice(),
         ] {
             assert!(
                 docker_run_json_request_from_argv(&args(values))
@@ -7290,7 +7373,14 @@ mod tests {
         }
         for values in [
             ["run", "agent:latest", "fixture-command", "--format=json"].as_slice(),
-            ["container", "run", "--format=json", "--timeout=17", "agent:latest"].as_slice(),
+            [
+                "container",
+                "run",
+                "--format=json",
+                "--timeout=17",
+                "agent:latest",
+            ]
+            .as_slice(),
             ["create", "--format=json", "--timeout=17", "agent:latest"].as_slice(),
         ] {
             assert!(
@@ -7339,13 +7429,25 @@ mod tests {
             },
         };
         let result = docker_run_json_result(&request, &ownership, &observation);
-        assert_eq!(result.get("schema"), Some(&serde_json::json!("vat.docker.run.v1")));
+        assert_eq!(
+            result.get("schema"),
+            Some(&serde_json::json!("vat.docker.run.v1"))
+        );
         assert_eq!(result.get("format"), Some(&serde_json::json!("vat_json")));
-        assert_eq!(result.get("generated_container_name"), Some(&serde_json::json!(ownership.name)));
+        assert_eq!(
+            result.get("generated_container_name"),
+            Some(&serde_json::json!(ownership.name))
+        );
         assert_eq!(result.get("outcome"), Some(&serde_json::json!("failed")));
         assert_eq!(result.get("child_exit_code"), Some(&serde_json::json!(43)));
-        assert_eq!(result.get("cleanup"), Some(&serde_json::json!("confirmed_absent")));
-        assert_eq!(result.get("terminal"), Some(&serde_json::json!("cleaned_up")));
+        assert_eq!(
+            result.get("cleanup"),
+            Some(&serde_json::json!("confirmed_absent"))
+        );
+        assert_eq!(
+            result.get("terminal"),
+            Some(&serde_json::json!("cleaned_up"))
+        );
         assert!(
             !result.to_string().contains(&ownership.token),
             "the owner token must not leak into the agent wrapper"
@@ -8005,22 +8107,18 @@ mod tests {
         assert!(publish.to_string().contains("explicit host port"));
 
         let engine = translate(&args(&["info"])).expect_err("Engine command must fail");
-        assert!(
-            engine
-                .to_string()
-                .contains("unsupported Docker command `info`")
-        );
+        assert!(engine
+            .to_string()
+            .contains("unsupported Docker command `info`"));
     }
 
     #[test]
     fn rejects_docker_only_network_modes_and_format_flags() {
         let network = translate(&args(&["run", "--network", "host", "nginx:alpine"]))
             .expect_err("host network must fail");
-        assert!(
-            network
-                .to_string()
-                .contains("unsupported Docker network `host`")
-        );
+        assert!(network
+            .to_string()
+            .contains("unsupported Docker network `host`"));
 
         let format =
             translate(&args(&["ps", "--format", "{{.ID}}"])).expect_err("template must fail");
@@ -8643,7 +8741,8 @@ mod tests {
             "help must disclose the VAT wrapper, untrusted content, and non-claim boundaries"
         );
         assert!(
-            STRICT_EXEC_HELP.contains("docker exec --format json --timeout SECONDS CONTAINER -- COMMAND")
+            STRICT_EXEC_HELP
+                .contains("docker exec --format json --timeout SECONDS CONTAINER -- COMMAND")
                 && STRICT_EXEC_HELP.contains("docker container exec")
                 && STRICT_EXEC_HELP.contains("stripped after validation")
                 && STRICT_EXEC_HELP.contains("container exec CONTAINER COMMAND"),

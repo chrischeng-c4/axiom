@@ -1,10 +1,10 @@
 //! Infrastructure implementation of VectorRepository.
 
+use crate::domain::ports::VectorRepository;
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::domain::ports::VectorRepository;
 
 /// Infrastructure Adapter implementing VectorRepository using Direct Offset file reading.
 pub struct IoUringVectorRepository {

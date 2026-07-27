@@ -1547,8 +1547,8 @@ fn element_to_string(
                     .unwrap_or_default();
 
                 // Comment / ProcessingInstruction nodes serialize as markers.
-                if let Some(kind) = super::super::dict_ops::dict_get_exact_str(&map, "_kind")
-                    .and_then(extract_str)
+                if let Some(kind) =
+                    super::super::dict_ops::dict_get_exact_str(&map, "_kind").and_then(extract_str)
                 {
                     let text = super::super::dict_ops::dict_get_exact_str(&map, "text")
                         .and_then(extract_str)
@@ -3312,9 +3312,7 @@ mod tests {
                 let map = lock.read().unwrap();
                 // #1631/#1028: bare `.get("tag")` misses the DictKey hash
                 // domain — use dict_get_exact_str (see test_fromstring_parses_real_xml).
-                extract_str(
-                    super::super::super::dict_ops::dict_get_exact_str(&map, "tag").unwrap(),
-                )
+                extract_str(super::super::super::dict_ops::dict_get_exact_str(&map, "tag").unwrap())
             } else {
                 None
             }

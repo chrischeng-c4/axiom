@@ -10065,9 +10065,7 @@ target = "python"
             },
             files: vec![SourceFile {
                 rel: "apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs".into(),
-                abs: PathBuf::from(
-                    "apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs",
-                ),
+                abs: PathBuf::from("apps/agentic-workflow/src/cli/td_dirty_gate_fixture.rs"),
                 language: "rust".into(),
                 markers: FileMarkers {
                     handwrite: true,

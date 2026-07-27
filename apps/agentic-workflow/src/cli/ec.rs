@@ -3216,9 +3216,11 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     // process/fs2 lease that guarded the legacy in-process terminal gate;
     // otherwise two root-runner retries can execute the same required EC
     // inventory concurrently.
-    let _python_terminal_lock = if let Some(wi) = args.wi.as_deref().filter(|_| {
-        ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1
-    }) {
+    let _python_terminal_lock = if let Some(wi) = args
+        .wi
+        .as_deref()
+        .filter(|_| ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1)
+    {
         let mut retry = format!("aw ec verify --project {}", ctx.project);
         if args.required_only {
             retry.push_str(" --required-only");

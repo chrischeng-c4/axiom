@@ -14,7 +14,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
@@ -51,12 +51,10 @@ exit 0
 }
 
 fn host_container_binary() -> PathBuf {
-    std::env::split_paths(
-        &std::env::var_os("PATH").expect("PATH is set for test process"),
-    )
-    .map(|directory| directory.join("container"))
-    .find(|candidate| candidate.is_file())
-    .expect("Apple Container CLI must be on PATH for the opted-in host E2E")
+    std::env::split_paths(&std::env::var_os("PATH").expect("PATH is set for test process"))
+        .map(|directory| directory.join("container"))
+        .find(|candidate| candidate.is_file())
+        .expect("Apple Container CLI must be on PATH for the opted-in host E2E")
 }
 
 /// Record the exact Apple argv the real E2E uses without replacing the
@@ -1297,7 +1295,10 @@ fn native_image_has_exact_owner_label(
     if images.len() != 1 {
         return false;
     }
-    let Some(variants) = images[0].get("variants").and_then(serde_json::Value::as_array) else {
+    let Some(variants) = images[0]
+        .get("variants")
+        .and_then(serde_json::Value::as_array)
+    else {
         return false;
     };
     !variants.is_empty()
@@ -1353,12 +1354,7 @@ fn real_image_has_owner_label(
 /// inspect-to-delete race remains unavoidable. The caller first uses a
 /// high-entropy tag and exact absence proof; immediately before delete this
 /// function rechecks every native image variant and leaks on all ambiguity.
-fn delete_real_owned_image(
-    container_binary: &Path,
-    tag: &str,
-    label: &str,
-    token: &str,
-) -> bool {
+fn delete_real_owned_image(container_binary: &Path, tag: &str, label: &str, token: &str) -> bool {
     if !real_image_has_owner_label(container_binary, tag, label, token) {
         return false;
     }
@@ -1937,13 +1933,14 @@ fn docker_stats_replays_one_valid_apple_native_json_document_with_canonical_runt
         b"{\"samples\":[{\"id\":\"agent-web\",\"cpuUsageUsec\":17,\"memoryUsageBytes\":42}]}\n",
         "the public result must remain exactly Apple Container's JSON, not a VAT wrapper"
     );
-    assert!(output.stderr.is_empty(), "unexpected stats stderr: {}", output_text(&output));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stats stderr: {}",
+        output_text(&output)
+    );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("validated Apple stats JSON");
-    assert_eq!(
-        parsed["samples"][0]["id"],
-        serde_json::json!("agent-web")
-    );
+    assert_eq!(parsed["samples"][0]["id"], serde_json::json!("agent-web"));
     assert_eq!(
         fs::read_to_string(&log).expect("read fake stats invocation"),
         "stats --format json --no-stream agent-web agent-db\n",
@@ -1965,10 +1962,38 @@ fn docker_stats_rejects_streaming_templates_and_unknown_flags_before_runtime() {
         ["stats", "--format", "json", "agent-web"].as_slice(),
         ["stats", "--no-stream", "agent-web"].as_slice(),
         ["stats", "--stream", "--format", "json", "agent-web"].as_slice(),
-        ["stats", "--no-stream", "--format", "{{.CPUPerc}}", "agent-web"].as_slice(),
-        ["stats", "--no-stream", "--format=json", "--all", "agent-web"].as_slice(),
-        ["stats", "--no-stream", "--format=json", "agent-web", "--all"].as_slice(),
-        ["stats", "--no-stream", "--format=json", "--format=json", "agent-web"].as_slice(),
+        [
+            "stats",
+            "--no-stream",
+            "--format",
+            "{{.CPUPerc}}",
+            "agent-web",
+        ]
+        .as_slice(),
+        [
+            "stats",
+            "--no-stream",
+            "--format=json",
+            "--all",
+            "agent-web",
+        ]
+        .as_slice(),
+        [
+            "stats",
+            "--no-stream",
+            "--format=json",
+            "agent-web",
+            "--all",
+        ]
+        .as_slice(),
+        [
+            "stats",
+            "--no-stream",
+            "--format=json",
+            "--format=json",
+            "agent-web",
+        ]
+        .as_slice(),
         ["stats", "--no-stream", "--format=json"].as_slice(),
     ] {
         let output = Command::new(&shim)
@@ -2042,7 +2067,10 @@ fn docker_stats_suppresses_malformed_child_stdout() {
         output_text(&output)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("was not one valid JSON document"), "{stderr}");
+    assert!(
+        stderr.contains("was not one valid JSON document"),
+        "{stderr}"
+    );
     assert!(
         !stderr.contains("raw-invalid-stats-marker"),
         "the malformed child stdout must stay suppressed: {stderr}"
@@ -2071,7 +2099,8 @@ fn docker_stats_suppresses_a_valid_apple_payload_that_exceeds_the_capture_limit(
         "a valid but oversized Apple payload must be suppressed rather than truncated"
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("output exceeded VAT's bounded capture limit"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("output exceeded VAT's bounded capture limit"),
         "the cap failure must remain explicit without replaying child stdout"
     );
 }
@@ -3290,10 +3319,7 @@ fn docker_exec_json_wraps_one_bounded_command_snapshot_for_direct_and_container_
         assert_eq!(result["backend"], "apple-container");
         assert_eq!(result["container"], "agent-web");
         assert_eq!(result["requested_timeout_seconds"], 2);
-        assert_eq!(
-            result["timeout_scope"],
-            "host-container-client-observation"
-        );
+        assert_eq!(result["timeout_scope"], "host-container-client-observation");
         assert_eq!(result["source"], "apple-container-exec");
         assert_eq!(result["outcome"], "completed");
         assert_eq!(result["child_exit_code"], 0);
@@ -3372,14 +3398,7 @@ fn docker_exec_json_rejects_nonexact_args_before_runtime_and_keeps_raw_commands_
             "fixture-command",
         ]
         .as_slice(),
-        [
-            "exec",
-            "--format=json",
-            "--timeout=2",
-            "agent-web",
-            "--",
-        ]
-        .as_slice(),
+        ["exec", "--format=json", "--timeout=2", "agent-web", "--"].as_slice(),
         [
             "exec",
             "-it",
@@ -3657,9 +3676,9 @@ fn docker_pull_json_emits_one_bounded_nonowning_image_receipt() {
     assert_eq!(result["rollback_guaranteed"], false);
     assert_eq!(result["untrusted_pull_output"], true);
     assert!(
-        result["stdout"]
-            .as_str()
-            .is_some_and(|value| value.contains("pull-stdout") && value.contains("invalid:\u{FFFD}")),
+        result["stdout"].as_str().is_some_and(
+            |value| value.contains("pull-stdout") && value.contains("invalid:\u{FFFD}")
+        ),
         "bounded stdout must retain fake child content: {result}"
     );
     assert_eq!(result["stdout_utf8_lossy"], true);
@@ -3704,7 +3723,11 @@ fn docker_pull_json_preserves_raw_direct_and_image_group_pull_paths() {
             .args(args)
             .output()
             .expect("run pre-existing raw Docker pull path");
-        assert!(output.status.success(), "args={args:?}: {}", output_text(&output));
+        assert!(
+            output.status.success(),
+            "args={args:?}: {}",
+            output_text(&output)
+        );
         assert!(
             String::from_utf8_lossy(&output.stdout).contains("pull-stdout"),
             "raw pull stdout must retain child stdio rather than receive the strict VAT receipt: {}",
@@ -3844,9 +3867,27 @@ fn docker_pull_json_rejects_nonexact_shapes_before_runtime_and_fails_closed_on_t
 
     for args in [
         ["pull", "--format=json", "--timeout=2"].as_slice(),
-        ["pull", "--format=table", "--timeout=2", "fixture/image:latest"].as_slice(),
-        ["pull", "--format=json", "--timeout=0", "fixture/image:latest"].as_slice(),
-        ["pull", "--format=json", "--timeout=1201", "fixture/image:latest"].as_slice(),
+        [
+            "pull",
+            "--format=table",
+            "--timeout=2",
+            "fixture/image:latest",
+        ]
+        .as_slice(),
+        [
+            "pull",
+            "--format=json",
+            "--timeout=0",
+            "fixture/image:latest",
+        ]
+        .as_slice(),
+        [
+            "pull",
+            "--format=json",
+            "--timeout=1201",
+            "fixture/image:latest",
+        ]
+        .as_slice(),
         [
             "pull",
             "--format=json",
@@ -3879,7 +3920,13 @@ fn docker_pull_json_rejects_nonexact_shapes_before_runtime_and_fails_closed_on_t
             "fixture/image:latest",
         ]
         .as_slice(),
-        ["pull", "--format=json", "--timeout=2", "-fixture/image:latest"].as_slice(),
+        [
+            "pull",
+            "--format=json",
+            "--timeout=2",
+            "-fixture/image:latest",
+        ]
+        .as_slice(),
         [
             "pull",
             "--format=json",
@@ -4025,9 +4072,9 @@ fn docker_build_json_emits_one_bounded_retained_image_receipt() {
     assert_eq!(result["untrusted_build_labels"], true);
     assert_eq!(result["untrusted_build_output"], true);
     assert!(
-        result["stdout"]
-            .as_str()
-            .is_some_and(|value| value.contains("build-stdout") && value.contains("invalid:\u{FFFD}")),
+        result["stdout"].as_str().is_some_and(
+            |value| value.contains("build-stdout") && value.contains("invalid:\u{FFFD}")
+        ),
         "bounded stdout must retain fake child content: {result}"
     );
     assert_eq!(result["stdout_utf8_lossy"], true);
@@ -4513,11 +4560,7 @@ fn native_image_owner_guard_requires_exact_apple_metadata_and_absence_preflight(
         real_image_tag_is_proven_absent(&fake_container, "missing:latest"),
         "only the exact native not-found diagnostic may authorize a new tag"
     );
-    for tag in [
-        "present:latest",
-        "noisy-missing:latest",
-        "uncertain:latest",
-    ] {
+    for tag in ["present:latest", "noisy-missing:latest", "uncertain:latest"] {
         assert!(
             !real_image_tag_is_proven_absent(&fake_container, tag),
             "successful or uncertain native image inspect must fail closed: {tag}"
@@ -4525,12 +4568,7 @@ fn native_image_owner_guard_requires_exact_apple_metadata_and_absence_preflight(
     }
 
     assert!(
-        real_image_has_owner_label(
-            &fake_container,
-            "owned:latest",
-            owner_label,
-            owner_token
-        ),
+        real_image_has_owner_label(&fake_container, "owned:latest", owner_label, owner_token),
         "the actual Apple variants[*].config.config.Labels shape must prove ownership"
     );
     for tag in [
@@ -4627,11 +4665,18 @@ fn docker_run_json_wraps_one_bounded_ephemeral_snapshot_and_proves_exact_cleanup
             .is_some_and(|value| value.contains("run-stderr-control:\u{1}")),
         "bounded stderr must retain fake child content: {result}"
     );
-    assert!(!state.exists(), "owner-checked cleanup must remove fake state");
+    assert!(
+        !state.exists(),
+        "owner-checked cleanup must remove fake state"
+    );
 
     let calls = fs::read_to_string(&log).expect("read fake run calls");
     let lines = calls.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 4, "strict run + inspect/delete/inspect: {calls}");
+    assert_eq!(
+        lines.len(),
+        4,
+        "strict run + inspect/delete/inspect: {calls}"
+    );
     let run = lines[0].split_whitespace().collect::<Vec<_>>();
     assert_eq!(run[0], "run");
     assert_eq!(run[1], "--name");
@@ -4947,7 +4992,12 @@ fn docker_run_json_accepts_only_explicit_not_found_and_refuses_label_mismatch_cl
         ])
         .output()
         .expect("run strict Docker run with mismatched owner label");
-    assert_eq!(mismatch.status.code(), Some(1), "{}", output_text(&mismatch));
+    assert_eq!(
+        mismatch.status.code(),
+        Some(1),
+        "{}",
+        output_text(&mismatch)
+    );
     assert!(
         mismatch.stdout.is_empty(),
         "cleanup uncertainty must suppress the success wrapper: {}",
@@ -4983,7 +5033,12 @@ fn docker_run_json_accepts_only_explicit_not_found_and_refuses_label_mismatch_cl
         ])
         .output()
         .expect("run strict Docker run with uncertain fake inspect");
-    assert_eq!(uncertain.status.code(), Some(1), "{}", output_text(&uncertain));
+    assert_eq!(
+        uncertain.status.code(),
+        Some(1),
+        "{}",
+        output_text(&uncertain)
+    );
     assert!(uncertain.stdout.is_empty(), "{}", output_text(&uncertain));
     assert!(
         String::from_utf8_lossy(&uncertain.stderr)
@@ -5748,7 +5803,10 @@ fn docker_compose_logs_json_is_one_bounded_capture_snapshot_without_runtime_call
         "text log replay must put its terminal handoff on a separate line: {raw_logs_stdout}"
     );
     let raw_logs_result = compose_shim_result(&raw_logs.stdout, "logs");
-    assert_eq!(raw_logs_result.get("terminal"), Some(&serde_json::json!("observed")));
+    assert_eq!(
+        raw_logs_result.get("terminal"),
+        Some(&serde_json::json!("observed"))
+    );
     let calls_before_snapshot =
         fs::read_to_string(&container_log).expect("read lifecycle calls before log snapshot");
 
@@ -7022,9 +7080,7 @@ fn apple_container_docker_run_published_port_contract() {
     );
 
     let exec_marker = format!("vat-docker-exec-json-{owner_token}");
-    let exec_command = format!(
-        "printf %s {exec_marker}; printf %s {exec_marker} >&2",
-    );
+    let exec_command = format!("printf %s {exec_marker}; printf %s {exec_marker} >&2",);
     let exec_json = Command::new(&shim)
         .args([
             "exec",
@@ -7153,7 +7209,10 @@ fn apple_container_docker_run_json_ephemeral_contract() {
         .find(|line| line.starts_with("run --name "))
         .expect("real strict run must record the generated Apple argv");
     let run = run_line.split_whitespace().collect::<Vec<_>>();
-    assert!(run.len() >= 7, "unexpected real strict run argv: {run_line}");
+    assert!(
+        run.len() >= 7,
+        "unexpected real strict run argv: {run_line}"
+    );
     assert_eq!(run[0], "run");
     assert_eq!(run[1], "--name");
     assert_eq!(run[3], "--label");
@@ -7221,7 +7280,10 @@ fn apple_container_docker_run_json_ephemeral_contract() {
     assert!(
         String::from_utf8_lossy(&absent.stderr)
             .to_ascii_lowercase()
-            .contains(&format!("error: container not found: {}", name.to_ascii_lowercase())),
+            .contains(&format!(
+                "error: container not found: {}",
+                name.to_ascii_lowercase()
+            )),
         "exact cleanup must use the current Apple not-found diagnostic: {}",
         String::from_utf8_lossy(&absent.stderr)
     );
@@ -7305,12 +7367,7 @@ fn apple_container_docker_pull_json_receipt_contract() {
         .env("PATH", path_with_prepend(&proxy_bin))
         .env("VAT_REAL_CONTAINER", &real_container)
         .env("VAT_REAL_CONTAINER_LOG", &calls_path)
-        .args([
-            "pull",
-            "--format=json",
-            "--timeout=120",
-            "alpine:3.20",
-        ])
+        .args(["pull", "--format=json", "--timeout=120", "alpine:3.20"])
         .output()
         .expect("run real strict Docker pull JSON receipt");
 
@@ -7407,10 +7464,7 @@ fn apple_container_docker_build_json_receipt_contract() {
     // Image repository components are conventionally lowercase; the tempdir
     // nonce may include uppercase ASCII even though it remains safe as an
     // owner-label value.
-    let tag = format!(
-        "vat-docker-build-json-{}",
-        owner_token.to_ascii_lowercase()
-    );
+    let tag = format!("vat-docker-build-json-{}", owner_token.to_ascii_lowercase());
     let mut cleanup = RealOwnedImageCleanup {
         container_binary: real_container.clone(),
         tag: tag.clone(),
@@ -8009,9 +8063,8 @@ fn apple_container_docker_compose_host_facing_independent_profile_contract() {
     );
 
     let docs_exec_json_marker = format!("vat-compose-docs-exec-json-{docs_port}");
-    let docs_exec_json_command = format!(
-        "printf %s {docs_exec_json_marker}; printf %s {docs_exec_json_marker} >&2"
-    );
+    let docs_exec_json_command =
+        format!("printf %s {docs_exec_json_marker}; printf %s {docs_exec_json_marker} >&2");
     let docs_exec_json = Command::new(&shim)
         .env("VAT_HOME", &vat_home)
         .args([
@@ -8046,8 +8099,9 @@ fn apple_container_docker_compose_host_facing_independent_profile_contract() {
         1,
         "real JSON exec must emit exactly one VAT document: {docs_exec_json_stdout}"
     );
-    let docs_exec_json_result: serde_json::Value = serde_json::from_str(docs_exec_json_stdout.trim())
-        .expect("parse one real VAT-native Compose exec JSON document");
+    let docs_exec_json_result: serde_json::Value =
+        serde_json::from_str(docs_exec_json_stdout.trim())
+            .expect("parse one real VAT-native Compose exec JSON document");
     assert_eq!(
         docs_exec_json_result.get("schema"),
         Some(&serde_json::json!("vat.docker-compose.exec.v1"))

@@ -6,10 +6,10 @@
 //! and --network none enforced under EgressPolicy::Deny.
 //! Skips cleanly (does not fail) when the `container` CLI is not installed.
 
-use vat::sandbox;
-use vat::spec::{EgressPolicy, EnvSpec, GpuRequest, Isolation};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use vat::sandbox;
+use vat::spec::{EgressPolicy, EnvSpec, GpuRequest, Isolation};
 
 fn container_available() -> bool {
     sandbox::microvm::available()
@@ -53,23 +53,41 @@ fn microvm_end_to_end_smoke_test() {
 
     // Verify argv structure (without actually running container).
     // Shape should be: ["run", "--rm", "-v", "<rootfs>:/workspace", "-w", "/workspace/.", "-e", "TEST_VAR=test_value", "busybox:latest", "echo", "hello"]
-    assert!(argv.len() > 5, "argv should have at least run + rm + volume + workdir + image + cmd");
+    assert!(
+        argv.len() > 5,
+        "argv should have at least run + rm + volume + workdir + image + cmd"
+    );
     assert_eq!(argv[0], "run");
     assert_eq!(argv[1], "--rm");
 
     // Check volume mount
-    let volume_idx = argv.iter().position(|x| x == "-v").expect("should have -v flag");
-    assert!(argv[volume_idx + 1].contains("/workspace"), "volume should mount to /workspace");
+    let volume_idx = argv
+        .iter()
+        .position(|x| x == "-v")
+        .expect("should have -v flag");
+    assert!(
+        argv[volume_idx + 1].contains("/workspace"),
+        "volume should mount to /workspace"
+    );
 
     // Check working directory
-    let workdir_idx = argv.iter().position(|x| x == "-w").expect("should have -w flag");
-    assert!(argv[workdir_idx + 1].contains("/workspace"), "workdir should be under /workspace");
+    let workdir_idx = argv
+        .iter()
+        .position(|x| x == "-w")
+        .expect("should have -w flag");
+    assert!(
+        argv[workdir_idx + 1].contains("/workspace"),
+        "workdir should be under /workspace"
+    );
 
     // Check image is present
-    assert!(argv.contains(&"busybox:latest".to_string()), "image should be in argv");
+    assert!(
+        argv.contains(&"busybox:latest".to_string()),
+        "image should be in argv"
+    );
 
     // Check command and args appear at end
-    let last_two = &argv[argv.len()-2..];
+    let last_two = &argv[argv.len() - 2..];
     assert_eq!(last_two[0], "echo");
     assert_eq!(last_two[1], "hello");
 }
