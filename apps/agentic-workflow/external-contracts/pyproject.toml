@@ -730,3 +730,17 @@ oracle = "Two isolated real-git repositories independently expose branch identit
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
 evidence_paths = ["evidence/td-create-dirty-persistent-branch.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-existing-workspace-dirty-persistent-branch"
+artifact_id = "artifact:agentic-workflow/td-existing-workspace-dirty-persistent-branch"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-existing-workspace-dirty-persistent-branch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-existing-workspace-dirty-persistent-branch.py"
+promise = "Public TD apply rejects malformed Python then advances with a semantic digest, and public CB generation stays on a dirty persistent non-main branch while committing only its generated target and preserving unrelated modified, deleted, and untracked paths; pre-existing staged paths fail closed, dirty main fails before switching, and clean main without a TD branch retains the workspace-not-found remediation."
+oracle = "Four isolated real-git repositories run the real aw TD/CB commands and independently expose syntax diagnostics, semantic digest and continuation, two exact commit deltas, staged-path refusal, branch identity and refs, porcelain state, file bytes, generated output, and remediation output."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-existing-workspace-dirty-persistent-branch"
+evidence_paths = ["evidence/td-existing-workspace-dirty-persistent-branch.json"]

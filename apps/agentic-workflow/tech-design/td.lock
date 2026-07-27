@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T18:14:07.092406+00:00"
-digest = "sha256:d1f7a64ffcca654bc27bef0c3ce460f175fb635a01a2120b369109338521801e"
-source_digest = "sha256:d1f7a64ffcca654bc27bef0c3ce460f175fb635a01a2120b369109338521801e"
-ir_digest = "sha256:175bbdeab09499cff931002aded39933ca976e5130e19e139239db0a8763e259"
+generated_at = "2026-07-27T18:47:39.369155+00:00"
+digest = "sha256:b77974ced353be572592cef47d5a39660620e7085ebabafeb453fee2ca5fa860"
+source_digest = "sha256:b77974ced353be572592cef47d5a39660620e7085ebabafeb453fee2ca5fa860"
+ir_digest = "sha256:e8677e7bf0b5a0b035d7e5c25bc1233dc62c44d101a6d4df741d8fcc1e73d643"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3962,6 +3962,10 @@ digest = "sha256:b19ef1dc32018aedfcf51340de2832108806040296e9e868d4bf905e52855c2
 [[files]]
 path = "src/agentic_workflow/work_items/taxonomy.py"
 digest = "sha256:b79f284df62497a78e1f52ac8863b5a23440a7757ed27982ba14110994a2d3c6"
+
+[[files]]
+path = "src/agentic_workflow/work_items/td_existing_workspace_activation.py"
+digest = "sha256:6ff42315df9ecd336aca7e205b4c8c5a577f68f87a764be95a4ee1e9c34aa1dc"
 
 [[files]]
 path = "src/agentic_workflow/work_items/td_persistent_branch_activation.py"
