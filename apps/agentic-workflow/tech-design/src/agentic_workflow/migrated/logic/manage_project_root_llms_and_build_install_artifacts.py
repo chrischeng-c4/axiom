@@ -1,0 +1,19 @@
+"""Canonical Python tech design migrated from `apps/agentic-workflow/tech-design/logic/manage-project-root-llms-and-build-install-artifacts.md`.
+
+Migrated by batch `semantic-logic-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:logic/logic-manage-project-root-llms-and-build-install-artifacts"
+__legacy_td_path__ = "apps/agentic-workflow/tech-design/logic/manage-project-root-llms-and-build-install-artifacts.md"
+__legacy_td_digest__ = "sha256:0a3c5a63d262e45912ecff5c7e0830f00ac39e163f9e70dfb4d6f7674b622b71"
+
+
+def render_markdown() -> Annotated[str, "sha256:0a3c5a63d262e45912ecff5c7e0830f00ac39e163f9e70dfb4d6f7674b622b71"]:
+    """Render the preserved legacy design byte-for-byte."""
+
+    return "---\nid: manage-project-root-llms-and-build-install-artifacts\nsummary: \"Manage llms.txt and build/install scripts as AW-governed project-root artifacts.\"\nfill_sections: [scenarios, mindmap, state-machine, interaction, logic, dependency, db-model, schema, rest-api, rpc-api, async-api, cli, wireframe, component, design-token, config, manifest, runtime-image, deployment, unit-test, e2e-test]\ncommand_refs:\n  - command: aw td gen\n  - command: aw health\n---\n\n# Manage Project Root LLMS And Build Install Artifacts\n\n## Scenarios\n<!-- type: scenarios lang: yaml -->\n\n```yaml\nid: aw-project-root-artifact-flow-scenarios\nscenarios:\n  - id: managed_scan_includes_root_artifacts\n    given:\n      - \"an AW project root contains README.md, llms.txt, tech-design/, src/, tests/, build.sh, and install.sh\"\n      - \"llms.txt is generated from project config, README capability path, TD root, scripts, and workspace test commands\"\n      - \"build.sh and install.sh carry CODEGEN or HANDWRITE ownership markers tied to TD/WI references\"\n    when:\n      - \"an agent runs `aw health --project <project> full --verify-cb`\"\n    then:\n      - \"the managed coverage report includes llms.txt, build.sh, and install.sh in the in-scope artifact set\"\n      - \"the next-action output points to a project-root artifact action when llms.txt is missing, hand-written, or stale\"\n      - \"generated llms.txt directs agents to TD and README before implementation files\"\n  - id: health_reports_missing_required_root_artifacts\n    given:\n      - \"a configured Rust project has a binary target or an installable CLI convention\"\n      - \"the project is missing llms.txt, build.sh, or install.sh\"\n    when:\n      - \"an agent runs `aw health --project <project> blockers`\"\n    then:\n      - \"the health report lists the missing required root artifact as a production blocker\"\n      - \"the blocker message names the exact project-relative path\"\n      - \"the recommended command routes to the active AW-owned producer rather than a handwritten checklist\"\n  - id: health_reports_unmanaged_or_stale_llms\n    given:\n      - \"a configured project has an existing llms.txt\"\n      - \"llms.txt is still HANDWRITE or no longer matches the TD-first generator output\"\n    when:\n      - \"an agent runs `aw health --project <project> blockers`\"\n    then:\n      - \"the health report lists llms.txt as a production blocker\"\n      - \"the blocker tells the agent to run `aw td gen --force-regen --project <project>`\"\n      - \"the generated file remains short and avoids codebase/source inventory expansion\"\n  - id: build_script_contract_distinguishes_debug_and_release\n    given:\n      - \"a configured Rust binary project has an executable build.sh\"\n    when:\n      - \"an agent or skill asks AW to validate the project-root artifact contract\"\n    then:\n      - \"AW confirms build.sh exposes separate debug and release modes\"\n      - \"AW treats a release path that installs target/debug as a contract gap\"\n      - \"aw:build:debug and aw:build:release can dispatch through the same project-root script\"\n```\n"

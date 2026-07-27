@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:09:05.254388+00:00"
-digest = "sha256:dfa1d475ac92194e73e281156107d7beafaafafb6e79bdec16ee2b510a642e55"
-source_digest = "sha256:dfa1d475ac92194e73e281156107d7beafaafafb6e79bdec16ee2b510a642e55"
-ir_digest = "sha256:1e59d579f4c875702a6181a05711de3a6a554540e5b3073ea99801a0d737aeab"
+generated_at = "2026-07-27T13:12:59.491552+00:00"
+digest = "sha256:acb57b5b53cef4b597b64b64c2c2ef7557a8f1010577c61fc286d1f5f00944fb"
+source_digest = "sha256:acb57b5b53cef4b597b64b64c2c2ef7557a8f1010577c61fc286d1f5f00944fb"
+ir_digest = "sha256:e355fe0cff75db59cb4ce1d205967378bb29ec0caadf49a1d3ae0edc4d5a96e6"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1466,6 +1466,118 @@ digest = "sha256:9ac5c093524534428de06ae2b8d276653b9379bfee6e32be9c4819b6b90017f
 [[files]]
 path = "src/agentic_workflow/migrated/core/validate/validator/semantic.py"
 digest = "sha256:279a9e30e826f2c75fb3513b74dad93380b2321f7ab591695b3f7aae0d202fae"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_ddd_python_source_generation.py"
+digest = "sha256:72018a03bdde5f96e67e82729f1d421095f2db425b25e55e37b61683f88e2d30"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_ec_add_vat_binding_command_support.py"
+digest = "sha256:a2b92af2198a5cb12da12a561f78ae3bf1337374d3e2fe12e871f16db0898d9a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_llm_offline_agent_orientation_command.py"
+digest = "sha256:db251be8403838bfdf4ff91410d543378e22aaa9b3f43dbd051140f5a42dc2bf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_artifact_goal_flow.py"
+digest = "sha256:173cb95b9c77cf8d1ef31402d482a85f043dd49d30ee8a96e74e1433c733cf5f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_artifact_readiness.py"
+digest = "sha256:1e24e68ac89a7270a5c54a8571b6c3133039eac6d24fe2461ac7f28508e4b72e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_artifact_trace_code_check.py"
+digest = "sha256:0401271c28809d88c630e90e446c6859f94938bc6c567922d9c6a424cf9ac160"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_td_mutation_evidence.py"
+digest = "sha256:a68edaff409920f4de6aa7a056fbff4cc0b45a94590f8b5080c09d4d42fe2f32"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_td_mutation_execution.py"
+digest = "sha256:d208219bc60e70c049fdbba7e1f4bba21754b6c9717e9106760949f7f7e53b9c"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_td_mutation_health.py"
+digest = "sha256:a92d0b3e103bc9dd4fe98a962a0579fa29665a54de96f370a358f956398541a3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_td_mutation_operators.py"
+digest = "sha256:c52f30e9f4c11b854e3fc2fc5f827f9b15a0d4dffeb6b251645a3504f7e0a5e1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_td_semantic_kernel.py"
+digest = "sha256:fefa3aa941003e744559bcb326065e60eedbad35c6aa154e34ac21fe9ef1f721"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_tech_design_lowering.py"
+digest = "sha256:69d476e0588e24ed1a44fc30e0b38747c4e4785171134d03cff7b36e0a5bf2e4"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_python_ui_component_lowering.py"
+digest = "sha256:aa66c27a183b3699dcb8030da5794d182c5eaa09b7858649f9e6e99b98d0f445"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_self_hosting_allow_python_first_lifecycle_roots_with_bounded.py"
+digest = "sha256:d14e44d2dffece8b1aa22c653adaefd08d726d1be0e6d0c32022604dc72e265d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/aw_td_ast_parse_rust_source_unit_sections_as_typed_td_bodies.py"
+digest = "sha256:d37c75918921e9285c11fddedac5a24f4b109da30e054743e5682676d515cfbf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/emit_actionable_hitl_questions_for_pending_ec_review.py"
+digest = "sha256:acc01c48f1d4b54efccee4b601c43939b33b00c8a1dcdd823a202928b4c506bf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/ignore_foreign_legacy_tds_during_lock_generation.py"
+digest = "sha256:085364b3de59398f532ed8abe4cc13bab9f9384ba2c9d58cd4764fa13fa9f67e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/manage_aw_init_templates_as_greenfield_ready_artifacts.py"
+digest = "sha256:8db3c66922cc49fff8fd6169b479ff968621e05d2d4ccfa45741db33e7becccb"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/manage_project_root_llms_and_build_install_artifacts.py"
+digest = "sha256:d0fa3e162be95042668d13de414df3638063e29a3c734f8c56ffc766b5c38e15"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/numeric_td_skeleton_id.py"
+digest = "sha256:9c0ab8594ee51d6b77513ff46929dc2601550f09349381f594b08b53eff605b9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/prevent_terminal_code_check_cross_project_evidence_leakage.py"
+digest = "sha256:bd2752b95edb66388569dbecc882c79cf4207de2b5b50aacea45b380b6634462"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/promote_generated_manuals_to_first_class_aw_evidence_artifacts.py"
+digest = "sha256:83af0418329689ce9beae28294de79dc76c22e4622f1126409cdb5d698dd9f00"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/remove_td_cb_crrr_collapse_to_linear_lifecycle.py"
+digest = "sha256:e10d82a8d6b2ea3edc2bf13b56539afe017694caea13a3a92bc5da28e0a7ed90"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/resolve_project_td_before_foreign_legacy_fallback.py"
+digest = "sha256:7fe61d16bdd8ed337c1a310af4473b4fd39c845b299a90333cb7e32763ebd6e7"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/scope_td_fill_re_enumeration_to_the_active_work_item.py"
+digest = "sha256:1b844103d78daa0572a64581a86165f30190d538f5dc60a70f6a5e834aec0771"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/shared_server_substrate_performance_layers.py"
+digest = "sha256:cf72ee65f15e3479c983db8bc760c229fcfef24b9bb76f1df044090bf795ede1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/td_default_section_queue_preservation.py"
+digest = "sha256:4d5544f2e06877ca54e1783d134c097e2970bf0da9d8e5d940ec441602ccda74"
+
+[[files]]
+path = "src/agentic_workflow/migrated/logic/workitem_loop_state_model_additive_foundation.py"
+digest = "sha256:b20fca6e12e19aacf65f6b0ed88afbfa3b9a789179d2f9bbccbd7623d531b45d"
 
 [[files]]
 path = "src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
