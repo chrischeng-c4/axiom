@@ -57,19 +57,26 @@ def hash_references(value: str) -> tuple[str, ...]:
     return tuple(references)
 
 
-def normalize_declaration_line(line: str) -> str:
+def normalize_declaration_line(line: str) -> str | None:
     """Remove only declaration-level list and bold formatting.
 
     Backtick-delimited syntax examples deliberately remain untouched, so a
     document that quotes a legacy declaration does not itself declare an edge.
+    Leading whitespace is accepted only when it precedes a Markdown list
+    marker; an indented bare prefix is prose continued from the preceding
+    block and must not be promoted into a declaration by trimming.
     """
 
-    normalized = line.strip()
-    if (
+    normalized = line.lstrip()
+    is_list_item = (
         len(normalized) >= 2
         and normalized[0] in {"-", "*", "+"}
         and normalized[1].isspace()
-    ):
+    )
+    if len(normalized) != len(line) and not is_list_item:
+        return None
+    normalized = normalized.rstrip()
+    if is_list_item:
         normalized = normalized[1:].lstrip()
 
     if normalized.startswith("**"):
@@ -90,6 +97,8 @@ def dependency_declaration(line: str) -> DependencyDeclaration | None:
     """
 
     normalized = normalize_declaration_line(line)
+    if normalized is None:
+        return None
     lowered = normalized.lower()
     for prefix, kind in _PREFIXES:
         if not lowered.startswith(prefix):
