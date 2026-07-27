@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T20:00:04.693834+00:00"
-ir_digest = "sha256:e1f356c45031fae5b45a313da31504386ac4e5adf22861fba37a0ab902bc3ea2"
-source_digest = "sha256:ff3f7f6a8cba5979948382a565aea2290103b61e5507dbcb6851e065b933d9ff"
+generated_at = "2026-07-27T20:24:02.911223+00:00"
+ir_digest = "sha256:494d741e09bbdbf4ffef1989378f4e37e215c6c9ec52e26c835cf32c0429efe1"
+source_digest = "sha256:ffe720b0b577c13fc23c9644165dd26ad438334b0b3b65ea143f5a2623df4a5e"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:18f5e3850edd02b24f2a2f18e23bac919d720fbe3d9d0e845551e88a25e0b532"
+digest = "sha256:03f47a343bcdaa3d179729d8b8d831991a9e7d9c6bac658e5830172be92a9036"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -51,6 +51,10 @@ digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
 digest = "sha256:88296c626c1262a172e509db9f12033d9a3fdcba00b0f8deb5fa6c2893a550c8"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
+digest = "sha256:e0094ea76853a70803934003facfe2a1f0c04cb90273a4c1affb3e17550db5c1"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
@@ -507,6 +511,26 @@ assertions = [
 evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:ae13dae3d99b28e7cceba6c17b8e6fccfa37caaf543d85273206ae45f412a15e"
+
+[[cases]]
+id = "coordination-authority"
+capability_id = "workflow-root-runner"
+claim_id = "aw-only-completion-and-decision-authority"
+contract_id = "coordination-authority"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-authority"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
+required_for_production = true
+assertions = [
+    "Only AW-owned durable coordination state may advance completion or a decision, and it does so only for the active dispatch after every required gate is satisfied and cited as evidence.",
+    "artifact: artifact:agentic-workflow/coordination-authority",
+    "oracle: The Python external contract establishes state through public AW authority commands, then submits only untrusted events. It independently checks durable active and interrupted dispatches, a positive two-gate completion with exact stored evidence, a concrete non-empty human decision, and rejection of forged authority/satisfaction, identity mismatch, empty gate or decision inputs, pending/wrong/partial gates, and non-human decision authority without durable decision mutation.",
+    "target: rust",
+]
+evidence_digest = "sha256:1174bef2f236dc173ac7d6e100631cb3180993cf003aacc34ce5c8c96b167611"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:91e896130859ce36a2e8c36b17d5582dfcb4ee44936d549e16ab1d68184411d9"
 
 [[cases]]
 id = "coordination-contract-schema"

@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T20:00:48.157531+00:00"
-digest = "sha256:289d4bd429b4cfac9cecf1585579bf0abafc8c3f6a54db2cc8c7508e99d6f017"
-source_digest = "sha256:289d4bd429b4cfac9cecf1585579bf0abafc8c3f6a54db2cc8c7508e99d6f017"
-ir_digest = "sha256:b536c26adf2ea30443b11fb03710df398ce27ca043d955ba024531e7f86949e4"
+generated_at = "2026-07-27T20:25:03.894185+00:00"
+digest = "sha256:dad11637d3dae8006b150e88f351b91ef0616ad50e03221b383979e682b15150"
+source_digest = "sha256:dad11637d3dae8006b150e88f351b91ef0616ad50e03221b383979e682b15150"
+ir_digest = "sha256:3bf3d73b098f44ed6c811032b7c577afa918d820fbccae85678e02bca05e10a7"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3922,6 +3922,10 @@ digest = "sha256:d4536fd98cb93414ccdc0492fadd1cdc3b5212d7c444b880c40c0cec4941f50
 [[files]]
 path = "src/agentic_workflow/migrated/validate/rust_source_unit_ir_lossless_cst_parse_to_structured_item_tree_b.py"
 digest = "sha256:e7338afe25a07f75e69181264f1c30936fb1eff07092cb9e00e0d68513b36450"
+
+[[files]]
+path = "src/agentic_workflow/work_items/coordination_authority.py"
+digest = "sha256:36fb1ec53b38c556b1dbea83eee641464107268035cd80b747ce1f0924e2e8a1"
 
 [[files]]
 path = "src/agentic_workflow/work_items/coordination_contract_schema.py"

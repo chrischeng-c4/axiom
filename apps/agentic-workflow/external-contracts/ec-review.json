@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:58065651d677e27d2956cf81053404ed74df212bab384403a0705e3f03803097",
+  "source_digest": "sha256:fe7de9be07cb25d1c447dd8c12b441bc6d46ec3f22076596bf9420da6d818052",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T19:59:54.260902+00:00",
-  "summary": "Accepted: `coordination-contract-schema` truthfully binds the workflow-root runner's root-scoped work-progression contract and independently evaluates four client-neutral JSON Schema artifacts. It pins each document's exact required/property set and closed-object boundary, round-trips representative fixtures, and exhaustively rejects every missing required field, every top-level field type mutation, every declared const/enum mutation, and unknown properties. It also pins the complete heartbeat/completion/escalation/blocked-question message vocabulary. Missing target schemas currently fail red, so an empty implementation cannot pass; the workflow-root-runner DeveloperTool capability retains separate efficiency and stability coverage.",
+  "reviewed_at": "2026-07-27T20:24:02.804109+00:00",
+  "summary": "Accepted: `coordination-authority` proves that untrusted submit events cannot supply or mutate AW-owned authority state. Public AW authority commands durably establish the active dispatch and pending gates; post-open source mutation has no effect; a durable interrupt blocks completion; forged authority/satisfaction and task/dispatch mismatches fail; pending, missing, wrong, partial, and empty-evidence gates fail; and two satisfied/cited gates advance with exact stored evidence. A blocked question remains HITL, empty decision choice/evidence exit nonzero and leave durable decision null, non-human authority cannot decide, and the valid human choice/evidence is durably recorded before AW reports decision advancement. Workflow-root-runner retains its required efficiency and stability cases.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
 }

@@ -16,6 +16,20 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
+id = "coordination-authority"
+artifact_id = "artifact:agentic-workflow/coordination-authority"
+capability_id = "workflow-root-runner"
+use_case_id = "aw-only-completion-and-decision-authority"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/coordination-authority.py"
+promise = "Only AW-owned durable coordination state may advance completion or a decision, and it does so only for the active dispatch after every required gate is satisfied and cited as evidence."
+oracle = "The Python external contract establishes state through public AW authority commands, then submits only untrusted events. It independently checks durable active and interrupted dispatches, a positive two-gate completion with exact stored evidence, a concrete non-empty human decision, and rejection of forged authority/satisfaction, identity mismatch, empty gate or decision inputs, pending/wrong/partial gates, and non-human decision authority without durable decision mutation."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-authority"
+evidence_paths = ["evidence/coordination-authority.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "coordination-contract-schema"
 artifact_id = "artifact:agentic-workflow/coordination-contract-schema"
 capability_id = "workflow-root-runner"
