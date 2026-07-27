@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:0a010d85421431362010c98789fad7f9d16c6a3df6734a4a4e119c75f9611b55",
+  "digest": "sha256:46ba66c6aa064768028c51ed122f08a708de044b38ce4893fdd25f2091f734c5",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10855,7 +10855,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/generate/project-health-source.md",
       "role": "generated_mirror",
       "sha256": "sha256:fd8b1c9bd6d1dbd93a607d2f93382511185920527ef8b9d0b16376af2769b6f4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/generate/project_health_source.py"
     },
     {
