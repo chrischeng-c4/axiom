@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T10:49:11.407179+00:00"
-digest = "sha256:c068894bad1eb4861c3fd1b04e07ba2cecaa2f262505068fc48d72ff590c1d80"
-source_digest = "sha256:c068894bad1eb4861c3fd1b04e07ba2cecaa2f262505068fc48d72ff590c1d80"
-ir_digest = "sha256:27c5bfa3c3b6dd01732733db79accdee23aca1b72847c0cb4c465b9c3fab88e0"
+generated_at = "2026-07-27T11:33:24.936996+00:00"
+digest = "sha256:080c8743371c498a98726cd7fd5ca3f2b56ddaa1c651a72f4d67e08c8ef3ebd8"
+source_digest = "sha256:080c8743371c498a98726cd7fd5ca3f2b56ddaa1c651a72f4d67e08c8ef3ebd8"
+ir_digest = "sha256:3deeea3c4d4dac5f626e9d50d00937dfa73a3b3b12e120e7a566ad837f5ee372"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -478,6 +478,130 @@ digest = "sha256:78b7114d85ab784e2c65973b02e9061071079ce5f594dcc953e6acab8140cbd
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/create_pre_clarifications/definition.py"
 digest = "sha256:5bd55a1f0797b9763bd45499f12f7ded01f62ee5928a6b3380818ba361d59da9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_mod_rs.py"
+digest = "sha256:63fe3c399f2329634e9b4d1847ee610d8bb79b9130109843e4c1f71c084e54a5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_router_rs.py"
+digest = "sha256:8adec188fd23440c2c20089ca0840df7b315f6a00798da21ecc2c21e831c98cb"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rule_rs.py"
+digest = "sha256:7f41712b8f7ae406ecfb6e7d1faab62cee64d77e597c1a6cc4952611a856791f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_mod_rs.py"
+digest = "sha256:2c6b989821c4b82e35a6a72acc266c7e7415c548cc548fdb114a6bff32356c29"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3a_double_option_rs.py"
+digest = "sha256:4884a917259169efb5398dd107d2d587340595fa3be9f4fd6fa658d73acb0efb"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3b_nullable_required_rs.py"
+digest = "sha256:33528e2d4aaf72fe18f3820675ede08a5ae1010b54779f23da75a7947a69e5c7"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3c_orphan_binding_rs.py"
+digest = "sha256:60b2ecc143f7452ace30c5bad59b54bf25b0e76745d93602f235ef930a8626e5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3d_lowercase_enum_rs.py"
+digest = "sha256:9a58cfcc0f5b63a6d0cc17bc40a9c63c04807841dce61694049e699be283b6e5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3e_impl_mode_misuse_rs.py"
+digest = "sha256:c8af59f3d8a0ada7c6464e85e8a4f75b60e962358b1d4df651f3abdddfa92177"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3f_codegen_ready_rs.py"
+digest = "sha256:08f53a4cb2e5cd982845e342e2ac8c086bdfaba5f95f0d8bb42be73689521900"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3g_rust_type_consistency_rs.py"
+digest = "sha256:f5ca56220b34a625b1e370f716e07276523acd9322a6eaf729e2f501521e0fc6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r6a_loose_root_file_rs.py"
+digest = "sha256:112863ec75d363ca6b469bf5ba6d9c4516c42544ec964102901f1854d01f6077"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r6b_unexpected_subdir_rs.py"
+digest = "sha256:315b7bccb816ca160bced9878eaf50b5ba18f362e2f32cfe0e0900dea2a27456"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7a_missing_section_annotation_rs.py"
+digest = "sha256:a0153123ae3ecd767028be1d78505a4ac2cf69a3a46c2c9f8e65ea8f4aa44f26"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7b_format_priority_violation_rs.py"
+digest = "sha256:d1f6b4f714236c3d9c50bc68585a4d996adc35c59424fd9ad587fc0951429291"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7c_duplicate_section_rs.py"
+digest = "sha256:0e1388a5deab352b9d7875e13803da6025c41fca5103c74d6e5a5eaebfe15df1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7d_orphan_requirement_rs.py"
+digest = "sha256:2d121cc716228de8f8561a1c1e81f9e041aab666f277eccdd4cf9bc894d51605"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7e_schema_conflict_rs.py"
+digest = "sha256:166a5fb9bb7467819537942805bf16bae2639d811943fdfbb41b0d92fc780617"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7f_field_near_match_rs.py"
+digest = "sha256:c74cdd52493c9e4ded818b5570dc63cc625b8f7043243a0684aff1648e6d2fe6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7g_dangling_capability_ref_rs.py"
+digest = "sha256:f88bfbcca53d85633f17ff07066d92de0899b4cdf86bc92eafdc026c0b53adc1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_section_format_rs.py"
+digest = "sha256:4bc7dbd3aca1178ed417387c567c66ed40335d4284859e5eca44d1aedaa4ada9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_runner_rs.py"
+digest = "sha256:c5c5e2f8dc1c66ef2cd419f61dd2d32ef8562a6250bfa6d9cac175fefdf3f6ad"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/td_ast/anti_patterns.py"
+digest = "sha256:d7fd167084157fa216d0853f7d1dbe7d965db33110733ed0661e280ab0c3e46b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/td_ast/validate.py"
+digest = "sha256:2f4ee82efda0e41cd6c684b12671a6a6e6a36727a6a84dde70da505e96bff68d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/test_util.py"
+digest = "sha256:4bff465def3fd91d00ec02496a87ca2b5327229d6a9ac75f086ec3dffb6304f3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/consistency.py"
+digest = "sha256:9637f6773ffa39fb1fd72d1967190f2aa7a3f14ca81dae8b9ce9c4944ab75012"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/fix.py"
+digest = "sha256:fc6718bbddb0c115553945c3f913d4b990beae5ee2b8af26467f0ee93b20d93d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/format.py"
+digest = "sha256:c6bca02cd784616ae81d312dc58ee4c16dbab633f9ba0f3054df1a392de132f1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/mod.py"
+digest = "sha256:1aadca4c42546c3c251c8a0a4bb530464997145631d1420d87331464d00f8b33"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/schema.py"
+digest = "sha256:9ac5c093524534428de06ae2b8d276653b9379bfee6e32be9c4819b6b90017f6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/validate/validator/semantic.py"
+digest = "sha256:279a9e30e826f2c75fb3513b74dad93380b2321f7ab591695b3f7aae0d202fae"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"

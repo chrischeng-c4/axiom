@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:bc7f3ce6d7d1d0fd175cd877aaf6f936533e8e2e233fc88766634a676243331a",
+  "digest": "sha256:6d7391c1a6fe625e621fe49ca5fe1cb84105569d0800d22bbe11a6513a224fa4",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -9615,7 +9615,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-mod-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:898385e3fb31300db8f05bb510c872d7db37099cf199b8e7fe0833f893064c64",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_mod_rs.py"
     },
     {
@@ -9625,7 +9625,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-router-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:7fc88aa0378b6ce9ea9d98d65a8f6d0de64922a47e8a16092cede63261a951de",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_router_rs.py"
     },
     {
@@ -9635,7 +9635,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rule-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:c7612ee4fe8bdb9bf4fbba888bd6832a4a593350cf45bd352c267cb75ec9f0b4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rule_rs.py"
     },
     {
@@ -9645,7 +9645,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-mod-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:e9cdac9c8a4915ec4dbf8ab9268a231af8c766ab0e2edf555b636183e580f6e7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_mod_rs.py"
     },
     {
@@ -9655,7 +9655,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3a_double_option-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:692ffabbbeacd6a253095462a73ed79fce97cd08680448258b32f81d8a3a56da",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3a_double_option_rs.py"
     },
     {
@@ -9665,7 +9665,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3b_nullable_required-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:fc66c8972318237ad706c7515ee868e47ce0a07b5963f03f55a4a03e9356efe4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3b_nullable_required_rs.py"
     },
     {
@@ -9675,7 +9675,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3c_orphan_binding-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:a3bca2d02a74d4ed295a6a680464b3641d1c4574b2b76f3788baffc43ffd2b4b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3c_orphan_binding_rs.py"
     },
     {
@@ -9685,7 +9685,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3d_lowercase_enum-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:7d6b2b4ed2fa38b97448158cce500d72a6bc47924bbd2c35854a5eeb1d8cb922",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3d_lowercase_enum_rs.py"
     },
     {
@@ -9695,7 +9695,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3e_impl_mode_misuse-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:b53e7be062dae369cb5fdd2ea2b52b7e452c7601b05642514749c832f833b91a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3e_impl_mode_misuse_rs.py"
     },
     {
@@ -9705,7 +9705,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3f_codegen_ready-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:a44052551364f4c2c32ed56698606eb64bb27beaba65c616f4b3ee3ef297dc26",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3f_codegen_ready_rs.py"
     },
     {
@@ -9715,7 +9715,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r3g_rust_type_consistency-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:790f6a94c143c6565f0b7aeca95d948d11cbe7100579697c209d335c7a358f3a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r3g_rust_type_consistency_rs.py"
     },
     {
@@ -9725,7 +9725,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r6a_loose_root_file-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:33dabecace78d61c49608185c08183a9068f1798e53a505b499d2ccf385477fa",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r6a_loose_root_file_rs.py"
     },
     {
@@ -9735,7 +9735,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r6b_unexpected_subdir-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:b3da240a78626b7d3906f57a7269527835ae2e14bba6d4605cc1c34b74798e16",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r6b_unexpected_subdir_rs.py"
     },
     {
@@ -9745,7 +9745,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7a_missing_section_annotation-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:30763261026c9165e20b2995141528500ef688ba5b6a357aefcf9f2184e1a134",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7a_missing_section_annotation_rs.py"
     },
     {
@@ -9755,7 +9755,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7b_format_priority_violation-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:55312a412bbc8d84a93f92e0dc11962b25b1727b127e00d00fbd60847a554dca",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7b_format_priority_violation_rs.py"
     },
     {
@@ -9765,7 +9765,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7c_duplicate_section-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:bead3fa8ee448a29259d33e0d556b2bdb023c81466d061a12949f90374463952",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7c_duplicate_section_rs.py"
     },
     {
@@ -9775,7 +9775,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7d_orphan_requirement-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:6abf224c5ada2d9905e76f488d7fba0e6055163944e13a95072f5559dcd471d8",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7d_orphan_requirement_rs.py"
     },
     {
@@ -9785,7 +9785,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7e_schema_conflict-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:af1cc23ba66f6f66eda19bce615889c933f80acfc96b97f3177ea8fcf1e4f0cb",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7e_schema_conflict_rs.py"
     },
     {
@@ -9795,7 +9795,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7f_field_near_match-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:50b4fe919e6818602af4d8f65ae4bddfdb43a25cac9bab3315f3cac502ae2f4f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7f_field_near_match_rs.py"
     },
     {
@@ -9805,7 +9805,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-r7g_dangling_capability_ref-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:418c1a21a81322a10d7b31f4a0c33a3b03c790359dbc4cd34dd2a52e42879c2a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_r7g_dangling_capability_ref_rs.py"
     },
     {
@@ -9815,7 +9815,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-section_format-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:6d261ef57368102c0ebdb415cfb44fd7890541bb881a6bbec0b47ae24ad53c02",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_rules_section_format_rs.py"
     },
     {
@@ -9825,7 +9825,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-runner-rs.md",
       "role": "generated_mirror",
       "sha256": "sha256:ce0cf44dc2453d42dd90b274e5de6bbde6b3d1f9d23434ac61db44aae2da46b0",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/source/projects_sdd_src_validate_runner_rs.py"
     },
     {
@@ -9855,7 +9855,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/td_ast/anti_patterns.md",
       "role": "generated_mirror",
       "sha256": "sha256:a47f8cbe37443490ca10f49e3e71d97bc54621cbfcb67fe3d9f5e59e16f778ba",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/td_ast/anti_patterns.py"
     },
     {
@@ -9865,7 +9865,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/td_ast/validate.md",
       "role": "generated_mirror",
       "sha256": "sha256:ec921bd19bef7d11019e2a91b95fff13957a205e9f4a308d62d3e73fe0ca1975",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/td_ast/validate.py"
     },
     {
@@ -9875,7 +9875,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/test_util.md",
       "role": "generated_mirror",
       "sha256": "sha256:bebc29846ee6e265194fc46d9201a6d578eb26c872f07339f7ff1449a7de9d81",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/test_util.py"
     },
     {
@@ -9905,7 +9905,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/consistency.md",
       "role": "generated_mirror",
       "sha256": "sha256:0dbab0476559b1be5cfb70a56463e97ae9fb0f54dbe121eb94022553310dc77b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/consistency.py"
     },
     {
@@ -9915,7 +9915,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/fix.md",
       "role": "generated_mirror",
       "sha256": "sha256:8a4c79c65b5b9369247faf7ca56e2741136cb6dea2e7fdc8d4b89f183830767b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/fix.py"
     },
     {
@@ -9925,7 +9925,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/format.md",
       "role": "generated_mirror",
       "sha256": "sha256:909bd37906a980d9854d6e9b72ce6b7d4dcec459ee2952e2c3dc7dee66521e25",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/format.py"
     },
     {
@@ -9935,7 +9935,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/mod.md",
       "role": "generated_mirror",
       "sha256": "sha256:f016675918909d6dcdbaf96487f89d3e22a03bf9ea78f44f124aaa5c199db773",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/mod.py"
     },
     {
@@ -9945,7 +9945,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/schema.md",
       "role": "generated_mirror",
       "sha256": "sha256:08b84c609f6fce70e962409d8021331962afb95c4160a68764b066d5694671c7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/schema.py"
     },
     {
@@ -9955,7 +9955,7 @@
       "path": "apps/agentic-workflow/tech-design/core/validate/validator/semantic.md",
       "role": "generated_mirror",
       "sha256": "sha256:b24b511fc98581241d7d3b61037a8419705380e44b4535a1c98f8ad5ac1aa031",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/validate/validator/semantic.py"
     },
     {
