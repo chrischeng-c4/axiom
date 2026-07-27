@@ -522,6 +522,17 @@ an independent namespace such as `<svc>-system`; `operator run` is the controlle
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
 
+**Every manifest checked in under `k8s/` must be `include_str!`-gated against
+its renderer.** A test that renders into a temp dir, or asserts against the
+library function the renderer calls, proves the *renderer* — it never reads the
+file a `kubectl apply -k` user actually applies, so that file can silently rot
+for releases. `lumen` shipped exactly that: `k8s/operator/crd.yaml` had drifted
+to carry no `x-kubernetes-validations` at all, meaning a new CEL rule passed its
+own unit test while the applied CRD still accepted what the rule forbade. The
+gate is one test comparing `include_str!("../k8s/…")` byte-for-byte to the
+render function — sound because `cli_std::artifact::write_or_print` writes the
+body verbatim, so `--out` reproduces the renderer's output exactly.
+
 ### Control plane and data plane responsibilities
 
 *(policy-only — judgment, not trait-enforced; the split is a repository service
@@ -733,6 +744,48 @@ Secret Store, or cloud Secret Manager sync, and owns the env wiring. Clients do
 not need connection strings for auth; they use `<SVC>_URL` for routing and
 `<SVC>_TOKEN` for credentials, then send `Authorization: Bearer <token>`.
 
+**The registry's map key is never the credential.** A document keyed by bearer
+secret cannot be read by anyone not also entitled to authenticate as everyone in
+it, so the permission table — the thing an operator most needs to review —
+inherits the blast radius of the secrets. The registry carries **two disjoint
+key namespaces**: `tokens` keys are bearer secrets, `identities` keys are
+provider-verified subjects (a Google email, a Kubernetes ServiceAccount). A
+presented bearer value resolves against `tokens` only and a verified identity
+against `identities` only, so a secret whose text happens to be a valid email
+can never inherit that email's grants, and an `identities`-only registry holds
+no credential at all — it is ordinary reviewable configuration.
+
+A section-less document stays valid and is read entirely as `tokens`, which is
+what lets a deployed registry survive the change untouched. **The
+discriminator has two clauses, and the second is not optional**: a document is
+sectioned only when every top-level key is `tokens` or `identities` *and* no
+top-level value carries a `subject` field. Without the second clause a flat
+registry whose one secret is literally spelled `tokens` is read as a section
+and silently loses its only credential. Any second decoder — a CLI resolving a
+dev token, a migration tool — must replicate both clauses and pin the copy with
+a test; `libs/cli-std`'s `connect::bearer_secrets` is the reference, duplicated
+rather than shared because `service-auth` depends on `cli-std` and not the
+reverse.
+
+**Authentication is on unless a CR asks for it off, and there is exactly one
+place a registry can come from.** The operator's `spec.auth` defaults to
+`required`, not to off — a field that fails open is a field that ships
+unauthenticated whenever someone forgets it. When both a Kubernetes Secret and
+a CSI `SecretProviderClass` name a registry, reject the CR with an
+`x-kubernetes-validations` CEL rule at `kubectl apply` instead of resolving it
+with a documented precedence: with a silent winner there is no way to tell
+which registry is actually being served, and the loser looks applied.
+
+Two spellings that look interchangeable and are not: the CRD enum variant is
+**`disabled`**, the process env value is **`off`**. Kubernetes parses CRs as
+YAML 1.1, where a bare `off` is the boolean `false` — so a `type: string` field
+defaulting to `"off"` rejects the very value its own description tells readers
+to write, and the error names a type mismatch rather than the missing quotes. A
+free-string auth field is worse still: `auth: requred` is accepted and read as
+"not required", which turns a typo into an open service. Use a unit enum
+(`#[serde(rename = "disabled")]`) — structural schemas represent those fine;
+it is only enums with divergent per-variant schemas they cannot express.
+
 Keep the boundary explicit: `libs/service-auth` authenticates callers;
 service handlers authorize per resource, tenant, collection, queue, workflow, or
 admin action. Standard probe/spec/scrape endpoints stay auth-exempt according to
@@ -789,12 +842,20 @@ to compose the shared mechanism, not to re-derive it. When a row needs a
 mechanism, **extend `libs/service-k8s` so every adopter gets it once** — never
 fork the pattern into one project.
 
-Leading the order does not mean inventing every row. Several rows already ship
-in a service further down it — the `network-policy` component in `defer`,
-`relay`, and `tape`; `replicas: 2` in `defer`'s operator. Where that is true,
-`lumen`'s job is to **adopt the existing pattern and pull it into
-`libs/service-k8s`**, not to write a second one. Check the other services for
-the row before authoring it.
+Leading the order does not mean inventing every row. Some rows already shipped
+in a service further down it before `lumen` reached them — the `network-policy`
+component originated in `defer`, `relay`, and `tape`, and `replicas: 2` in
+`defer`'s operator. Where that is true, `lumen`'s job is to **adopt the existing
+pattern and pull it into `libs/service-k8s`**, not to write a second one. Check
+the other services for the row before authoring it.
+
+As of 2026-07-27, `lumen` has closed four rows and pulled each mechanism into
+the shared layer: **control-plane observability** (#2620/#2621),
+**`status.conditions[]`** (#2601), **network isolation** (#2603), and **operator
+HA** (#2602). For the next adopter those four are no longer authoring work —
+`libs/service-k8s` renders them and the job is composition plus a cluster proof.
+Rows still open everywhere: **SLO-shaped latency alerting**, **both scaling
+axes**, and **verifiable release artifacts**.
 
 `sift` (in `projects/sift`, not `apps/`) sits late in that order for a
 structural reason, not a priority one. Like `lumen` it is something other
@@ -813,10 +874,10 @@ hides every other service's failure.
 | **Alert rules** | The operator renders a **`PrometheusRule`** beside its `ServiceMonitor`, behind the same `spec.observability` switch. Baseline for a stateful service: no ready replicas, pod crash-looping, PVC near full, scheduled backup job failing, storage degraded. Every alert carries a **`runbook` annotation naming the first command to run**. | `lumen`'s `operator/render.rs` `prometheus_rule` is the reference. **An alert on a series nothing publishes is worse than no alert** — if the signal lives in the CR's `status`, it needs a `customresourcestate` config or a driver-side gauge before the alert means anything (see `LumenReshardWorkflowStalled`, which can only read a fence gauge and misses `PrepareSplit`/`Splitting` stalls entirely). |
 | **Early warning before the wall** | Any resource with a hard limit (disk, quota, connection budget) pairs its **degraded** alert with an **approaching** alert that fires earlier. | A degraded alert alone only tells you the outage already started. `LumenPvcNearFull` (10% free, 10m) is the early warning `LumenStorageDegraded`'s own runbook cross-references. |
 | **SLO-shaped latency alerting** | Where a latency **histogram** exists, alert on quantiles or error-budget burn rate — not on a static-threshold counter. | A histogram referenced only from a runbook *string* is instrumentation nobody automated: `lumen_search_latency_seconds_bucket` ships, yet the only latency alert is `rate(lumen_slow_queries_total[5m]) > 0.1`. |
-| **Control-plane observability** | The operator exposes its **own `/metrics`** (reconcile attempts/failures/duration, leader-election state), ships its own `ServiceMonitor` in `<svc>-system`, emits Kubernetes **`Event`s** for reconcile decisions and failures, and owns at least two alerts: **operator absent** and **reconcile error rate non-zero**. | Belongs in `libs/service-k8s`'s shared controller, not per app. **Data-plane alerts cannot see a control plane that stopped reconciling** — every data-plane alert reading green is exactly what a wedged operator looks like, and `kubectl describe <cr>` with no Events cannot tell a deployer why nothing happened. |
-| **Status is the convergence API** | `status` carries `observedGeneration`, `additionalPrinterColumns` for the fields a human greps, and a standard **`conditions[]`** array (`metav1.Condition` shape: `type`/`status`/`reason`/`message`/`lastTransitionTime`/`observedGeneration`) with at least `Ready` and `Progressing`. | Without `conditions[]`, **`kubectl wait --for=condition=Ready` has nothing to read** and Argo/Flux cannot assess health without a bespoke Lua hook. A custom `phase` string is for humans; `conditions[]` is for automation. Both are needed — they are not substitutes. |
-| **Network isolation ships with the instance** | Every service ships a **`k8s/components/network-policy`** kustomize component: default-deny ingress plus explicit allows for client traffic, peer/consensus traffic, and metrics scrape. | `defer`, `relay`, and `tape` are the reference components. It is a **component, not a base resource** — a cluster whose CNI does not enforce NetworkPolicy opts out by not composing it, instead of silently believing it is isolated. |
-| **Operator HA is on by default** | A leader-elected operator's rendered Deployment defaults to **`replicas: 2`**. | Shipping the lease (`libs/service-k8s::lease`) and then `replicas: 1` means a node drain stops reconciliation until a fresh Pod schedules — the failover machinery is built and switched off. |
+| **Control-plane observability** | The operator exposes its **own `/metrics`** (reconcile attempts/failures/duration, leader-election state), ships its own `ServiceMonitor` in `<svc>-system`, emits Kubernetes **`Event`s** for reconcile decisions and failures, and owns at least two alerts: **operator absent** and **reconcile error rate non-zero**. | Shipped in `libs/service-k8s`'s shared controller, not per app: `metrics::ControllerMetrics` + `metrics::serve` (listener address from `OPERATOR_METRICS_ADDR`, default `0.0.0.0:9090`) and a `kube::runtime::events::Recorder` wired into `controller::run`. `lumen` is the reference adopter (#2620/#2621) — the per-app work is the `ServiceMonitor` and the two alerts, not the mechanism. **Data-plane alerts cannot see a control plane that stopped reconciling** — every data-plane alert reading green is exactly what a wedged operator looks like, and `kubectl describe <cr>` with no Events cannot tell a deployer why nothing happened. Note the Recorder's **6-minute dedup window**: a tight reconcile-fail loop emits one Event, so the failure *counter* is the alerting signal and the Event is the explanation. |
+| **Status is the convergence API** | `status` carries `observedGeneration`, `additionalPrinterColumns` for the fields a human greps, and a standard **`conditions[]`** array (`metav1.Condition` shape: `type`/`status`/`reason`/`message`/`lastTransitionTime`/`observedGeneration`) with at least `Ready` and `Progressing`. | Without `conditions[]`, **`kubectl wait --for=condition=Ready` has nothing to read** and Argo/Flux cannot assess health without a bespoke Lua hook. A custom `phase` string is for humans; `conditions[]` is for automation. Both are needed — they are not substitutes. The shared shape is `service_k8s::service::{Condition, ConditionFact, ConditionStatus}`; `lumen` is the reference adopter (#2601), emitting `Ready`, `Progressing`, and a domain condition. **`status_patch` is a pure function by contract, so it must not read a clock** — a service returns clock-free `ConditionFact`s and the controller stamps `lastTransitionTime`, carrying the prior value forward when `status` is unchanged. Get that backwards and every reconcile rewrites the timestamp, making a stuck condition look freshly flipped. Note also that a merge patch **replaces the whole array**, so the projection must re-emit conditions it did not change. |
+| **Network isolation ships with the instance** | Every service ships a **`k8s/components/network-policy`** kustomize component: default-deny ingress plus explicit allows for client traffic, peer/consensus traffic, and metrics scrape. | `defer`, `relay`, and `tape` are the original hand-written components; the shared renderer is now `service_k8s::render::common::network_policy`, adopted by `lumen` (#2603) for the operator-rendered path a CR user gets without kustomize. It is a **component, not a base resource** — a cluster whose CNI does not enforce NetworkPolicy opts out by not composing it, instead of silently believing it is isolated. Two traps: the controller's `plural_for()` fallback pluralizes to `networkpolicys`, so the kind needs an explicit `"NetworkPolicy" => "networkpolicies"` arm; and **kind's default `kindnet` CNI does not enforce NetworkPolicy at all**, so a kind run proves the object renders and applies, never that traffic is blocked. |
+| **Operator HA is on by default** | A leader-elected operator's rendered Deployment defaults to **`replicas: 2`**. | Shipping the lease (`libs/service-k8s::lease`) and then `replicas: 1` means a node drain stops reconciliation until a fresh Pod schedules — the failover machinery is built and switched off. `defer` and `lumen` (#2602) both ship it. **`replicas: 2` without a `PodDisruptionBudget` is still one drain away from zero** — the pair needs a PDB keeping one Pod up (`maxUnavailable: 1`, or the equivalent `minAvailable: 1` at two replicas), or the node-drain case the second replica exists for evicts both at once. |
 | **Both scaling axes stay autonomous** | See *HA* above: storage grows by disk-driven shard split, compute by CPU-driven replica scaling, neither gated on a human. | **A CRD field that still advertises autoscaling bounds while the renderer has stopped emitting the autoscaler is a defect in both directions** — either wire the replacement policy or remove the field. An inert knob whose doc comment promises elasticity is worse than an honest absence. |
 | **Release artifacts are verifiable** | Published container images carry a **cosign signature, an SBOM, and build provenance**; the release workflow produces them and the deploy handoff names the verification command. | A sha256 on the release tarball proves the tarball — it says nothing about the image a cluster actually pulls. Without attestation, no admission policy can enforce "only run images we built". |
 
