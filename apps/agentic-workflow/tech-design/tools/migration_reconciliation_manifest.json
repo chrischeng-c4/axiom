@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:d440cb109140418e320f441a8e732fabedfc83fcb4c489ea0076dcd72ada3337",
+  "digest": "sha256:351b0c1380e07e6b2b1b520ac9800c1649dcf41cadc5dadaa208395aed99a284",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10895,7 +10895,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/cb_arbitrate.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:0f629c5ca3c6cca1f8560001b3b26010b39ae7a832d7c9838f69863ce12449f9",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/cb_arbitrate.py"
     },
     {
@@ -10915,7 +10915,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/cb_review.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:1c910d4a36df9a50fce7b4fd65fe4525dc2ebdad163ba4a9ca0201b09fa8725f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/cb_review.py"
     },
     {
@@ -10925,7 +10925,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/cb_revise.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:b79525335393f161661aa0a95a9ac8d32dd6b3c51e49d583c93489e133a7ffe5",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/cb_revise.py"
     },
     {
@@ -11095,7 +11095,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/project.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:dd311002d171162db93e6d11a442afbc898d305a0f6d341e2f8cfc616a8353da",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/project.py"
     },
     {

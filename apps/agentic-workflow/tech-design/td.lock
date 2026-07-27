@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:38:26.276037+00:00"
-digest = "sha256:e2bd9559461cda79a96d50c400ce65730ae84d78fa602f49445b3056442de52c"
-source_digest = "sha256:e2bd9559461cda79a96d50c400ce65730ae84d78fa602f49445b3056442de52c"
-ir_digest = "sha256:7f331e80feda192169cddf206429c52ddec669f9a8a3782c76098d0a64f01417"
+generated_at = "2026-07-27T13:41:43.930671+00:00"
+digest = "sha256:0e49b289ef5abfdad38fe0212889a7015aa616b7dc8120c6328b216333da7a50"
+source_digest = "sha256:0e49b289ef5abfdad38fe0212889a7015aa616b7dc8120c6328b216333da7a50"
+ir_digest = "sha256:1386d04cdb730463ed2f41fe4e1e079d7e38fae8c0fd87e8da46bbd6c56a48d3"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1840,8 +1840,20 @@ path = "src/agentic_workflow/migrated/surface/interfaces/src/cb.py"
 digest = "sha256:7551f7801a959c45908aedcdc7b17668b693539f9573dbaedf9d7a7f2263371a"
 
 [[files]]
+path = "src/agentic_workflow/migrated/surface/interfaces/src/cb_arbitrate.py"
+digest = "sha256:69490b553c23275e1e368edb78e414ff593298ec78a5737de1148d8506a00368"
+
+[[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/cb_fill.py"
 digest = "sha256:53a3a765eb26ba93478010aa1e9673c029277d962f76afc84ec630594c173eb7"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/interfaces/src/cb_review.py"
+digest = "sha256:e8d7c3c300ab07752594456d284df466ebbbe3ee933cb160c89ccbc2f26236a2"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/interfaces/src/cb_revise.py"
+digest = "sha256:afa053b1c6ac45badbde18ce0c97b6eb2e42b1689ced56269a244e5c9c1204f0"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/chain.py"
@@ -1906,6 +1918,10 @@ digest = "sha256:cb0d2f931d361345516a07e5ca464da15d8cdbaa8f37dac379da730a87206db
 [[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/migrate.py"
 digest = "sha256:165b4d57b6a61758507f5ece59fc1eaf35777ef686cb71e87dad63e8dc685791"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/interfaces/src/project.py"
+digest = "sha256:aa539a292b14e2b21c3f5dfd7a62638e537ba9c20dced77edfad0f88cf22b9fc"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/remote_push.py"
