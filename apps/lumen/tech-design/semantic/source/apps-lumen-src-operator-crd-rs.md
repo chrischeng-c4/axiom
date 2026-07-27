@@ -20,27 +20,28 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 168 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 382 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 525 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 359 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 587 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 412 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 558 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 389 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 620 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 549 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 326 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 225 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 260 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 500 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 477 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 409 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 197 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 370 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 397 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 336 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 345 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 664 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 749 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 645 | storage_pod_count(&self) -> i32 |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 582 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 356 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 255 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 290 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 533 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 510 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 442 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 227 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 400 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 430 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 366 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 375 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 718 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 803 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 699 | storage_pod_count(&self) -> i32 |
+| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 686 | validate(&self) -> Result<(), String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -128,18 +129,32 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `off` (dev) or `required` (token registry supplied via
-    /// `tokensSecret` or `tokensSecretProviderClass`).
+    /// Auth mode: `required` (the default — supply a token registry via
+    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    ///
+    /// `required` is the default because the other way round, forgetting this
+    /// field ships an open cluster and nothing says so; forgetting it now
+    /// fails startup with a message naming the field to set. `disabled`
+    /// remains a one-word opt-out for local development (#2678, R4).
+    ///
+    /// Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the
+    /// boolean `false`. (`off` is what the serving process's own `LUMEN_AUTH`
+    /// env var takes — the two spellings are not interchangeable.)
     #[serde(default)]
     pub auth: AuthMode,
 
     /// Name of a Secret whose `token-registry.json` key is mounted at
     /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
     /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object of
-    /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
-    /// Ignored when `auth: off`. See also `tokensSecretProviderClass` for a
-    /// Secret-free alternative; if both are set, this field wins.
+    /// `token-registry.json` is a JSON object with two disjoint namespaces —
+    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
+    /// each claims object being
+    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
+    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
+    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
+    /// for a Secret-free alternative; setting **both** is rejected by the CRD
+    /// schema (#2678, R7), because silently preferring one leaves an operator
+    /// reading credentials that are not the ones being served.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -151,9 +166,10 @@ pub struct LumenSpec {
     /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
     /// referenced `SecretProviderClass` must project a file named
     /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by
-    /// precedence, not schema enforcement: if `tokensSecret` is also set, it
-    /// wins (backward compatible) and this field is ignored. Rotation
+    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
+    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
+    /// both is rejected at `kubectl apply` rather than resolved by a
+    /// precedence rule nothing surfaces (#2678, R7). Rotation
     /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
     /// the live verifier on change — no rolling restart needed on lumen's
     /// side. The remaining caveat is entirely at the CSI layer: a
@@ -442,14 +458,17 @@ impl LogFormat {
 #[serde(rename_all = "lowercase")]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum AuthMode {
-    /// Open API (dev / trusted network). Serialized as `disabled` — NOT `off`,
-    /// which YAML 1.1 (kubectl / go-yaml) would parse as the boolean `false`
-    /// and corrupt the CRD enum/default.
-    #[default]
+    /// Open API (dev / trusted network) — an explicit opt-out, never the
+    /// default (#2678, R4). Serialized as `disabled` — NOT `off`, which YAML
+    /// 1.1 (kubectl / go-yaml) would parse as the boolean `false` and corrupt
+    /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; the token registry file comes from
-    /// `tokensSecret` or `tokensSecretProviderClass`.
+    /// Bearer-token or verified-identity required; the registry file comes
+    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
+    /// `Lumen` that omits `spec.auth` fails startup asking for credentials
+    /// instead of serving an open API silently.
+    #[default]
     Required,
 }
 
@@ -566,7 +585,7 @@ pub struct ServingBackupSpec {
     /// Name of a Secret whose `token` key holds a bearer token with
     /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
     /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: off`.
+    /// token) when `spec.auth: disabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -704,6 +723,27 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
+    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    ///
+    /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
+    /// `kubectl apply`. This is the second line: a cluster still running an
+    /// older CRD, or an object written before the rule existed, must not
+    /// silently serve one of two credential sets. Naming **both** fields
+    /// matters — an operator who set `tokensSecretProviderClass` and got a
+    /// message about `tokensSecret` has no idea what to remove.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
+            return Err(format!(
+                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
+                 remove one — with both present there is no way to tell which registry is \
+                 actually being served",
+                self.tokens_secret.as_deref().unwrap_or_default(),
+                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn storage_pod_count(&self) -> i32 {
         if self.replicas_per_shard > 1 {
             (self.shard_count * self.replicas_per_shard) as i32

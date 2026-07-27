@@ -456,6 +456,9 @@ spec:
   replicasPerShard: 1
   voterCount: 1
   logFormat: json
+  # #2678: `auth` fails closed. This restore leg probes /search unauthenticated,
+  # so it opts out explicitly; the auth legs live in their own CRs below.
+  auth: disabled
   serving:
     cpu: 500m
     memory: 1Gi

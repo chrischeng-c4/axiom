@@ -712,7 +712,7 @@ impl GoogleVerifier {
     /// authorization succeeding.
     fn resolve(&self, identity: &str) -> Result<RoleMapPrincipal, GoogleAuthError> {
         self.registry
-            .lookup(identity)
+            .lookup_identity(identity)
             .map(RoleMapPrincipal::Token)
             .ok_or(GoogleAuthError::NotInRegistry)
     }
@@ -731,8 +731,10 @@ impl GoogleVerifier {
             }
             Credential::Opaque => {
                 // Registry first: a pre-shared secret is a local map hit and
-                // must not acquire a network round trip.
-                if let Some(claims) = self.registry.lookup(token) {
+                // must not acquire a network round trip. `lookup_secret`, not
+                // `lookup_identity` — the bearer namespace is the only one a
+                // presented string may reach (#2678, R1).
+                if let Some(claims) = self.registry.lookup_secret(token) {
                     return Ok(RoleMapPrincipal::Token(claims));
                 }
                 let email = self.introspect_access_token(token).await?;
@@ -791,7 +793,7 @@ impl AsyncVerifier for GoogleVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::role_map::{Role, TokenClaims};
+    use crate::role_map::{Registry, Role, TokenClaims};
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -938,19 +940,24 @@ mod tests {
         )
     }
 
+    fn dev_claims() -> TokenClaims {
+        TokenClaims {
+            subject: "dev:lumen-dev".to_string(),
+            roles: HashMap::from([("products".to_string(), Role::Read)]),
+        }
+    }
+
     /// The registry keyed by IAM identity instead of by secret. The key is a
     /// public email, so it can live in git, in a CR, in a code review — none
-    /// of which is true of a bearer secret.
+    /// of which is true of a bearer secret. It lives in the `identities`
+    /// namespace, which is the only one a verified Google email may reach.
     fn registry() -> Arc<ReloadableRoleMapVerifier> {
-        Arc::new(ReloadableRoleMapVerifier::new(
+        Arc::new(ReloadableRoleMapVerifier::with_registry(
             true,
-            HashMap::from([(
-                IDENTITY.to_string(),
-                TokenClaims {
-                    subject: "dev:lumen-dev".to_string(),
-                    roles: HashMap::from([("products".to_string(), Role::Read)]),
-                },
-            )]),
+            Registry {
+                tokens: HashMap::new(),
+                identities: HashMap::from([(IDENTITY.to_string(), dev_claims())]),
+            },
         ))
     }
 
@@ -1362,6 +1369,75 @@ mod tests {
             introspection.calls(),
             0,
             "an existing bearer secret must not acquire a Google round trip"
+        );
+    }
+
+    // -- #2678 AC1/AC2: the two namespaces are disjoint ---------------------
+
+    /// AC1. Once the identity is verified, it is judged by the same role map
+    /// as a secret-keyed entry — same claims in, same decision out. The
+    /// namespace decides *how you prove who you are*, never *what you may do*.
+    #[tokio::test]
+    async fn an_identity_keyed_entry_authorizes_identically_to_a_secret_keyed_one() {
+        let by_identity = verifier_with(
+            CountingJwks::serving(),
+            None,
+            FakeClock::new(1_700_000_000),
+        );
+        let by_secret = GoogleVerifier::with_sources(
+            true,
+            Arc::new(ReloadableRoleMapVerifier::with_registry(
+                true,
+                Registry::from_tokens(HashMap::from([(
+                    "preshared-secret".to_string(),
+                    dev_claims(),
+                )])),
+            )),
+            GoogleAuthConfig::new([AUDIENCE]),
+            CountingJwks::serving(),
+            None,
+            FakeClock::new(1_700_000_000),
+        );
+
+        let from_identity = by_identity
+            .authenticate_credential(&id_token())
+            .await
+            .unwrap();
+        let from_secret = by_secret
+            .authenticate_credential("preshared-secret")
+            .await
+            .unwrap();
+
+        assert_eq!(from_identity.subject(), from_secret.subject());
+        for (resource, role) in [
+            ("products", Role::Read),
+            ("products", Role::Write),
+            ("orders", Role::Read),
+        ] {
+            assert_eq!(
+                from_identity.ensure(resource, role).is_ok(),
+                from_secret.ensure(resource, role).is_ok(),
+                "{resource}/{role:?} must decide the same either way"
+            );
+        }
+    }
+
+    /// AC2. A bearer secret whose text happens to be a valid email address
+    /// must not match an email-keyed entry. Presenting a string is not proving
+    /// an identity; if one namespace served both, anyone who learned an
+    /// authorized email would hold a working credential.
+    #[tokio::test]
+    async fn a_bearer_secret_spelled_like_an_email_does_not_match_an_identity_entry() {
+        // No introspection source: reaching Google is itself the proof that
+        // the string was not resolved locally as a secret.
+        let verifier = verifier_with(CountingJwks::serving(), None, FakeClock::new(1_700_000_000));
+
+        let error = verifier.authenticate_credential(IDENTITY).await.unwrap_err();
+
+        assert_eq!(
+            error,
+            GoogleAuthError::IntrospectionNotConfigured,
+            "the email text must fall through to introspection, not resolve as a secret"
         );
     }
 

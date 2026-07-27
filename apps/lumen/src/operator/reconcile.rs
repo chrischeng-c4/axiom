@@ -455,6 +455,33 @@ impl ManagedService for Lumen {
         render::render(self)
     }
 
+    /// #2678 R7: reject a spec that names two credential sources before any
+    /// child object is applied.
+    ///
+    /// `render` is infallible by contract — six services share that signature —
+    /// so the refusal lives here, the one hook on the reconcile path that can
+    /// return an error. Failing here means the reconcile fails and the CR does
+    /// not converge; the alternative, picking one source by precedence, leaves
+    /// an operator reading the credentials they deployed while lumen serves the
+    /// other ones. The CRD carries the same rule as CEL, so on a current
+    /// cluster this never fires — it is the backstop for an older CRD or an
+    /// object written before the rule existed.
+    fn reconcile_plan(
+        &self,
+        _client: kube::Client,
+    ) -> impl std::future::Future<Output = anyhow::Result<service_k8s::service::ReconcilePlan>> + Send
+    {
+        let validation = self.spec.validate();
+        let children = render::render(self);
+        async move {
+            validation.map_err(|why| anyhow::anyhow!(why))?;
+            Ok(service_k8s::service::ReconcilePlan {
+                children,
+                context: serde_json::Value::Null,
+            })
+        }
+    }
+
     fn prunes(&self) -> Vec<service_k8s::service::PruneTarget> {
         render::prunes(self)
     }

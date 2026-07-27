@@ -57,9 +57,9 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 124 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 149 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 113 | wants_hpa(_lumen: &Lumen) -> bool |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 130 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 155 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 119 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -150,7 +150,12 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
 }
 
 /// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
+///
+/// The two are mutually exclusive by schema and by
+/// [`LumenSpec::validate`](super::crd::LumenSpec::validate), so at most one is
+/// ever set on a spec that reaches here (#2678, R7). The order below is not a
+/// precedence rule to rely on — it is what a spec that slipped past both gates
+/// happens to render, and that spec's reconcile has already failed.
 fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;

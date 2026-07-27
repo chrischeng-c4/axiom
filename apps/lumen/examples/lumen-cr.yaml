@@ -16,6 +16,10 @@ spec:
   replicasPerShard: 1
   voterCount: 1
   logFormat: pretty
+  # `auth` defaults to `required`, so an open API has to be asked for out loud.
+  # The value is spelled `disabled`, not `off` — YAML 1.1 reads a bare `off`
+  # as the boolean false.
+  auth: disabled
   serving:
     autoscaling:
       minReplicas: 1
@@ -41,7 +45,9 @@ spec:
   logLevel: warn
   auth: required
   tokensSecret: lumen-tokens
-  # tokensSecretProviderClass: lumen-tokens-spc  # CSI alternative to tokensSecret (mutually exclusive; tokensSecret wins if both set)
+  # tokensSecretProviderClass: lumen-tokens-spc  # CSI alternative to tokensSecret.
+  # Exactly one of the two: the CRD's CEL rule rejects a CR that sets both, so a
+  # half-finished migration fails at `kubectl apply` instead of at runtime.
   serving:
     autoscaling:
       minReplicas: 6

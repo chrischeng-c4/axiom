@@ -81,18 +81,32 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `off` (dev) or `required` (token registry supplied via
-    /// `tokensSecret` or `tokensSecretProviderClass`).
+    /// Auth mode: `required` (the default — supply a token registry via
+    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    ///
+    /// `required` is the default because the other way round, forgetting this
+    /// field ships an open cluster and nothing says so; forgetting it now
+    /// fails startup with a message naming the field to set. `disabled`
+    /// remains a one-word opt-out for local development (#2678, R4).
+    ///
+    /// Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the
+    /// boolean `false`. (`off` is what the serving process's own `LUMEN_AUTH`
+    /// env var takes — the two spellings are not interchangeable.)
     #[serde(default)]
     pub auth: AuthMode,
 
     /// Name of a Secret whose `token-registry.json` key is mounted at
     /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
     /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object of
-    /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
-    /// Ignored when `auth: off`. See also `tokensSecretProviderClass` for a
-    /// Secret-free alternative; if both are set, this field wins.
+    /// `token-registry.json` is a JSON object with two disjoint namespaces —
+    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
+    /// each claims object being
+    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
+    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
+    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
+    /// for a Secret-free alternative; setting **both** is rejected by the CRD
+    /// schema (#2678, R7), because silently preferring one leaves an operator
+    /// reading credentials that are not the ones being served.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -104,9 +118,10 @@ pub struct LumenSpec {
     /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
     /// referenced `SecretProviderClass` must project a file named
     /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by
-    /// precedence, not schema enforcement: if `tokensSecret` is also set, it
-    /// wins (backward compatible) and this field is ignored. Rotation
+    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
+    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
+    /// both is rejected at `kubectl apply` rather than resolved by a
+    /// precedence rule nothing surfaces (#2678, R7). Rotation
     /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
     /// the live verifier on change — no rolling restart needed on lumen's
     /// side. The remaining caveat is entirely at the CSI layer: a
@@ -395,14 +410,17 @@ impl LogFormat {
 #[serde(rename_all = "lowercase")]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 pub enum AuthMode {
-    /// Open API (dev / trusted network). Serialized as `disabled` — NOT `off`,
-    /// which YAML 1.1 (kubectl / go-yaml) would parse as the boolean `false`
-    /// and corrupt the CRD enum/default.
-    #[default]
+    /// Open API (dev / trusted network) — an explicit opt-out, never the
+    /// default (#2678, R4). Serialized as `disabled` — NOT `off`, which YAML
+    /// 1.1 (kubectl / go-yaml) would parse as the boolean `false` and corrupt
+    /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; the token registry file comes from
-    /// `tokensSecret` or `tokensSecretProviderClass`.
+    /// Bearer-token or verified-identity required; the registry file comes
+    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
+    /// `Lumen` that omits `spec.auth` fails startup asking for credentials
+    /// instead of serving an open API silently.
+    #[default]
     Required,
 }
 
@@ -519,7 +537,7 @@ pub struct ServingBackupSpec {
     /// Name of a Secret whose `token` key holds a bearer token with
     /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
     /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: off`.
+    /// token) when `spec.auth: disabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -657,6 +675,27 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
+    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    ///
+    /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
+    /// `kubectl apply`. This is the second line: a cluster still running an
+    /// older CRD, or an object written before the rule existed, must not
+    /// silently serve one of two credential sets. Naming **both** fields
+    /// matters — an operator who set `tokensSecretProviderClass` and got a
+    /// message about `tokensSecret` has no idea what to remove.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
+            return Err(format!(
+                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
+                 remove one — with both present there is no way to tell which registry is \
+                 actually being served",
+                self.tokens_secret.as_deref().unwrap_or_default(),
+                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn storage_pod_count(&self) -> i32 {
         if self.replicas_per_shard > 1 {
             (self.shard_count * self.replicas_per_shard) as i32

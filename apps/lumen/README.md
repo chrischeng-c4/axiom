@@ -1409,7 +1409,7 @@ LUMEN_AUTH=required
 LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
 ```
 
-The registry file is a JSON map of bearer token to subject/roles, mounted from a
+The registry file maps each principal to its subject and roles, mounted from a
 Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
 Lumen's adapter delegates validation and atomic last-known-good replacement to
@@ -1422,19 +1422,38 @@ external Secret-reloader controller required. Invalid replacements are
 rejected and the process stays on its last-known-good registry, emitting a
 redacted auth audit event.
 
-`token-registry.json` shape:
+`token-registry.json` has two **disjoint** namespaces (#2678). `tokens` keys
+are bearer secrets; `identities` keys are emails an external provider verified.
+A presented bearer token is only ever looked up in `tokens`, so a secret that
+happens to be spelled like an email can never inherit that email's grants:
 
 ```json
 {
-  "admin-token": {
-    "subject": "platform-admin",
-    "roles": { "*": "admin" }
+  "tokens": {
+    "admin-token": {
+      "subject": "platform-admin",
+      "roles": { "*": "admin" }
+    },
+    "product-reader-token": {
+      "subject": "products-reader",
+      "roles": { "products": "read" }
+    }
   },
-  "product-reader-token": {
-    "subject": "products-reader",
-    "roles": { "products": "read" }
+  "identities": {
+    "data-team@example.com": {
+      "subject": "data-team",
+      "roles": { "products": "read" }
+    }
   }
 }
+```
+
+Only the `tokens` half is a credential, so a registry that carries `identities`
+alone is ordinary configuration — versionable, diffable, reviewable. A flat
+document with no sections is still accepted and read entirely as `tokens`:
+
+```json
+{ "admin-token": { "subject": "platform-admin", "roles": { "*": "admin" } } }
 ```
 
 Role values are `read`, `write`, and `admin`; `*` grants across all collections.

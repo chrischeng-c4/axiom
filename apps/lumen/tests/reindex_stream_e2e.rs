@@ -119,9 +119,9 @@ async fn stream_requires_write_role_under_auth() {
     use std::collections::HashMap;
 
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig {
-        required: true,
-        tokens: HashMap::from([
+    let cfg = AuthConfig::with_tokens(
+        true,
+        HashMap::from([
             (
                 "tok-r".to_string(),
                 TokenClaims {
@@ -137,7 +137,7 @@ async fn stream_requires_write_role_under_auth() {
                 },
             ),
         ]),
-    };
+    );
     let app = router(AppState::new(engine, Arc::new(cfg)));
     let s = TestServer::new(app).unwrap();
 

@@ -72,6 +72,18 @@
 //! via [`async_auth_middleware`]; a synchronous verifier reaches that same
 //! middleware through [`AsAsync`]. Neither trait replaces the other, and no
 //! existing [`Verifier`] implementation changed to make room for the second.
+//!
+//! ## Two credential namespaces, deliberately disjoint
+//!
+//! [`Registry`] holds bearer secrets (`tokens`) and provider-verified
+//! identities (`identities`) in two maps, not one. The key of the first is a
+//! *secret* — knowing it is the proof. The key of the second is a *public
+//! email* — knowing it proves nothing, and only a verified Google credential
+//! may reach it. Sharing one map would mean a bearer secret spelled like an
+//! email silently grants that identity's roles to anyone who read it off a CR.
+//! A service that resolves only secrets keeps using [`load_registry`], which
+//! now rejects rather than ignores an identity-keyed document it cannot honour;
+//! a service that resolves both uses [`load_registry_file`] (#2678).
 
 pub mod async_verifier;
 mod error;
@@ -96,7 +108,8 @@ pub use reload::{
     DEFAULT_REGISTRY_FILE_WATCH_INTERVAL,
 };
 pub use role_map::{
-    load_registry, Role, RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
+    load_registry, load_registry_file, Registry, Role, RoleMapDenied, RoleMapPrincipal,
+    StaticRoleMapVerifier, TokenClaims,
 };
 pub use verifier::Verifier;
 

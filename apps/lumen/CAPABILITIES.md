@@ -556,6 +556,121 @@ Two findings worth keeping, both about the *harness* rather than the product:
   after a rollout *every* replica honestly reports `leader 0`. Asserting
   immediately reads a real, transient, correct state as a failure.
 
+## Authentication and Authorization Evidence
+
+### Registry keyed by verified identity, auth required by default (#2678, 2026-07-27)
+
+The registry's map key used to **be** the credential, which cost two things at
+once: the permission table could not be read by anyone who was not also
+entitled to authenticate as everyone in it, and a Google email — the only thing
+#2677's verification produces — had nothing in the document to match. The
+registry now carries two **disjoint** key namespaces:
+
+```json
+{ "tokens": { "<bearer secret>": {…} }, "identities": { "<verified email>": {…} } }
+```
+
+A presented `Authorization: Bearer` value resolves against `tokens` only, a
+provider-verified email against `identities` only. So a bearer secret whose
+text happens to be a valid email address can never inherit that email's grants,
+and a registry carrying `identities` alone holds no credential at all — it is
+ordinary configuration, versionable and reviewable. A flat, section-less
+document is still accepted and read entirely as `tokens`, which is what keeps
+every already-deployed registry valid unchanged, including the GKE acceptance
+payload in `acceptance/gcp/environment/secretmanager.tf`.
+
+The discriminator is the part worth pinning: a document is sectioned only when
+**every** top-level key is `tokens` or `identities` **and** no top-level value
+carries a `subject` field. Drop the second clause and a flat registry whose one
+secret is literally spelled `tokens` is misread as a section, silently losing
+its only credential. That rule is duplicated in `libs/cli-std/src/connect.rs`
+rather than shared, because `service-auth` depends on `cli-std` and not the
+reverse; the two copies are held together by a test, not by a symbol.
+
+Four integrator-facing artifacts turned out to describe a product that no
+longer exists. None of them is something the compiler can see:
+
+- The CRD description told readers to write `auth: off` — a value the enum
+  rejects. The wire spelling is `disabled`, because YAML 1.1 parses a bare
+  `off` as the boolean `false`. `off` stays correct for the serving process's
+  own `LUMEN_AUTH` env var; the two spellings are not interchangeable and the
+  `#[serde(rename = "disabled")]` that records the trap has to stay.
+- The published `operationalSchemas.TokenRegistry` JSON Schema **rejected the
+  shape the product now recommends** — it was `additionalProperties: <claims>`
+  at the top level. It is now `anyOf` [sectioned, flat]; `anyOf` and not
+  `oneOf`, because `{}` matches both branches and would fail an exclusive
+  choice.
+- `lumen llm --topic auth` still taught a `tokensSecret`-wins precedence rule
+  that R7 had replaced with a hard CEL rejection at `kubectl apply`.
+- …and claimed rotation needs a rolling restart, contradicting the 15s file
+  watcher wired at `bin/lumen.rs:2335` since #2475. The real remaining caveat
+  is one layer down: GKE's managed CSI driver defaults secret rotation off, so
+  the mounted file never changes and there is nothing for the watcher to see.
+
+Rendering R4 and R7 into the shipped manifest exposed a gap older than either
+of them. `apps/lumen/tests/operator_render.rs` asserts against the library's
+`crd_yaml()`, and `cli_convention.rs` renders into a temp dir — so nothing in
+the suite ever looked at `apps/lumen/k8s/operator/crd.yaml`, the file a
+kustomize user actually applies. It had drifted: no `x-kubernetes-validations`
+block at all, and `spec.auth` still defaulting to `disabled`. R7 would have
+passed its own unit test while shipping a CRD that accepted both token sources,
+and R4's new default would never have reached a `kubectl apply`. Every other
+manifest under `k8s/operator/` (`rbac.yaml`, `deployment.yaml`, `pdb.yaml`, the
+kustomizations) is already `include_str!`-gated by
+`operator_backup_kubernetes_wiring.rs`; `crd.yaml` was the one that was not.
+`checked_in_crd_yaml_matches_the_renderer` now compares the two byte for byte —
+sound because `cli_std::artifact::write_or_print` writes the body verbatim, so
+`--out` produces exactly `crd_yaml()`.
+
+The same sweep caught the one true code regression:
+`cli_std::connect::resolve_token` — the dev path behind `lumen connect` and
+`lumen query --namespace/--secret` — decoded the flat form only, so the first
+cluster to adopt the sectioned registry would have broken port-forward access
+for every developer while the server itself kept working.
+
+Evidence — every acceptance criterion that can be settled without a cluster:
+
+| AC | Assertion | Test |
+| --- | --- | --- |
+| AC1 | An email-keyed entry authorizes identically to a secret-keyed one | `service-auth` `gcp::…::an_identity_keyed_entry_authorizes_identically_to_a_secret_keyed_one` |
+| AC2 | A bearer secret spelled like an email does not match an identity entry | `service-auth` `gcp::…::a_bearer_secret_spelled_like_an_email_does_not_match_an_identity_entry` |
+| AC5 | A malformed rotation leaves the previous registry serving | `service-auth` `reload::…::a_malformed_identity_rotation_leaves_the_previous_registry_serving` |
+| AC6 | A CR with no auth configuration fails to start, naming the field | `lumen` `auth::…::auth_config_required_without_tokens_fails_fast_naming_the_cr_fields` |
+| AC7 | `LUMEN_TOKENS` appears nowhere in the tree | tree-wide grep → **0 hits**, plus `cargo test -p lumen` |
+| AC8 | A CR naming both token sources is rejected, identifying both | `lumen` `operator::…::the_crd_rejects_naming_both_token_sources` |
+| AC9 | A CR omitting `spec.auth` requires authentication | `lumen` `operator::…::auth_defaults_to_required` |
+| — | Both registry shapes resolve the same token via the CLI path | `cli-std` `connect::…::both_registry_shapes_resolve_the_same_token` |
+| — | Every published schema example parses through the real loader | `lumen` `json_schema_emits_token_registry_operational_schema` |
+| — | The applied `k8s/operator/crd.yaml` is byte-identical to the renderer | `lumen` `operator_render::checked_in_crd_yaml_matches_the_renderer` |
+
+Runs (2026-07-27, `EXIT` codes captured by direct redirect — a `| tail` reports
+the pipe's status, not cargo's):
+
+- `cargo test -p service-auth` → **64 passed / 0 failed**, `EXIT=0`.
+- `cargo test -p lumen --features operator` → **743 passed / 0 failed** across
+  153 targets (116 ignored — the cluster- and network-gated ones), `EXIT=0`;
+  `--test operator_render` re-run after the parity test was added → 43/0.
+- `cargo build -p lumen --features operator --bin lumen` → `EXIT=0`.
+- `cargo test -p cli-std --features k8s` → 45 passed / 1 failed, `EXIT=101`.
+  The failure is **pre-existing and unrelated**:
+  `connect::tests::wait_for_local_port_ready_times_out_against_closed_port`
+  picks a "closed" port by binding `127.0.0.1:0`, reading the number and
+  dropping the listener — while a sibling test binds `:0` in a parallel thread,
+  and macOS hands the just-freed ephemeral port straight back. Confirmed
+  unchanged at HEAD (`git show HEAD:libs/cli-std/src/connect.rs`); the isolated
+  re-run `--lib connect::` is **11 passed / 0 failed, `EXIT=0`**. Left as-is
+  rather than folded into this change.
+
+**Owed to a cluster.** AC3 (adding an identity to the Secret Manager value
+grants access with no pod restart) and AC4 (the mounted file observably changes,
+proving CSI rotation is on rather than assumed) cannot be settled locally, and
+R3 — declaring rotation in the acceptance cluster's terraform — is blocked
+behind #2706's single-root rewrite and a provider bump: `rotation_config`
+reached the GA `hashicorp/google` provider only in 7.2.0, and
+`acceptance/gcp/cluster/main.tf` pins `~> 6.0`. Until that run happens, the
+claim is "the key namespaces are disjoint and the reload path survived the
+shape change", not "identity-keyed rotation is proven in GKE".
+
 ## Verified Cloud Evidence
 
 Standard GKE operator acceptance evidence for Lumen (epic #2434 ordered

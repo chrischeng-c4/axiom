@@ -325,6 +325,33 @@ fn k8s_instance_render_prod_accepts_app_namespace_overrides() {
     }
 }
 
+/// #2678: `spec.auth` fails closed, so a rendered CR that omits it is a
+/// `required` instance with no token source — a data plane that never passes
+/// readiness. Every profile therefore states its posture, and every profile
+/// that says `required` also names where the registry comes from.
+#[test]
+fn k8s_instance_render_every_profile_states_its_auth_posture() {
+    for profile in ["dev", "staging", "prod", "template"] {
+        let rendered = run_lumen(&["k8s", "instance", "render", "--profile", profile]);
+        let auth = rendered
+            .lines()
+            .find_map(|line| line.strip_prefix("  auth: "))
+            .unwrap_or_else(|| panic!("profile `{profile}` renders no `auth:` line:\n{rendered}"));
+
+        assert!(
+            matches!(auth, "required" | "disabled"),
+            "profile `{profile}`: `auth: {auth}` is not a CRD enum value"
+        );
+        if auth == "required" {
+            assert!(
+                rendered.contains("\n  tokensSecret:")
+                    || rendered.contains("\n  tokensSecretProviderClass:"),
+                "profile `{profile}` requires auth but names no token source:\n{rendered}"
+            );
+        }
+    }
+}
+
 /// #963: file-writing modes end with exactly one `next: <command>` tail line
 /// (shape `^next: \S`); stream-to-stdout modes (no `--out`) emit none, and
 /// the streamed artifact bytes stay untouched. Offline, no network/server.

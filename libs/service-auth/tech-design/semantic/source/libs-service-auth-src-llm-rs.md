@@ -21,8 +21,8 @@ Public API manifest for `libs/service-auth/src/llm.rs` captured during libs code
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `TOPIC` | libs/service-auth/src/llm.rs | const | pub | 4 | pub const TOPIC: cli_std::llm::Topic = cli_std::llm::Topic { |
-| `topic` | libs/service-auth/src/llm.rs | function | pub | 52 | pub fn topic() -> &'static cli_std::llm::Topic { |
+| `TOPIC` | libs/service-auth/src/llm.rs | const | pub | 6 | pub const TOPIC: cli_std::llm::Topic = cli_std::llm::Topic { |
+| `topic` | libs/service-auth/src/llm.rs | function | pub | 70 | pub fn topic() -> &'static cli_std::llm::Topic { |
 
 
 ## Source
@@ -56,21 +56,36 @@ registry loading, and principal injection. Each service owns its public env
 prefix, resource names, route exemptions, and handler-level authorization.
 
 ## token registry shape
-The registry is a JSON object keyed by exact bearer token. Each token maps to a
-subject plus resource-role grants:
+The registry is a JSON object with two **disjoint** namespaces: `tokens` is
+keyed by exact bearer secret, `identities` by an email an external provider
+verified. Each key maps to a subject plus resource-role grants:
 
 ```json
 {
-  "admin-token": {
-    "subject": "ops",
-    "roles": { "*": "admin" }
+  "tokens": {
+    "admin-token": {
+      "subject": "ops",
+      "roles": { "*": "admin" }
+    },
+    "reader-token": {
+      "subject": "reader",
+      "roles": { "products": "read" }
+    }
   },
-  "reader-token": {
-    "subject": "reader",
-    "roles": { "products": "read" }
+  "identities": {
+    "data-team@example.com": {
+      "subject": "data-team",
+      "roles": { "products": "read" }
+    }
   }
 }
 ```
+
+A presented bearer token resolves against `tokens` only, so a secret whose text
+happens to be a valid email can never inherit that email's grants. Only the
+`tokens` half is a credential — a registry carrying `identities` alone is
+ordinary configuration. A flat document with neither section is still accepted
+and read entirely as `tokens`.
 
 Roles are `read`, `write`, or `admin`; `admin` covers `write` and `read`, and
 `write` covers `read`. The literal resource key `*` grants across all
@@ -80,6 +95,7 @@ with 403.
 };
 
 /// Return the shared auth topic for CLI composition.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }

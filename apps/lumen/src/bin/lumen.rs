@@ -407,7 +407,7 @@ struct BackupArgs {
     #[arg(long)]
     dest: String,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
     #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
     token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
@@ -623,7 +623,7 @@ struct SnapshotExportArgs {
     #[arg(long)]
     out: Option<PathBuf>,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
     #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
     token: Option<String>,
 }
@@ -639,7 +639,7 @@ struct SnapshotImportArgs {
     #[arg(long)]
     file: Option<PathBuf>,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
     #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
     token: Option<String>,
 }
@@ -1414,7 +1414,7 @@ fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String 
 /// set, fetch the Secret via kubectl, decode its `token-registry.json` key
 /// (the same schema `lumen llm --topic auth` documents), and pick a token
 /// whose role covers `target.role` for `collection` (or `*`). Returns `None`
-/// when no token can be resolved (e.g. `spec.auth: off` deployments). Thin
+/// when no token can be resolved (e.g. `spec.auth: disabled`). Thin
 /// wrapper over `cli_std::connect::resolve_token` (#1376).
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
@@ -1906,16 +1906,20 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     );
     match body {
         InstanceBody::Dev => {
-            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            // Every profile states its auth posture out loud, even when it
+            // agrees with the CRD default (#2678). `auth` fails closed, so a
+            // rendered CR that stayed silent would be a `required` instance
+            // with no token source: a pod that never passes readiness.
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
         }
         InstanceBody::Prod => {
             yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  tokensSecret: REPLACE_ME__TOKENS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
     cli_std::artifact::ensure_trailing_newline(&yaml)
@@ -2303,7 +2307,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     let auth = Arc::new(AuthConfig::from_env()?);
     if auth.required {
-        tracing::info!(tokens = auth.tokens.len(), "auth required");
+        tracing::info!(
+            tokens = auth.registry.tokens.len(),
+            identities = auth.registry.identities.len(),
+            "auth required"
+        );
     } else {
         tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
     }

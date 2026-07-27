@@ -68,8 +68,13 @@ spec:
                     nullable: true
                 type: object
               auth:
-                default: disabled
-                description: 'Auth mode: `off` (dev) or `required` (token registry supplied via `tokensSecret` or `tokensSecretProviderClass`).'
+                default: required
+                description: |-
+                  Auth mode: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+
+                  `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2678, R4).
+
+                  Spelled `disabled`, not `off`: YAML 1.1 reads a bare `off` as the boolean `false`. (`off` is what the serving process's own `LUMEN_AUTH` env var takes — the two spellings are not interchangeable.)
                 enum:
                 - disabled
                 - required
@@ -236,7 +241,7 @@ spec:
                     nullable: true
                     properties:
                       adminTokenSecret:
-                        description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: off`.'
+                        description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: disabled`.'
                         nullable: true
                         type: string
                       destination:
@@ -318,7 +323,7 @@ spec:
                     minimum: 0.0
                 type: object
               tokensSecret:
-                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object of `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`. Ignored when `auth: off`. See also `tokensSecretProviderClass` for a Secret-free alternative; if both are set, this field wins.'
+                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`. See also `tokensSecretProviderClass` for a Secret-free alternative; setting **both** is rejected by the CRD schema (#2678, R7), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
                 nullable: true
                 type: string
               tokensSecretCsiDriver:
@@ -326,7 +331,7 @@ spec:
                 nullable: true
                 type: string
               tokensSecretProviderClass:
-                description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by precedence, not schema enforcement: if `tokensSecret` is also set, it wins (backward compatible) and this field is ignored. Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
+                description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2678, R7). Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
                 nullable: true
                 type: string
               voterCount:
@@ -337,6 +342,9 @@ spec:
             required:
             - image
             type: object
+            x-kubernetes-validations:
+            - rule: '!(has(self.tokensSecret) && self.tokensSecret != null && has(self.tokensSecretProviderClass) && self.tokensSecretProviderClass != null)'
+              message: set at most one of spec.tokensSecret (a Kubernetes Secret) or spec.tokensSecretProviderClass (a Secret Manager CSI projection); with both set there is no way to tell which registry is actually being served
           status:
             description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
             nullable: true

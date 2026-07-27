@@ -60,42 +60,82 @@ pub fn json_schema_json() -> String {
 /// json-schema` and in `lumen llm --topic auth`.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn token_registry_schema() -> Value {
-    json!({
-        "description": "JSON object mounted as token-registry.json; each property name is the bearer token string.",
+    // One claims object, inlined into both accepted shapes. `$ref` would need a
+    // resolution base this schema does not own — it is embedded under
+    // `operationalSchemas` in a larger document.
+    let claims = json!({
         "type": "object",
-        "additionalProperties": {
-            "type": "object",
-            "required": ["subject"],
-            "additionalProperties": false,
-            "properties": {
-                "subject": {
+        "required": ["subject"],
+        "additionalProperties": false,
+        "properties": {
+            "subject": {
+                "type": "string",
+                "description": "Human-readable or service-account identity attached to requests authenticated with this entry."
+            },
+            "roles": {
+                "type": "object",
+                "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
+                "additionalProperties": {
                     "type": "string",
-                    "description": "Human-readable or service-account identity attached to requests authenticated with this token."
+                    "enum": ["read", "write", "admin"]
                 },
-                "roles": {
-                    "type": "object",
-                    "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
-                    "additionalProperties": {
-                        "type": "string",
-                        "enum": ["read", "write", "admin"]
-                    },
-                    "default": {}
-                }
+                "default": {}
             }
-        },
+        }
+    });
+    json!({
+        "description": "JSON object mounted as token-registry.json. Two disjoint namespaces (#2678): `tokens` is keyed by the exact bearer secret, `identities` by an email an external provider verified. A presented bearer token resolves against `tokens` only, so a secret spelled like an email cannot inherit that email's grants. A flat object carrying neither section is still accepted and read entirely as `tokens`.",
+        "type": "object",
+        "anyOf": [
+            {
+                "title": "sectioned",
+                "additionalProperties": false,
+                "properties": {
+                    "tokens": {
+                        "type": "object",
+                        "description": "Bearer secrets. This half is the credential.",
+                        "additionalProperties": claims
+                    },
+                    "identities": {
+                        "type": "object",
+                        "description": "Emails an external identity provider verified. Not credentials, so this half is ordinary reviewable configuration.",
+                        "additionalProperties": claims
+                    }
+                }
+            },
+            {
+                "title": "flat (compatibility)",
+                "description": "Pre-#2678 shape: every property name is a bearer secret. Read as `tokens`.",
+                "additionalProperties": claims
+            }
+        ],
         "examples": [
+            {
+                "tokens": {
+                    "admin-token": {
+                        "subject": "platform-admin",
+                        "roles": { "*": "admin" }
+                    },
+                    "product-reader-token": {
+                        "subject": "products-reader",
+                        "roles": { "products": "read" }
+                    },
+                    "product-writer-token": {
+                        "subject": "products-writer",
+                        "roles": { "products": "write" }
+                    }
+                },
+                "identities": {
+                    "data-team@example.com": {
+                        "subject": "data-team",
+                        "roles": { "products": "read" }
+                    }
+                }
+            },
             {
                 "admin-token": {
                     "subject": "platform-admin",
                     "roles": { "*": "admin" }
-                },
-                "product-reader-token": {
-                    "subject": "products-reader",
-                    "roles": { "products": "read" }
-                },
-                "product-writer-token": {
-                    "subject": "products-writer",
-                    "roles": { "products": "write" }
                 }
             }
         ]
@@ -106,17 +146,25 @@ pub fn token_registry_schema() -> Value {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn token_registry_example_json() -> String {
     serde_json::to_string_pretty(&json!({
-        "admin-token": {
-            "subject": "platform-admin",
-            "roles": { "*": "admin" }
+        "tokens": {
+            "admin-token": {
+                "subject": "platform-admin",
+                "roles": { "*": "admin" }
+            },
+            "product-reader-token": {
+                "subject": "products-reader",
+                "roles": { "products": "read" }
+            },
+            "product-writer-token": {
+                "subject": "products-writer",
+                "roles": { "products": "write" }
+            }
         },
-        "product-reader-token": {
-            "subject": "products-reader",
-            "roles": { "products": "read" }
-        },
-        "product-writer-token": {
-            "subject": "products-writer",
-            "roles": { "products": "write" }
+        "identities": {
+            "data-team@example.com": {
+                "subject": "data-team",
+                "roles": { "products": "read" }
+            }
         }
     }))
     .expect("token registry example serializes")
@@ -426,13 +474,20 @@ Probe/spec/scrape routes stay auth-exempt: `/healthz`, `/readyz`, `/metrics`,
 `/openapi.json`, and `/docs`.
 
 ## token-registry.json
-The registry file is a JSON object. Each top-level key is the exact bearer token
-string. Each value declares the authenticated subject and optional collection
-roles:
+The registry file is a JSON object with two **disjoint** namespaces (#2678).
+`tokens` keys are exact bearer secret strings; `identities` keys are emails an
+external provider verified. A presented bearer token is only ever looked up in
+`tokens`, so a secret that happens to be spelled like an email can never
+inherit that email's grants. Each value declares the authenticated subject and
+optional collection roles:
 
 ```json
 {}
 ```
+
+Only the `tokens` half is a credential, so a registry carrying `identities`
+alone is ordinary configuration — versionable, diffable, reviewable. A flat
+document with no sections is still accepted and read entirely as `tokens`.
 
 Role values are `read`, `write`, or `admin`; `admin` covers `write` and `read`,
 and `write` covers `read`. Role keys are collection ids. The literal key `*`
@@ -447,12 +502,19 @@ The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
 Alternatively, `spec.tokensSecretProviderClass` names an existing
 `SecretProviderClass` mounted via the Secrets Store CSI driver at that same
 path, so the registry content never becomes a Secret or ConfigMap object at
-all; `tokensSecret` wins when both are set.
+all. Exactly one of the two: setting both is rejected by the CRD's
+`x-kubernetes-validations` at `kubectl apply` (#2678), rather than resolved by
+a precedence rule nothing surfaces.
 
 On GKE, keep GCP Secret Manager as the source of truth and materialize the file
 through External Secrets Operator, Secret Store CSI, or a platform-approved
-Secret sync. Lumen reads the registry at startup; token rotation should roll the
-serving pods or use a Secret reloader controller.
+Secret sync. Lumen polls the mounted registry every 15s and hot-swaps the live
+verifier when the bytes change, so rotation needs no rolling restart on lumen's
+side; a rejected replacement leaves the previous registry serving. The
+remaining caveat is at the CSI layer: a CSI-mounted file only refreshes on the
+underlying value's rotation when the cluster's CSI driver has secret rotation
+enabled (GKE's managed add-on defaults it off), and with rotation disabled the
+mounted file never changes for the watcher to notice.
 
 ## Generated clients
 Generated Python clients accept either `auth_token="<token>"` or
@@ -1188,7 +1250,8 @@ lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
 `--url` points at the serving Service (not a specific pod); `--token` falls
 back to the `LUMEN_BACKUP_TOKEN` env var, which is how the CronJob injects
 `spec.serving.backup.adminTokenSecret` (`secretKeyRef` into that env var —
-skip it when `spec.auth: off`). The verb GETs `/admin/backup`, hands the
+skip it when `spec.auth: disabled`). The verb GETs `/admin/backup`, hands
+the
 bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by

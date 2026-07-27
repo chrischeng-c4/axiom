@@ -84,7 +84,12 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
 }
 
 /// Which shared projection source (if any) supplies the token registry file.
-/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
+///
+/// The two are mutually exclusive by schema and by
+/// [`LumenSpec::validate`](super::crd::LumenSpec::validate), so at most one is
+/// ever set on a spec that reaches here (#2678, R7). The order below is not a
+/// precedence rule to rely on — it is what a spec that slipped past both gates
+/// happens to render, and that spec's reconcile has already failed.
 fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;

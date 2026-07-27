@@ -366,8 +366,10 @@ fn statefulset_wires_serving_contract_single_member() {
             "unexpected raft env {absent} at replicasPerShard:1; have {names:?}"
         );
     }
-    // auth=off and no log level → those env vars are absent.
-    assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
+    // auth=off and no log level → those env vars are absent. There is no
+    // inline-credential env var to check for any more: #2678 deleted the one
+    // that existed, because a credential in the environment is a credential in
+    // `kubectl describe pod`.
     assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
     // #1384 AC4: default spec has no shard-map assignments yet, so the
@@ -1166,6 +1168,25 @@ fn crd_yaml_emits_lumen_definition() {
             "CRD should publish token registry shape in tokensSecret docs; missing `{needle}`: {yaml}"
         );
     }
+}
+
+/// The checked-in `k8s/operator/crd.yaml` is what a kustomize user applies —
+/// the library's `crd_yaml()` is what the tests above assert against. Nothing
+/// held the two together, and they had come apart: at the commit before
+/// #2678's render the file carried the pre-R4 `default: disabled` and no
+/// `x-kubernetes-validations` at all, so R7's mutual-exclusion rule existed in
+/// `crd.rs`, passed its own test, and still shipped a CRD that accepted both
+/// token sources. Every other manifest under `k8s/operator/` is already
+/// `include_str!`-gated; this closes the one that was not.
+#[test]
+fn checked_in_crd_yaml_matches_the_renderer() {
+    let rendered = lumen::operator::crd_yaml();
+    let checked_in = include_str!("../k8s/operator/crd.yaml");
+    assert_eq!(
+        checked_in, rendered,
+        "apps/lumen/k8s/operator/crd.yaml is stale — regenerate with \
+         `lumen k8s crd render --out apps/lumen/k8s/operator/crd.yaml`"
+    );
 }
 
 #[test]
