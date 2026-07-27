@@ -21,12 +21,18 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `llm` | libs/service-auth/src/lib.rs | module | pub | 66 | pub mod llm; |
-| `role_map` | libs/service-auth/src/lib.rs | module | pub | 68 | pub mod role_map; |
-| `AuthError` | libs/service-auth/src/lib.rs | re-export | pub | 71 | pub use error::AuthError; |
-| `auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 72 | pub use middleware::{auth_middleware, bearer_token}; |
-| `bearer_token` | libs/service-auth/src/lib.rs | re-export | pub | 72 | pub use middleware::{auth_middleware, bearer_token}; |
-| `Verifier` | libs/service-auth/src/lib.rs | re-export | pub | 76 | pub use verifier::Verifier; |
+| `async_verifier` | libs/service-auth/src/lib.rs | module | pub | 74 | pub mod async_verifier; |
+| `gcp` | libs/service-auth/src/lib.rs | module | pub | 76 | pub mod gcp; |
+| `llm` | libs/service-auth/src/lib.rs | module | pub | 77 | pub mod llm; |
+| `reload` | libs/service-auth/src/lib.rs | module | pub | 79 | pub mod reload; |
+| `role_map` | libs/service-auth/src/lib.rs | module | pub | 80 | pub mod role_map; |
+| `async_auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 83 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AsAsync` | libs/service-auth/src/lib.rs | re-export | pub | 83 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AsyncVerifier` | libs/service-auth/src/lib.rs | re-export | pub | 83 | pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier}; |
+| `AuthError` | libs/service-auth/src/lib.rs | re-export | pub | 84 | pub use error::AuthError; |
+| `auth_middleware` | libs/service-auth/src/lib.rs | re-export | pub | 89 | pub use middleware::{auth_middleware, bearer_token}; |
+| `bearer_token` | libs/service-auth/src/lib.rs | re-export | pub | 89 | pub use middleware::{auth_middleware, bearer_token}; |
+| `Verifier` | libs/service-auth/src/lib.rs | re-export | pub | 99 | pub use verifier::Verifier; |
 
 
 ## Source
@@ -96,19 +102,37 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 //!     .route("/things", axum::routing::get(handler))
 //!     .layer(from_fn_with_state(verifier, auth_middleware::<MyVerifier>));
 //! ```
+//!
+//! ## When the credential cannot be judged locally
+//!
+//! [`Verifier::authenticate`] is synchronous, which suits every verifier that
+//! answers from memory. A verifier that must *ask an identity provider* — the
+//! Google paths in [`gcp`] — implements [`AsyncVerifier`] instead and attaches
+//! via [`async_auth_middleware`]; a synchronous verifier reaches that same
+//! middleware through [`AsAsync`]. Neither trait replaces the other, and no
+//! existing [`Verifier`] implementation changed to make room for the second.
 
+pub mod async_verifier;
 mod error;
+pub mod gcp;
 pub mod llm;
 mod middleware;
 pub mod reload;
 pub mod role_map;
 mod verifier;
 
+pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier};
 pub use error::AuthError;
+pub use gcp::{
+    AccessTokenIntrospection, Credential, GoogleAuthConfig, GoogleAuthError, GoogleVerifier,
+    InvalidReason, JwksSource,
+};
 pub use middleware::{auth_middleware, bearer_token};
 pub use reload::{
+    spawn_registry_file_watcher, spawn_registry_file_watcher_with_interval,
     AuditedRoleMapPrincipal, AuthEvent, AuthEventSink, AuthorizationDecision, AuthorizationReason,
     NoopAuthEventSink, ReloadFailure, ReloadableRoleMapVerifier, TracingAuthEventSink,
+    DEFAULT_REGISTRY_FILE_WATCH_INTERVAL,
 };
 pub use role_map::{
     load_registry, Role, RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,

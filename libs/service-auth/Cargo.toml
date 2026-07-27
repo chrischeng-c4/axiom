@@ -17,6 +17,14 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time"] }
+# `AsyncVerifier` carries an async method behind a `dyn`-usable trait.
+async-trait = { workspace = true }
+# Offline verification of Google ID tokens against the published JWKS.
+jsonwebtoken = { workspace = true }
+# Fetching that JWKS, and introspecting opaque access tokens. The workspace pin
+# is rustls-only on purpose: an auth library must not drag a system OpenSSL
+# into every service that links it.
+reqwest = { workspace = true }
 
 [dev-dependencies]
 # tokio drives the `#[tokio::test]` oneshot middleware tests.

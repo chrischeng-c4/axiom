@@ -63,15 +63,31 @@
 //!     .route("/things", axum::routing::get(handler))
 //!     .layer(from_fn_with_state(verifier, auth_middleware::<MyVerifier>));
 //! ```
+//!
+//! ## When the credential cannot be judged locally
+//!
+//! [`Verifier::authenticate`] is synchronous, which suits every verifier that
+//! answers from memory. A verifier that must *ask an identity provider* — the
+//! Google paths in [`gcp`] — implements [`AsyncVerifier`] instead and attaches
+//! via [`async_auth_middleware`]; a synchronous verifier reaches that same
+//! middleware through [`AsAsync`]. Neither trait replaces the other, and no
+//! existing [`Verifier`] implementation changed to make room for the second.
 
+pub mod async_verifier;
 mod error;
+pub mod gcp;
 pub mod llm;
 mod middleware;
 pub mod reload;
 pub mod role_map;
 mod verifier;
 
+pub use async_verifier::{async_auth_middleware, AsAsync, AsyncVerifier};
 pub use error::AuthError;
+pub use gcp::{
+    AccessTokenIntrospection, Credential, GoogleAuthConfig, GoogleAuthError, GoogleVerifier,
+    InvalidReason, JwksSource,
+};
 pub use middleware::{auth_middleware, bearer_token};
 pub use reload::{
     spawn_registry_file_watcher, spawn_registry_file_watcher_with_interval,

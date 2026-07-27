@@ -325,6 +325,21 @@ impl ReloadableRoleMapVerifier {
         self.read_snapshot().tokens.len()
     }
 
+    /// Look one registry key up in the currently adopted snapshot.
+    ///
+    /// For verifiers that resolve a credential to a registry key themselves
+    /// rather than presenting a bearer secret: [`crate::gcp::GoogleVerifier`]
+    /// turns a Google credential into a verified email and then needs exactly
+    /// this lookup. Routing it through the snapshot — instead of holding a
+    /// separate map — is what keeps such a verifier subject to the same atomic
+    /// rotation and last-known-good guarantees as [`Verifier::authenticate`].
+    ///
+    /// The returned value is cloned so the caller cannot hold the read lock
+    /// across its own work.
+    pub fn lookup(&self, key: &str) -> Option<TokenClaims> {
+        self.read_snapshot().tokens.get(key).cloned()
+    }
+
     /// Parse, validate, and atomically adopt an inline registry document.
     pub fn reload_json(&self, json: &str) -> Result<u64> {
         let tokens = match serde_json::from_str::<HashMap<String, TokenClaims>>(json) {
