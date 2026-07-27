@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:39f722444fd5b661e5d5cc7fa9a4e6a3ddb09cfa810c0a65fba7ce3415f2ddbe",
+  "source_digest": "sha256:647b4e1ca78ee887531dfab627a3c98810a97ef0b63823ae6ea0f91081347b94",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T18:50:03.976227+00:00",
-  "summary": "Accepted: the revised WI #2779 oracle directly passes all five assertions through current public TD apply, TD check, and CB generation surfaces. Four isolated real-git repositories independently prove syntax-error rejection, semantic-digest continuation, exact source and generated commit deltas, preservation of unrelated modified/deleted/untracked work, staged-path refusal, dirty-main branch-ref preservation, and missing-workspace remediation. The 51-case structural inventory and claim reconciliation are clean.",
+  "reviewed_at": "2026-07-27T19:04:18.525978+00:00",
+  "summary": "Accepted: the WI #2772 source-independent local-backend oracle directly passes all three assertions. It pins raw cache serialization to lowercase `type: change`, round-trips both cached and independent Change items through filtered list plus cached show, and proves an EC scaffold for the independent target remains live with a chainable structural-check continuation and only external-contract artifacts. The 52-case structural inventory and claim reconciliation are clean.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

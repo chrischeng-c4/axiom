@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T18:50:13.044505+00:00"
-ir_digest = "sha256:bd221bfbd1980e3f13c8849036fdc8f8c2f2012cc47610c95de207456bc33fba"
-source_digest = "sha256:12b37be116ea71d5576ca0390f645775d077fd421b3bb4c7c32f3c1ac77a1dac"
+generated_at = "2026-07-27T19:04:30.105902+00:00"
+ir_digest = "sha256:21135f6b0b2cc56e87f9943f3cdad156ed97d5559fd63b75c7bc9bcb165a4e4e"
+source_digest = "sha256:9cad8f9f21e0e848a9f1be407c82c73e7e765090f9815e8cb5ea7b9fec0e835f"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:0daf3122c2d941cb44f5608d2e3656e163f6eb24a247bb2d58bcda57f71de03b"
+digest = "sha256:74e1b9073a2923a7f14d12b78f3dbf736084ffa7d8418d1edac20158ee3fba94"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -63,6 +63,10 @@ digest = "sha256:56fd38bc1883fda1f3f62352605e52c72bba97efc0ad34d12057a5bccf185b2
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/external-fixture-reports-advisory-gap.py"
 digest = "sha256:3ec5972b56c78957ebeca47c3d60fd45f0c153633c0a564968a51402f8cfe687"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/issue-cache-canonical-change.py"
+digest = "sha256:a76986871634efd1cbe2e383e59dd57af9e531c8f8e84abfaafc29f248db967a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artifacts-operational-efficiency.py"
@@ -557,6 +561,26 @@ assertions = [
 evidence_digest = "sha256:862f7edcfa17cb7e6d9449c6b984a528d29af19f012b453b15d299aec56badb7"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:0e5a70b76e3af7f7eec13dd03513800b9a6d33cdc8317753e9e23ee5a937c085"
+
+[[cases]]
+id = "issue-cache-canonical-change"
+capability_id = "work-item-planning"
+claim_id = "canonical-change-cache-round-trip"
+contract_id = "issue-cache-canonical-change"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:issue-cache-canonical-change"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/issue-cache-canonical-change.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
+required_for_production = true
+assertions = [
+    "Canonical Change work items serialize and parse as type change in the issue cache, and one cached Change cannot poison list, show, or EC draft for another work item.",
+    "artifact: artifact:agentic-workflow/issue-cache-canonical-change",
+    "oracle: An isolated local-backend repository inspects the raw cache frontmatter, then executes the real aw list, show, and EC draft surfaces without importing production source.",
+    "target: rust",
+]
+evidence_digest = "sha256:f1198222d5aaa398ddc48a1668937ed940088768bb05874123f3b4bbb41ca5f0"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:37df94d84924910e499e27e6c70655b771284d76302e30f450d183710468fd81"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-efficiency"

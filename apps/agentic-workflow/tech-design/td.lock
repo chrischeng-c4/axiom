@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T18:47:39.369155+00:00"
-digest = "sha256:b77974ced353be572592cef47d5a39660620e7085ebabafeb453fee2ca5fa860"
-source_digest = "sha256:b77974ced353be572592cef47d5a39660620e7085ebabafeb453fee2ca5fa860"
-ir_digest = "sha256:e8677e7bf0b5a0b035d7e5c25bc1233dc62c44d101a6d4df741d8fcc1e73d643"
+generated_at = "2026-07-27T19:05:11.994376+00:00"
+digest = "sha256:88619028792a26b96503609534c3e943de71c845ff2f4027878fc25683054ea6"
+source_digest = "sha256:88619028792a26b96503609534c3e943de71c845ff2f4027878fc25683054ea6"
+ir_digest = "sha256:7fd3cace10d807e657a3ad849f32247d1a4e9232166d970f74b47bf85bc2210b"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3934,6 +3934,10 @@ digest = "sha256:4bb5278732ab93afa1848cf2c7e950e2c752fea76886239be7e51122a2140d9
 [[files]]
 path = "src/agentic_workflow/work_items/intake_health.py"
 digest = "sha256:249df6e6f443e28d25ab7b2d29cdd2da76bb3fbc384a84bd06f5a91adcffd68c"
+
+[[files]]
+path = "src/agentic_workflow/work_items/issue_cache_canonical_change.py"
+digest = "sha256:c3fcc110756b9a14910ce2e512d71a1dddf57ce13d2cd02018fcd1866f47601b"
 
 [[files]]
 path = "src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py"

@@ -30,6 +30,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/work-item-four-type-taxonomy.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "issue-cache-canonical-change"
+artifact_id = "artifact:agentic-workflow/issue-cache-canonical-change"
+capability_id = "work-item-planning"
+use_case_id = "canonical-change-cache-round-trip"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/issue-cache-canonical-change.py"
+promise = "Canonical Change work items serialize and parse as type change in the issue cache, and one cached Change cannot poison list, show, or EC draft for another work item."
+oracle = "An isolated local-backend repository inspects the raw cache frontmatter, then executes the real aw list, show, and EC draft surfaces without importing production source."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case issue-cache-canonical-change"
+evidence_paths = ["evidence/issue-cache-canonical-change.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "work-item-type-templates"
 artifact_id = "artifact:agentic-workflow/work-item-type-templates"
 capability_id = "work-item-planning"

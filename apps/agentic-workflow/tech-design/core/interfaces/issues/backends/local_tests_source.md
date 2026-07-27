@@ -15,7 +15,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/src/issues/backends/local.rs` generated from AST during Score force-regeneration standardization. Local compatibility fixtures read each legacy non-epic frontmatter value as canonical `change` while proving the original file and label remain unmodified.
+Public API manifest for `apps/agentic-workflow/src/issues/backends/local.rs` generated from AST during Score force-regeneration standardization. Local compatibility fixtures read each legacy non-epic frontmatter value as canonical `change` while proving the original file and label remain unmodified. Canonical `type: change` cache entries are also parsed together so one valid cached Change cannot poison lookup of an unrelated lifecycle target (#2772).
 
 ### Symbols
 
@@ -41,5 +41,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:local-backend-tests>"
-    description: "Source template owns local backend regression tests, including lossless legacy non-epic to canonical change compatibility reads."
+    description: "Source template owns local backend regression tests, including lossless legacy non-epic compatibility reads and canonical Change cache isolation for #2772."
 ```
