@@ -549,7 +549,9 @@ fn declared_parent_references(issue: &Issue) -> Vec<String> {
     for label in &issue.labels {
         for prefix in ["epic:", "parent-epic:", "parent:"] {
             if let Some(reference) = label.strip_prefix(prefix) {
-                refs.push(reference.trim().to_string());
+                if let Some(reference) = extract_parent_reference(reference) {
+                    refs.push(reference);
+                }
                 break;
             }
         }
@@ -564,12 +566,36 @@ fn declared_parent_references(issue: &Issue) -> Vec<String> {
         let lower = trimmed.to_ascii_lowercase();
         for prefix in ["parent epic:", "parent wi:", "parent:"] {
             if lower.starts_with(prefix) {
-                refs.push(trimmed[prefix.len()..].trim().trim_matches('`').to_string());
+                if let Some(reference) = extract_parent_reference(&trimmed[prefix.len()..]) {
+                    refs.push(reference);
+                }
                 break;
             }
         }
     }
     refs
+}
+
+/// Extract one declared owner from the value following a parent prefix.
+///
+/// The first hash reference is authoritative when trailing prose names
+/// another work item. Compatibility forms without a hash retain only their
+/// first token, preserving bare ids, slugs, and owner/repository/id paths.
+fn extract_parent_reference(value: &str) -> Option<String> {
+    if let Some(reference) = hash_references(value).into_iter().next() {
+        return Some(reference);
+    }
+
+    let token = value.trim().split_whitespace().next()?.trim_matches('`');
+    let normalized = normalize_reference(token);
+    (!normalized.is_empty()
+        && normalized.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        && normalized
+            .chars()
+            .any(|character| character.is_ascii_alphanumeric()))
+    .then_some(normalized)
 }
 
 fn body_dependency_references(issue: &Issue) -> Vec<String> {
@@ -809,6 +835,100 @@ mod tests {
         assert_eq!(
             canonical_graph.changes[0].priority.value.as_deref(),
             Some("p1")
+        );
+    }
+
+    #[test]
+    fn body_parent_reference_extracts_first_hash_and_ignores_trailing_prose() {
+        for body in [
+            "Parent epic: #2600 (Operations baseline row 5).",
+            "Parent epic: #2600 (Operations baseline row 7).",
+            "Parent epic: #2600 (Operations baseline row 6).",
+            "Parent epic: #2600 (Operations baseline row 4).",
+            "Parent epic: #2600 (Operations baseline row 4). Depends on #2620, which gives the shared",
+        ] {
+            let change = issue(2601, "change", "open", &["type:change"], body);
+            assert_eq!(
+                declared_parent_references(&change),
+                vec!["2600"],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn body_parent_reference_preserves_legacy_non_hash_tokens() {
+        for (body, expected) in [
+            ("Parent epic: #2600.", "2600"),
+            ("Parent: #2600", "2600"),
+            ("Parent WI: #2600", "2600"),
+            ("Parent: 2600.", "2600"),
+            ("Parent: local-epic.", "local-epic"),
+            ("Parent: owner/repository/2600.", "2600"),
+        ] {
+            let change = issue(2601, "change", "open", &["type:change"], body);
+            assert_eq!(
+                declared_parent_references(&change),
+                vec![expected],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_parent_reference_uses_the_same_extraction_rule() {
+        let change = issue(
+            2601,
+            "change",
+            "open",
+            &[
+                "type:change",
+                "epic:#2600 (owner) #2620",
+                "parent-epic:owner/repository/2601.",
+                "parent:",
+            ],
+            "",
+        );
+
+        assert_eq!(declared_parent_references(&change), vec!["2600", "2601"]);
+    }
+
+    #[test]
+    fn parent_prefix_documentation_does_not_declare_a_parent() {
+        let change = issue(
+            2688,
+            "change",
+            "open",
+            &["type:change"],
+            "`Parent epic:`, `Parent WI:`, and `Parent:` are decode-only migration inputs.",
+        );
+
+        assert!(declared_parent_references(&change).is_empty());
+    }
+
+    #[test]
+    fn missing_parent_diagnostic_names_only_the_extracted_reference() {
+        let graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[issue(
+                2601,
+                "change",
+                "open",
+                &["type:change", "app:demo"],
+                "Parent epic: #2600 (Operations baseline row 5).",
+            )],
+        );
+
+        let diagnostic = graph
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "missing_epic_parent")
+            .expect("missing parent diagnostic");
+        assert_eq!(diagnostic.related.as_deref(), Some("2600"));
+        assert_eq!(
+            diagnostic.remediation_target,
+            "existing epic target for epic:2600 on 2601"
         );
     }
 

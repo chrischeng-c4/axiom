@@ -42,9 +42,12 @@ updates, closes, labels, or comments on an issue.
 
 `parent-epic:<id>`, `parent:<id>`, `Parent Epic:`, `Parent WI:`, generic
 `Parent:`, and the existing epic-targeting `related` / `implements` references
-are decode-only migration inputs. Closing punctuation on a body reference
-(for example, `Parent: #2284.`) is ignored. They normalize to the same graph
-as `epic:<id>` and do not cause tracker writes.
+are decode-only migration inputs. After a parent prefix, the first `#<digits>`
+reference is authoritative and trailing prose or later references are ignored.
+When no hash reference exists, the first bare id, slug, or
+`owner/repository/<id>` token remains supported; a prefix with no extractable
+reference declares no parent. Labels use the same extraction rule. These forms
+normalize to the same graph as `epic:<id>` and do not cause tracker writes.
 
 ## Logic
 <!-- type: logic lang: markdown -->
