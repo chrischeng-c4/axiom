@@ -3,9 +3,9 @@ project = "mamba"
 ir_kind = "ec"
 ec_path = "projects/mamba/external-contracts"
 inventory_path = "projects/mamba/aw.toml"
-generated_at = "2026-07-20T09:23:34.011830+00:00"
-ir_digest = "sha256:a174467443f7067740ce4c6683716fe35a222d86dbc3e22de3753bbf690f68f5"
-source_digest = "sha256:d3b88fdbb3a503b532120e02a012f4053d600a31d4cfca307af534b60aef8139"
+generated_at = "2026-07-27T21:11:35.023679+00:00"
+ir_digest = "sha256:db353b9173fe1e23088ce2b5486c8c25193b45c0fe2d595e552b35837921cd8b"
+source_digest = "sha256:37499818a5e5332c040afe523b4d6eff1bacea0fc17785e4e50722ddd73c7b95"
 tool_contracts = []
 
 [[sources]]
@@ -15,6 +15,10 @@ digest = "sha256:87557a7bddcf5b4591e914bd5cb2f2736d6af8d80e6ae51e1f07517067c1827
 [[sources]]
 path = "projects/mamba/external-contracts/README.md"
 digest = "sha256:73ff8646348b2161a918624d4dd7dffed4df41fceb77dc423620cd9d687e2b37"
+
+[[sources]]
+path = "projects/mamba/external-contracts/behavior/1942.md"
+digest = "sha256:4d4a4016b96aab0e1a54c768936b4ddd536a1dc7b65ba675add89ebc547688c2"
 
 [[sources]]
 path = "projects/mamba/external-contracts/behavior/mamba-t1-to-thread-gather-results.md"
@@ -179,3 +183,31 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:982db232a5f2c0819feda65da917fc77c2ebba5f7c364b514fe44c0b8df610d2"
+
+[[cases]]
+id = "mamba-t1-type-wall-conformance-determinism"
+capability_id = "mamba-core-semantics"
+claim_id = "deterministic-type-wall-outcomes"
+contract_id = "MAMBA-T1-TYPE-WALL-CONFORMANCE-DETERMINISM"
+dimension = "stability"
+source_ref = "projects/mamba/external-contracts/behavior/1942.md#mamba-t1-type-wall-conformance-determinism"
+test_path = "projects/mamba/tests/external_contracts/ec_mamba_t1_type_wall_conformance_determinism.rs"
+command = "cargo test -p mamba --release --test mamba_core_semantics_ec -- type_wall_conformance_determinism --exact"
+required_for_production = true
+assertions = [
+    "The external contract verifier verifies fixture inventory against manifest projects/mamba/tests/governance/gates/t1_type_wall_denominator/manifest.toml, asserting exact expected row_count = 7407 and exact expected denominator_sha256 = eb45a673ca92c766c1df6596592aa226fae56ab81f8f27fea47e1168743eae28.",
+    "Before repeated evaluation, the verifier proves the denominator-scoped executable surface by invoking the current release cpython_ported_integration test binary twice with --list: first without a libtest filter, which must yield exactly 13767 unique terminal test names for the whole target, and then with the exact libtest filter cpython_ported::gen::_type, which must yield exactly 7407 unique terminal test names that are set-equal to projects/mamba/tests/governance/gates/t1_type_wall_denominator/denominator.txt.",
+    "The evaluation consists of three fresh isolated subprocess executions of exactly cargo test -p mamba --release --test cpython_ported_integration cpython_ported::gen::_type -- --nocapture executed from the same source revision, exact rustup toolchain surface (rustc 1.96.1 (31fca3adb 2026-06-26) and cargo 1.96.1 (356927216 2026-06-26)), environment fingerprint, and manifest digest, where each subprocess has its own run-local output/temp capture and shares no prior-run in-memory state.",
+    "Evaluation requires a named baseline evidence artifact at projects/mamba/external-contracts/evidence/mamba-t1-type-wall-conformance-determinism-baseline.json whose required fields include source revision, manifest path (projects/mamba/tests/governance/gates/t1_type_wall_denominator/manifest.toml), manifest digest (denominator_sha256), manifest row count (row_count), exact rustup_toolchain string, exact cargo_version string, full normalized allowed failing-path set, failure count, command (cargo test -p mamba --release --test cpython_ported_integration cpython_ported::gen::_type -- --nocapture), and capture timestamp. Missing baseline artifact or missing required fields constitutes a hard failure.",
+    "Every one of the three post-fix runs must produce an executed terminal-name set that is exactly set-equal to the denominator's 7407 cpython_ported::gen::_type names, with no ignored or skipped executed rows, duplicates, missing rows, cross-namespace rows, or unparseable rows.",
+    "For every one of the three post-fix runs, passed plus failed executed rows must equal exactly 7407.",
+    "For every one of the three post-fix runs, the verifier must reconcile whole-target libtest filtering by proving exactly 6360 filtered-out rows, equal to the pinned whole-target preflight count 13767 minus the executed denominator count 7407.",
+    "The three post-fix normalized failing sets and total failure counts across all three repetitions must be exactly equal.",
+    "Every post-fix failing path must be a member of the pinned baseline allowed set recorded in projects/mamba/external-contracts/evidence/mamba-t1-type-wall-conformance-determinism-baseline.json, and the post-fix total failure count must be less than or equal to the baseline failure count, closing both subset and equal-count replacement.",
+    "The verifier includes fail-closed self-tests/canaries that remove one fixture result and flip one outcome in captured test data, asserting that both simulated mutations are rejected before real evidence can pass.",
+    "Timeouts, crash or signal termination, nonzero exit without complete terminal accounting, output truncation, revision/manifest/toolchain/environment drift, missing baseline, or parse errors are hard failures.",
+    "Internal implementation causes, runtime micro-optimizations, CPython parity comparisons, and any inferred bijection to unrelated run_conformance::<path> cases do not constitute proof of external contract compliance and remain explicitly non-oracles.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:44e3cdd3e292b145d96797d72e8f1c81e93a00681684bb4f9d904433c1492873"

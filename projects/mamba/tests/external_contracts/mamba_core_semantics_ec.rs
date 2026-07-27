@@ -5,7 +5,7 @@
 
 #![cfg(unix)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::ExitStatusExt;
@@ -594,7 +594,7 @@ asyncio.run(main())
     );
     assert_eq!(
         rounds,
-        (0_u32..100).collect(),
+        (0_u32..100).collect::<BTreeSet<_>>(),
         "every stability round must emit exact success evidence"
     );
 
@@ -728,7 +728,7 @@ print("DONE", total)
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1942" reason="logic section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
 #[test]
 fn to_thread_gather_efficiency() {
     let logical_cpus = std::thread::available_parallelism()
@@ -816,5 +816,806 @@ asyncio.run(main())
         stable_digest(parallel.stdout.as_bytes()),
         speedup
     );
+}
+// </HANDWRITE>
+
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1942" reason="unit-test section in mamba_core_semantics_ec.rs is hand-written for WI #1942 EC">
+#[test]
+fn type_wall_conformance_determinism() {
+    let manifest_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/governance/gates/t1_type_wall_denominator/manifest.toml");
+    let denom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/governance/gates/t1_type_wall_denominator/denominator.txt");
+    let baseline_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "external-contracts/evidence/mamba-t1-type-wall-conformance-determinism-baseline.json",
+    );
+
+    // 1. Verify manifest.toml and denominator.txt
+    let (denom_rows, manifest_digest) =
+        verify_type_wall_manifest_and_denominator(&manifest_path, &denom_path);
+
+    // 2. Load and validate baseline JSON evidence artifact
+    let baseline = load_type_wall_baseline(&baseline_path);
+    assert_eq!(
+        baseline.denominator_sha256, manifest_digest,
+        "Baseline denominator_sha256 mismatch"
+    );
+    assert_eq!(
+        baseline.manifest_path,
+        "projects/mamba/tests/governance/gates/t1_type_wall_denominator/manifest.toml",
+        "Baseline manifest_path mismatch"
+    );
+    assert_eq!(baseline.row_count, 7407, "Baseline row_count mismatch");
+    assert_eq!(
+        baseline.command, "cargo test -p mamba --release --test conformance -- --nocapture",
+        "Baseline command mismatch"
+    );
+    assert_eq!(
+        baseline.source_revision, "36f80b5dc530649c366b6d5848b1cca333de63c5",
+        "Baseline source_revision mismatch"
+    );
+    assert_eq!(
+        baseline.failure_count,
+        baseline.allowed_failing_paths.len(),
+        "Baseline failure_count must equal cardinality of allowed_failing_paths"
+    );
+
+    // Validate capture_timestamp as RFC3339 UTC timestamp per Item 5
+    let parsed_dt = chrono::DateTime::parse_from_rfc3339(&baseline.capture_timestamp)
+        .expect("Baseline capture_timestamp must be valid RFC3339 timestamp");
+    assert_eq!(
+        parsed_dt.offset().local_minus_utc(),
+        0,
+        "Baseline capture_timestamp offset must be UTC"
+    );
+
+    // Environment fingerprint & drift check before runs (Round 4 Tail Fix 4 & 5)
+    let rustc_ver = get_rustc_version();
+    let cargo_ver = get_cargo_version();
+    let git_head = get_git_head_revision();
+
+    assert_eq!(
+        git_head, baseline.source_revision,
+        "Git HEAD revision mismatch: expected {:?}, got {:?}",
+        baseline.source_revision, git_head
+    );
+    assert_eq!(
+        baseline.rustup_toolchain, rustc_ver,
+        "Baseline rustup_toolchain mismatch: expected {:?}, got {:?}",
+        rustc_ver, baseline.rustup_toolchain
+    );
+    assert_eq!(
+        baseline.cargo_version, cargo_ver,
+        "Baseline cargo_version mismatch: expected {:?}, got {:?}",
+        cargo_ver, baseline.cargo_version
+    );
+
+    let env_fp_before = compute_type_wall_env_fingerprint(
+        &manifest_digest,
+        &baseline.source_revision,
+        &rustc_ver,
+        &cargo_ver,
+        &baseline.command,
+        "8",
+    );
+    assert_eq!(
+        baseline.environment_fingerprint, env_fp_before,
+        "Baseline environment_fingerprint mismatch: expected {}, got {}",
+        env_fp_before, baseline.environment_fingerprint
+    );
+
+    // 3. Execute 3 fresh isolated release conformance runs with per-run timeout >= 1200s & run-local capture
+    let mut run_failing_sets: Vec<BTreeSet<String>> = Vec::new();
+    let mut run_failing_counts: Vec<usize> = Vec::new();
+    let mut last_captured_outcomes: Vec<BTreeMap<String, String>> = Vec::new();
+    let mut last_full_summaries: Vec<String> = Vec::new();
+
+    for run_idx in 0..3 {
+        println!(
+            "Starting isolated release conformance run {}/3...",
+            run_idx + 1
+        );
+
+        let (stdout, stderr, exit_code) =
+            execute_conformance_run_with_timeout(Duration::from_secs(1200));
+
+        let (denom_outcomes, failing_set, summary_str) =
+            parse_and_verify_run_outcomes(&stdout, &stderr, &denom_rows, exit_code);
+
+        // Run real observed outcomes map through production validator per Correction 8
+        let (val_failing, val_count) = validate_type_wall_outcomes(
+            &denom_outcomes,
+            &denom_rows,
+            &baseline.allowed_failing_paths,
+            baseline.failure_count,
+        )
+        .expect("Real observed outcomes failed production validator");
+
+        assert_eq!(val_count, 7407);
+
+        run_failing_counts.push(val_failing.len());
+        run_failing_sets.push(failing_set);
+        last_captured_outcomes.push(denom_outcomes);
+        last_full_summaries.push(summary_str);
+    }
+
+    // Environment fingerprint drift check after runs
+    let git_head_after = get_git_head_revision();
+    assert_eq!(
+        git_head_after, baseline.source_revision,
+        "Git HEAD revision drift"
+    );
+
+    let env_fp_after = compute_type_wall_env_fingerprint(
+        &manifest_digest,
+        &baseline.source_revision,
+        &rustc_ver,
+        &cargo_ver,
+        &baseline.command,
+        "8",
+    );
+    assert_eq!(
+        env_fp_before, env_fp_after,
+        "Environment fingerprint drift detected across test execution"
+    );
+
+    // 4. Assert exact equality of failing sets and counts across all 3 runs
+    assert_eq!(
+        run_failing_counts[0], run_failing_counts[1],
+        "Run 1 and Run 2 failure counts differ: {} vs {}",
+        run_failing_counts[0], run_failing_counts[1]
+    );
+    assert_eq!(
+        run_failing_counts[1], run_failing_counts[2],
+        "Run 2 and Run 3 failure counts differ: {} vs {}",
+        run_failing_counts[1], run_failing_counts[2]
+    );
+    assert_eq!(
+        run_failing_sets[0], run_failing_sets[1],
+        "Run 1 and Run 2 failing sets differ"
+    );
+    assert_eq!(
+        run_failing_sets[1], run_failing_sets[2],
+        "Run 2 and Run 3 failing sets differ"
+    );
+
+    // 5. Assert baseline subset containment & failure count bound
+    let post_fix_failing_set = &run_failing_sets[0];
+    let post_fix_count = run_failing_counts[0];
+
+    assert!(
+        post_fix_count <= baseline.failure_count,
+        "Post-fix failure count {} exceeds pre-fix baseline failure count {}",
+        post_fix_count,
+        baseline.failure_count
+    );
+
+    for path in post_fix_failing_set {
+        assert!(
+            baseline.allowed_failing_paths.contains(path),
+            "Failing path {:?} is not in baseline allowed set",
+            path
+        );
+    }
+
+    // 8. Fail-closed mutation canaries over captured outcomes map using production validator
+    let real_outcomes = &last_captured_outcomes[0];
+
+    // Canary 1: Omission canary — remove 1 denominator row from outcome map and pass to validator
+    let mut omitted_map = real_outcomes.clone();
+    if let Some(first_key) = omitted_map.keys().next().cloned() {
+        omitted_map.remove(&first_key);
+    }
+    let canary1_result = validate_type_wall_outcomes(
+        &omitted_map,
+        &denom_rows,
+        &baseline.allowed_failing_paths,
+        baseline.failure_count,
+    );
+    assert!(
+        canary1_result.is_err(),
+        "Fail-closed canary FAILED: omitted row was not rejected by production validator"
+    );
+
+    // Canary 2: Outcome-flip canary — flip 1 real denominator member's outcome from PASS to FAIL
+    let mut flipped_map = real_outcomes.clone();
+    let mut flipped_key = String::new();
+    for (k, v) in real_outcomes {
+        if v == "PASS" {
+            flipped_key = k.clone();
+            break;
+        }
+    }
+    assert!(
+        !flipped_key.is_empty(),
+        "No passing key found to flip for canary 2"
+    );
+    flipped_map.insert(flipped_key, "FAIL".to_string());
+    let canary2_result = validate_type_wall_outcomes(
+        &flipped_map,
+        &denom_rows,
+        &baseline.allowed_failing_paths,
+        baseline.failure_count,
+    );
+    assert!(
+        canary2_result.is_err(),
+        "Fail-closed canary FAILED: outcome-flip mutation was not rejected by production validator"
+    );
+
+    println!(
+        "MAMBA-T1-TYPE-WALL-CONFORMANCE-DETERMINISM PASS runs=3 total=7407 failures={} baseline_failures={} summary={:?}",
+        post_fix_count,
+        baseline.failure_count,
+        last_full_summaries[0]
+    );
+}
+
+fn verify_type_wall_manifest_and_denominator(
+    manifest_path: &std::path::Path,
+    denom_path: &std::path::Path,
+) -> (BTreeSet<String>, String) {
+    assert!(
+        manifest_path.is_file(),
+        "Missing manifest.toml at {}",
+        manifest_path.display()
+    );
+    assert!(
+        denom_path.is_file(),
+        "Missing denominator.txt at {}",
+        denom_path.display()
+    );
+
+    let manifest_raw = std::fs::read_to_string(manifest_path).expect("read manifest.toml");
+    let manifest_toml: toml::Value = manifest_raw.parse().expect("parse manifest.toml");
+
+    let row_count = manifest_toml
+        .get("row_count")
+        .and_then(|v| v.as_integer())
+        .expect("manifest row_count") as usize;
+    assert_eq!(row_count, 7407, "manifest row_count must be 7407");
+
+    let expected_digest = manifest_toml
+        .get("denominator_sha256")
+        .and_then(|v| v.as_str())
+        .expect("manifest denominator_sha256")
+        .to_string();
+    assert_eq!(
+        expected_digest,
+        "eb45a673ca92c766c1df6596592aa226fae56ab81f8f27fea47e1168743eae28"
+    );
+
+    let denom_bytes = std::fs::read(denom_path).expect("read denominator.txt");
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(&denom_bytes);
+    let actual_digest = format!("{:x}", hasher.finalize());
+    assert_eq!(
+        actual_digest, expected_digest,
+        "denominator.txt sha256 mismatch"
+    );
+
+    let denom_str = String::from_utf8_lossy(&denom_bytes);
+    let denom_rows: BTreeSet<String> = denom_str
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(
+        denom_rows.len(),
+        7407,
+        "denominator.txt must contain exactly 7407 unique lines"
+    );
+
+    (denom_rows, expected_digest)
+}
+
+struct TypeWallBaselineEvidence {
+    source_revision: String,
+    manifest_path: String,
+    denominator_sha256: String,
+    row_count: usize,
+    command: String,
+    capture_timestamp: String,
+    rustup_toolchain: String,
+    cargo_version: String,
+    environment_fingerprint: String,
+    allowed_failing_paths: BTreeSet<String>,
+    failure_count: usize,
+}
+
+fn load_type_wall_baseline(baseline_path: &std::path::Path) -> TypeWallBaselineEvidence {
+    assert!(
+        baseline_path.is_file(),
+        "Missing baseline artifact at {}",
+        baseline_path.display()
+    );
+
+    let raw = std::fs::read_to_string(baseline_path).expect("read baseline json");
+    let val: serde_json::Value = serde_json::from_str(&raw).expect("parse baseline json");
+
+    let manifest_path = val
+        .get("manifest_path")
+        .and_then(|v| v.as_str())
+        .expect("baseline manifest_path")
+        .to_string();
+    let denominator_sha256 = val
+        .get("denominator_sha256")
+        .or_else(|| val.get("manifest_digest"))
+        .and_then(|v| v.as_str())
+        .expect("baseline denominator_sha256")
+        .to_string();
+    let row_count = val
+        .get("row_count")
+        .or_else(|| val.get("manifest_row_count"))
+        .and_then(|v| v.as_u64())
+        .expect("baseline row_count") as usize;
+    let command = val
+        .get("command")
+        .and_then(|v| v.as_str())
+        .expect("baseline command")
+        .to_string();
+    let capture_timestamp = val
+        .get("capture_timestamp")
+        .and_then(|v| v.as_str())
+        .expect("baseline capture_timestamp")
+        .to_string();
+    let rustup_toolchain = val
+        .get("rustup_toolchain")
+        .and_then(|v| v.as_str())
+        .expect("baseline rustup_toolchain")
+        .to_string();
+    let cargo_version = val
+        .get("cargo_version")
+        .and_then(|v| v.as_str())
+        .expect("baseline cargo_version")
+        .to_string();
+    let environment_fingerprint = val
+        .get("environment_fingerprint")
+        .and_then(|v| v.as_str())
+        .expect("baseline environment_fingerprint")
+        .to_string();
+    let source_revision = val
+        .get("source_revision")
+        .or_else(|| val.get("revision"))
+        .and_then(|v| v.as_str())
+        .expect("baseline source_revision")
+        .to_string();
+    let allowed_array = val
+        .get("allowed_failing_paths")
+        .or_else(|| val.get("full_normalized_allowed_failing_path_set"))
+        .and_then(|v| v.as_array())
+        .expect("baseline allowed_failing_paths");
+    let allowed_failing_paths: BTreeSet<String> = allowed_array
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    let failure_count = val
+        .get("failure_count")
+        .and_then(|v| v.as_u64())
+        .expect("baseline failure_count") as usize;
+
+    TypeWallBaselineEvidence {
+        source_revision,
+        manifest_path,
+        denominator_sha256,
+        row_count,
+        command,
+        capture_timestamp,
+        rustup_toolchain,
+        cargo_version,
+        environment_fingerprint,
+        allowed_failing_paths,
+        failure_count,
+    }
+}
+
+fn get_rustc_version() -> String {
+    let output = Command::new("rustc")
+        .arg("--version")
+        .output()
+        .expect("get rustc version");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_cargo_version() -> String {
+    let output = Command::new("cargo")
+        .arg("--version")
+        .output()
+        .expect("get cargo version");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_git_head_revision() -> String {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("failed to execute git rev-parse HEAD");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD exited with status {:?}",
+        output.status
+    );
+    let rev = String::from_utf8(output.stdout)
+        .expect("git rev-parse HEAD output is not valid UTF-8")
+        .trim()
+        .to_string();
+    assert_eq!(
+        rev.len(),
+        40,
+        "git rev-parse HEAD output must be exactly 40 hex characters, got {:?}",
+        rev
+    );
+    assert!(
+        rev.chars().all(|c| c.is_ascii_hexdigit()),
+        "git rev-parse HEAD output must be valid hex characters, got {:?}",
+        rev
+    );
+    rev
+}
+
+fn compute_type_wall_env_fingerprint(
+    manifest_digest: &str,
+    revision: &str,
+    rustc_ver: &str,
+    cargo_ver: &str,
+    command: &str,
+    threads: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(manifest_digest.as_bytes());
+    hasher.update(b":");
+    hasher.update(revision.as_bytes());
+    hasher.update(b":");
+    hasher.update(rustc_ver.as_bytes());
+    hasher.update(b":");
+    hasher.update(cargo_ver.as_bytes());
+    hasher.update(b":");
+    hasher.update(command.as_bytes());
+    hasher.update(b":");
+    hasher.update(threads.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+struct ProcessGroupGuard {
+    pgid: i32,
+    reaped: bool,
+}
+
+impl ProcessGroupGuard {
+    fn kill_all(&mut self) {
+        if !self.reaped && self.pgid > 0 {
+            unsafe {
+                let _ = libc::kill(-self.pgid, libc::SIGTERM);
+                thread::sleep(Duration::from_millis(100));
+                let _ = libc::kill(-self.pgid, libc::SIGKILL);
+            }
+            self.reaped = true;
+        }
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        self.kill_all();
+    }
+}
+
+static RUN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn execute_conformance_run_with_timeout(timeout: Duration) -> (String, String, i32) {
+    let package_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let run_seq = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let pid = std::process::id();
+    let epoch_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stdout_path = std::env::temp_dir().join(format!(
+        "mamba_conf_stdout_{pid}_{epoch_nanos}_{run_seq}.log"
+    ));
+    let stderr_path = std::env::temp_dir().join(format!(
+        "mamba_conf_stderr_{pid}_{epoch_nanos}_{run_seq}.log"
+    ));
+
+    let stdout_file =
+        std::fs::File::create(&stdout_path).expect("create run-local stdout temp file");
+    let stderr_file =
+        std::fs::File::create(&stderr_path).expect("create run-local stderr temp file");
+
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "test",
+        "-p",
+        "mamba",
+        "--release",
+        "--test",
+        "conformance",
+        "--",
+        "--nocapture",
+    ])
+    .env("RUST_TEST_THREADS", "8")
+    .current_dir(&package_dir)
+    .stdout(Stdio::from(stdout_file))
+    .stderr(Stdio::from(stderr_file));
+
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn().expect("spawn cargo test subprocess");
+    let pgid = child.id() as i32;
+    let mut pg_guard = ProcessGroupGuard {
+        pgid,
+        reaped: false,
+    };
+
+    let start = Instant::now();
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                pg_guard.reaped = true;
+                let code = status.code().unwrap_or_else(|| {
+                    let _ = std::fs::remove_file(&stdout_path);
+                    let _ = std::fs::remove_file(&stderr_path);
+                    panic!("Subprocess terminated by signal: {:?}", status);
+                });
+                break code;
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    pg_guard.kill_all();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&stdout_path);
+                    let _ = std::fs::remove_file(&stderr_path);
+                    panic!("Subprocess execution timed out after {:?}", timeout);
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                pg_guard.kill_all();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&stdout_path);
+                let _ = std::fs::remove_file(&stderr_path);
+                panic!("Error waiting on subprocess: {e}");
+            }
+        }
+    };
+
+    let stdout = std::fs::read_to_string(&stdout_path).expect("read run-local stdout temp file");
+    let stderr = std::fs::read_to_string(&stderr_path).expect("read run-local stderr temp file");
+    let _ = std::fs::remove_file(&stdout_path);
+    let _ = std::fs::remove_file(&stderr_path);
+
+    assert!(
+        exit_code == 0 || exit_code == 101,
+        "Subprocess exited with unexpected exit code {}\nstdout snippet:\n{}\nstderr snippet:\n{}",
+        exit_code,
+        &stdout[..stdout.len().min(2000)],
+        &stderr[..stderr.len().min(2000)]
+    );
+
+    (stdout, stderr, exit_code)
+}
+
+fn parse_and_verify_run_outcomes(
+    stdout: &str,
+    stderr: &str,
+    denom_rows: &BTreeSet<String>,
+    exit_code: i32,
+) -> (BTreeMap<String, String>, BTreeSet<String>, String) {
+    let mut full_observed_map: BTreeMap<String, String> = BTreeMap::new();
+    let mut full_seen_keys: BTreeSet<String> = BTreeSet::new();
+
+    // 1. Parse terminal lines for ENTIRE conformance suite into exact-name map per Tail Fix 1
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(test_idx) = trimmed.find("test ") {
+            let rest = &trimmed[test_idx + 5..];
+            if let Some(dots_idx) = rest.find(" ... ") {
+                let full_name = rest[..dots_idx].trim().to_string();
+                let status_part = rest[dots_idx + 5..].trim();
+
+                let outcome = if status_part.starts_with("ok") {
+                    "PASS"
+                } else if status_part.starts_with("FAILED") {
+                    "FAIL"
+                } else if status_part.starts_with("ignored") {
+                    "IGNORED"
+                } else {
+                    continue;
+                };
+
+                if full_name.starts_with("cpython_") || denom_rows.contains(&full_name) {
+                    assert!(
+                        full_seen_keys.insert(full_name.clone()),
+                        "Duplicate terminal line observed for test: {}",
+                        full_name
+                    );
+
+                    full_observed_map.insert(full_name, outcome.to_string());
+                }
+            }
+        }
+    }
+
+    let full_ok_count = full_observed_map.values().filter(|v| *v == "PASS").count();
+    let full_failed_count = full_observed_map.values().filter(|v| *v == "FAIL").count();
+    let full_ignored_count = full_observed_map
+        .values()
+        .filter(|v| *v == "IGNORED")
+        .count();
+
+    // 2. Parse and reconcile complete libtest summary against ENTIRE observed map per Tail Fix 1
+    let summary_lines: Vec<&str> = stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(|l| l.trim())
+        .filter(|l| l.starts_with("test result:"))
+        .collect();
+
+    assert_eq!(
+        summary_lines.len(),
+        1,
+        "Expected exactly 1 libtest summary line ('test result: ...'), found {}",
+        summary_lines.len()
+    );
+
+    let summary = summary_lines[0];
+    let passed_parsed =
+        parse_summary_number(summary, "passed").expect("parse passed count from summary");
+    let failed_parsed =
+        parse_summary_number(summary, "failed").expect("parse failed count from summary");
+    let ignored_parsed =
+        parse_summary_number(summary, "ignored").expect("parse ignored count from summary");
+    let measured_parsed =
+        parse_summary_number(summary, "measured").expect("parse measured count from summary");
+    let filtered_parsed =
+        parse_summary_number(summary, "filtered").expect("parse filtered count from summary");
+
+    assert_eq!(
+        measured_parsed, 0,
+        "Full suite summary measured count must be 0, got {}",
+        measured_parsed
+    );
+    assert_eq!(
+        filtered_parsed, 0,
+        "Full suite summary filtered count must be 0, got {}",
+        filtered_parsed
+    );
+
+    let summary_total =
+        passed_parsed + failed_parsed + ignored_parsed + measured_parsed + filtered_parsed;
+    let full_observed_total = full_observed_map.len();
+    assert_eq!(
+        full_observed_total, summary_total,
+        "Sum of full observed terminal lines ({full_observed_total}) does not match summary total ({summary_total})"
+    );
+
+    assert_eq!(
+        passed_parsed, full_ok_count,
+        "Full suite summary passed count {} does not match full observed ok count {}",
+        passed_parsed, full_ok_count
+    );
+    assert_eq!(
+        failed_parsed, full_failed_count,
+        "Full suite summary failed count {} does not match full observed FAILED count {}",
+        failed_parsed, full_failed_count
+    );
+    assert_eq!(
+        ignored_parsed, full_ignored_count,
+        "Full suite summary ignored count {} does not match full observed IGNORED count {}",
+        ignored_parsed, full_ignored_count
+    );
+
+    if exit_code == 0 {
+        assert_eq!(
+            full_failed_count, 0,
+            "Child exited 0 but libtest summary contains {} failures",
+            full_failed_count
+        );
+    } else if exit_code == 101 {
+        assert!(
+            full_failed_count > 0,
+            "Child exited 101 but libtest summary contains 0 failures"
+        );
+    }
+
+    // 3. Separately project exact 7,407 denominator members and require exact bidirectional equality per Tail Fix 1
+    let mut denom_observed_map: BTreeMap<String, String> = BTreeMap::new();
+    let mut denom_failing_set: BTreeSet<String> = BTreeSet::new();
+
+    for d in denom_rows {
+        let outcome = full_observed_map.get(d).unwrap_or_else(|| {
+            panic!(
+                "Denominator member {} was not found in full suite observed output",
+                d
+            );
+        });
+
+        assert_ne!(
+            outcome, "IGNORED",
+            "Denominator member {} was marked ignored in libtest output",
+            d
+        );
+
+        denom_observed_map.insert(d.clone(), outcome.clone());
+        if outcome == "FAIL" {
+            denom_failing_set.insert(d.clone());
+        }
+    }
+
+    assert_eq!(
+        denom_observed_map.len(),
+        7407,
+        "Denominator map count mismatch: expected 7407, got {}",
+        denom_observed_map.len()
+    );
+
+    (denom_observed_map, denom_failing_set, summary.to_string())
+}
+
+fn parse_summary_number(summary: &str, label: &str) -> Option<usize> {
+    for part in summary.split(';') {
+        let trimmed = part.trim();
+        if trimmed.contains(label) {
+            let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+            for i in 0..tokens.len() {
+                if tokens[i] == label && i > 0 {
+                    if let Ok(n) = tokens[i - 1].parse::<usize>() {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn validate_type_wall_outcomes(
+    outcomes: &BTreeMap<String, String>,
+    denom_rows: &BTreeSet<String>,
+    allowed_failing_paths: &BTreeSet<String>,
+    max_failures: usize,
+) -> Result<(BTreeSet<String>, usize), String> {
+    if outcomes.len() != 7407 {
+        return Err(format!("Expected 7407 outcomes, got {}", outcomes.len()));
+    }
+    for d in denom_rows {
+        if !outcomes.contains_key(d) {
+            return Err(format!("Missing denominator key {}", d));
+        }
+    }
+    for k in outcomes.keys() {
+        if !denom_rows.contains(k) {
+            return Err(format!("Extra non-denominator key in outcomes: {}", k));
+        }
+    }
+
+    let mut failing = BTreeSet::new();
+    for (k, v) in outcomes {
+        if v == "FAIL" {
+            if !allowed_failing_paths.contains(k) {
+                return Err(format!("Unallowed failing path {}", k));
+            }
+            failing.insert(k.clone());
+        } else if v != "PASS" {
+            return Err(format!("Invalid outcome status {}", v));
+        }
+    }
+
+    if failing.len() > max_failures {
+        return Err(format!(
+            "Failure count {} exceeds max {}",
+            failing.len(),
+            max_failures
+        ));
+    }
+
+    Ok((failing, outcomes.len()))
 }
 // </HANDWRITE>

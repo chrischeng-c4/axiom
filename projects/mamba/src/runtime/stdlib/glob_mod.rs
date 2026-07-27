@@ -776,7 +776,7 @@ mod tests {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     for item in lock.read().unwrap().iter() {
-                        if let Some(s) = extract_str(*item) {
+                        if let Some(s) = extract_str(item) {
                             out.push(s);
                         }
                     }

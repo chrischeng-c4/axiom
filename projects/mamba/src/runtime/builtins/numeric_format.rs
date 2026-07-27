@@ -372,3 +372,214 @@ pub fn mb_format(val: MbValue, spec: MbValue) -> MbValue {
     }
     string_ops::mb_format_value(val, spec)
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct PercentFormatOptions {
+    pub conv: char,
+    pub sign_plus: bool,
+    pub sign_space: bool,
+    pub alternate: bool,
+    pub zero_pad: bool,
+    pub left_align: bool,
+    pub width: usize,
+    pub precision: Option<usize>,
+}
+
+pub fn format_numeric_percent(
+    val: Option<MbValue>,
+    opts: PercentFormatOptions,
+) -> Result<(String, String), String> {
+    let conv = opts.conv;
+    let sign_plus = opts.sign_plus;
+    let sign_space = opts.sign_space;
+    let alternate = opts.alternate;
+    let precision = opts.precision;
+
+    match conv {
+        'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'b' => {
+            let radix = match conv {
+                'o' => 8,
+                'b' => 2,
+                'x' | 'X' => 16,
+                _ => 10,
+            };
+            let (negative, mut body) = if let Some(v) = val {
+                if let Some((neg, digits)) = int_digits_for_percent_val(v, radix) {
+                    (neg, digits)
+                } else if let Some(f) = v.as_float() {
+                    let neg = f.is_sign_negative();
+                    let abs_f = f.abs().trunc();
+                    let digits = match radix {
+                        2 => format!("{:b}", abs_f as u64),
+                        8 => format!("{:o}", abs_f as u64),
+                        16 => format!("{:x}", abs_f as u64),
+                        _ => abs_f.to_string(),
+                    };
+                    (neg, digits)
+                } else {
+                    return Err(format!(
+                        "%{conv} format: a real number is required, not {}",
+                        super::value_type_name(v)
+                    ));
+                }
+            } else {
+                (false, "0".to_string())
+            };
+
+            if conv == 'X' {
+                body = body.to_ascii_uppercase();
+            }
+
+            if let Some(p) = precision {
+                if p == 0 && body == "0" {
+                    body = String::new();
+                } else if body.len() < p {
+                    let pad = p - body.len();
+                    body = format!("{}{body}", "0".repeat(pad));
+                }
+            }
+
+            let sign_part = if negative {
+                "-".to_string()
+            } else if sign_plus {
+                "+".to_string()
+            } else if sign_space {
+                " ".to_string()
+            } else {
+                String::new()
+            };
+
+            let alt = if alternate {
+                match conv {
+                    'x' => "0x",
+                    'X' => "0X",
+                    'o' => if body.starts_with('0') { "" } else { "0o" },
+                    'b' => "0b",
+                    _ => "",
+                }
+            } else {
+                ""
+            };
+
+            Ok((format!("{sign_part}{alt}"), body))
+        }
+        'f' | 'F' | 'e' | 'E' | 'g' | 'G' => {
+            let v = val
+                .and_then(|a| a.as_float())
+                .or_else(|| val.and_then(|a| a.as_int()).map(|i| i as f64))
+                .unwrap_or(0.0);
+            let prec = precision.unwrap_or(6);
+            let negative = v.is_sign_negative();
+            let abs_v = v.abs();
+
+            let (prefix_sign, body) = match conv {
+                'f' | 'F' => {
+                    let mut b = format!("{:.prec$}", abs_v, prec = prec);
+                    if alternate && !b.contains('.') {
+                        b.push('.');
+                    }
+                    if conv == 'F' {
+                        b = b.to_ascii_uppercase();
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                'e' | 'E' => {
+                    let s = format!("{:.prec$e}", abs_v, prec = prec);
+                    let mut parts = s.split('e');
+                    let mantissa = parts.next().unwrap_or("0");
+                    let exp: i32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                    let exp_char = if conv == 'E' { 'E' } else { 'e' };
+                    let mut b = format!("{mantissa}{exp_char}{exp:+03}");
+                    if alternate && !b.contains('.') {
+                        if let Some(idx) = b.find(exp_char) {
+                            b.insert(idx, '.');
+                        }
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                'g' | 'G' => {
+                    let p = if prec == 0 { 1 } else { prec };
+                    let mut b = if abs_v == 0.0 {
+                        "0".to_string()
+                    } else {
+                        let exp = abs_v.log10().floor() as i32;
+                        if -4 <= exp && exp < p as i32 {
+                            let dec = (p as i32 - 1 - exp).max(0) as usize;
+                            format!("{:.dec$}", abs_v, dec = dec)
+                        } else {
+                            let dec = (p as i32 - 1).max(0) as usize;
+                            let s = format!("{:.dec$e}", abs_v, dec = dec);
+                            let mut parts = s.split('e');
+                            let mantissa = parts.next().unwrap_or("0");
+                            let exp_val: i32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                            let exp_char = if conv == 'G' { 'E' } else { 'e' };
+                            format!("{mantissa}{exp_char}{exp_val:+03}")
+                        }
+                    };
+                    if !alternate {
+                        if b.contains('.') && !b.contains('e') && !b.contains('E') {
+                            b = b.trim_end_matches('0').trim_end_matches('.').to_string();
+                        } else if b.contains('e') || b.contains('E') {
+                            let exp_char = if conv == 'G' { 'E' } else { 'e' };
+                            if let Some(idx) = b.find(exp_char) {
+                                let (mant, exp_str) = b.split_at(idx);
+                                let trimmed_mant = if mant.contains('.') {
+                                    mant.trim_end_matches('0').trim_end_matches('.')
+                                } else {
+                                    mant
+                                };
+                                b = format!("{trimmed_mant}{exp_str}");
+                            }
+                        }
+                    } else if !b.contains('.') {
+                        if let Some(idx) = b.find(if conv == 'G' { 'E' } else { 'e' }) {
+                            b.insert(idx, '.');
+                        } else {
+                            b.push('.');
+                        }
+                    }
+                    if conv == 'G' {
+                        b = b.to_ascii_uppercase();
+                    }
+                    (if negative { "-" } else if sign_plus { "+" } else if sign_space { " " } else { "" }, b)
+                }
+                _ => unreachable!(),
+            };
+
+            Ok((prefix_sign.to_string(), body))
+        }
+        _ => Err(format!("unsupported conversion '{conv}'")),
+    }
+}
+
+fn int_digits_for_percent_val(v: MbValue, radix: u32) -> Option<(bool, String)> {
+    if let Some(i) = v.as_int() {
+        let abs = i.unsigned_abs();
+        let digits = match radix {
+            2 => format!("{:b}", abs),
+            8 => format!("{:o}", abs),
+            16 => format!("{:x}", abs),
+            _ => abs.to_string(),
+        };
+        return Some((i < 0, digits));
+    }
+    if let Some(b) = v.as_bool() {
+        return Some((false, if b { "1" } else { "0" }.to_string()));
+    }
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::BigInt(ref big) = (*ptr).data {
+            let s = big.to_str_radix(radix);
+            if let Some(rest) = s.strip_prefix('-') {
+                Some((true, rest.to_string()))
+            } else {
+                Some((false, s))
+            }
+        } else if let Some(("int", payload)) = class::builtin_data_payload(v) {
+            int_digits_for_percent_val(payload, radix)
+        } else {
+            None
+        }
+    }
+}
+

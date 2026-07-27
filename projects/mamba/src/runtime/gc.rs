@@ -307,10 +307,12 @@ unsafe fn visit_contained(obj: *mut MbObject, mut visitor: impl FnMut(*mut MbObj
     use super::rc::ObjData;
     match &(*obj).data {
         ObjData::List(lock) => {
-            let items = lock.read().unwrap();
-            for item in items.iter() {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
+            let buf = lock.read().unwrap();
+            if let super::rc::MbListBuffer::Generic(ref items) = *buf {
+                for item in items.iter() {
+                    if let Some(ptr) = item.as_ptr() {
+                        visitor(ptr);
+                    }
                 }
             }
         }
@@ -1117,4 +1119,31 @@ mod tests {
             assert_eq!(gc.borrow().alloc_count, 0);
         });
     }
+
+    #[test]
+    fn test_gc_enable_disable_state() {
+        reset_gc_for_test();
+        assert!(gc_is_enabled());
+
+        gc_disable();
+        assert!(!gc_is_enabled());
+
+        gc_enable();
+        assert!(gc_is_enabled());
+    }
+
+    #[test]
+    fn test_gc_threshold_and_stats() {
+        reset_gc_for_test();
+        gc_set_threshold(500);
+
+        let (collections, _objs, threshold) = gc_get_stats();
+        assert_eq!(threshold, 500);
+
+        let initial_collections = collections;
+        collect();
+        let (new_collections, _, _) = gc_get_stats();
+        assert_eq!(new_collections, initial_collections + 1);
+    }
 }
+

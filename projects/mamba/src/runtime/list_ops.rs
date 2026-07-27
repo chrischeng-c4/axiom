@@ -4,7 +4,7 @@ use super::value::MbValue;
 ///
 /// Implements Python-compatible list methods. All mutable collection access
 /// goes through RwLock guards for thread-safety.
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
@@ -38,9 +38,9 @@ impl Drop for RetainedListSnapshot {
 }
 
 pub(crate) fn retained_list_snapshot(
-    lock: &super::rc::MbRwLock<super::rc::MbList>,
+    lock: &super::rc::MbRwLock<super::rc::MbListBuffer>,
 ) -> RetainedListSnapshot {
-    RetainedListSnapshot::new(lock.read().unwrap().iter().copied().collect())
+    RetainedListSnapshot::new(lock.read().unwrap().to_vec())
 }
 
 #[derive(Clone, Copy)]
@@ -224,6 +224,186 @@ pub fn mb_list_new_with_capacity_untracked(cap: MbValue) -> MbValue {
 /// Create a list from elements (used by list literals).
 pub fn mb_list_from(elements: Vec<MbValue>) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(elements))
+}
+
+// ── Typed Unboxed Scalar List Creation & Operations (Stage 1 / WI #1075) ──
+
+pub fn mb_int_list_new() -> MbValue {
+    MbValue::from_ptr(MbObject::new_int_list_inline(smallvec![]))
+}
+
+pub fn mb_int_list_new_untracked() -> MbValue {
+    MbValue::from_ptr(MbObject::new_int_list_inline_untracked(smallvec![]))
+}
+
+pub fn mb_int_list_new_with_capacity(cap: MbValue) -> MbValue {
+    let n = cap.as_int().unwrap_or(0).max(0) as usize;
+    MbValue::from_ptr(MbObject::new_int_list_inline(SmallVec::with_capacity(n)))
+}
+
+pub fn mb_int_list_new_with_capacity_untracked(cap: MbValue) -> MbValue {
+    let n = cap.as_int().unwrap_or(0).max(0) as usize;
+    MbValue::from_ptr(MbObject::new_int_list_inline_untracked(SmallVec::with_capacity(n)))
+}
+
+pub fn mb_float_list_new() -> MbValue {
+    MbValue::from_ptr(MbObject::new_float_list_inline(smallvec![]))
+}
+
+pub fn mb_float_list_new_untracked() -> MbValue {
+    MbValue::from_ptr(MbObject::new_float_list_inline_untracked(smallvec![]))
+}
+
+pub fn mb_float_list_new_with_capacity(cap: MbValue) -> MbValue {
+    let n = cap.as_int().unwrap_or(0).max(0) as usize;
+    MbValue::from_ptr(MbObject::new_float_list_inline(SmallVec::with_capacity(n)))
+}
+
+pub fn mb_float_list_new_with_capacity_untracked(cap: MbValue) -> MbValue {
+    let n = cap.as_int().unwrap_or(0).max(0) as usize;
+    MbValue::from_ptr(MbObject::new_float_list_inline_untracked(SmallVec::with_capacity(n)))
+}
+
+pub fn mb_int_list_append_raw(list: MbValue, item: i64) {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut buf = lock.write().unwrap();
+                buf.push_int(item);
+                mark_list_mutated(list);
+            }
+        }
+    }
+}
+
+pub fn mb_float_list_append_raw(list: MbValue, item: f64) {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut buf = lock.write().unwrap();
+                buf.push_float(item);
+                mark_list_mutated(list);
+            }
+        }
+    }
+}
+
+pub fn mb_int_list_getitem(list: MbValue, index: i64) -> i64 {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let buf = lock.read().unwrap();
+                match &*buf {
+                    super::rc::MbListBuffer::Int(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            return vec[actual as usize];
+                        }
+                    }
+                    super::rc::MbListBuffer::Generic(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            if let Some(i) = vec[actual as usize].as_int() {
+                                return i;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    0
+}
+
+pub fn mb_float_list_getitem(list: MbValue, index: i64) -> f64 {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let buf = lock.read().unwrap();
+                match &*buf {
+                    super::rc::MbListBuffer::Float(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            return vec[actual as usize];
+                        }
+                    }
+                    super::rc::MbListBuffer::Generic(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            if let Some(f) = vec[actual as usize].as_float() {
+                                return f;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    0.0
+}
+
+pub fn mb_int_list_setitem(list: MbValue, index: i64, value: i64) {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut buf = lock.write().unwrap();
+                match &mut *buf {
+                    super::rc::MbListBuffer::Int(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            vec[actual as usize] = value;
+                        }
+                    }
+                    _ => {
+                        let len = buf.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            let new_val = super::bigint_ops::int_from_i64(value);
+                            let generic_vec = buf.ensure_generic();
+                            let old_val = std::mem::replace(&mut generic_vec[actual as usize], new_val);
+                            super::rc::release_owned(old_val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn mb_float_list_setitem(list: MbValue, index: i64, value: f64) {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut buf = lock.write().unwrap();
+                match &mut *buf {
+                    super::rc::MbListBuffer::Float(vec) => {
+                        let len = vec.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            vec[actual as usize] = value;
+                        }
+                    }
+                    _ => {
+                        let len = buf.len() as i64;
+                        let actual = if index < 0 { index + len } else { index };
+                        if actual >= 0 && actual < len {
+                            let new_val = MbValue::from_float(value);
+                            let generic_vec = buf.ensure_generic();
+                            let old_val = std::mem::replace(&mut generic_vec[actual as usize], new_val);
+                            super::rc::release_owned(old_val);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 macro_rules! retain_owned_args {
@@ -651,9 +831,9 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
 pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
-            if let Some(idx) = index.as_int() {
-                match &(*ptr).data {
-                    ObjData::List(ref lock) => {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => {
+                    if let Some(idx) = index.as_int().or_else(|| index.as_int_pyint()) {
                         // Fast path: try non-blocking read (succeeds when uncontended)
                         let items = match lock.try_read() {
                             Ok(guard) => guard,
@@ -662,8 +842,9 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                         let len = items.len() as i64;
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
-                            let val = items[actual as usize];
-                            return super::rc::return_owned(val);
+                            if let Some(val) = items.get(actual as usize) {
+                                return super::rc::return_owned(val);
+                            }
                         }
                         drop(items);
                         // CPython: out-of-range list index raises (#32).
@@ -674,8 +855,19 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                             )),
                         );
                         return MbValue::none();
+                    } else {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "list indices must be integers or slices, not {}",
+                                super::builtins::value_type_name(index)
+                            ))),
+                        );
+                        return MbValue::none();
                     }
-                    ObjData::Tuple(ref items) => {
+                }
+                ObjData::Tuple(ref items) => {
+                    if let Some(idx) = index.as_int().or_else(|| index.as_int_pyint()) {
                         let len = items.len() as i64;
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
@@ -689,9 +881,18 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                             )),
                         );
                         return MbValue::none();
+                    } else {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "tuple indices must be integers or slices, not {}",
+                                super::builtins::value_type_name(index)
+                            ))),
+                        );
+                        return MbValue::none();
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
     }
@@ -745,10 +946,31 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
                         let len = items.len() as i64;
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
-                            let old = items[actual as usize];
                             super::rc::store_owned(value);
-                            items[actual as usize] = value;
-                            super::rc::release_owned(old);
+                            match &mut *items {
+                                super::rc::MbListBuffer::Int(vec) => {
+                                    if let Some(i) = value.as_int() {
+                                        vec[actual as usize] = i;
+                                    } else {
+                                        let generic_vec = items.ensure_generic();
+                                        let old_val = std::mem::replace(&mut generic_vec[actual as usize], value);
+                                        super::rc::release_owned(old_val);
+                                    }
+                                }
+                                super::rc::MbListBuffer::Float(vec) => {
+                                    if let Some(f) = value.as_float() {
+                                        vec[actual as usize] = f;
+                                    } else {
+                                        let generic_vec = items.ensure_generic();
+                                        let old_val = std::mem::replace(&mut generic_vec[actual as usize], value);
+                                        super::rc::release_owned(old_val);
+                                    }
+                                }
+                                super::rc::MbListBuffer::Generic(vec) => {
+                                    let old_val = std::mem::replace(&mut vec[actual as usize], value);
+                                    super::rc::release_owned(old_val);
+                                }
+                            }
                             mark_list_mutated(list);
                         } else {
                             // CPython: out-of-range store raises IndexError.
@@ -827,7 +1049,7 @@ pub fn mb_list_setslice(
                             ByteSeqOutcome::Ok(vlock.read().unwrap().clone())
                         }
                         ObjData::List(ref vlock) => {
-                            let items = vlock.read().unwrap();
+                            let items = vlock.read().unwrap().to_vec();
                             collect_u8_seq(&items)
                         }
                         ObjData::Tuple(ref t) => collect_u8_seq(t),
@@ -891,11 +1113,11 @@ pub fn mb_list_setslice(
                 }
                 let s = start
                     .as_int_pyint()
-                    .map(|i| clamp_index(i, len))
+                    .map(|i| clamp_index(i, len, 1))
                     .unwrap_or(0) as usize;
                 let e = stop
                     .as_int_pyint()
-                    .map(|i| clamp_index(i, len))
+                    .map(|i| clamp_index(i, len, 1))
                     .unwrap_or(len) as usize;
                 let s = s.min(data.len());
                 let e = e.min(data.len()).max(s);
@@ -927,21 +1149,21 @@ pub fn mb_list_setslice(
                     let (mut i, end) = if step > 0 {
                         let s = start
                             .as_int_pyint()
-                            .map(|idx| clamp_index(idx, len))
+                            .map(|idx| clamp_index(idx, len, step))
                             .unwrap_or(0);
                         let e = stop
                             .as_int_pyint()
-                            .map(|idx| clamp_index(idx, len))
+                            .map(|idx| clamp_index(idx, len, step))
                             .unwrap_or(len);
                         (s, e)
                     } else {
                         let s = start
                             .as_int_pyint()
-                            .map(|idx| clamp_index(idx, len))
+                            .map(|idx| clamp_index(idx, len, step))
                             .unwrap_or(len - 1);
                         let e = stop
                             .as_int_pyint()
-                            .map(|idx| clamp_index(idx, len))
+                            .map(|idx| clamp_index(idx, len, step))
                             .unwrap_or(-1);
                         (s, e)
                     };
@@ -973,6 +1195,7 @@ pub fn mb_list_setslice(
                     for &v in &new_elems {
                         super::rc::store_owned(v);
                     }
+                    let items = items.ensure_generic();
                     for (idx, new_value) in indices.into_iter().zip(new_elems.into_iter()) {
                         let old = items[idx];
                         items[idx] = new_value;
@@ -983,12 +1206,13 @@ pub fn mb_list_setslice(
                 }
                 let s = start
                     .as_int_pyint()
-                    .map(|i| clamp_index(i, len))
+                    .map(|i| clamp_index(i, len, 1))
                     .unwrap_or(0) as usize;
                 let e = stop
                     .as_int_pyint()
-                    .map(|i| clamp_index(i, len))
+                    .map(|i| clamp_index(i, len, 1))
                     .unwrap_or(len as i64) as usize;
+                let items = items.ensure_generic();
                 let s = s.min(items.len());
                 let e = e.min(items.len()).max(s);
 
@@ -1003,7 +1227,90 @@ pub fn mb_list_setslice(
                 // Replace the slice. SmallVec has no `splice`; do a
                 // drain + insert_from_slice instead.
                 items.drain(s..e);
-                items.insert_from_slice(s, &new_elems);
+                items.insert_many(s, new_elems.into_iter());
+                mark_list_mutated(list);
+            }
+        }
+    }
+}
+
+/// list[start:stop:step] deletion
+pub fn mb_list_delslice(list: MbValue, start: MbValue, stop: MbValue, step: MbValue) {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut items = lock.write().unwrap();
+                let len = items.len() as i64;
+                let st = step.as_int_pyint().unwrap_or(1);
+                if st == 0 {
+                    drop(items);
+                    super::builtins::raise_value_error("slice step cannot be zero".to_string());
+                    return;
+                }
+                if st == 1 {
+                    let s = start
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(0) as usize;
+                    let e = stop
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(len) as usize;
+                    let items = items.ensure_generic();
+                    let s = s.min(items.len());
+                    let e = e.min(items.len()).max(s);
+                    for &old in &items[s..e] {
+                        super::rc::release_owned(old);
+                    }
+                    items.drain(s..e);
+                    mark_list_mutated(list);
+                    return;
+                }
+                let (s, e) = if st > 0 {
+                    let s = start
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(0);
+                    let e = stop
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(len);
+                    (s, e)
+                } else {
+                    let s = start
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(len - 1);
+                    let e = stop
+                        .as_int_pyint()
+                        .map(|i| clamp_index(i, len, st))
+                        .unwrap_or(-1);
+                    (s, e)
+                };
+                let mut positions = Vec::new();
+                let mut i = s;
+                if st > 0 {
+                    while i < e {
+                        if i >= 0 && i < len {
+                            positions.push(i as usize);
+                        }
+                        i += st;
+                    }
+                } else {
+                    while i > e {
+                        if i >= 0 && i < len {
+                            positions.push(i as usize);
+                        }
+                        i += st;
+                    }
+                }
+                let items = items.ensure_generic();
+                for idx in positions.into_iter().rev() {
+                    if idx < items.len() {
+                        let removed = items.remove(idx);
+                        super::rc::release_owned(removed);
+                    }
+                }
                 mark_list_mutated(list);
             }
         }
@@ -1016,67 +1323,28 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 if let Some(kp) = index.as_ptr() {
-                    if let ObjData::Tuple(ref parts) = (*kp).data {
-                        if parts.len() == 3 {
-                            let mut items = lock.write().unwrap();
-                            let len = items.len() as i64;
-                            let step = parts[2].as_int_pyint().unwrap_or(1);
-                            if step == 0 {
-                                super::exception::mb_raise(
-                                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                                    MbValue::from_ptr(MbObject::new_str(
-                                        "slice step cannot be zero".to_string(),
-                                    )),
-                                );
-                                return;
-                            }
-                            let (start, stop) = if step > 0 {
-                                let s = parts[0]
-                                    .as_int_pyint()
-                                    .map(|i| clamp_index(i, len))
-                                    .unwrap_or(0);
-                                let e = parts[1]
-                                    .as_int_pyint()
-                                    .map(|i| clamp_index(i, len))
-                                    .unwrap_or(len);
-                                (s, e)
-                            } else {
-                                let s = parts[0]
-                                    .as_int_pyint()
-                                    .map(|i| clamp_index(i, len))
-                                    .unwrap_or(len - 1);
-                                let e = parts[1]
-                                    .as_int_pyint()
-                                    .map(|i| clamp_index(i, len))
-                                    .unwrap_or(-1);
-                                (s, e)
-                            };
-                            let mut positions = Vec::new();
-                            let mut i = start;
-                            if step > 0 {
-                                while i < stop {
-                                    if i >= 0 && i < len {
-                                        positions.push(i as usize);
-                                    }
-                                    i += step;
-                                }
-                            } else {
-                                while i > stop {
-                                    if i >= 0 && i < len {
-                                        positions.push(i as usize);
-                                    }
-                                    i += step;
-                                }
-                            }
-                            for idx in positions.into_iter().rev() {
-                                if idx < items.len() {
-                                    let removed = items.remove(idx);
-                                    super::rc::release_if_ptr(removed);
-                                }
-                            }
-                            mark_list_mutated(list);
-                            return;
+                    let slice_args = match &(*kp).data {
+                        ObjData::Tuple(ref parts) if parts.len() == 3 => {
+                            Some((parts[0], parts[1], parts[2]))
                         }
+                        ObjData::Instance {
+                            ref class_name,
+                            ref fields,
+                            ..
+                        } if class_name == "slice" => {
+                            let f = fields.read().unwrap();
+                            Some((
+                                f.get("start").cloned().unwrap_or(MbValue::none()),
+                                f.get("stop").cloned().unwrap_or(MbValue::none()),
+                                f.get("step").cloned().unwrap_or(MbValue::none()),
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some((start, stop, step)) = slice_args {
+                        drop(lock);
+                        mb_list_delslice(list, start, stop, step);
+                        return;
                     }
                 }
                 if let Some(idx) = index.as_int() {
@@ -1084,7 +1352,8 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
                     let len = items.len() as i64;
                     let actual = if idx < 0 { idx + len } else { idx };
                     if actual >= 0 && actual < len {
-                        items.remove(actual as usize);
+                        let removed = items.remove(actual as usize);
+                        super::rc::release_owned(removed);
                         mark_list_mutated(list);
                     }
                 }
@@ -1096,6 +1365,11 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
 /// list[start:stop] -> new list
 pub fn mb_list_slice(list: MbValue, start: MbValue, stop: MbValue) -> MbValue {
     mb_list_slice_full(list, start, stop, MbValue::none())
+}
+
+/// Full slice with step FFI entry point: list[start:stop:step].
+pub fn mb_list_slice_step(list: MbValue, start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
+    mb_list_slice_full(list, start, stop, step)
 }
 
 /// Full slice with step: list[start:stop:step]. Handles None for defaults.
@@ -1115,7 +1389,8 @@ pub fn mb_list_slice_full(list: MbValue, start: MbValue, stop: MbValue, step: Mb
                     );
                     return mb_list_new();
                 }
-                let result = slice_indices(&items, len, start, stop, st);
+                let items_vec = items.to_vec();
+                let result = slice_indices(&items_vec, len, start, stop, st);
                 // Sliced items are borrowed from the source list — retain.
                 return MbValue::from_ptr(MbObject::new_list_borrowed(result));
             }
@@ -1136,21 +1411,21 @@ fn slice_indices(
     let (s, e) = if step > 0 {
         let s = start
             .as_int_pyint()
-            .map(|i| clamp_index(i, len))
+            .map(|i| clamp_index(i, len, step))
             .unwrap_or(0);
         let e = stop
             .as_int_pyint()
-            .map(|i| clamp_index(i, len))
+            .map(|i| clamp_index(i, len, step))
             .unwrap_or(len);
         (s, e)
     } else {
         let s = start
             .as_int_pyint()
-            .map(|i| clamp_index(i, len))
+            .map(|i| clamp_index(i, len, step))
             .unwrap_or(len - 1);
         let e = stop
             .as_int_pyint()
-            .map(|i| clamp_index(i, len))
+            .map(|i| clamp_index(i, len, step))
             .unwrap_or(-1);
         (s, e)
     };
@@ -1174,10 +1449,22 @@ fn slice_indices(
     result
 }
 
-/// Clamp a (possibly negative) index into [0, len] range.
-fn clamp_index(i: i64, len: i64) -> i64 {
+/// Clamp a (possibly negative) index into range.
+/// When step < 0, lower bound clamping allows -1 so negative-step slices
+/// (such as lst[4:-10:-1]) include index 0.
+fn clamp_index(i: i64, len: i64, step: i64) -> i64 {
     let idx = if i < 0 { i + len } else { i };
-    idx.max(0).min(len)
+    if step < 0 {
+        if idx < -1 {
+            -1
+        } else if idx >= len {
+            len - 1
+        } else {
+            idx
+        }
+    } else {
+        idx.max(0).min(len)
+    }
 }
 
 // ── Mutation Methods ──
@@ -1322,8 +1609,9 @@ pub fn mb_list_remove(list: MbValue, value: MbValue) {
                     let mut items = lock.write().unwrap();
                     // The __eq__ may have mutated the list; only remove when
                     // the found slot still holds the same element.
-                    if pos < items.len() && items[pos] == snapshot[pos] {
-                        items.remove(pos);
+                    if pos < items.len() && items.get(pos) == Some(snapshot[pos]) {
+                        let removed = items.remove(pos);
+                        super::rc::release_owned(removed);
                         mark_list_mutated(list);
                     }
                     return;
@@ -1344,38 +1632,62 @@ pub fn mb_list_extend(list: MbValue, other: MbValue) {
     unsafe {
         // Read from `other` first to avoid holding two locks simultaneously.
         // Accept list, tuple, set, frozenset, dict (keys), str (chars), range, bytes.
-        let cloned: Option<Vec<MbValue>> = if let Some(ptr) = other.as_ptr() {
+        let (cloned, newly_created): (Option<Vec<MbValue>>, bool) = if let Some(ptr) = other.as_ptr() {
             match &(*ptr).data {
-                ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
-                ObjData::Tuple(ref items) => Some(items.clone()),
-                ObjData::Set(ref lock) => Some(lock.read().unwrap().to_vec()),
-                ObjData::FrozenSet(ref items) => Some(items.clone()),
-                ObjData::Dict(ref lock) => Some(
-                    lock.read()
-                        .unwrap()
-                        .keys()
-                        .map(super::dict_ops::dict_key_to_mbvalue)
-                        .collect(),
+                ObjData::List(ref lock) => (Some(lock.read().unwrap().to_vec()), false),
+                ObjData::Tuple(ref items) => (Some(items.clone()), false),
+                ObjData::Set(ref lock) => (Some(lock.read().unwrap().to_vec()), false),
+                ObjData::FrozenSet(ref items) => (Some(items.clone()), false),
+                ObjData::Dict(ref lock) => (
+                    Some(
+                        lock.read()
+                            .unwrap()
+                            .keys()
+                            .map(super::dict_ops::dict_key_to_mbvalue)
+                            .collect(),
+                    ),
+                    true,
                 ),
-                ObjData::Str(ref s) => Some(
-                    s.chars()
-                        .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
-                        .collect(),
+                ObjData::Str(ref s) => (
+                    Some(
+                        s.chars()
+                            .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
+                            .collect(),
+                    ),
+                    true,
                 ),
-                ObjData::Bytes(ref data) => {
-                    Some(data.iter().map(|&b| MbValue::from_int(b as i64)).collect())
-                }
-                _ => None,
+                ObjData::Bytes(ref data) => (
+                    Some(data.iter().map(|&b| MbValue::from_int(b as i64)).collect()),
+                    true,
+                ),
+                _ => (None, false),
             }
         } else {
-            None
+            (None, false)
         };
-        if let (Some(ptr), Some(cloned)) = (list.as_ptr(), cloned) {
+        if let (Some(ptr), Some(cloned)) = (list.as_ptr(), cloned.as_ref()) {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for elem in &cloned {
-                    super::rc::store_owned(*elem);
+                if !newly_created {
+                    for elem in cloned {
+                        super::rc::store_owned(*elem);
+                    }
                 }
-                lock.write().unwrap().extend(cloned);
+                lock.write().unwrap().extend(cloned.clone());
+                mark_list_mutated(list);
+                return;
+            }
+        }
+        if cloned.is_none() {
+            let iter_handle = super::iter::mb_iter(other);
+            if !iter_handle.is_none() {
+                while super::iter::mb_has_next(iter_handle).as_bool() == Some(true) {
+                    let item = super::iter::mb_next(iter_handle);
+                    if let Some(ptr) = list.as_ptr() {
+                        if let ObjData::List(ref lock) = (*ptr).data {
+                            lock.write().unwrap().push(item);
+                        }
+                    }
+                }
                 mark_list_mutated(list);
             }
         }
@@ -1387,7 +1699,8 @@ pub fn mb_list_clear(list: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.write().unwrap().clear();
+                let mut buf = lock.write().unwrap();
+                buf.clear();
                 mark_list_mutated(list);
             }
         }
@@ -1438,6 +1751,9 @@ pub fn mb_list_sort(list: MbValue) {
                     // __lt__ on Instance values is respected.
                     items.sort_by(|a, b| mb_value_cmp_pub(*a, *b));
                 }
+                if super::exception::mb_has_exception().as_bool() == Some(true) {
+                    return;
+                }
             }
         }
     }
@@ -1449,7 +1765,7 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let do_reverse = reverse.as_bool() == Some(true) || reverse.as_int() == Some(1);
+                let do_reverse = super::builtins::mb_is_truthy(reverse) != 0;
                 let has_key = !key.is_none();
                 if has_key {
                     // The key must be callable (CPython: `xs.sort(key=42)` →
@@ -1485,7 +1801,15 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     // key callable runs: mb_call1_val can re-enter the runtime
                     // (and even this list) arbitrarily.
                     let snapshot = retained_list_snapshot(lock);
-                    let mut indexed: Vec<(MbValue, MbValue)> = Vec::with_capacity(snapshot.len());
+                    struct KeyCleanupGuard(Vec<(MbValue, MbValue)>);
+                    impl Drop for KeyCleanupGuard {
+                        fn drop(&mut self) {
+                            for (_, k) in self.0.drain(..) {
+                                super::rc::release_owned(k);
+                            }
+                        }
+                    }
+                    let mut indexed = KeyCleanupGuard(Vec::with_capacity(snapshot.len()));
                     let mutation_watch = ActiveSortMutationWatch::new(list);
                     for &item in snapshot.iter() {
                         let k = if let Some(ref name) = named_key {
@@ -1506,9 +1830,9 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                             raise_list_modified_during_sort();
                             return;
                         }
-                        indexed.push((item, k));
+                        indexed.0.push((item, k));
                     }
-                    indexed.sort_by(|a, b| {
+                    indexed.0.sort_by(|a, b| {
                         stable_order_for_reverse(mb_value_cmp_pub(a.1, b.1), do_reverse)
                     });
                     if mutation_watch.as_ref().is_some_and(|watch| watch.mutated()) {
@@ -1519,7 +1843,8 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         return;
                     }
                     let mut items = lock.write().unwrap();
-                    *items = indexed.into_iter().map(|(v, _)| v).collect();
+                    let sorted_v: Vec<MbValue> = indexed.0.iter().map(|(v, _)| *v).collect();
+                    *items = sorted_v.into_iter().collect();
                 } else {
                     let mut items = lock.write().unwrap();
                     // Type-specialized sort for no-key case.
@@ -1534,6 +1859,9 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         items.sort_by(|a, b| {
                             stable_order_for_reverse(mb_value_cmp_pub(*a, *b), do_reverse)
                         });
+                    }
+                    if super::exception::mb_has_exception().as_bool() == Some(true) {
+                        return;
                     }
                 }
             }
@@ -2025,9 +2353,10 @@ pub fn mb_seq_getitem(val: MbValue, index: i64) -> MbValue {
                     let len = items.len() as i64;
                     let actual = if index < 0 { index + len } else { index };
                     if actual >= 0 && actual < len {
-                        let val = items[actual as usize];
-                        super::rc::retain_if_ptr(val);
-                        return val;
+                        if let Some(val) = items.get(actual as usize) {
+                            super::rc::retain_if_ptr(val);
+                            return val;
+                        }
                     }
                     return MbValue::none();
                 }
@@ -2064,7 +2393,7 @@ pub fn mb_seq_slice(val: MbValue, start: MbValue, stop: MbValue) -> MbValue {
                     let len = items.len() as i64;
                     let s = start_idx.max(0).min(len) as usize;
                     let e = stop_idx.max(0).min(len) as usize;
-                    let slice: Vec<MbValue> = items[s..e].to_vec();
+                    let slice: Vec<MbValue> = items.slice(s, e);
                     return MbValue::from_ptr(MbObject::new_list(slice));
                 }
                 ObjData::Tuple(ref items) => {
@@ -2159,7 +2488,7 @@ pub fn mb_list_repeat(list: MbValue, n: MbValue) -> MbValue {
                     let items = lock.read().unwrap();
                     let mut result = Vec::with_capacity(items.len() * count as usize);
                     for _ in 0..count {
-                        result.extend_from_slice(&items);
+                        result.extend(items.iter());
                     }
                     // Items borrowed from the source list — retain.
                     return MbValue::from_ptr(MbObject::new_list_borrowed(result));
@@ -2201,7 +2530,7 @@ pub fn mb_list_repeat_inplace(list: MbValue, n: MbValue) -> MbValue {
                             let mut extra =
                                 Vec::with_capacity(original.len() * (count as usize - 1));
                             for _ in 1..count {
-                                extra.extend_from_slice(&original);
+                                extra.extend(original.iter());
                             }
                             for elem in &extra {
                                 super::rc::retain_if_ptr(*elem);
@@ -2246,7 +2575,6 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
                         .read()
                         .unwrap()
                         .get(i)
-                        .copied()
                         .unwrap_or(MbValue::none());
                 }
             }
@@ -2263,16 +2591,40 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             0
         }
     };
+    let check_arity = |min_args: usize, max_args: usize| -> bool {
+        let n = argc();
+        if n < min_args || n > max_args {
+            let msg = if min_args == max_args {
+                format!("{name}() takes exactly {min_args} argument ({n} given)")
+            } else if max_args == usize::MAX {
+                format!("{name}() takes at least {min_args} argument ({n} given)")
+            } else if min_args == 0 {
+                format!("{name}() takes at most {max_args} argument ({n} given)")
+            } else {
+                format!("{name}() takes between {min_args} and {max_args} arguments ({n} given)")
+            };
+            super::exception::mb_raise(
+                MbValue::from_ptr(super::rc::MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(super::rc::MbObject::new_str(msg)),
+            );
+            false
+        } else {
+            true
+        }
+    };
     match name {
         "append" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_list_append(receiver, arg(0));
             MbValue::none()
         }
         "insert" => {
+            if !check_arity(2, 2) { return MbValue::none(); }
             mb_list_insert(receiver, arg(0), arg(1));
             MbValue::none()
         }
         "pop" => {
+            if !check_arity(0, 1) { return MbValue::none(); }
             if argc() > 0 {
                 mb_list_pop_at(receiver, arg(0))
             } else {
@@ -2280,64 +2632,103 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             }
         }
         "remove" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_list_remove(receiver, arg(0));
             MbValue::none()
         }
         "extend" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_list_extend(receiver, arg(0));
             MbValue::none()
         }
         "clear" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
             mb_list_clear(receiver);
             MbValue::none()
         }
         "reverse" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
             mb_list_reverse(receiver);
             MbValue::none()
         }
         "sort" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
             mb_list_sort(receiver);
             MbValue::none()
         }
-        "copy" => mb_list_copy(receiver),
+        "copy" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_list_copy(receiver)
+        }
         "index" => {
+            if !check_arity(1, 3) { return MbValue::none(); }
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let stop = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_list_index_range(receiver, arg(0), start, stop)
         }
-        "count" => mb_list_count(receiver, arg(0)),
+        "count" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_count(receiver, arg(0))
+        }
         // ── Explicit dunder access — `[…].__getitem__(0)`, `__add__`, etc.
         // CPython exposes every protocol slot by name on plain list objects;
         // mamba previously raised AttributeError for each of these.
-        "__getitem__" => mb_list_getitem(receiver, arg(0)),
+        "__getitem__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_getitem(receiver, arg(0))
+        }
         // `[].__dir__()` — same name set as dir([]) (already sorted).
-        "__dir__" => super::class::mb_dir(receiver),
+        "__dir__" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            super::class::mb_dir(receiver)
+        }
         "__setitem__" => {
+            if !check_arity(2, 2) { return MbValue::none(); }
             mb_list_setitem(receiver, arg(0), arg(1));
             MbValue::none()
         }
         "__delitem__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             mb_list_delitem(receiver, arg(0));
             MbValue::none()
         }
-        "__contains__" => mb_list_contains(receiver, arg(0)),
-        "__len__" => mb_list_len(receiver),
-        "__iter__" => super::iter::mb_iter(receiver),
-        "__add__" => mb_list_concat(receiver, arg(0)),
-        "__radd__" => mb_list_concat(arg(0), receiver),
-        "__mul__" | "__rmul__" => mb_list_repeat(receiver, arg(0)),
-        // NOTE: __iadd__ / __imul__ are not exposed yet — returning the
-        // mutated receiver from method dispatch hits a refcount/free
-        // race that crashes a follow-up call. The augmented-assign
-        // operator path (`L += other`) keeps working because codegen
-        // uses mb_list_extend / mb_list_repeat directly without
-        // returning the receiver up the method-call stack.
-        "__eq__" => mb_list_eq(receiver, arg(0)),
+        "__contains__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_contains(receiver, arg(0))
+        }
+        "__len__" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            mb_list_len(receiver)
+        }
+        "__iter__" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            super::iter::mb_iter(receiver)
+        }
+        "__add__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_concat(receiver, arg(0))
+        }
+        "__radd__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_concat(arg(0), receiver)
+        }
+        "__mul__" | "__rmul__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_repeat(receiver, arg(0))
+        }
+        "__eq__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
+            mb_list_eq(receiver, arg(0))
+        }
         "__ne__" => {
+            if !check_arity(1, 1) { return MbValue::none(); }
             let eq = mb_list_eq(receiver, arg(0));
             MbValue::from_bool(eq.as_bool() != Some(true))
         }
-        "__repr__" | "__str__" => super::builtins::mb_repr(receiver),
+        "__repr__" | "__str__" => {
+            if !check_arity(0, 0) { return MbValue::none(); }
+            super::builtins::mb_repr(receiver)
+        }
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(super::rc::MbObject::new_str("AttributeError".to_string())),
@@ -2832,9 +3223,9 @@ mod tests {
             let ptr = list.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert_eq!(items[0].to_bits(), first.to_bits());
-                assert_eq!(items[1].to_bits(), second.to_bits());
-                assert_eq!(items[2].to_bits(), short.to_bits());
+                assert_eq!(items.get(0).unwrap().to_bits(), first.to_bits());
+                assert_eq!(items.get(1).unwrap().to_bits(), second.to_bits());
+                assert_eq!(items.get(2).unwrap().to_bits(), short.to_bits());
             } else {
                 panic!("expected list");
             }
@@ -3316,17 +3707,59 @@ mod tests {
         );
     }
 
-    // TODO: enable when mb_list_slice_step is implemented
-    // #[test]
-    // fn test_py312_list_step_slice_forward() {
-    //     let list = mb_list_from(vec![
-    //         MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
-    //         MbValue::from_int(3), MbValue::from_int(4),
-    //     ]);
-    //     let sliced = mb_list_slice_step(list, MbValue::from_int(0), MbValue::from_int(5), MbValue::from_int(2));
-    //     assert_eq!(mb_list_len(sliced).as_int(), Some(3));
-    //     assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(0));
-    //     assert_eq!(mb_list_getitem(sliced, MbValue::from_int(1)).as_int(), Some(2));
-    //     assert_eq!(mb_list_getitem(sliced, MbValue::from_int(2)).as_int(), Some(4));
-    // }
+    #[test]
+    fn test_py312_list_step_slice_forward() {
+        let list = mb_list_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        let sliced = mb_list_slice_step(list, MbValue::from_int(0), MbValue::from_int(5), MbValue::from_int(2));
+        assert_eq!(mb_list_len(sliced).as_int(), Some(3));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(0));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(1)).as_int(), Some(2));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(2)).as_int(), Some(4));
+    }
+
+    #[test]
+    fn test_py312_list_negative_step_includes_index_0() {
+        let list = mb_list_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        let sliced = mb_list_slice_step(list, MbValue::from_int(4), MbValue::from_int(-10), MbValue::from_int(-1));
+        assert_eq!(mb_list_len(sliced).as_int(), Some(5));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(4));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(4)).as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_py312_list_extended_slice_setslice_and_delslice() {
+        let list = mb_list_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        // Set extended slice lst[::2] = [10, 20, 30]
+        let val = mb_list_from(vec![MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30)]);
+        mb_list_setslice(list, MbValue::none(), MbValue::none(), MbValue::from_int(2), val);
+        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(10));
+        assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(20));
+        assert_eq!(mb_list_getitem(list, MbValue::from_int(4)).as_int(), Some(30));
+
+        // Delete extended slice del list[1::2]
+        mb_list_delslice(list, MbValue::from_int(1), MbValue::none(), MbValue::from_int(2));
+        assert_eq!(mb_list_len(list).as_int(), Some(3));
+    }
+
+    #[test]
+    fn test_py312_list_negative_step_upper_bound_clamping() {
+        let list = mb_list_from(vec![
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(4),
+        ]);
+        let sliced = mb_list_slice_step(list, MbValue::from_int(100), MbValue::none(), MbValue::from_int(-2));
+        assert_eq!(mb_list_len(sliced).as_int(), Some(3));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(4));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(1)).as_int(), Some(2));
+        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(2)).as_int(), Some(0));
+    }
 }

@@ -1088,7 +1088,7 @@ fn list_len(value: MbValue) -> Option<usize> {
 fn list_first(value: MbValue) -> Option<MbValue> {
     value.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
-            lock.read().unwrap().first().copied()
+            lock.read().unwrap().first()
         } else {
             None
         }

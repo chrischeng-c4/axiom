@@ -677,7 +677,14 @@ pub fn mb_random_method_choices(receiver: MbValue, pop: MbValue, k: MbValue) -> 
         let idx = (next_u64(id) % n) as usize;
         out.push(items[idx]);
     }
-    MbValue::from_ptr(MbObject::new_list(out))
+    // `items[idx]` is picked with replacement, so the same pointer can land
+    // in `out` more than once; `out` borrows those pointers from `items`
+    // (itself borrowed from the population container), so the returned list
+    // must retain each occurrence (`new_list_borrowed`) rather than take
+    // unretained ownership (`new_list`) — otherwise a repeated pick makes
+    // `release_contained_values` release the same object once per
+    // occurrence on drop, a use-after-free/double-free on duplicate picks.
+    MbValue::from_ptr(MbObject::new_list_borrowed(out))
 }
 
 /// Full `choices(population, weights=None, *, cum_weights=None, k=1)` with
@@ -807,7 +814,18 @@ pub fn mb_random_method_choices_full(
             }
         }
     }
-    MbValue::from_ptr(MbObject::new_list(out))
+    // `items[idx]` is picked with replacement (weighted or uniform), so the
+    // same pointer can land in `out` more than once; `items` is itself
+    // borrowed (either cloned from an existing List/Tuple population, or
+    // freshly allocated per-call for a Str population with no other owner).
+    // Either way, `out`'s pointers are not uniquely-owned-per-slot, so the
+    // returned list must retain each occurrence (`new_list_borrowed`)
+    // instead of taking unretained ownership (`new_list`) — otherwise a
+    // repeated pick makes `release_contained_values` release the same
+    // object once per occurrence on drop, a use-after-free/double-free on
+    // duplicate picks (the Cranelift-JIT-opt1 malloc-corruption crash of
+    // #2539).
+    MbValue::from_ptr(MbObject::new_list_borrowed(out))
 }
 
 /// Materialise a non-list population (Str/Tuple) into a `Vec<MbValue>` for
@@ -2026,7 +2044,7 @@ mod tests {
             if let ObjData::List(ref lk) = (*list.as_ptr().unwrap()).data {
                 let g = lk.read().unwrap();
                 assert_eq!(g.len(), 5);
-                let mut sorted: Vec<i64> = g.iter().map(|v| v.as_int().unwrap()).collect();
+                let mut sorted: Vec<i64> = g.to_vec().into_iter().map(|v| v.as_int().unwrap()).collect();
                 sorted.sort();
                 assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
             }

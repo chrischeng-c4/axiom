@@ -299,7 +299,7 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
                         match &(*p).data {
                             // (name, type) pair → name; plain string → itself.
                             ObjData::Tuple(ref t) => t.first().copied(),
-                            ObjData::List(ref l) => l.read().unwrap().first().copied(),
+                            ObjData::List(ref l) => l.read().unwrap().first(),
                             ObjData::Str(_) => Some(*item),
                             _ => None,
                         }
@@ -909,7 +909,6 @@ fn alias_sequence_key(v: MbValue) -> Option<String> {
                 lock.read()
                     .unwrap()
                     .iter()
-                    .copied()
                     .map(alias_key)
                     .collect::<Vec<_>>()
                     .join(",")
@@ -925,7 +924,7 @@ fn tuple_items(v: MbValue) -> Vec<MbValue> {
         .map(|ptr| unsafe {
             match &(*ptr).data {
                 ObjData::Tuple(items) => items.to_vec(),
-                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                ObjData::List(lock) => lock.read().unwrap().iter().collect(),
                 _ => Vec::new(),
             }
         })
@@ -1044,6 +1043,29 @@ fn substitute_typevars(v: MbValue, sub: &rustc_hash::FxHashMap<u64, MbValue>) ->
                 .map(|a| substitute_typevars(a, sub))
                 .collect();
             make_alias(&kind, origin, new_args, repr_name.as_deref(), None)
+        }
+        Some("GenericAlias") | Some("types.GenericAlias") => {
+            let origin = instance_field_of(v, "__origin__")
+                .or_else(|| instance_field_of(v, "_origin"))
+                .unwrap_or_else(MbValue::none);
+            let args_key = if instance_class_of(v).as_deref() == Some("types.GenericAlias") {
+                "_args"
+            } else {
+                "__args__"
+            };
+            let args = instance_field_of(v, args_key)
+                .map(tuple_items)
+                .unwrap_or_default();
+            let new_args: Vec<MbValue> = args
+                .into_iter()
+                .map(|a| substitute_typevars(a, sub))
+                .collect();
+            let key = if new_args.len() == 1 {
+                new_args[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(new_args))
+            };
+            super::super::class::make_generic_alias_instance(origin, key)
         }
         Some("UnionType") => {
             let new_args: Vec<MbValue> = alias_args_vec(v)

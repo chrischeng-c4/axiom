@@ -351,6 +351,52 @@ pub fn cleanup_func_attrs() {
     });
 }
 
+/// #1743: Snapshot a function's __dict__ proxy attributes into a fresh real dict.
+pub fn func_attrs_dict_proxy_snapshot(proxy: MbValue) -> Option<MbValue> {
+    let func = func_attrs_proxy_func(proxy)?;
+    let out = super::dict_ops::mb_dict_new();
+    FUNC_ATTRS.with(|m| {
+        if let Some(attrs) = m.borrow().get(&func.to_bits()) {
+            for (k, &v) in attrs.iter() {
+                let key = MbValue::from_ptr(MbObject::new_str(k.clone()));
+                super::dict_ops::mb_dict_setitem(out, key, v);
+            }
+        }
+    });
+    Some(out)
+}
+
+/// #1743: Return the count of attributes currently stored under a function.
+pub fn func_attrs_len(func: MbValue) -> usize {
+    FUNC_ATTRS.with(|m| {
+        m.borrow().get(&func.to_bits()).map_or(0, |attrs| attrs.len())
+    })
+}
+
+/// #1743: Delete an attribute stored under a function. Returns true if deleted, false if not found.
+pub fn func_attrs_del(func: MbValue, attr_name: &str) -> bool {
+    let mut removed = false;
+    FUNC_ATTRS.with(|m| {
+        let mut map = m.borrow_mut();
+        if let Some(entry) = map.get_mut(&func.to_bits()) {
+            if let Some(prev) = entry.remove(attr_name) {
+                unsafe { super::rc::release_if_ptr(prev) };
+                removed = true;
+            }
+        }
+    });
+    removed
+}
+
+/// #1743: Check if an attribute is stored under a function.
+pub fn func_attrs_contains(func: MbValue, attr_name: &str) -> bool {
+    FUNC_ATTRS.with(|m| {
+        m.borrow()
+            .get(&func.to_bits())
+            .map_or(false, |attrs| attrs.contains_key(attr_name))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

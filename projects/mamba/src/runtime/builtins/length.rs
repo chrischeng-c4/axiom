@@ -29,7 +29,11 @@ pub(crate) fn validate_len_result(result: MbValue) -> MbValue {
     // Arbitrary-precision ints are valid (non-negative) lengths.
     if let Some(ptr) = result.as_ptr() {
         unsafe {
-            if let ObjData::BigInt(_) = (*ptr).data {
+            if let ObjData::BigInt(ref b) = (*ptr).data {
+                if b.sign() == num_bigint::Sign::Minus {
+                    super::raise_value_error("__len__() should return >= 0".to_string());
+                    return MbValue::none();
+                }
                 return result;
             }
         }
@@ -119,7 +123,7 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     // not the raw proxy), so `len(obj.__dict__)` fell through
                     // to the generic `len_type_error` at the bottom of this
                     // arm ("object of type 'dict' has no len()").
-                    if class_name == "__instance_dict_proxy__" {
+                    if class_name == "__instance_dict_proxy__" || class_name == "function.__dict__" {
                         return super::super::dict_ops::mb_dict_len(val);
                     }
                     if let Some(n) = super::super::dict_ops::dict_view_len(val) {
@@ -263,5 +267,68 @@ pub fn mb_len(val: MbValue) -> MbValue {
         }
     } else {
         len_type_error(val)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_len_result_valid_cases() {
+        let zero = MbValue::from_int(0);
+        assert_eq!(validate_len_result(zero).as_int(), Some(0));
+
+        let pos = MbValue::from_int(42);
+        assert_eq!(validate_len_result(pos).as_int(), Some(42));
+
+        let t_bool = MbValue::from_bool(true);
+        assert_eq!(validate_len_result(t_bool).as_bool(), Some(true));
+
+        let f_bool = MbValue::from_bool(false);
+        assert_eq!(validate_len_result(f_bool).as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_validate_len_result_negative_int_raises_value_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let neg = MbValue::from_int(-5);
+        let res = validate_len_result(neg);
+        assert!(res.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_validate_len_result_non_int_raises_type_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let s = MbValue::from_ptr(MbObject::new_str("not-an-int".to_string()));
+        let res = validate_len_result(s);
+        assert!(res.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_validate_len_result_negative_bigint_raises_value_error() {
+        crate::runtime::exception::mb_clear_exception();
+        let neg_big = MbValue::from_ptr(MbObject::new_bigint(num_bigint::BigInt::from(-100)));
+        let res = validate_len_result(neg_big);
+        assert!(res.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("ValueError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+
+        let pos_big = MbValue::from_ptr(MbObject::new_bigint(num_bigint::BigInt::from(100)));
+        let res_pos = validate_len_result(pos_big);
+        assert!(!res_pos.is_none());
     }
 }

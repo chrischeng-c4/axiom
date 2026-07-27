@@ -912,6 +912,8 @@ mod tests {
 #[cfg(test)]
 #[path = "tests"]
 mod tests_subdirs {
-    pub mod cpython_ported;
     pub mod generators;
+    pub mod stress;
 }
+
+

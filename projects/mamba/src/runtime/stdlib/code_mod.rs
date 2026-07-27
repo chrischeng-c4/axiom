@@ -610,7 +610,7 @@ fn method_args(args: MbValue) -> Vec<MbValue> {
     if let Some(ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                return lock.read().unwrap().iter().copied().collect();
+                return lock.read().unwrap().to_vec();
             }
         }
     }
@@ -737,7 +737,7 @@ unsafe extern "C" fn ic_push(self_v: MbValue, args: MbValue) -> MbValue {
                 let mut buf = lock.write().unwrap();
                 buf.push(new_str(&line));
                 buf.iter()
-                    .map(|v| extract_str(*v).unwrap_or_default())
+                    .map(|v| extract_str(v).unwrap_or_default())
                     .collect::<Vec<_>>()
                     .join("\n")
             } else {

@@ -3009,7 +3009,7 @@ mod tests {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 1);
-                let function = inst_field(items[0], "function").and_then(extract_str);
+                let function = inst_field(items.get(0).unwrap(), "function").and_then(extract_str);
                 assert_eq!(function.as_deref(), Some("<module>"));
                 return;
             }
@@ -3061,7 +3061,7 @@ mod tests {
             let ObjData::List(ref lock) = (*stack_ptr).data else {
                 panic!("inspect.stack did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), 3);
             assert_eq!(
                 inst_field(items[0], "function")
@@ -3084,7 +3084,7 @@ mod tests {
             let ObjData::List(ref lock) = (*outer_ptr).data else {
                 panic!("inspect.getouterframes did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(items.len(), baseline + 3);
             assert_eq!(
                 inst_field(items[2], "function")
@@ -3141,7 +3141,7 @@ mod tests {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 2);
                 // Each item should be a tuple of (name, value)
-                for item in items.iter() {
+                for item in items.to_vec() {
                     if let ObjData::Tuple(ref elems) = (*item.as_ptr().unwrap()).data {
                         assert_eq!(elems.len(), 2);
                     } else {

@@ -766,7 +766,7 @@ impl Encoder {
                 ObjData::List(ref lock) => {
                     self.out.push(EMPTY_LIST);
                     self.memoize(key);
-                    let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                    let items: Vec<MbValue> = lock.read().unwrap().iter().collect();
                     self.emit_batch_appends(&items)?;
                 }
                 ObjData::Tuple(items) => {
@@ -920,7 +920,7 @@ impl Encoder {
                             let args: Vec<MbValue> = match parts[1].as_ptr().map(|p| &(*p).data) {
                                 Some(ObjData::Tuple(items)) => items.clone(),
                                 Some(ObjData::List(lock)) => {
-                                    lock.read().unwrap().iter().copied().collect()
+                                    lock.read().unwrap().iter().collect()
                                 }
                                 _ => vec![parts[1]],
                             };
@@ -1588,7 +1588,7 @@ fn tuple_or_list_to_list(value: MbValue) -> MbValue {
         .map(|ptr| unsafe {
             match &(*ptr).data {
                 ObjData::Tuple(items) => items.clone(),
-                ObjData::List(lock) => lock.read().unwrap().iter().copied().collect(),
+                ObjData::List(lock) => lock.read().unwrap().iter().collect(),
                 _ => vec![value],
             }
         })
@@ -1914,8 +1914,8 @@ mod tests {
             if let ObjData::List(ref lock) = (*rt.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[2].as_int(), Some(3));
+                assert_eq!(items.get(0).and_then(|v| v.as_int()), Some(1));
+                assert_eq!(items.get(2).and_then(|v| v.as_int()), Some(3));
             } else {
                 panic!("expected list");
             }

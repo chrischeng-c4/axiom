@@ -316,10 +316,18 @@ fn populate_exception_fields(
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
         insert_borrowed_field(fields, "value", value_val);
     }
+    if type_name == "SystemExit" {
+        let code = match arg_items.len() {
+            0 => MbValue::none(),
+            1 => arg_items[0],
+            _ => MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec())),
+        };
+        fields.insert("code".to_string(), code);
+    }
     if type_name == "AttributeError" {
         fields.insert("name".to_string(), MbValue::none());
         fields.insert("obj".to_string(), MbValue::none());
-    } else if type_name == "NameError" {
+    } else if type_name == "NameError" || type_name == "UnboundLocalError" {
         fields.insert("name".to_string(), MbValue::none());
     } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
         populate_import_error_fields(fields, arg_items);
@@ -339,6 +347,34 @@ fn populate_exception_fields(
         && !populate_toml_decode_error_fields(fields, arg_items)
     {
         return false;
+    }
+    if type_name == "OSError"
+        || type_name == "IOError"
+        || type_name == "EnvironmentError"
+        || is_subclass_of(type_name, "OSError")
+    {
+        let (errno, strerror, filename, winerror, filename2) =
+            if arg_items.len() >= 2 && arg_items.len() <= 5 {
+                let errno = arg_items.get(0).copied().unwrap_or_else(MbValue::none);
+                let strerror = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
+                let filename = arg_items.get(2).copied().unwrap_or_else(MbValue::none);
+                let winerror = arg_items.get(3).copied().unwrap_or_else(MbValue::none);
+                let filename2 = arg_items.get(4).copied().unwrap_or_else(MbValue::none);
+                (errno, strerror, filename, winerror, filename2)
+            } else {
+                (
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                    MbValue::none(),
+                )
+            };
+        fields.insert("errno".to_string(), errno);
+        fields.insert("strerror".to_string(), strerror);
+        fields.insert("filename".to_string(), filename);
+        fields.insert("winerror".to_string(), winerror);
+        fields.insert("filename2".to_string(), filename2);
     }
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
     fields.insert("args".to_string(), args_tuple);
@@ -1063,6 +1099,13 @@ pub fn current_exception_type() -> Option<String> {
     CURRENT_EXCEPTION.with(|cell| cell.borrow().as_ref().map(|e| e.exc_type.clone()))
 }
 
+/// Peek the pending exception's message string without clearing it. Returns `None`
+/// when no exception is pending.
+pub fn current_exception_message() -> Option<String> {
+    CURRENT_EXCEPTION.with(|cell| cell.borrow().as_ref().map(|e| e.message.clone()))
+}
+
+
 /// Cheap probe for hot paths that only need to know whether an exception
 /// exists, not allocate its type name.
 pub fn has_current_exception() -> bool {
@@ -1181,7 +1224,7 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         | "ZoneInfoNotFoundError"
         | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
         | "ValueError" | "JSONDecodeError" | "TOMLDecodeError"
-        | "OSError" | "IOError"
+        | "OSError" | "IOError" | "EnvironmentError"
         | "FileNotFoundError" | "PermissionError" | "IsADirectoryError"
         | "NotADirectoryError" | "FileExistsError" | "ConnectionError"
         | "TimeoutError" | "BrokenPipeError" | "ConnectionAbortedError"
@@ -1313,9 +1356,12 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             // ValueError (CPython 3.12).
             | "IllegalMonthError" | "IllegalWeekdayError"
         ),
-        "OSError" => matches!(
+        "OSError" | "EnvironmentError" | "IOError" => matches!(
             child,
-            "FileNotFoundError"
+            "OSError"
+                | "EnvironmentError"
+                | "IOError"
+                | "FileNotFoundError"
                 | "PermissionError"
                 | "IsADirectoryError"
                 | "NotADirectoryError"
@@ -1894,6 +1940,8 @@ pub fn register_builtin_exceptions() {
 
     // OS / IO hierarchy
     super::class::mb_class_register("OSError", vec!["Exception".into()], empty());
+    super::class::mb_class_register("EnvironmentError", vec!["Exception".into()], empty());
+    super::class::mb_class_register("IOError", vec!["OSError".into()], empty());
     super::class::mb_class_register("FileNotFoundError", vec!["OSError".into()], empty());
     super::class::mb_class_register("PermissionError", vec!["OSError".into()], empty());
     super::class::mb_class_register("IsADirectoryError", vec!["OSError".into()], empty());

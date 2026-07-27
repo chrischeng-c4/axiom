@@ -670,7 +670,7 @@ where
                 .filter(|(_, task)| {
                     coros
                         .get(&task.coroutine_id)
-                        .is_some_and(|coro| !coro.exhausted && coro.state == 0)
+                        .is_some_and(|coro| !coro.exhausted && !coro.running)
                 })
                 .map(|(&task_id, _)| task_id)
                 .collect()
@@ -1156,10 +1156,11 @@ pub fn mb_gather(coros: MbValue) -> MbValue {
                 let coro_list = lock.read().unwrap();
                 let mut event_loop = EventLoop::new();
                 let task_ids: Vec<(u64, u64)> = coro_list
-                    .iter()
+                    .to_vec()
+                    .into_iter()
                     .map(|c| {
                         let coro_id = c.as_int().unwrap_or(0) as u64;
-                        let task = mb_create_task(*c);
+                        let task = mb_create_task(c);
                         let tid = task.as_int().unwrap_or(0) as u64;
                         event_loop.schedule(tid);
                         (coro_id, tid)
@@ -1258,12 +1259,12 @@ pub fn mb_async_wait(tasks: MbValue, _timeout: MbValue) -> MbValue {
                 let task_list = lock.read().unwrap();
                 let mut done = Vec::new();
                 let mut pending = Vec::new();
-                for t in task_list.iter() {
-                    let is_done = mb_task_done(*t).as_bool().unwrap_or(false);
+                for t in task_list.to_vec() {
+                    let is_done = mb_task_done(t).as_bool().unwrap_or(false);
                     if is_done {
-                        done.push(*t);
+                        done.push(t);
                     } else {
-                        pending.push(*t);
+                        pending.push(t);
                     }
                 }
                 return MbValue::from_ptr(MbObject::new_tuple(vec![
@@ -1469,7 +1470,7 @@ mod tests {
             .unwrap()
             .get(&(timer_coro.as_int().unwrap() as u64))
             .map(|c| c.exhausted)
-            .unwrap_or(false);
+            .unwrap_or_else(|| crate::runtime::async_rt::is_completed_coroutine(timer_coro));
         assert!(exhausted, "zero-duration timer should expire after tick");
     }
 }

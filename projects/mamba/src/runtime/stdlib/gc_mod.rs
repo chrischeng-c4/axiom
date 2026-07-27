@@ -479,14 +479,14 @@ pub fn mb_gc_mod_get_referents(args: &[MbValue]) -> MbValue {
                 match &(*ptr).data {
                     ObjData::List(lock) => {
                         let g = lock.read().unwrap();
-                        for &v in g.iter() {
+                        for v in g.to_vec() {
                             push_retained(&mut out, v);
                         }
                     }
                     ObjData::Set(lock) => {
                         // MbSet derefs to its ordered MbList for read-only iteration.
                         let g = lock.read().unwrap();
-                        for &v in g.iter() {
+                        for v in g.to_vec() {
                             push_retained(&mut out, v);
                         }
                     }

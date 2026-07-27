@@ -442,4 +442,29 @@ mod tests {
         assert_eq!(map.get(&TypeVarId(1)), Some(&"U"));
         assert_eq!(map.get(&TypeVarId(2)), None);
     }
+
+    #[test]
+    fn test_type_param_default_helpers() {
+        let none = TypeParamDefault::None;
+        let unres = TypeParamDefault::Unresolved;
+        let res = TypeParamDefault::Resolved(TypeId(42));
+
+        assert!(!none.is_present());
+        assert!(unres.is_present());
+        assert!(res.is_present());
+
+        assert_eq!(none.resolved(), None);
+        assert_eq!(unres.resolved(), None);
+        assert_eq!(res.resolved(), Some(TypeId(42)));
+    }
+
+    #[test]
+    fn test_external_callable_enums() {
+        assert_eq!(ExternalCallableAccess::Module, ExternalCallableAccess::Module);
+        assert_ne!(ExternalCallableAccess::Module, ExternalCallableAccess::ClassMember);
+
+        assert_eq!(ExternalCallableRuntimeKind::BuiltinFunction, ExternalCallableRuntimeKind::BuiltinFunction);
+        assert_ne!(ExternalCallableRuntimeKind::BuiltinFunction, ExternalCallableRuntimeKind::PythonFunction);
+    }
 }
+

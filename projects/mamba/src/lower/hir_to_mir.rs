@@ -1567,6 +1567,7 @@ struct HirToMir<'a> {
     blocks: Vec<BasicBlock>,
     current_stmts: Vec<MirInst>,
     sym_to_vreg: HashMap<SymbolId, VReg>,
+    handle_syms: HashSet<SymbolId>,
     /// SymbolId.0 of module-scope Vars whose `sym_to_vreg` entry is
     /// synced with a paired boxed StoreGlobal (the plain-assignment write
     /// path). Reads of these that expect Any can safely re-load from
@@ -1872,6 +1873,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            handle_syms: HashSet::new(),
             global_synced_syms: HashSet::new(),
             module_scope_sync_suppressed: false,
             loop_exit: None,
@@ -2193,6 +2195,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            handle_syms: HashSet::new(),
             global_synced_syms: HashSet::new(),
             module_scope_sync_suppressed: false,
             loop_exit: None,
@@ -3863,6 +3866,9 @@ impl<'a> HirToMir<'a> {
                 let val = self.lower_expr(value);
                 match target {
                     HirLValue::Var(sym) => {
+                        if hir_expr_may_return_boxed_value(value) || self.hir_expr_may_be_handle(value) {
+                            self.handle_syms.insert(*sym);
+                        }
                         // Check cell_override first: synthetic (1M+) nonlocal-shared symbols
                         // always use global storage regardless of symbol_table classification.
                         if self.cell_override.contains(&sym.0) {
@@ -9443,7 +9449,8 @@ impl<'a> HirToMir<'a> {
                 // icmp/fcmp would compare boxed bits against a raw primitive.
                 let has_any = matches!(lt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_))
                     || matches!(rt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_));
-                if (has_class || has_any) && binop_to_runtime(*op).is_some() {
+                let has_handle = self.hir_expr_may_be_handle(lhs) || self.hir_expr_may_be_handle(rhs);
+                if (has_class || has_any || has_handle) && binop_to_runtime(*op).is_some() {
                     let boxed_l = self.box_operand(l, lhs.ty());
                     let boxed_r = self.box_operand(r, rhs.ty());
                     let opcode = self.emit_int_const(lower_mir_binop(*op).to_opcode());
@@ -10378,12 +10385,16 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: sorted(iterable, reverse=True) → pass both args.
-                    if extern_name == "mb_sorted" && boxed_args.len() >= 2 {
+                    // Special case: sorted positional arity error when >1 positional args are passed.
+                    if extern_name == "mb_sorted" && boxed_args.len() > 1 {
+                        let msg = self.emit_str_const(&format!(
+                            "sorted expected at most 1 argument, got {}",
+                            boxed_args.len()
+                        ));
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
-                            name: extern_name,
-                            args: vec![boxed_args[0], boxed_args[1]],
+                            name: "mb_arg_bind_error".to_string(),
+                            args: vec![msg],
                             ty: *ty,
                         });
                         return dest;
@@ -13594,7 +13605,7 @@ fn binop_to_runtime(op: HirBinOp) -> Option<&'static str> {
     }
 }
 
-fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
+pub(crate) fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
     matches!(
         expr,
         HirExpr::Index { .. }
@@ -13602,6 +13613,21 @@ fn hir_expr_may_return_boxed_value(expr: &HirExpr) -> bool {
             | HirExpr::Call { .. }
             | HirExpr::IfExpr { .. }
     )
+}
+
+impl<'a> HirToMir<'a> {
+    pub(crate) fn hir_expr_may_be_handle(&self, expr: &HirExpr) -> bool {
+        let ty = self.tcx.get(expr.ty());
+        if !matches!(ty, crate::types::Ty::Int | crate::types::Ty::Bool | crate::types::Ty::Float) {
+            if hir_expr_may_return_boxed_value(expr) {
+                return true;
+            }
+        }
+        match expr {
+            HirExpr::Var(sym, _) => self.handle_syms.contains(sym),
+            _ => false,
+        }
+    }
 }
 
 fn lower_mir_unaryop(op: HirUnaryOp) -> MirUnaryOp {

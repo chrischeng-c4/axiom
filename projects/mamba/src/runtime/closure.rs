@@ -757,7 +757,7 @@ pub fn mb_apply_decorators(func: MbValue, decorators: MbValue) -> MbValue {
     if let Some(ptr) = decorators.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let decs = lock.read().unwrap();
+                let decs = lock.read().unwrap().to_vec();
                 let mut result = func;
                 // Apply in reverse order (innermost first)
                 for dec in decs.iter().rev() {
@@ -863,7 +863,7 @@ pub fn mb_func_set_params(func: MbValue, params: MbValue) {
     if let Some(ptr) = params.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(tp) = item.as_ptr() else { continue };
                     let ObjData::Tuple(ref elems) = (*tp).data else {
                         continue;
@@ -1313,7 +1313,7 @@ pub fn mb_func_set_varnames(func: MbValue, names: MbValue) {
                     }
                 }
                 ObjData::List(lock) => {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     for item in items.iter() {
                         if let Some(s) = extract_str(*item) {
                             collected.push(s);
@@ -1368,7 +1368,7 @@ pub fn mb_func_set_freevars(func: MbValue, freevars: MbValue) {
     if let Some(ptr) = freevars.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
+                for item in lock.read().unwrap().to_vec() {
                     let Some(pair_ptr) = item.as_ptr() else {
                         continue;
                     };

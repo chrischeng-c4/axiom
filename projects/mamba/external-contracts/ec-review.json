@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "mamba",
-  "source_digest": "sha256:e736c4b5e49b7821484a56bb8c50f3d79b4e9a10f3885a2f6bb55430a8f48431",
+  "source_digest": "sha256:e352a7d9e1af31759fc546991df09009b22489bced78c0e3dc9f23cde8ec3f17",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "aw-ec-reviewer",
-  "reviewed_at": "2026-07-20T09:40:20.061862+00:00",
-  "summary": "Independent re-review after the sole change since the prior accepted digest (sha256:5edc8b50...d6405e): the case test_path was corrected from the colliding hand-written file mamba_core_semantics_ec.rs to the fresh dedicated path ec_build_globals_dict_key_leak_free.rs, matching this project's three other accepted EC cases and unblocking `aw ec gen`. Nothing semantic changed (same claim_id/capability_id/contract_id/category/command/assertions). All six axes re-derived from scratch against the current markdown and the real hand-written oracle in mamba_core_semantics_ec.rs:650. The leak oracle is peak RSS from libc::wait4/ru_maxrss (OS kernel counter) on the real compiled mamba binary, gated at large(50k calls) <= small(100 calls) + 24 MiB; a vacuous-pass guard pins the exact key-count sum to iterations*42, and the generated wrapper carries the #694-class zero-tests-executed guard. Actual test re-verified PASS (release build, 1 passed / 3 filtered out via --exact). Accepted with no findings. NOTE: this is agent-arbitration input for the human batch audit, not human-backed acceptance evidence.",
+  "reviewed_by": "agent:aw-ec-reviewer-1942-filter-accounting",
+  "reviewed_at": "2026-07-27T21:11:14.181065+00:00",
+  "summary": "Accepted after independent re-arbitration of the revised WI #1942 EC. The case exercises the deterministic-type-wall-outcomes stability claim with three fresh isolated executions of the exact filtered cpython_ported_integration target under pinned source, manifest, environment, and exact rustup rustc/cargo identities. Its independent manifest and baseline oracles pin the 7,407-row denominator, digest, allowed failure set, failure count, and updated command. The filtering revision closes the prior defect: preflight separately proves 13,767 whole-target names and an exact denominator-set-equal 7,407-name filtered surface; every execution must then have an exact denominator-set-equal terminal set, passed plus failed equal to 7,407, no ignored/skipped/duplicate/missing/cross-namespace/unparseable rows, and exactly 6,360 whole-target rows filtered out. Repetition equality, baseline subset/count bounds, fail-closed mutation canaries, and hard failures for incomplete accounting or drift prevent trivial, empty, or zero-test greens.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,5 +15,6 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": []
+  "findings": [],
+  "target_path": "projects/mamba/external-contracts/behavior/1942.md"
 }

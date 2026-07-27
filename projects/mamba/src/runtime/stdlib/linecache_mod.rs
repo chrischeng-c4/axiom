@@ -161,7 +161,7 @@ fn list_to_lines(val: MbValue) -> Vec<String> {
                 Some(
                     guard
                         .iter()
-                        .map(|v| extract_str(*v).unwrap_or_default())
+                        .map(|v| extract_str(v).unwrap_or_default())
                         .collect(),
                 )
             } else {

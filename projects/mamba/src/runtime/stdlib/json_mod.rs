@@ -677,7 +677,7 @@ fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
                     let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json_h(*v, hook)).collect();
+                        items.iter().map(|v| mbvalue_to_json_h(v, hook)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Dict(ref lock) => {
@@ -1162,7 +1162,7 @@ mod tests {
             if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(1));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
             }
         }
     }
@@ -1323,7 +1323,7 @@ mod tests {
             if let ObjData::List(ref lock) = (*parsed.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(1));
+                assert_eq!(items.get(0).unwrap().as_int(), Some(1));
             } else {
                 panic!("expected List");
             }
@@ -1386,7 +1386,7 @@ mod tests {
             if let ObjData::List(ref lock) = (*out.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 1);
-                assert_eq!(get_str(items[0]), "[1, 2]");
+                assert_eq!(get_str(items.get(0).unwrap()), "[1, 2]");
             } else {
                 panic!("expected list");
             }

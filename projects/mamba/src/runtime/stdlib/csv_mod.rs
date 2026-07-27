@@ -564,7 +564,7 @@ fn source_records(csvfile: MbValue, quotechar: Option<char>) -> Option<Vec<Strin
                 let items = lock.read().unwrap();
                 let mut out = Vec::new();
                 for v in items.iter() {
-                    if let Some(s) = extract_str(*v) {
+                    if let Some(s) = extract_str(v) {
                         out.extend(line_to_records(&s, quotechar));
                     }
                 }
@@ -1058,7 +1058,7 @@ fn embedded_newline_error_index(csvfile: MbValue, quotechar: Option<char>) -> Op
                     .read()
                     .unwrap()
                     .iter()
-                    .filter_map(|x| extract_str(*x))
+                    .filter_map(|x| extract_str(x))
                     .collect(),
                 ObjData::Tuple(t) => t.iter().filter_map(|x| extract_str(*x)).collect(),
                 _ => return None, // str / file: real multi-line content is fine
@@ -1170,7 +1170,7 @@ pub extern "C" fn reader_next(slf: MbValue) -> MbValue {
         .as_ptr()
         .and_then(|p| unsafe {
             if let ObjData::List(ref lock) = (*p).data {
-                lock.read().unwrap().get(idx as usize).copied()
+                lock.read().unwrap().get(idx as usize)
             } else {
                 None
             }
@@ -1270,7 +1270,7 @@ fn materialize_names(v: MbValue) -> Option<Vec<String>> {
                         lock.read()
                             .unwrap()
                             .iter()
-                            .filter_map(|x| extract_str(*x))
+                            .filter_map(|x| extract_str(x))
                             .collect(),
                     );
                 }
@@ -1347,7 +1347,7 @@ fn infer_fieldnames(reader: MbValue) -> Vec<String> {
                 lock.read()
                     .unwrap()
                     .iter()
-                    .filter_map(|x| extract_str(*x))
+                    .filter_map(|x| extract_str(x))
                     .collect()
             } else {
                 Vec::new()
@@ -2089,7 +2089,7 @@ fn list_has_bytes(v: MbValue) -> bool {
                         .unwrap()
                         .iter()
                         .next()
-                        .map(|x| is_bytes(*x))
+                        .map(|x| is_bytes(x))
                         .unwrap_or(false);
                 }
                 ObjData::Tuple(items) => {

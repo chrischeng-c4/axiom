@@ -262,6 +262,14 @@ pub fn register() {
             "__eq__".into(),
             MbValue::from_func(fs_eq as *const () as usize),
         );
+        fs.insert(
+            "__repr__".into(),
+            var(fs_repr as *const () as usize),
+        );
+        fs.insert(
+            "__str__".into(),
+            var(fs_repr as *const () as usize),
+        );
         super::super::class::mb_class_register("FrameSummary", vec![], fs);
 
         let mut ss: Map<String, MbValue> = Map::new();
@@ -1456,6 +1464,16 @@ unsafe extern "C" fn fs_getitem(self_v: MbValue, args: MbValue) -> MbValue {
 /// len(FrameSummary) == 4 (filename, lineno, name, line).
 unsafe extern "C" fn fs_len(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(4)
+}
+
+/// <FrameSummary file filename, line lineno, in name>
+unsafe extern "C" fn fs_repr(self_v: MbValue, _args: MbValue) -> MbValue {
+    let items = frame_summary_tuple_items(self_v).unwrap_or_default();
+    let filename = extract_str(items.get(0).copied().unwrap_or_else(MbValue::none)).unwrap_or_default();
+    let lineno = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let name = extract_str(items.get(2).copied().unwrap_or_else(MbValue::none)).unwrap_or_default();
+    let formatted = format!("<FrameSummary file {filename}, line {lineno}, in {name}>");
+    MbValue::from_ptr(MbObject::new_str(formatted))
 }
 
 fn make_stack_summary(entries: Vec<MbValue>) -> MbValue {
@@ -3070,8 +3088,9 @@ mod tests {
                 if let ObjData::List(ref lock) = (*ptr).data {
                     lock.read().ok().map(|items| {
                         items
-                            .iter()
-                            .filter_map(|item| extract_str(*item))
+                            .to_vec()
+                            .into_iter()
+                            .filter_map(|item| extract_str(item))
                             .collect::<Vec<_>>()
                     })
                 } else {
@@ -3147,7 +3166,6 @@ mod tests {
                         .read()
                         .unwrap()
                         .first()
-                        .copied()
                         .unwrap_or_else(MbValue::none);
                 }
             }
@@ -3342,7 +3360,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("format_exception did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(
                 extract_str(items[0]).as_deref(),
                 Some("Exception: projector\n")
@@ -3363,7 +3381,7 @@ mod tests {
             let ObjData::List(ref lock) = (*ptr).data else {
                 panic!("format_exception_only did not return a list");
             };
-            let items = lock.read().unwrap();
+            let items = lock.read().unwrap().to_vec();
             assert_eq!(
                 extract_str(items[0]).as_deref(),
                 Some("Exception: projector\n")
@@ -3401,7 +3419,7 @@ mod tests {
         if let Some(ptr) = r.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     let text = extract_str(items[0]).unwrap_or_default();
                     assert!(text.contains(".py"));
                     assert!(text.contains("raise TypeError"));
@@ -3449,7 +3467,7 @@ mod tests {
         if let Some(ptr) = r.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    let items = lock.read().unwrap();
+                    let items = lock.read().unwrap().to_vec();
                     assert!(extract_str(items[0]).is_some());
                     return;
                 }

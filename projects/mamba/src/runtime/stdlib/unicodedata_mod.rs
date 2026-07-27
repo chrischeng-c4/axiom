@@ -110,7 +110,6 @@ fn method_arg(args: MbValue) -> MbValue {
                         .read()
                         .unwrap()
                         .first()
-                        .copied()
                         .unwrap_or_else(MbValue::none);
                 }
                 ObjData::Tuple(items) => {

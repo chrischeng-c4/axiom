@@ -20,7 +20,7 @@ pub(crate) fn mb_first_index_value(val: MbValue) -> Option<i64> {
                 .read()
                 .unwrap()
                 .first()
-                .and_then(|v| super::resolve_index_value(*v)),
+                .and_then(super::resolve_index_value),
             _ => None,
         }
     }

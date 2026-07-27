@@ -52,13 +52,18 @@ pub(super) fn range_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
 /// other value. Used so subset/superset comparisons treat the two types
 /// interchangeably, matching CPython.
 pub(super) fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
-    v.as_ptr().and_then(|p| unsafe {
+    let target = super::collection_operands::set_like_operand(v).unwrap_or(v);
+    target.as_ptr().and_then(|p| unsafe {
         match &(*p).data {
             ObjData::Set(lock) => Some(lock.read().unwrap().iter().copied().collect()),
             ObjData::FrozenSet(items) => Some(items.iter().copied().collect()),
             _ => None,
         }
     })
+}
+
+pub(super) fn is_setlike(v: MbValue) -> bool {
+    setlike_items(v).is_some()
 }
 
 pub(super) fn is_instance_value(v: MbValue) -> bool {
@@ -97,6 +102,9 @@ pub(super) fn same_ordered_dataclass_instances(a: MbValue, b: MbValue) -> bool {
 }
 
 pub(super) fn can_derive_ordering_from_lt_eq(a: MbValue, b: MbValue) -> bool {
+    if is_setlike(a) && is_setlike(b) {
+        return true;
+    }
     if !is_instance_value(a) && !is_instance_value(b) {
         return true;
     }

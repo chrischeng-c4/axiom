@@ -207,6 +207,7 @@ pub mod types_mod;
 pub mod typing_extensions_mod;
 pub mod urllib3_mod;
 pub mod urllib_error_mod;
+pub mod urllib_parse_mod;
 pub mod uu_mod;
 pub mod uvicorn_mod;
 pub mod vendor_lib;
@@ -272,6 +273,7 @@ pub fn register_stdlib() {
     // up the proper callable class shells from urllib_error_mod rather than
     // the legacy 3-string-stub block previously inlined in http_mod.
     urllib_error_mod::register();
+    urllib_parse_mod::register();
     http_mod::register();
     unittest_mod::register();
     unittest_mod::register_classes();

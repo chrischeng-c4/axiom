@@ -677,6 +677,30 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             I64
         ),
+        rt_sym!(
+            "mb_itruediv",
+            class::mb_itruediv as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_imod",
+            class::mb_imod as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_ilshift",
+            class::mb_ilshift as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_irshift",
+            class::mb_irshift as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
         // ── String ops ──
         rt_sym!(
             "mb_str_concat",
@@ -941,6 +965,90 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             list_ops::mb_list_new_with_capacity_untracked as fn(super::MbValue) -> super::MbValue,
             [I64],
             I64
+        ),
+        rt_sym!(
+            "mb_int_list_new",
+            list_ops::mb_int_list_new as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_int_list_new_untracked",
+            list_ops::mb_int_list_new_untracked as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_int_list_new_with_capacity",
+            list_ops::mb_int_list_new_with_capacity as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_int_list_new_with_capacity_untracked",
+            list_ops::mb_int_list_new_with_capacity_untracked as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_float_list_new",
+            list_ops::mb_float_list_new as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_float_list_new_untracked",
+            list_ops::mb_float_list_new_untracked as fn() -> super::MbValue,
+            [],
+            I64
+        ),
+        rt_sym!(
+            "mb_float_list_new_with_capacity",
+            list_ops::mb_float_list_new_with_capacity as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_float_list_new_with_capacity_untracked",
+            list_ops::mb_float_list_new_with_capacity_untracked as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_int_list_append_raw",
+            list_ops::mb_int_list_append_raw as fn(super::MbValue, i64),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_float_list_append_raw",
+            list_ops::mb_float_list_append_raw as fn(super::MbValue, f64),
+            [I64, F64],
+            Void
+        ),
+        rt_sym!(
+            "mb_int_list_getitem",
+            list_ops::mb_int_list_getitem as fn(super::MbValue, i64) -> i64,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_float_list_getitem",
+            list_ops::mb_float_list_getitem as fn(super::MbValue, i64) -> f64,
+            [I64, I64],
+            F64
+        ),
+        rt_sym!(
+            "mb_int_list_setitem",
+            list_ops::mb_int_list_setitem as fn(super::MbValue, i64, i64),
+            [I64, I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_float_list_setitem",
+            list_ops::mb_float_list_setitem as fn(super::MbValue, i64, f64),
+            [I64, I64, F64],
+            Void
         ),
         // Fixed-arity small-literal constructors — collapse `1 + N` FFI calls into one.
         rt_sym!(

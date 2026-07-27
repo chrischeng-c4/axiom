@@ -6650,8 +6650,8 @@ impl<'a> AstLowerer<'a> {
                 // Update variable type when we widened so subsequent reads
                 // (print(x), x == 0.5) don't treat the float result as a raw int.
                 if widen {
-                    if let HirLValue::Var(sym) = &lv {
-                        self.local_types.insert(*sym, ty);
+                    if let HirLValue::Var(sym) = lv {
+                        self.local_types.insert(sym, ty);
                     }
                 }
                 Some(HirStmt::Assign {
@@ -7710,7 +7710,20 @@ impl<'a> AstLowerer<'a> {
                             .iter()
                             .filter(|a| matches!(a, ast::CallArg::Positional(_)))
                             .count();
-                        if positional_count != 1
+                        if positional_count == 0 {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_arg_bind_error".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![HirExpr::StrLit(
+                                    "sorted expected 1 argument, got 0".to_string(),
+                                    str_ty,
+                                )],
+                                ty: any_ty,
+                            });
+                        }
+                        if positional_count > 1
                             || args.iter().any(|a| {
                                 matches!(
                                     a,
@@ -7724,7 +7737,7 @@ impl<'a> AstLowerer<'a> {
                                     any_ty,
                                 )),
                                 args: vec![HirExpr::StrLit(
-                                    format!("sorted expected 1 argument, got {}", positional_count),
+                                    format!("sorted expected at most 1 positional argument, got {}", positional_count),
                                     str_ty,
                                 )],
                                 ty: any_ty,
@@ -8184,6 +8197,18 @@ impl<'a> AstLowerer<'a> {
                         }
                         // sorted(iterable, key=None, reverse=False) → mb_sorted_kwargs
                         if name == "sorted" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "reverse"
+                                } else {
+                                    false
+                                }
+                            });
+                            if pos_count > 1 || has_bad_kw || has_star {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8229,6 +8254,35 @@ impl<'a> AstLowerer<'a> {
                         }
                         // min(iterable, key=None, default=None) → mb_min_kwargs
                         if name == "min" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_default_kw = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { name: n, .. } if n == "default"));
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "default"
+                                } else {
+                                    false
+                                }
+                            });
+                            if has_star {
+                                return None;
+                            }
+                            if pos_count >= 2 && has_default_kw {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "Cannot specify a default for min() with multiple positional arguments".to_string(),
+                                        self.checker.tcx.str(),
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if has_bad_kw {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8258,6 +8312,7 @@ impl<'a> AstLowerer<'a> {
                                     None
                                 })
                                 .unwrap_or_else(|| none_hir.clone());
+                            let no_def_sentinel = HirExpr::StrLit("__mb_no_default__".to_string(), any_ty);
                             let default = args
                                 .iter()
                                 .find_map(|a| {
@@ -8268,7 +8323,7 @@ impl<'a> AstLowerer<'a> {
                                     }
                                     None
                                 })
-                                .unwrap_or_else(|| none_hir.clone());
+                                .unwrap_or(no_def_sentinel);
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_min_kwargs".to_string(),
@@ -8280,6 +8335,35 @@ impl<'a> AstLowerer<'a> {
                         }
                         // max(iterable, key=None, default=None) → mb_max_kwargs
                         if name == "max" {
+                            let has_star = args.iter().any(|a| matches!(a, ast::CallArg::StarArg(_) | ast::CallArg::DoubleStarArg(_)));
+                            let pos_count = args.iter().filter(|a| matches!(a, ast::CallArg::Positional(_))).count();
+                            let has_default_kw = args.iter().any(|a| matches!(a, ast::CallArg::Keyword { name: n, .. } if n == "default"));
+                            let has_bad_kw = args.iter().any(|a| {
+                                if let ast::CallArg::Keyword { name: n, .. } = a {
+                                    n != "key" && n != "default"
+                                } else {
+                                    false
+                                }
+                            });
+                            if has_star {
+                                return None;
+                            }
+                            if pos_count >= 2 && has_default_kw {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "Cannot specify a default for max() with multiple positional arguments".to_string(),
+                                        self.checker.tcx.str(),
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if has_bad_kw {
+                                return None;
+                            }
                             let pos: Vec<HirExpr> = args
                                 .iter()
                                 .filter_map(|a| {
@@ -8309,6 +8393,7 @@ impl<'a> AstLowerer<'a> {
                                     None
                                 })
                                 .unwrap_or_else(|| none_hir.clone());
+                            let no_def_sentinel = HirExpr::StrLit("__mb_no_default__".to_string(), any_ty);
                             let default = args
                                 .iter()
                                 .find_map(|a| {
@@ -8319,7 +8404,7 @@ impl<'a> AstLowerer<'a> {
                                     }
                                     None
                                 })
-                                .unwrap_or_else(|| none_hir.clone());
+                                .unwrap_or(no_def_sentinel);
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_max_kwargs".to_string(),

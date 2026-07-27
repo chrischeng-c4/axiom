@@ -4,29 +4,41 @@ use super::{resolve_index_value, strip_pep515_underscores};
 
 /// int(value, base) — convert string to integer with given base; raises ValueError on bad input.
 pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
-    // base accepts any SupportsIndex (int / bool / object with __index__),
-    // e.g. `int("ff", Indexable(16))`.
-    let Some(base_int) = resolve_index_value(base) else {
-        super::super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "int() base must be an integer".to_string(),
-            )),
-        );
-        return MbValue::none();
+    // 1. If base is supplied and val is not string-like (str/bytes/bytearray), raise TypeError
+    let is_str_like = if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            matches!(
+                (*ptr).data,
+                ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_)
+            )
+        }
+    } else {
+        false
     };
-    // CPython: base is 0 (prefix auto-detect) or 2..=36; anything else raises
-    // ValueError. Rust's from_str_radix panics on a radix outside 2..=36, and a
-    // negative base would wrap when cast to u32 — so reject up front.
-    if base_int != 0 && !(2..=36).contains(&base_int) {
-        super::super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "int() base must be >= 2 and <= 36, or 0".to_string(),
-            )),
+    if !is_str_like {
+        super::errors::raise_type_error(
+            "int() can't convert non-string with explicit base".to_string(),
         );
         return MbValue::none();
     }
+
+    // 2. Convert base via resolve_index_value(base): if non-integer, raise TypeError: '<type>' object cannot be interpreted as an integer
+    let Some(base_int) = resolve_index_value(base) else {
+        let tname = super::errors::value_type_name(base);
+        super::errors::raise_type_error(format!(
+            "'{tname}' object cannot be interpreted as an integer"
+        ));
+        return MbValue::none();
+    };
+
+    // 3. Check base range (base == 0 || (2 <= base && base <= 36)): if invalid, raise ValueError
+    if base_int != 0 && !(2..=36).contains(&base_int) {
+        super::errors::raise_value_error(
+            "int() base must be >= 2 and <= 36, or 0".to_string(),
+        );
+        return MbValue::none();
+    }
+
     let base_num = base_int as u32;
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -145,13 +157,57 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
             return mb_int_base(s_obj, base);
         }
     }
-    // An explicit base requires a string/bytes value (CPython: `int(123, 10)`
-    // raises TypeError, not a silent 0).
-    super::super::exception::mb_raise(
-        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            "int() can't convert non-string with explicit base".to_string(),
-        )),
-    );
     MbValue::none()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::exception::{current_exception_message, current_exception_type, suspend_current_exception};
+
+    #[test]
+    fn test_wi2050_int_base_precedence_non_string_with_float_base() {
+        let _ = suspend_current_exception();
+        let val = MbValue::from_int(123);
+        let base = MbValue::from_float(1.5);
+        let res = mb_int_base(val, base);
+        assert!(res.is_none());
+        assert_eq!(current_exception_type(), Some("TypeError".to_string()));
+        assert_eq!(
+            current_exception_message(),
+            Some("int() can't convert non-string with explicit base".to_string())
+        );
+        let _ = suspend_current_exception();
+    }
+
+    #[test]
+    fn test_wi2050_int_base_precedence_string_with_float_base() {
+        let _ = suspend_current_exception();
+        let val = MbValue::from_ptr(MbObject::new_str("123".to_string()));
+        let base = MbValue::from_float(1.5);
+        let res = mb_int_base(val, base);
+        assert!(res.is_none());
+        assert_eq!(current_exception_type(), Some("TypeError".to_string()));
+        assert_eq!(
+            current_exception_message(),
+            Some("'float' object cannot be interpreted as an integer".to_string())
+        );
+        let _ = suspend_current_exception();
+    }
+
+    #[test]
+    fn test_wi2050_int_base_precedence_invalid_base_range() {
+        let _ = suspend_current_exception();
+        let val = MbValue::from_ptr(MbObject::new_str("123".to_string()));
+        let base = MbValue::from_int(99);
+        let res = mb_int_base(val, base);
+        assert!(res.is_none());
+        assert_eq!(current_exception_type(), Some("ValueError".to_string()));
+        assert_eq!(
+            current_exception_message(),
+            Some("int() base must be >= 2 and <= 36, or 0".to_string())
+        );
+        let _ = suspend_current_exception();
+    }
+}
+

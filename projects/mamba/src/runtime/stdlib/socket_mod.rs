@@ -97,6 +97,25 @@ const SOCKET_KIND_MEMBERS: &[(&str, i64)] = &[
 ];
 
 /// Register the socket module.
+unsafe extern "C" fn d_socket_close(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if nargs != 1 {
+        return raise("TypeError", &format!("close() takes exactly 1 argument ({nargs} given)"));
+    }
+    let fd_val = a[0];
+    let Some(fd) = fd_val.as_int() else {
+        return raise("TypeError", &format!("an integer is required (got type {})", type_label(fd_val)));
+    };
+    if fd < 0 {
+        return raise("ValueError", "file descriptor must be non-negative");
+    }
+    #[cfg(unix)]
+    unsafe {
+        libc::close(fd as libc::c_int);
+    }
+    MbValue::none()
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
 
@@ -122,6 +141,7 @@ pub fn register() {
 
     let dispatchers: Vec<(&str, usize)> = vec![
         ("socket", d_socket_new as *const () as usize),
+        ("close", d_socket_close as *const () as usize),
         ("gethostname", d_gethostname as *const () as usize),
         ("gethostbyname", d_gethostbyname as *const () as usize),
         ("getaddrinfo", d_getaddrinfo as *const () as usize),

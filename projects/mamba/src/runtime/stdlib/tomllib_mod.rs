@@ -384,8 +384,8 @@ mod tests {
             if let ObjData::List(ref lock) = (*p).data {
                 let list = lock.read().unwrap();
                 assert_eq!(list.len(), 3);
-                assert_eq!(list[0].as_int(), Some(1));
-                assert_eq!(list[2].as_int(), Some(3));
+                assert_eq!(list.get(0).and_then(|v| v.as_int()), Some(1));
+                assert_eq!(list.get(2).and_then(|v| v.as_int()), Some(3));
             } else {
                 panic!("nums not list");
             }
