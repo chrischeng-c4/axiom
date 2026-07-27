@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:4568465ec319be59801aa79c86ccbc9dec3aee867d18bda24ac36f088dc094de",
+  "digest": "sha256:2259ffd3c81dffeff7223ce699bf47e176dd72dfcc5f9024bc56f51cf020d438",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10765,7 +10765,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/bugs/td-merge-and-issues-merge-hard-code-target-branch.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:b7c9997ef4590d7af22b79ccca71569c29bd840153f3c61bbe2ad5c23a57cddf",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/bugs/td_merge_and_issues_merge_hard_code_target_branch.py"
     },
     {
