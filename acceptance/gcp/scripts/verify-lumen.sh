@@ -1216,11 +1216,39 @@ jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet-seed")] | le
   capture_fleet_diagnostics
   exit 1
 }
-jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"] // {} | keys[]]
-       | any(. == "f:shardCount" or . == "f:shardMap" or . == "f:reshardPolicy") | not' \
+# The three paths, spelled exactly as `DRIVER_OWNED_PATHS` in
+# apps/lumen/src/operator/fleet.rs spells them -- `reshardPolicy.workflow` is a
+# LEAF of reshardPolicy, not the whole subtree.
+#
+# This used to test the top-level key `f:reshardPolicy` and it red-flagged a
+# correct fleet (run 0727153733). `prepareAtPercent`/`urgentAtPercent` ARE fleet
+# policy and the steady-state apply is supposed to own them -- fleet.rs's own
+# unit test asserts "the rest of reshardPolicy is fleet-declared policy and must
+# stay". Only `workflow` belongs to the reshard driver. A coarse check that
+# cannot tell a subtree from a leaf fails the very design it exists to protect.
+jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"] // {}][0] as $applied
+       | ($applied | has("f:shardCount") | not)
+         and ($applied | has("f:shardMap") | not)
+         and (($applied["f:reshardPolicy"] // {}) | has("f:workflow") | not)' \
   "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >/dev/null || {
   echo "the steady-state 'lumen-fleet' apply-set claims a path the reshard driver owns; a later pass would revert a completed split" >&2
-  jq '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"] | keys]' \
+  # The whole subtree, not `keys`: the nesting IS the finding, and printing only
+  # the top level is what made this failure unreadable the first time.
+  jq '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"]]' \
+    "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+# The mirror of the check above, and the reason the coarse version was actively
+# harmful rather than merely wrong: a fleet that stopped propagating its own
+# policy would pass the negative test trivially, by never naming reshardPolicy
+# at all. Ownership of the thresholds is the positive half of the same contract.
+jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet")
+        | .fieldsV1["f:spec"]["f:reshardPolicy"] // {}][0]
+       | has("f:prepareAtPercent") and has("f:urgentAtPercent")' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >/dev/null || {
+  echo "the steady-state 'lumen-fleet' apply-set does not own its own reshard policy thresholds; fleet-declared policy is not being propagated" >&2
+  jq '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"]["f:reshardPolicy"]]' \
     "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >&2 || true
   capture_fleet_diagnostics
   exit 1
