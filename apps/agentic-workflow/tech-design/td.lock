@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T16:49:41.253936+00:00"
-digest = "sha256:d3747b89124eb2e602fa967196bfd38289a647e37ed6f45ebbe1621f3c2ffc04"
-source_digest = "sha256:d3747b89124eb2e602fa967196bfd38289a647e37ed6f45ebbe1621f3c2ffc04"
-ir_digest = "sha256:e913993e99fc19423e6d341b082723c1641178f2b651f2b1c2525491de8cf7a4"
+generated_at = "2026-07-27T17:36:10.952349+00:00"
+digest = "sha256:4125f509ce37a5ee26b9de0900fe76fc6b2f6f90263bcfde91cf8ef0792f90d1"
+source_digest = "sha256:4125f509ce37a5ee26b9de0900fe76fc6b2f6f90263bcfde91cf8ef0792f90d1"
+ir_digest = "sha256:566af41daec73a52aaf027c8ebb76dc53510367f95a48f451248cf2142094ceb"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3946,6 +3946,10 @@ digest = "sha256:01553b838717201f1b15977b334d340ba90a91bcfc7a890eef935f30bb5f5ac
 [[files]]
 path = "src/agentic_workflow/work_items/report_triage.py"
 digest = "sha256:f85448e04222557f2acae6d6b0cda3c6ab340f8fe34afede936e0a7250d478a6"
+
+[[files]]
+path = "src/agentic_workflow/work_items/scoped_capability_verification.py"
+digest = "sha256:31502bb1b1e57269b01c165b9cff0b1e01208a94954184bc19da9c0715de0702"
 
 [[files]]
 path = "src/agentic_workflow/work_items/shared_cli_report.py"

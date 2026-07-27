@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T16:51:30.774692+00:00"
-ir_digest = "sha256:b2edd18b8b686b4017b16484e80bc35000cad048f9e13122f754039751c0b434"
-source_digest = "sha256:c421f3d05d892643308dea6f70546cf66a7a332c76d6b26b064e3a9db28c33df"
+generated_at = "2026-07-27T17:45:09.713747+00:00"
+ir_digest = "sha256:f21964b789aaaa3cfba8a62022582f74d2dda4440b3b5a07a97f8938fb71d6e2"
+source_digest = "sha256:b6c3c197334180349c3882d1d06389891c16c07cb588a07158bdb3190a77c9ed"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:9dbe5f0f60b035108065c6298f74d4e6e51256474d7625072c76b429d256fabd"
+digest = "sha256:e41fb7cca0b58a71ec1a8e4e276662d569f20a7857ebbbc9ede2457c8ae9a0be"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -47,6 +47,10 @@ digest = "sha256:d475cb315d2c1690588187974cc350027646058541db2a94eda6abfc1d44b66
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-control-plane-operational-stability.py"
 digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594e"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
+digest = "sha256:88296c626c1262a172e509db9f12033d9a3fdcba00b0f8deb5fa6c2893a550c8"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-efficiency.py"
@@ -86,7 +90,7 @@ digest = "sha256:494da34273e75538163cd47d3d2cf3b4a7ce6608464cd6f9302844b4d2346fc
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-capability-admission.py"
-digest = "sha256:95b45d566564f2aa078f8365e2d3f1ed750f5dad6557f0f3ba8ed72cb78a0b20"
+digest = "sha256:e74ac1b937c1adecc5efd03918005b570780d2ea1fdc11fe077f2ff6512c16eb"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-health-policy.py"
@@ -246,7 +250,7 @@ digest = "sha256:86b4aff2e016e82895e4a7115c99f656c3e1f823d518148e9ea42183814da03
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py"
-digest = "sha256:d543a8477b45bee3c6e3c3256925f36f4de0ea56b1b6af5e06c2c837d8a287a0"
+digest = "sha256:dc94bef444d170e70893b4315ba2e9e1e2f0c9602fdd9508baa44e88c4ef7f29"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py"
@@ -465,6 +469,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:727d99d6618864c6dc8f9f20918e946291f57e809ce18320bfad2ae4e97525c0"
 
 [[cases]]
+id = "capability-scoped-dependency-verification"
+capability_id = "capability-control-plane"
+claim_id = "scoped-capability-verification"
+contract_id = "capability-scoped-dependency-verification"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:capability-scoped-dependency-verification"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
+required_for_production = true
+assertions = [
+    "a capability goal verifies only the requested capability and its transitive dependencies, excludes workspace-wide test gates, and retains scope in follow-up commands",
+    "artifact: artifact:agentic-workflow/capability-scoped-dependency-verification",
+    "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated capability catalog, observes gate side effects, and independently proves unrelated and unknown capability gates never run.",
+    "target: rust",
+]
+evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ae13dae3d99b28e7cceba6c17b8e6fccfa37caaf543d85273206ae45f412a15e"
+
+[[cases]]
 id = "existing-project-standardization-operational-efficiency"
 capability_id = "existing-project-standardization"
 claim_id = "existing-project-standardization-operational-efficiency"
@@ -662,14 +686,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-cap
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 required_for_production = true
 assertions = [
-    "capability admission dispatches the exact EC structural worker; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation",
+    "scoped capability admission completes without unrelated project lifecycle gates and hands control to project rollup; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation",
     "artifact: artifact:agentic-workflow/self-hosting-capability-admission",
-    "oracle: The canonical capability document independently requires an EC check, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons.",
+    "oracle: A canonical verified capability with a passing capability-owned gate independently requires scoped completion and project rollup, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons.",
     "target: rust",
 ]
-evidence_digest = "sha256:9041873b3ed34f4e84783d9ab62cf204bd0c74edf714348ec198ad110a4425e1"
+evidence_digest = "sha256:d8c2101a4de33e39e2e6ccc9a8b65aaf325addd1436f70a0ca5f0b919d865a99"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fc222f1987ed3fb13e2cdf40b792b979cd5bd54a788ce6865590127470baa817"
+digest = "sha256:32fe0c684509e0cb908e14ec424df754c51e42bbf0382443ce0a06d45e315ad6"
 
 [[cases]]
 id = "self-hosting-health-policy"

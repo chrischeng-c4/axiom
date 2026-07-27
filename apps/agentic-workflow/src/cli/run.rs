@@ -1875,6 +1875,7 @@ fn preflight_evidence_label(kind: PreFlightEvidenceKind) -> &'static str {
     }
 }
 
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
 async fn capability_envelope(
     project: &str,
     capability_id: &str,
@@ -1884,13 +1885,14 @@ async fn capability_envelope(
         kind: "capability".to_string(),
         id: capability_id.to_string(),
     };
+    let capability_command =
+        format!("aw capability check --project {project} --verify --capability {capability_id}");
     progress.emit(
         25,
         "capability",
         "evaluating scoped capability readiness",
-        Some(format!("aw capability check --project {project} --verify").as_str()),
+        Some(capability_command.as_str()),
     );
-    let capability_command = format!("aw capability check --project {project} --verify");
     let report_result = await_with_progress(
         progress,
         25,
@@ -3338,6 +3340,7 @@ fn project_production_blocked_envelope(
     }
 }
 
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
 fn capability_production_blocked_envelope(
     project: &str,
     capability_id: &str,
@@ -3348,7 +3351,8 @@ fn capability_production_blocked_envelope(
     capability_blockers.extend(global_blockers);
     capability_blockers.sort();
     capability_blockers.dedup();
-    let command = format!("aw capability check --project {project} --verify");
+    let command =
+        format!("aw capability check --project {project} --verify --capability {capability_id}");
     let reason = if capability_blockers.is_empty() {
         format!("capability `{capability_id}` is not production ready")
     } else {
@@ -4806,6 +4810,24 @@ workspaces = []
             agent_command("aw capability check --project jet --json --verify"),
             "aw capability check --project jet --verify"
         );
+    }
+
+    #[test]
+    fn capability_goal_scope_blocker_preserves_scope_in_next_and_invoke() {
+        let envelope = capability_production_blocked_envelope(
+            "jet",
+            "request-routing",
+            WorkflowNode {
+                kind: "capability".to_string(),
+                id: "request-routing".to_string(),
+            },
+            vec!["catalog/claim verification is not complete".to_string()],
+            Vec::new(),
+        );
+
+        let expected = "aw capability check --project jet --verify --capability request-routing";
+        assert_eq!(envelope.next.command, expected);
+        assert_eq!(envelope.invoke.command, expected);
     }
 
     #[test]

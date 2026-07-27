@@ -184,6 +184,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/capability-control-plane-missing-readme-initialization.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "capability-scoped-dependency-verification"
+artifact_id = "artifact:agentic-workflow/capability-scoped-dependency-verification"
+capability_id = "capability-control-plane"
+use_case_id = "scoped-capability-verification"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/capability-scoped-dependency-verification.py"
+promise = "a capability goal verifies only the requested capability and its transitive dependencies, excludes workspace-wide test gates, and retains scope in follow-up commands"
+oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated capability catalog, observes gate side effects, and independently proves unrelated and unknown capability gates never run."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case capability-scoped-dependency-verification"
+evidence_paths = ["evidence/capability-scoped-dependency-verification.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "external-fixture-reports-advisory-gap"
 artifact_id = "artifact:agentic-workflow/external-fixture-reports-advisory-gap"
 capability_id = "existing-project-standardization"
@@ -234,8 +248,8 @@ use_case_id = "self-hosting-root-runner-policy"
 dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/self-hosting-capability-admission.py"
-promise = "capability admission dispatches the exact EC structural worker; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation"
-oracle = "The canonical capability document independently requires an EC check, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons."
+promise = "scoped capability admission completes without unrelated project lifecycle gates and hands control to project rollup; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation"
+oracle = "A canonical verified capability with a passing capability-owned gate independently requires scoped completion and project rollup, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons."
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
 evidence_paths = ["evidence/self-hosting-capability-admission.json"]

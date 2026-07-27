@@ -1688,6 +1688,21 @@ impl ProjectTestGateReport {
         }
     }
 
+    pub fn scoped_capability(project: &str, capability_id: &str) -> Self {
+        Self {
+            evaluated: true,
+            status: ProjectTestGateStatus::Passed,
+            note: Some(format!(
+                "workspace test gates are excluded from scoped capability verification for `{project}` capability `{capability_id}`"
+            )),
+            command_count: 0,
+            passed_count: 0,
+            failed_count: 0,
+            skipped_count: 0,
+            commands: Vec::new(),
+        }
+    }
+
     fn skipped_by_caps_ec_policy(project: &str) -> Self {
         Self {
             evaluated: true,
