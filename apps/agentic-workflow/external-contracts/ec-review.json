@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:d5bb6c6f3a28f7cbb5eb6c6bef41e5883f16cde2fca73af5289e0e98e3ad1b0c",
+  "source_digest": "sha256:92fd7276df8dfb1c94424fdb83fab12be4034a64b8ccc396147a4125ef48c9a3",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T17:46:11.134689+00:00",
-  "summary": "Accepted: the #2770 dependency-closed scoped capability oracle and the corrected self-hosting admission oracle both pass directly. The self-hosting pyproject promise, oracle description, wrapper assertions, delegated verifier, and evidence now consistently prove scoped capability completion without unrelated project lifecycle gates plus exact project rollup and backlog remediation. The complete 49-case inventory and structural and claim reconciliation guards are clean.",
+  "reviewed_at": "2026-07-27T18:17:59.789889+00:00",
+  "summary": "Accepted: the WI #2776 real-git oracle directly passes and now binds the successful dispatch to a real tracked Python TD source with the exact WI identity, requires HEAD advancement, and limits the complete commit delta to that emitted source alone. It also preserves unrelated modified, deleted, and untracked work byte-for-byte on the persistent branch and proves dirty main fails before a TD branch or source tree is created. The 50-case inventory and structural and claim reconciliation guards are clean.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

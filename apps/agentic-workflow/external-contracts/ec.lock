@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T17:45:09.713747+00:00"
-ir_digest = "sha256:f21964b789aaaa3cfba8a62022582f74d2dda4440b3b5a07a97f8938fb71d6e2"
-source_digest = "sha256:b6c3c197334180349c3882d1d06389891c16c07cb588a07158bdb3190a77c9ed"
+generated_at = "2026-07-27T18:18:05.311749+00:00"
+ir_digest = "sha256:d8320df01a33a9c9ef2d8958cc4d8435c4a52cad7c77de2698a336a577c15c26"
+source_digest = "sha256:9f8a01acf6068740ce50c6dd65eddca9f0bc3c5688f8b1b66a74b24b0934db25"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:e41fb7cca0b58a71ec1a8e4e276662d569f20a7857ebbbc9ede2457c8ae9a0be"
+digest = "sha256:869c02d9147644c5aa25347a5c29e3bcdb3e19c53f0dcfb29f89062be9f22f9a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -127,6 +127,10 @@ digest = "sha256:b50153797512e0608a27231c7a88224815853da5e472b80676c78dad1f59399
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-remove-td-merge-command.py"
 digest = "sha256:ec878b0dfeecef5cd9df2e849e1b94a53e0d399736b221f577bec98ba93c4466"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/td-create-dirty-persistent-branch.py"
+digest = "sha256:3089eeb86868d9360c834301a6a1679b5348df5592b1d3dcf7d04ddab391e2f7"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/wi-close-remote-real-cli.py"
@@ -877,6 +881,26 @@ assertions = [
 evidence_digest = "sha256:6a944eb2a9baa19bcb62ca06eda1a08c5450e126ee454134c2208cf7597f4f27"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:864d2e79d6372c9d4333b2a52f8ad3d3a767accbcacb42d4f547c90c2a68a5e7"
+
+[[cases]]
+id = "td-create-dirty-persistent-branch"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-create-dirty-persistent-branch"
+contract_id = "td-create-dirty-persistent-branch"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:td-create-dirty-persistent-branch"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/td-create-dirty-persistent-branch.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
+required_for_production = true
+assertions = [
+    "TD create stays on a dirty persistent non-main project branch, commits only lifecycle-owned paths, and leaves unrelated modified, deleted, and untracked work byte-identical; dirty main still fails before branch activation.",
+    "artifact: artifact:agentic-workflow/td-create-dirty-persistent-branch",
+    "oracle: Two isolated real-git repositories independently expose branch identity, porcelain state, file bytes, TD source existence, and td-branch refs before and after the real aw td create command.",
+    "target: rust",
+]
+evidence_digest = "sha256:969a538c9adabbb0c48ea1b55791366871f5f7e4cd68ece066fa9194dd00099e"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:15615a84335908537c64e722764b60d7c39f4a792e0f047e4a63dc3751ce8528"
 
 [[cases]]
 id = "wi-close-remote-real-cli"

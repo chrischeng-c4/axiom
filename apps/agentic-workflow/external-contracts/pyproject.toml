@@ -716,3 +716,17 @@ oracle = "A hand-authored Python black-box fixture executes the real aw CLI, ins
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
 evidence_paths = ["evidence/python-ec-only-authoring.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "td-create-dirty-persistent-branch"
+artifact_id = "artifact:agentic-workflow/td-create-dirty-persistent-branch"
+capability_id = "td-cb-lifecycle-automation"
+use_case_id = "td-create-dirty-persistent-branch"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/td-create-dirty-persistent-branch.py"
+promise = "TD create stays on a dirty persistent non-main project branch, commits only lifecycle-owned paths, and leaves unrelated modified, deleted, and untracked work byte-identical; dirty main still fails before branch activation."
+oracle = "Two isolated real-git repositories independently expose branch identity, porcelain state, file bytes, TD source existence, and td-branch refs before and after the real aw td create command."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-create-dirty-persistent-branch"
+evidence_paths = ["evidence/td-create-dirty-persistent-branch.json"]

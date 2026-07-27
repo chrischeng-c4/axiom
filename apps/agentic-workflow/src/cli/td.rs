@@ -6364,6 +6364,71 @@ mod tests {
         assert!(error.contains("staged-user-change.rs"), "{error}");
     }
 
+    // @spec #2776
+    #[test]
+    fn td_create_dirty_persistent_branch_preserves_unrelated_work() {
+        if !git_available() {
+            return;
+        }
+
+        let persistent = tempfile::tempdir().unwrap();
+        init_git_repo(persistent.path());
+        std::fs::write(persistent.path().join("tracked.txt"), "baseline\n").unwrap();
+        std::fs::write(persistent.path().join("deleted.txt"), "keep in history\n").unwrap();
+        git_stdout(persistent.path(), &["add", "tracked.txt", "deleted.txt"]);
+        git_stdout(persistent.path(), &["commit", "-m", "fixture baseline"]);
+        git_stdout(persistent.path(), &["checkout", "-qb", "project-demo"]);
+
+        std::fs::write(persistent.path().join("tracked.txt"), "user edit\n").unwrap();
+        std::fs::remove_file(persistent.path().join("deleted.txt")).unwrap();
+        std::fs::write(persistent.path().join("untracked.txt"), "user scratch\n").unwrap();
+        let before = git_stdout(persistent.path(), &["status", "--porcelain"]);
+
+        let branch =
+            activate_td_workspace_for_lifecycle(persistent.path(), "2776-fixture").unwrap();
+
+        assert_eq!(branch, "project-demo");
+        assert_eq!(
+            git_stdout(persistent.path(), &["branch", "--show-current"]),
+            "project-demo"
+        );
+        assert_eq!(
+            git_stdout(persistent.path(), &["status", "--porcelain"]),
+            before
+        );
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("tracked.txt")).unwrap(),
+            "user edit\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("untracked.txt")).unwrap(),
+            "user scratch\n"
+        );
+
+        let main = tempfile::tempdir().unwrap();
+        init_git_repo(main.path());
+        std::fs::write(main.path().join("tracked.txt"), "baseline\n").unwrap();
+        git_stdout(main.path(), &["add", "tracked.txt"]);
+        git_stdout(main.path(), &["commit", "-m", "fixture baseline"]);
+        std::fs::write(main.path().join("tracked.txt"), "dirty main\n").unwrap();
+        std::fs::write(main.path().join("untracked.txt"), "dirty main scratch\n").unwrap();
+        let main_before = git_stdout(main.path(), &["status", "--porcelain"]);
+
+        let error = activate_td_workspace_for_lifecycle(main.path(), "2776-main")
+            .expect_err("dirty main must fail before branch activation");
+
+        assert!(error.to_string().contains("requires a clean tree"));
+        assert_eq!(
+            git_stdout(main.path(), &["branch", "--show-current"]),
+            "main"
+        );
+        assert_eq!(
+            git_stdout(main.path(), &["status", "--porcelain"]),
+            main_before
+        );
+        assert!(!crate::branch_switch::branch_exists_local(main.path(), "td-2776-main").unwrap());
+    }
+
     #[test]
     fn rebased_td_lifecycle_recovery_excludes_post_gen_and_terminal_phases() {
         use crate::issues::types::td_phase;
