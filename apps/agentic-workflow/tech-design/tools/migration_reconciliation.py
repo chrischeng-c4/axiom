@@ -284,6 +284,32 @@ def _render_python_projection(entry: dict[str, Any], markdown: str) -> str:
     )
 
 
+def _render_python_migration(entry: dict[str, Any], markdown: str) -> str:
+    """Render one legacy Markdown TD as its canonical Python owner.
+
+    The legacy document remains executable data instead of an active Markdown
+    authoring surface.  Its stable artifact identity and digest are compiled
+    into the Python TD IR, while ``render_markdown`` preserves every reviewed
+    byte for audit and later semantic extraction.
+    """
+
+    artifact_id = _projection_artifact_id(entry)
+    encoded_markdown = json.dumps(markdown, ensure_ascii=False)
+    return (
+        f'"""Canonical Python tech design migrated from `{entry["path"]}`.\n\n'
+        f'Migrated by batch `{entry["batch_id"]}`.\n"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from typing import Annotated\n\n\n"
+        f'__aw_artifact_id__ = "{artifact_id}"\n'
+        f'__legacy_td_path__ = "{entry["path"]}"\n'
+        f'__legacy_td_digest__ = "{entry["sha256"]}"\n\n\n'
+        "def render_markdown() -> "
+        f'Annotated[str, "{entry["sha256"]}"]:\n'
+        '    """Render the preserved legacy design byte-for-byte."""\n\n'
+        f"    return {encoded_markdown}\n"
+    )
+
+
 def _materialize_batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any]:
     batch = next(
         (item for item in manifest["batches"] if item["id"] == batch_id),
@@ -296,15 +322,16 @@ def _materialize_batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any
         for entry in manifest["markdown_td"]
     }
     failures: list[str] = []
+    planned: list[tuple[dict[str, Any], Path, Path, str]] = []
     materialized: list[str] = []
     for path in batch["artifact_paths"]:
         entry = entries.get(path)
         if entry is None:
             failures.append(f"{path}: missing manifest entry")
             continue
-        if entry["disposition"] != "generated_projection":
+        if entry["disposition"] not in {"generated_projection", "migrate"}:
             failures.append(
-                f"{path}: migration-only materializer requires generated_projection"
+                f"{path}: materializer requires migrate or generated_projection"
             )
             continue
         source = REPOSITORY_ROOT / path
@@ -313,22 +340,25 @@ def _materialize_batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any
             failures.append(f"{path}: missing source artifact")
             continue
         if target_value is None:
-            failures.append(f"{path}: missing Python projection target")
+            failures.append(f"{path}: missing Python migration target")
             continue
         if _sha256(source) != entry["sha256"]:
             failures.append(f"{path}: digest drift")
             continue
         target = REPOSITORY_ROOT / target_value
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            _render_python_projection(
-                entry,
-                source.read_text(encoding="utf-8"),
-            ),
-            encoding="utf-8",
+        markdown = source.read_text(encoding="utf-8")
+        rendered = (
+            _render_python_projection(entry, markdown)
+            if entry["disposition"] == "generated_projection"
+            else _render_python_migration(entry, markdown)
         )
-        entry["status"] = "completed"
-        materialized.append(target_value)
+        if target.exists() and (
+            not target.is_file()
+            or target.read_text(encoding="utf-8") != rendered
+        ):
+            failures.append(f"{target_value}: target collision")
+            continue
+        planned.append((entry, source, target, rendered))
     if failures:
         raise RuntimeError(
             json.dumps(
@@ -341,6 +371,14 @@ def _materialize_batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any
                 sort_keys=True,
             )
         )
+    for entry, _source, target, rendered in planned:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered, encoding="utf-8")
+    for entry, source, _target, _rendered in planned:
+        if entry["disposition"] == "migrate":
+            source.unlink()
+        entry["status"] = "completed"
+        materialized.append(entry["target_path"])
     manifest["digest"] = _manifest_digest(manifest)
     MANIFEST_PATH.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -587,36 +625,61 @@ def _verify_entry(entry: dict[str, Any]) -> list[str]:
             not source.is_file() or target is None or not target.is_file()
         ):
             failures.append(f"{entry['path']}: projection producer is incomplete")
-        elif disposition == "generated_projection" and target is not None:
+        if disposition in {"generated_projection", "migrate"} and (
+            target is not None and target.is_file()
+        ):
             try:
                 namespace = runpy.run_path(str(target))
             except Exception as error:
                 failures.append(
-                    f"{entry['path']}: projection producer cannot execute: {error}"
+                    f"{entry['path']}: Python producer cannot execute: {error}"
                 )
             else:
                 renderer = namespace.get("render_markdown")
                 if not callable(renderer):
                     failures.append(
-                        f"{entry['path']}: projection producer has no render_markdown"
+                        f"{entry['path']}: Python producer has no render_markdown"
                     )
-                elif renderer() != source.read_text(encoding="utf-8"):
-                    failures.append(
-                        f"{entry['path']}: projection producer output drift"
+                else:
+                    rendered = renderer()
+                    rendered_digest = (
+                        "sha256:"
+                        + hashlib.sha256(rendered.encode("utf-8")).hexdigest()
                     )
+                    if rendered_digest != entry["sha256"]:
+                        failures.append(
+                            f"{entry['path']}: Python producer output drift"
+                        )
+                    if (
+                        disposition == "generated_projection"
+                        and rendered != source.read_text(encoding="utf-8")
+                    ):
+                        failures.append(
+                            f"{entry['path']}: projection producer output drift"
+                        )
                 if namespace.get("__aw_artifact_id__") != _projection_artifact_id(
                     entry
                 ):
                     failures.append(
-                        f"{entry['path']}: projection artifact identity drift"
+                        f"{entry['path']}: Python artifact identity drift"
                     )
-                if namespace.get("__legacy_projection_path__") != entry["path"]:
+                path_key = (
+                    "__legacy_projection_path__"
+                    if disposition == "generated_projection"
+                    else "__legacy_td_path__"
+                )
+                digest_key = (
+                    "__legacy_projection_digest__"
+                    if disposition == "generated_projection"
+                    else "__legacy_td_digest__"
+                )
+                if namespace.get(path_key) != entry["path"]:
                     failures.append(
-                        f"{entry['path']}: projection source identity drift"
+                        f"{entry['path']}: Python source identity drift"
                     )
-                if namespace.get("__legacy_projection_digest__") != entry["sha256"]:
+                if namespace.get(digest_key) != entry["sha256"]:
                     failures.append(
-                        f"{entry['path']}: projection digest identity drift"
+                        f"{entry['path']}: Python digest identity drift"
                     )
     return failures
 
