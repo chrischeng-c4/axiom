@@ -1,0 +1,19 @@
+"""Canonical Python tech design migrated from `apps/agentic-workflow/tech-design/core/validate/execution_modes_test.md`.
+
+Migrated by batch `semantic-core-validate-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-validate/core-validate-execution-modes-test"
+__legacy_td_path__ = "apps/agentic-workflow/tech-design/core/validate/execution_modes_test.md"
+__legacy_td_digest__ = "sha256:622e802b06b9c445bf921d69f903049a820c8c1119c8273cb8b1f4985cd434ca"
+
+
+def render_markdown() -> Annotated[str, "sha256:622e802b06b9c445bf921d69f903049a820c8c1119c8273cb8b1f4985cd434ca"]:
+    """Render the preserved legacy design byte-for-byte."""
+
+    return "---\nid: projects-sdd-tests-execution-modes-test-rs\nfill_sections: [overview, tests, changes]\ncapability_refs:\n  - id: existing-project-standardization\n    role: primary\n    gap: managed-and-semantic-production-gates\n    claim: managed-and-semantic-production-gates\n    coverage: full\n    rationale: \"Validation TDs implement managed and semantic production gates for standardization readiness.\"\n---\n\n# Execution Modes Legacy Hook Retirement Tests\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nCodegenerated integration tests for the retired Claude agent bash hook layout.\nPhase 2 moved SDD execution to mainthread-owned apply/validate routing, so the\nold `agents/_shared/pretooluse-*.sh` hooks must not be required for the test\nsuite. The file is generated through the Rust tests template using raw Rust\npreamble and test bodies; those fields are generator template data, not new\nsection types.\n\n## Tests\n<!-- type: tests lang: yaml -->\n\n```yaml\npreamble: |\n  //! Integration tests for retired legacy agent execution hooks\n  //!\n  //! Covers:\n  //! - R5: legacy Claude agent bash hooks are retired\n  //! - R6: stale mainthread Claude hooks are retired\n  //!\n  //! R4 (multi_claude_agents agent frontmatter) tests were retired when\n  //! Phase 2 mainthread-only execution deleted `.claude/agents/score-*.md`.\n  //! The mainthread now drives every `--apply` step directly; there are no\n  //! `score-change-*` / `score-review` agent definitions to validate.\n\n  use std::path::PathBuf;\n\n  /// Project root (2 levels up from the crate directory)\n  fn project_root() -> PathBuf {\n      PathBuf::from(env!(\"CARGO_MANIFEST_DIR\")).join(\"../..\")\n  }\nimports: []\ntests:\n  - name: test_legacy_agent_pretooluse_hooks_are_not_required\n    body: |\n      // R5: retired Claude agent hook paths must not be required by current SDD tests.\n      let root = project_root();\n      assert!(\n          !root\n              .join(\".claude/hooks/agents/_shared/pretooluse-readonly-bash.sh\")\n              .exists(),\n          \"legacy readonly agent hook should stay retired\"\n      );\n      assert!(\n          !root\n              .join(\".claude/hooks/agents/_shared/pretooluse-safe-bash.sh\")\n              .exists(),\n          \"legacy safe agent hook should stay retired\"\n      );\n  - name: test_mainthread_hooks_are_not_required\n    body: |\n      // R6: stale Claude framework hooks should not be required by current AW execution.\n      let root = project_root();\n      for hook in [\n          \".claude/hooks/hook1-post-apply-validate.sh\",\n          \".claude/hooks/hook2-pre-apply-guard.sh\",\n          \".claude/hooks/hook5-session-start-idle.sh\",\n      ] {\n          assert!(!root.join(hook).exists(), \"{hook} should stay retired\");\n      }\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/tests/execution_modes_test.rs\n    action: modify\n    section: tests\n    impl_mode: codegen\n    description: |\n      Generate the complete execution-modes integration test file from the\n      Tests section. The target file contains only the CODEGEN block for this\n      section.\n```\n"
