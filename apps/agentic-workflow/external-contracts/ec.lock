@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T08:50:22.049270+00:00"
-ir_digest = "sha256:cdd510babb44fb7a6f62309bf7a2057444d26e357c06cc2058f71c469a3af4ba"
-source_digest = "sha256:3af17eb8f546b3f0df0e6ee0736d1a789db4e522280e5f557f9007135eb3ba76"
+generated_at = "2026-07-27T09:23:31.893034+00:00"
+ir_digest = "sha256:fd9c8694995ee0165a3c70887e402fdb6d7dcd086941efb806007688124f6793"
+source_digest = "sha256:5cc30e07903b06160602338c97b7e15b376064cf0c401f2070188b70df3e178b"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:2084fd731b1a1801d30b14a65c9d011806380eed47217535bc59800e56811ef5"
+digest = "sha256:afdcaaf0ffd4fe09282cb4c776b9c392af4982fca90b69ac92a51a027a52dec5"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -110,7 +110,7 @@ digest = "sha256:7899e3863c2e5eb6734cefc521c0b8ca9eb671c1f6ee14c7763f9f2b317479c
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-artifact-producer-cli-fixture.py"
-digest = "sha256:ea3722761a15055abff233ad70525b150fb0d4cd17bd54f682293f2b2972518d"
+digest = "sha256:019c26d3f749c2352e384f18f9d82a5702d9d52e3fa04b22803767e91027409f"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-cb-lifecycle-automation-operational-efficiency.py"
@@ -234,7 +234,7 @@ digest = "sha256:c6e7f788d57cd0135892c7b64298242882b0d90756b0196e5ef6bc34cb1f55d
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/prompt_artifacts.py"
-digest = "sha256:f0bb6f46004459c52eafb00d5e8c1b9cdeac1d33cf3e5a571790a0046c6ccaa7"
+digest = "sha256:86b4aff2e016e82895e4a7115c99f656c3e1f823d518148e9ea42183814da033"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py"
@@ -242,7 +242,7 @@ digest = "sha256:d543a8477b45bee3c6e3c3256925f36f4de0ea56b1b6af5e06c2c837d8a287a
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py"
-digest = "sha256:435ce252d0542b03003c11746ae0de490b378b1ce48dc28bc93f5ffed99349c0"
+digest = "sha256:2c4c51457a1ec10851502733ea5ccf358561bec642d288052eec45d4082836aa"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/td_source_target.py"
@@ -775,14 +775,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/td-artifact-prod
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
 required_for_production = true
 assertions = [
-    "aw td create creates the durable TD skeleton and one JSON payload for the current queued section; the TD contract exposes validation, generation, evidence, and a runnable next transition; CODEGEN-BEGIN/END and HANDWRITE-BEGIN/END ownership outputs are explicit; HANDWRITE requires gap, tracker, and reason fields",
+    "aw td create initializes one WI-bound Python module below tech-design/src and emits the exact apply handoff without Markdown skeletons or JSON section payloads",
     "artifact: artifact:agentic-workflow/td-artifact-producer-cli-fixture",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:b728859dd5244808dbb08d81028deb3f1c1439a2c4341f0724ecc567b9d31d49"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:266913235daf6472bac3154b1062fefb99d2a6dde48673d15d690499bece7058"
+digest = "sha256:390db18a9d83a8ff63eca6abf350e5f61b53718daf23b583248ee46014ec480a"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"

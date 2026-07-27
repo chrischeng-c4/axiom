@@ -6,7 +6,7 @@ USE_CASE_ID = "shared-artifact-producer-contract"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_td_artifact_producer_cli_fixture.rs"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case td-artifact-producer-cli-fixture"
-ASSERTIONS = ('aw td create creates the durable TD skeleton and one JSON payload for the current queued section', 'the TD contract exposes validation, generation, evidence, and a runnable next transition', 'CODEGEN-BEGIN/END and HANDWRITE-BEGIN/END ownership outputs are explicit', 'HANDWRITE requires gap, tracker, and reason fields')
+ASSERTIONS = ('aw td create initializes one WI-bound Python module below tech-design/src', 'the exact apply handoff contains no Markdown or JSON section payload')
 
 
 def verify() -> list[str]:

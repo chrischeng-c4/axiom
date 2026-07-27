@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -112,6 +113,12 @@ def _arguments() -> argparse.Namespace:
     )
     render.add_argument("--body", type=Path, required=True)
     render.add_argument("--output", type=Path, required=True)
+
+    materialize = subcommands.add_parser(
+        "materialize",
+        help="materialize one reviewed generated-projection batch as Python source",
+    )
+    materialize.add_argument("--batch", required=True)
 
     verify = subcommands.add_parser("verify")
     verify.add_argument("--baseline", action="store_true")
@@ -238,6 +245,115 @@ def _candidate_python_target(path: Path) -> str:
         / filename
     )
     return _relative(target)
+
+
+def _projection_artifact_id(entry: dict[str, Any]) -> str:
+    relative = Path(entry["path"]).relative_to(
+        "apps/agentic-workflow/tech-design"
+    )
+    family = _python_identifier(entry["family"]).replace("_", "-")
+    name = "-".join(
+        _python_identifier(part).replace("_", "-")
+        for part in relative.with_suffix("").parts
+    )
+    return f"artifact:{family}/{name}"
+
+
+def _render_python_projection(entry: dict[str, Any], markdown: str) -> str:
+    """Render a self-contained Python producer for one legacy projection.
+
+    The Markdown output is preserved byte-for-byte as executable Python data.
+    Its digest is also compiled into the canonical Python TD IR through the
+    function annotation, so content drift cannot be hidden in a function body.
+    """
+
+    artifact_id = _projection_artifact_id(entry)
+    encoded_markdown = json.dumps(markdown, ensure_ascii=False)
+    return (
+        f'"""Canonical Python producer for `{entry["path"]}`.\n\n'
+        f'Migrated by batch `{entry["batch_id"]}`.\n"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from typing import Annotated\n\n\n"
+        f'__aw_artifact_id__ = "{artifact_id}"\n'
+        f'__legacy_projection_path__ = "{entry["path"]}"\n'
+        f'__legacy_projection_digest__ = "{entry["sha256"]}"\n\n\n'
+        "def render_markdown() -> "
+        f'Annotated[str, "{entry["sha256"]}"]:\n'
+        '    """Render the preserved generated projection byte-for-byte."""\n\n'
+        f"    return {encoded_markdown}\n"
+    )
+
+
+def _materialize_batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any]:
+    batch = next(
+        (item for item in manifest["batches"] if item["id"] == batch_id),
+        None,
+    )
+    if batch is None:
+        raise RuntimeError(f"unknown migration batch: {batch_id}")
+    entries = {
+        entry["path"]: entry
+        for entry in manifest["markdown_td"]
+    }
+    failures: list[str] = []
+    materialized: list[str] = []
+    for path in batch["artifact_paths"]:
+        entry = entries.get(path)
+        if entry is None:
+            failures.append(f"{path}: missing manifest entry")
+            continue
+        if entry["disposition"] != "generated_projection":
+            failures.append(
+                f"{path}: migration-only materializer requires generated_projection"
+            )
+            continue
+        source = REPOSITORY_ROOT / path
+        target_value = entry.get("target_path")
+        if not source.is_file():
+            failures.append(f"{path}: missing source artifact")
+            continue
+        if target_value is None:
+            failures.append(f"{path}: missing Python projection target")
+            continue
+        if _sha256(source) != entry["sha256"]:
+            failures.append(f"{path}: digest drift")
+            continue
+        target = REPOSITORY_ROOT / target_value
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            _render_python_projection(
+                entry,
+                source.read_text(encoding="utf-8"),
+            ),
+            encoding="utf-8",
+        )
+        entry["status"] = "completed"
+        materialized.append(target_value)
+    if failures:
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "schema": manifest["schema"],
+                    "batch": batch_id,
+                    "status": "blocked",
+                    "failures": failures,
+                },
+                sort_keys=True,
+            )
+        )
+    manifest["digest"] = _manifest_digest(manifest)
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "schema": manifest["schema"],
+        "batch": batch_id,
+        "artifact_count": len(materialized),
+        "status": "materialized",
+        "manifest_digest": manifest["digest"],
+        "targets": materialized,
+    }
 
 
 def _target_paths(markdown_paths: list[Path]) -> dict[str, str]:
@@ -471,6 +587,37 @@ def _verify_entry(entry: dict[str, Any]) -> list[str]:
             not source.is_file() or target is None or not target.is_file()
         ):
             failures.append(f"{entry['path']}: projection producer is incomplete")
+        elif disposition == "generated_projection" and target is not None:
+            try:
+                namespace = runpy.run_path(str(target))
+            except Exception as error:
+                failures.append(
+                    f"{entry['path']}: projection producer cannot execute: {error}"
+                )
+            else:
+                renderer = namespace.get("render_markdown")
+                if not callable(renderer):
+                    failures.append(
+                        f"{entry['path']}: projection producer has no render_markdown"
+                    )
+                elif renderer() != source.read_text(encoding="utf-8"):
+                    failures.append(
+                        f"{entry['path']}: projection producer output drift"
+                    )
+                if namespace.get("__aw_artifact_id__") != _projection_artifact_id(
+                    entry
+                ):
+                    failures.append(
+                        f"{entry['path']}: projection artifact identity drift"
+                    )
+                if namespace.get("__legacy_projection_path__") != entry["path"]:
+                    failures.append(
+                        f"{entry['path']}: projection source identity drift"
+                    )
+                if namespace.get("__legacy_projection_digest__") != entry["sha256"]:
+                    failures.append(
+                        f"{entry['path']}: projection digest identity drift"
+                    )
     return failures
 
 
@@ -1199,6 +1346,8 @@ def main() -> None:
                 "terminal_requirement_count": 2,
                 "manifest_digest": manifest["digest"],
             }
+        elif args.command == "materialize":
+            result = _materialize_batch(_load_manifest(), args.batch)
         else:
             manifest = _load_manifest()
             result: dict[str, Any] = {}

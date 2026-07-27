@@ -24,7 +24,7 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
     let mut roles = BTreeSet::new();
     let mut openapi_requirements = None;
     for module in ir.modules.iter().filter(|m| m.path.starts_with("src/")) {
-        let name = module
+        let leaf_name = module
             .path
             .trim_end_matches(".py")
             .rsplit('/')
@@ -33,10 +33,11 @@ pub fn emit_python_td_rust_target(ir: &PythonTdIr, root: &Path) -> Result<RustTd
         // Python package markers carry import topology only. They have no
         // target-native declaration, so emitting an empty Rust module for
         // them would add noise without preserving any TD contract.
-        if module.declarations.is_empty() && name == "__init__" {
+        if module.declarations.is_empty() && leaf_name == "__init__" {
             continue;
         }
-        if !ident(name) || module.declarations.is_empty() {
+        let name = rust_module_name(&module.path)?;
+        if module.declarations.is_empty() {
             bail!(
                 "unsupported Python TD module `{}` for Rust target",
                 module.id
@@ -195,7 +196,35 @@ fn ident(value: &str) -> bool {
             .enumerate()
             .all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
 }
+fn rust_module_name(path: &str) -> Result<String> {
+    let relative = path
+        .strip_prefix("src/")
+        .and_then(|value| value.strip_suffix(".py"))
+        .ok_or_else(|| anyhow::anyhow!("unsupported Python TD module path `{path}`"))?;
+    let segments = relative.split('/').collect::<Vec<_>>();
+    if segments.is_empty() || segments.iter().any(|segment| !ident(segment)) {
+        bail!("unsupported Python TD module path `{path}` for Rust target");
+    }
+    Ok(segments.join("__"))
+}
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rust_module_name;
+
+    #[test]
+    fn rust_module_name_preserves_parent_path_for_repeated_leaf_names() {
+        assert_eq!(
+            rust_module_name("src/agentic_workflow/migrated/agents/mod.py").unwrap(),
+            "agentic_workflow__migrated__agents__mod"
+        );
+        assert_eq!(
+            rust_module_name("src/agentic_workflow/migrated/models/mod.py").unwrap(),
+            "agentic_workflow__migrated__models__mod"
+        );
+    }
 }
 // HANDWRITE-END

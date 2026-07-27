@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from migration_clusters.work_item_planning import BOUNDED_BODY
@@ -34,6 +35,20 @@ def _git(root: Any, *args: str) -> None:
     )
     if completed.returncode != 0:
         raise AssertionError(f"git {' '.join(args)} failed: {completed.stderr}")
+
+
+def _runtime_root(root: Path) -> Path:
+    raw = str(root.resolve())
+    slug: list[str] = []
+    last_dash = True
+    for character in raw:
+        if character.isascii() and character.isalnum():
+            slug.append(character.lower())
+            last_dash = False
+        elif not last_dash:
+            slug.append("-")
+            last_dash = True
+    return Path("/tmp/aw/workspaces") / "".join(slug).strip("-")
 
 
 def _artifact_snapshot() -> dict[str, Any]:
@@ -85,17 +100,47 @@ def _artifact_snapshot() -> dict[str, Any]:
             run_aw(root, "td", "create", created["slug"], "--project", "demo")
         )
         td_artifact = td["artifact"]
-        assert td_artifact["schema_version"] == "aw.artifact-producer.v1"
-        assert td_artifact["fill_slots"][0]["format"] == "json_schema"
-        assert td_artifact["validation"]["command"].startswith("aw td check ")
-        assert td_artifact["generation"]["command"].startswith("aw cb gen ")
-        ownership = {item["marker"]: item for item in td_artifact["ownership_outputs"]}
-        assert ownership["CODEGEN-BEGIN/END"]["required_fields"] == []
-        assert ownership["HANDWRITE-BEGIN/END"]["required_fields"] == [
-            "gap",
-            "tracker",
-            "reason",
-        ]
+        assert td["action"] == "dispatch"
+        assert td_artifact["schema_version"] == "aw.python-td-authoring.v1"
+        assert td_artifact["kind"] == "python_td"
+        assert td_artifact["source_path"].startswith("tech-design/src/")
+        assert td_artifact["source_path"].endswith(".py")
+        assert td_artifact["initialized"] is True
+        assert td_artifact["work_item"] == created["slug"]
+        assert td_artifact["fill_marker"] == "AW_TD_FILL"
+        assert td_artifact["validation"].startswith("aw td check ")
+        assert td["target"]["source_path"] == td_artifact["source_path"]
+        assert td["invoke"]["command"] == "aw td create"
+        assert td["invoke"]["args"]["apply"] is True
+        assert td["invoke"]["args"]["spec_path"] == td_artifact["source_path"]
+        expected_apply = (
+            f"aw td create {created['slug']} --apply --spec-path "
+            f"{td_artifact['source_path']} --project demo"
+        )
+        assert td["next"]["command"] == expected_apply
+        assert td["invoke"]["args"] == {
+            "slug": created["slug"],
+            "apply": True,
+            "spec_path": td_artifact["source_path"],
+            "project": "demo",
+            "source_path": td_artifact["source_path"],
+        }
+
+        source_path = root / td_artifact["source_path"]
+        python_modules = sorted((root / "tech-design" / "src").rglob("*.py"))
+        assert python_modules == [source_path]
+        source = source_path.read_text(encoding="utf-8")
+        assert (
+            f'__aw_artifact_id__ = "{td_artifact["artifact_id"]}"'
+            in source
+        )
+        assert f'__aw_work_item__ = "{created["slug"]}"' in source
+        assert source.count("AW_TD_FILL") == 1
+        assert not list((root / "tech-design").rglob("*.md"))
+
+        runtime = _runtime_root(root)
+        td_payload_root = runtime / "payloads" / "td"
+        assert not td_payload_root.exists() or not list(td_payload_root.rglob("*.json"))
         return {"wi": wi_artifact, "ec": ec, "td": td_artifact}
 
 
@@ -129,8 +174,8 @@ def verify(case_id: str) -> list[str]:
             ]
         if case_id == "td-artifact-producer-cli-fixture":
             return [
-                "TD create owns its skeleton, JSON payload, validation, and CB generation commands",
-                "CODEGEN and HANDWRITE ownership outputs expose the required fields",
+                "TD create initializes one WI-bound Python module below tech-design/src",
+                "the exact apply handoff contains no Markdown or JSON section payload",
             ]
         return [
             "WI create emits aw.artifact-producer.v1 with a bounded Markdown fill slot",

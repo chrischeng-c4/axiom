@@ -1,0 +1,19 @@
+"""Canonical Python producer for `apps/agentic-workflow/tech-design/core/interfaces/issues/issues_module_runtime_source.md`.
+
+Migrated by batch `projection-core-interfaces-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-interfaces/core-interfaces-issues-issues-module-runtime-source"
+__legacy_projection_path__ = "apps/agentic-workflow/tech-design/core/interfaces/issues/issues_module_runtime_source.md"
+__legacy_projection_digest__ = "sha256:cdfb0ed3d4be176fc165bc6a67f5dd4646ead537ef09aed6f802e358098c0add"
+
+
+def render_markdown() -> Annotated[str, "sha256:cdfb0ed3d4be176fc165bc6a67f5dd4646ead537ef09aed6f802e358098c0add"]:
+    """Render the preserved generated projection byte-for-byte."""
+
+    return "---\nid: sdd-interfaces-issues-module-runtime-source\nfill_sections: [overview, source, changes]\ncapability_refs:\n  - id: aw-core-client-model-workitem-first-artifact-lifecycle\n    role: primary\n    gap: agent-first-cli-product-model\n    claim: agent-first-cli-product-model\n    coverage: full\n    rationale: \"Issue backend interfaces project the single AW CLI workflow state to configured issue platforms.\"\n---\n\n# Issues Module Runtime Source\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nPublic API manifest for `apps/agentic-workflow/src/issues/mod.rs` generated from AST during Score force-regeneration standardization.\n\n### Symbols\n\n| Name | Target | Kind | Visibility | Line | Signature |\n|------|--------|------|------------|------|-----------|\n| `AW_FIXTURE_LOCAL_BACKEND_ENV` | apps/agentic-workflow/src/issues/mod.rs | const | pub | 89 | AW_FIXTURE_LOCAL_BACKEND_ENV: &str |\n| `backend` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 26 |  |\n| `backends` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 27 |  |\n| `graph` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 28 |  |\n| `github_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 269 | github_backend() -> GitHubBackend |\n| `labels` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 29 |  |\n| `local_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 215 | local_backend(project_root: &Path) -> LocalBackend |\n| `make_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 65 | make_backend(     kind: &str,     project_root: &Path,     repo: Option<String>,     host: Option<String>, ) -> Result<Box<dyn IssueBackend>> |\n| `next_id` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 30 |  |\n| `push_through` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 31 |  |\n| `remote_read_cache_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 238 | remote_read_cache_backend(     kind: &str,     repo: Option<&str>,     host: Option<&str>, ) -> LocalBackend |\n| `remote_read_cache_dir` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 223 | remote_read_cache_dir(kind: &str, repo: Option<&str>, host: Option<&str>) -> PathBuf |\n| `resolve_default_backend` | apps/agentic-workflow/src/issues/mod.rs | function | pub | 113 | resolve_default_backend(     project_root: &Path, ) -> Result<(String, Option<String>, Option<String>)> |\n| `slug` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 32 |  |\n| `types` | apps/agentic-workflow/src/issues/mod.rs | module | pub | 33 |  |\n## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: handwrite-gap issues-module-facade-runtime -->\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/issues/mod.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n    replaces:\n      - \"<handwrite-gap:issues-module-facade-runtime>\"\n    description: \"Source template owns the issues module facade runtime, including staged project-plan exports, and tests.\"\n```\n"

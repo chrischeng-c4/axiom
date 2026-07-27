@@ -23,18 +23,14 @@ def _snapshot() -> dict[str, Any]:
     artifacts = _artifact_snapshot()
     runner = _runner_snapshot()
     td = artifacts["td"]
-    ownership = {item["marker"]: item for item in td["ownership_outputs"]}
-    assert td["validation"]["command"].startswith("aw td check ")
-    assert td["generation"]["command"].startswith("aw cb gen ")
-    assert ownership["HANDWRITE-BEGIN/END"]["required_fields"] == [
-        "gap",
-        "tracker",
-        "reason",
-    ]
+    assert td["validation"].startswith("aw td check ")
+    assert td["source_path"].startswith("tech-design/src/")
+    assert td["source_path"].endswith(".py")
+    assert td["fill_marker"] == "AW_TD_FILL"
     with project_fixture() as root:
         retired = run_aw(root, "td", "merge", expect_success=False)
         assert "unrecognized subcommand" in retired.stderr
-    return {"artifacts": artifacts, "runner": runner, "ownership": ownership}
+    return {"artifacts": artifacts, "runner": runner}
 
 
 def verify(case_id: str) -> list[str]:
@@ -45,18 +41,18 @@ def verify(case_id: str) -> list[str]:
     dispatch = snapshot["runner"]["dispatch"]
     if case_id == "td-cb-lifecycle-automation-chain-liveness-proof":
         return [
-            "real runner emits EC verification and TD producer emits TD check then CB generation",
+            "real runner emits EC verification and TD producer emits Python apply then TD check",
             "every observed transition names one executable command and a bounded terminal predicate",
         ]
     if case_id == "td-cb-lifecycle-automation-chain-liveness-retry":
-        assert td["validation"]["command"] != td["generation"]["command"]
+        assert td["validation"] != snapshot["artifacts"]["td"]["source_path"]
         return [
-            "validation and generation retries remain distinct deterministic commands",
+            "Python source and validation remain distinct deterministic artifacts",
             "a failed stage preserves its exact artifact identity for retry",
         ]
     if case_id == "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle":
         return [
-            "TD producer has one linear validation-to-CB-generation continuation",
+            "TD producer has one linear Python-authoring-to-validation continuation",
             "no review/revise or merge phase appears in the emitted artifact contract",
         ]
     if case_id == "td-cb-lifecycle-automation-remove-td-merge-command":
@@ -65,10 +61,10 @@ def verify(case_id: str) -> list[str]:
             "parsing the retired verb returns an unrecognized-subcommand failure",
         ]
     if case_id == "td-generation-target-ownership-inferred-single-real-cli":
-        assert td["identity"]["artifact_path"] == td["evidence"][0]
+        assert td["source_path"].startswith("tech-design/src/")
         return [
-            "single project-local TD target is inferred consistently by identity and evidence",
-            "the same slug is carried into the exact CB generation command",
+            "single project-local TD target is a deterministic Python source path",
+            "the same WI identity is carried by the Python authoring artifact",
         ]
     assert dispatch["artifact_quality_profile"]["source_policy"]["mode"] == "spec"
     return [
