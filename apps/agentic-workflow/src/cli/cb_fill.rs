@@ -2544,7 +2544,7 @@ pub fn before() {}\n\
         run(&["add", "README.md"]);
         run(&["commit", "-qm", "seed"]);
         run(&["checkout", "-qb", "persistent-app-branch"]);
-        let foreign = "apps/agentic-workflow/tests/fixtures/foreign.yaml";
+        let foreign = "apps/agentic-workflow/src/fixtures/foreign.yaml";
         let foreign_path = tmp.path().join(foreign);
         std::fs::create_dir_all(foreign_path.parent().unwrap()).unwrap();
         std::fs::write(

@@ -200,7 +200,9 @@ mod tests {
 
     #[test]
     fn test_tokio_spawn_completed_coro() {
-        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let name = MbValue::from_ptr(MbObject::new_str("tokio_test".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -218,7 +220,9 @@ mod tests {
 
     #[test]
     fn test_tokio_gather_empty() {
-        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let coros = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = mb_tokio_gather(coros);
@@ -231,7 +235,9 @@ mod tests {
 
     #[test]
     fn test_tokio_gather_completed_coros() {
-        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let n1 = MbValue::from_ptr(MbObject::new_str("g1".to_string()));
         let l1 = MbValue::from_ptr(MbObject::new_list(vec![]));

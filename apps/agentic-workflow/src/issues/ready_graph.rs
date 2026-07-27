@@ -457,7 +457,7 @@ mod tests {
             ],
         );
         let error = select_ready_change_leaf(&graph, None, &BTreeSet::new()).unwrap_err();
-        assert_eq!(error.code, "unresolved_dependency");
+        assert_eq!(error.code, "missing_relation_target");
         assert_eq!(error.next_command, "aw wi show 11");
     }
 }

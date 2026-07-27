@@ -1,1 +1,0 @@
-"""SQLite and SQLAlchemy adapters."""

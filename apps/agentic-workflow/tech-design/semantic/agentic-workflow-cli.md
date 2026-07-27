@@ -31,7 +31,7 @@ capability_refs:
     gap: self-hosting-root-runner-policy
     claim: self-hosting-root-runner-policy
     coverage: full
-    rationale: "Runner admission rejects Agentic Workflow's own project, capability, and WI roots before mutation, while self-health exposes the sanctioned direct-commit gate partition."
+    rationale: "Runner admission lets Agentic Workflow dogfood its own Python-first project, capability, backlog, and WI roots while self-health exposes the bounded broken-worker fallback."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -1315,15 +1315,6 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
-          - name: "SelfHostingPolicyEnvelope"
-            kind: "struct"
-            public: false
-          - name: "self_hosting_policy_envelope"
-            kind: "function"
-            public: false
-          - name: "emit_self_hosting_policy_error"
-            kind: "function"
-            public: true
           - name: "RunPrintOptions"
             kind: "struct"
             public: true
@@ -3512,8 +3503,10 @@ changes:
       path creates only `pyproject.toml`, `src/runner.py`, one bounded
       `src/<id>.py` contract source, and `evidence/`; it emits the exact
       follow-up check and never creates a Markdown fallback. Clap help names
-      the Python/pyproject contract while retaining fill/gen as compatibility
-      surfaces.
+      the Python/pyproject contract. #2712 removes the compatibility Markdown
+      `fill` and `gen` commands from the public EC lifecycle; draft, check,
+      independent review, lock, and verification remain Python-project
+      operations even when a retired `spec_model` value is still present.
       #1469: `verify_ec_context` gained a `required_only: bool` execution-time
       filter parameter. When `true`, a `required_for_production: false` case
       is never executed — it still gets a `status: "skipped"` entry in
@@ -4034,6 +4027,10 @@ changes:
       create label vector, and `default_spec_path_for_issue_in_project`.
       Libraries resolve under `libs/<name>/tech-design`, apps retain their
       existing root, and a raw `project:` issue label still fails loudly.
+      Issue #2713 removes implicit Markdown fallback from the public `aw td
+      check` and `aw td ast` consumers. Both commands compile the complete
+      Python TD project root, and a configured project rejects any other root
+      or individual source file.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify
@@ -4072,6 +4069,9 @@ changes:
       lock must be a non-symlink regular file at that exact canonical leaf.
       External TD-directory and lock-leaf symlink regressions prove external
       bytes, HEAD, and repository status remain unchanged on rejection.
+      Issue #2713 derives Python TD lock entries from the compiler-owned module
+      inventory and referenced OpenAPI documents. Retired Markdown and runtime
+      cache files no longer affect the Python source or semantic lock digest.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/validate_proposal.rs"
     action: modify
@@ -4593,9 +4593,9 @@ changes:
       command. Lifecycle state and non-graph metadata may advance normally.
       `probe_wi_root_envelope` builds the same `ResolvedRunRoot::Wi`
       envelope `aw goal wi <id>` would emit, with progress streaming
-      disabled (a silent probe, not a real tick). `run_backlog_root`:
-      short-circuits self-hosting projects via
-      `emit_self_hosting_policy_error`; drops parked entries whose change
+      disabled (a silent probe, not a real tick). `run_backlog_root` admits
+      self-hosting through the same reviewed-graph path as every other project,
+      then drops parked entries whose change
       closed since the last drain; asks the shared selector for one ready
       leaf, probes it, parks (never emits) any leaf that reports
       `requires_hitl`/`action == "blocked"`, and reselects so a blocked
@@ -4619,13 +4619,10 @@ changes:
     action: modify
     section: unit-test
     description: |
-      #1899 assertion repair: `self_hosting_policy_envelope_is_terminal_
-      and_has_no_root_retry` previously banned the substring `aw goal
-      capability` anywhere in the serialized policy envelope, which the
-      post-retirement policy prose legitimately names. The gate is now
-      structural: a recursive `has_command_key` walk asserts no `command`
-      key exists anywhere in the envelope JSON, so no executable root
-      retry can be handed back while prose may reference the goal forms.
+      #2446 replaces the terminal self-hosting policy envelope with normal
+      Python-first root admission. Focused invariants pin the policy mode,
+      enabled root runner, non-default bounded fallback, and exact
+      current-worker failure trigger.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/llm.rs"
     action: modify

@@ -94,7 +94,10 @@ fn platform_mechanisms_delegate_to_shared_owners() {
         "RaftHost::spawn_with_peer_transport",
         "service_auth::spawn_registry_file_watcher",
     ] {
-        assert!(CLI.contains(seam), "CLI/runtime seam must delegate through {seam}");
+        assert!(
+            CLI.contains(seam),
+            "CLI/runtime seam must delegate through {seam}"
+        );
     }
 
     for seam in [
@@ -132,14 +135,26 @@ fn shared_and_domain_ownership_are_total_and_disjoint() {
         .filter_map(|(concern, owner)| (*owner == Owner::Domain).then_some(*concern))
         .collect();
 
-    assert_eq!(all.len(), OWNERSHIP.len(), "every concern must be classified exactly once");
-    assert!(shared.is_disjoint(&domain), "shared failures cannot be reclassified as domain skips");
-    assert_eq!(shared.len() + domain.len(), all.len(), "ownership classification must be total");
+    assert_eq!(
+        all.len(),
+        OWNERSHIP.len(),
+        "every concern must be classified exactly once"
+    );
+    assert!(
+        shared.is_disjoint(&domain),
+        "shared failures cannot be reclassified as domain skips"
+    );
+    assert_eq!(
+        shared.len() + domain.len(),
+        all.len(),
+        "ownership classification must be total"
+    );
 
     assert!(README.contains("### Search Core"));
     assert!(README.contains("### Dynamic Shard Topology"));
     assert!(
-        README.contains("operator watches one namespace and owns\nstorage topology, reshard phases"),
+        README
+            .contains("operator watches one namespace and owns\nstorage topology, reshard phases"),
         "Lumen-specific search and CRD reshard policy must remain app-owned"
     );
 }

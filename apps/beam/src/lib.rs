@@ -36,20 +36,20 @@
 //!   collection registry + REST routes that turn the engine into a callable
 //!   vector database.
 
+pub mod application;
+pub mod backup;
 pub mod bench;
 pub mod collection;
 pub mod dataset;
+pub mod domain;
+pub mod dx;
 pub mod gpu;
 pub mod index;
+pub mod infrastructure;
 pub mod payload;
 pub mod persist;
 pub mod service;
 pub mod spec;
-pub mod dx;
-pub mod backup;
-pub mod domain;
-pub mod infrastructure;
-pub mod application;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =

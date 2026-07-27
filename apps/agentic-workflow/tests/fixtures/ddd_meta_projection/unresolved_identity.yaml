@@ -1,3 +1,0 @@
-schema_version: aw.ddd-meta-projection.v1
-projections:
-  - { surface: capabilities, identity: context:unknown, facts: [promise] }

@@ -25,9 +25,9 @@ authoring, CLI, service, and meta-doc rules remain in
 
 - Treat `CAPABILITIES.md` as the project promise map and keep capability IDs,
   work-root rows, WI refs, TD refs, and EC evidence resolvable.
-- For AW self-hosting repairs, direct commits are allowed when the lifecycle
-  itself is broken; otherwise prefer the active `aw wi` -> `aw ec` -> `aw td`
-  -> `aw cb check` route.
+- AW self-hosting uses the active `aw wi` -> `aw ec` -> `aw td` -> `aw cb
+  check` route. A bounded direct commit with `Refs #<issue>` is allowed only
+  when the exact worker verb required by the current root is itself broken.
 - For a newly accepted bounded WI, establish the project-local EC skeleton,
   fill, independent review, and generation before `aw td create`; EC red
   returns to bounded TD/codegen adaptation, while EC green permits terminal

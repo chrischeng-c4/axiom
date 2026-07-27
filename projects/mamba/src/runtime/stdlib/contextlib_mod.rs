@@ -1164,8 +1164,10 @@ mod tests {
                 } else {
                     panic!("expected string for _type");
                 }
-                assert!(super::super::super::dict_ops::dict_get_exact_str(&map, "_exceptions")
-                    .is_some());
+                assert!(
+                    super::super::super::dict_ops::dict_get_exact_str(&map, "_exceptions")
+                        .is_some()
+                );
             } else {
                 panic!("expected dict");
             }

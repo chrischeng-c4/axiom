@@ -14,9 +14,9 @@ claim.
 
 As a human you mostly touch three surfaces:
 
-- `aw capability run --project <name>` (or `aw wi run <id>`) — hand a project,
-  capability, or single work item to an agent and let the CLI drive it end to
-  end.
+- `aw goal capability --project <name>` (or `aw goal wi <id>`) — hand a
+  project, capability, or single work item to an agent and let the CLI drive
+  it end to end.
 - `aw health --project <name>` — the read-only dashboard: readiness, gates,
   blockers, and the exact next command when something needs attention.
 - `aw ec review` — the human judgment point: approve or bounce the external
@@ -26,6 +26,11 @@ As a human you mostly touch three surfaces:
 
 Everything else is agent-facing: agents orient with `aw llm` and then follow
 the CLI's own stdout (`next.command`) from one step to the next.
+
+External behavior is implemented and reviewed as ordinary Python under
+`external-contracts/`. Rust rules that require crate-private state stay
+colocated with their semantic `src/**` owner and run through the separate
+library invariant gate; there is no app-level Rust EC wrapper tree.
 
 ## Contributing
 

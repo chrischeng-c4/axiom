@@ -31,18 +31,14 @@ pub struct TdArgs {
 #[derive(Debug, Subcommand)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub enum TdCommand {
-    /// Author a tech-design spec (brief or apply mode).
+    /// Author and validate a WI-bound Python tech-design module.
     Create(CreateArgs),
-    /// Read-only rule-registry check against a project's `tech-design/`
-    /// files. Accepts a slug (resolved in the current checkout), a single
-    /// file path, or a directory. Runs the unified rule registry; no
-    /// commit, no phase advance, no envelope. Exits non-zero on any
-    /// violation. The sole authoritative read-only TD checker — folds in
-    /// the retired `aw td validate`'s read-only rule check (issue #1277).
+    /// Compile and check one canonical Python TD project root.
+    /// The retired Markdown rule registry remains available only to isolated
+    /// regression fixtures, never as an implicit lifecycle fallback.
     /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
     Check(CheckArgs),
-    /// Parse a TD spec file into the unified TDAst and dump it as JSON.
-    /// Debug/inspection verb — accepts a file path (no slug context).
+    /// Compile a canonical Python TD project root and dump its IR as JSON.
     Ast(AstArgs),
     /// Convert legacy mermaid blocks to Mermaid Plus format.
     /// @spec apps/agentic-workflow/tech-design/generate/diagrams/mermaid_plus/migrate.md#cli
@@ -124,7 +120,7 @@ pub struct TdAuditRecordArgs {
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
 #[derive(Debug, Args)]
 pub struct AstArgs {
-    /// Path to the TD spec markdown file (relative or absolute).
+    /// Path to the Python TD project root (relative or absolute).
     pub path: String,
     /// Pretty-print the JSON output (default: compact).
     #[arg(long)]
@@ -134,30 +130,21 @@ pub struct AstArgs {
 #[derive(Debug, Args)]
 /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct CreateArgs {
-    /// Issue slug. Optional when `--from-source` is set: a slug is then
-    /// derived from the source path's file stem, matching the retired `aw
-    /// td code-claim`'s prior default.
+    /// Issue slug that owns the Python TD module.
     #[arg(default_value = "")]
     pub slug: String,
-    /// Apply mode: validate the spec in-place and emit dispatch envelope.
+    /// Validate the authored Python module and advance the TD lifecycle.
     #[arg(long)]
     pub apply: bool,
-    /// Path to the spec file (relative to the current checkout root). Required with --apply.
+    /// Checkout-relative Python TD module below `<project>/tech-design/src/`.
+    /// Required with --apply; normally emitted by the initial create handoff.
     #[arg(long)]
     pub spec_path: Option<String>,
-    /// TD authoring pass. `applicability` fills section applicability/N/A
-    /// evidence; `contract` fills the approved contract content.
-    #[arg(long)]
+    /// Retired Markdown section-pass compatibility input.
+    #[arg(long, hide = true)]
     pub phase: Option<String>,
-    /// Per-section apply: merge ONLY the section of the given `type:`
-    /// annotation from the payload file at
-    /// `/tmp/aw/workspaces/<workspace>/payloads/td/<slug>/<phase>/<section>.json`
-    /// into the spec. Other sections in the spec are untouched. Required
-    /// for loop-fill flow where the subagent applies one section at a time.
-    /// Payloads are JSON. Generic sections use `{"body":"<section markdown>"}`;
-    /// structured sections such as `unit-test` use their section-specific
-    /// schema and are rendered by this command.
-    #[arg(long)]
+    /// Retired Markdown section-payload compatibility input.
+    #[arg(long, hide = true)]
     pub section: Option<String>,
     /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
     #[arg(long, hide = true)]
@@ -168,36 +155,21 @@ pub struct CreateArgs {
     /// Pretty-print the JSON envelope.
     #[arg(long)]
     pub pretty: bool,
-    /// Adopt an existing source file or directory into the score lifecycle
-    /// by generating a TD spec via the fillback pipeline, instead of
-    /// authoring a new TD from scratch. Folds the retired `aw td
-    /// code-claim` verb (epic #1270 R5 / #1273): the generated spec now
-    /// always targets the project-local `tech-design/` root — resolved via
-    /// `--project`, or inferred from the source path against the
-    /// configured project scopes when omitted — instead of the legacy
-    /// repo-root `.aw/tech-design` (#1243). The old standalone verb's
-    /// `--init` flag (`.aw/` workspace bootstrap) has no project-local
-    /// equivalent and is retired: a project's `tech-design/` root is
-    /// resolved from `aw.toml`, not created ad hoc.
-    #[arg(long)]
+    /// Retired Markdown fillback compatibility input. Canonical create no
+    /// longer accepts this mode.
+    #[arg(long, hide = true)]
     pub from_source: Option<String>,
-    /// With `--from-source`: tech-design group name for the generated
-    /// spec's output path. Inferred from the source path when omitted.
-    #[arg(long)]
+    /// Retired `--from-source` compatibility input.
+    #[arg(long, hide = true)]
     pub group: Option<String>,
-    /// With `--from-source`: skip filing/linking a durable tracker
-    /// work-item for the adopted code path (see the retired code-claim's
-    /// `--no-issue`, issue #925).
-    #[arg(long)]
+    /// Retired `--from-source` compatibility input.
+    #[arg(long, hide = true)]
     pub no_issue: bool,
-    /// With `--from-source`: suppress interactive clarification prompts.
-    /// Required for non-TTY environments such as agent dispatch and CI.
-    #[arg(long)]
+    /// Retired `--from-source` compatibility input.
+    #[arg(long, hide = true)]
     pub non_interactive: bool,
-    /// With a file `--from-source`: commit only the exact generated TD artifact
-    /// file. Directory adoption remains caller-committed because a directory
-    /// path is not a safe exact commit scope.
-    #[arg(long, requires = "from_source")]
+    /// Retired `--from-source` compatibility input.
+    #[arg(long, requires = "from_source", hide = true)]
     pub commit: bool,
 }
 
@@ -211,33 +183,23 @@ pub struct GenCodeArgs {
     pub spec_path: Option<String>,
 }
 
-/// Args for `aw td check <target>` — the unified read-only TD checker.
+/// Args for `aw td check <target>` — compile the canonical Python TD project.
 ///
-/// This is the sole authoritative read-only checker (issue #1277): it folds
-/// in the retired `aw td validate`'s spec-content rule check (path, prefix,
-/// and slug shapes all shared the same rule registry already) plus the
-/// section-type registry conformance pass below.
-///
-/// `--section-type-conformance` switches to the registry-conformance pass
-/// (R2 of #1212): walks a project's `tech-design/**/*.md` under the
-/// resolved scope and reports per-spec headings whose `<!-- type: ... -->`
-/// annotation is unknown / deprecated / missing.
+/// Markdown paths, slugs, and the retired section-type reader are preserved
+/// only behind the test-only legacy seam while their corpus is migrated.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-td-check-section-type-conformance.md#schema
 #[derive(Debug, Args)]
 pub struct CheckArgs {
-    /// Issue slug, spec file path, or directory to check. Optional when
-    /// `--section-type-conformance` is set (defaults to project root).
+    /// Python TD project root to compile and check.
     #[arg(default_value = "")]
     pub target: String,
     /// Emit findings as a JSON array.
     #[arg(long)]
     pub json: bool,
-    /// Run the section-type registry conformance pass instead of the
-    /// rule-registry check. Reads a project's
-    /// `tech-design/surface/specs/score-section-type-registry.md`.
-    #[arg(long)]
+    /// Retired Markdown section-type compatibility input.
+    #[arg(long, hide = true)]
     pub section_type_conformance: bool,
     /// Root-owned Python artifact lifecycle WI. A successful Python TD check
     /// records target generation rather than requiring root re-discovery.
@@ -2613,6 +2575,283 @@ pub(crate) fn default_spec_path_for_issue_in_project(
     ))
 }
 
+const PYTHON_TD_FILL_MARKER: &str = "AW_TD_FILL";
+
+fn python_module_segment(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut last_underscore = true;
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            output.push(character.to_ascii_lowercase());
+            last_underscore = false;
+        } else if !last_underscore {
+            output.push('_');
+            last_underscore = true;
+        }
+    }
+    while output.ends_with('_') {
+        output.pop();
+    }
+    if output.is_empty() {
+        output.push_str("work_item");
+    }
+    if output.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+        output.insert_str(0, "wi_");
+    }
+    output
+}
+
+fn python_td_root_for_issue(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<(String, std::path::PathBuf)> {
+    let project = project_label_for_issue(issue).ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot derive Python TD root for issue '{fallback_slug}': no recognized project \
+             label; expected one of `crate:<name>`, `app:<name>`, or `lib:<name>`"
+        )
+    })?;
+    let resolved =
+        crate::services::project_registry::resolve_td_root_from_config(project_root, &project)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "cannot derive Python TD root for issue '{fallback_slug}': project \
+                     '{project}' is not resolvable via aw.toml ({}: {})",
+                    error.kind,
+                    error.message,
+                )
+            })?;
+    Ok((project, std::path::PathBuf::from(resolved.root)))
+}
+
+fn default_python_td_path_for_issue_in_project(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<String> {
+    let (project, td_root) = python_td_root_for_issue(project_root, issue, fallback_slug)?;
+    let semantic_name =
+        td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("wi-{fallback_slug}"));
+    let module = python_module_segment(&semantic_name);
+    let package = python_module_segment(&project);
+    let relative_root = td_root.strip_prefix(project_root).unwrap_or(&td_root);
+    Ok(slash_path(
+        relative_root
+            .join("src")
+            .join(package)
+            .join("work_items")
+            .join(format!("{module}.py")),
+    ))
+}
+
+fn python_td_capability_context(body: &str) -> Option<String> {
+    let section = body
+        .split_once("## Capability Alignment")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default()
+        .split("\n## ")
+        .next()
+        .unwrap_or_default();
+    section.lines().find_map(|line| {
+        let value = line
+            .trim()
+            .strip_prefix("Capability:")
+            .map(str::trim)?
+            .trim_matches('`');
+        let slug = slugify_spec_filename(value);
+        (!slug.is_empty()).then_some(slug)
+    })
+}
+
+fn python_td_artifact_id(issue: &Issue, slug: &str) -> String {
+    let mut context = python_td_capability_context(&issue.body)
+        .or_else(|| {
+            crate::cli::capability::wi_body_capability_alignment_ids(&issue.body)
+                .into_iter()
+                .next()
+        })
+        .map(|value| slugify_spec_filename(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            project_label_for_issue(issue)
+                .map(|value| slugify_spec_filename(&value))
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "work-item".to_string())
+        });
+    if !context
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_lowercase)
+    {
+        context.insert_str(0, "capability-");
+    }
+    let semantic_name =
+        td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("work-item-{slug}"));
+    let wi_identity = {
+        let value = slugify_spec_filename(slug);
+        if value.is_empty() {
+            "work-item".to_string()
+        } else {
+            value
+        }
+    };
+    let mut name = format!(
+        "{}-wi-{}",
+        slugify_spec_filename(&semantic_name),
+        wi_identity
+    );
+    if !name.as_bytes().first().is_some_and(u8::is_ascii_lowercase) {
+        name.insert_str(0, "work-item-");
+    }
+    format!("artifact:{context}/{name}")
+}
+
+fn python_td_scaffold(issue: &Issue, slug: &str) -> String {
+    let title = issue.title.replace(['\n', '\r'], " ");
+    let artifact_id = python_td_artifact_id(issue, slug);
+    let documentation = serde_json::to_string(&format!(
+        "Tech design for WI #{slug}: {title}.\n\n@spec #{slug}"
+    ))
+    .expect("Python TD documentation is JSON-string serializable");
+    let artifact_literal =
+        serde_json::to_string(&artifact_id).expect("artifact id is JSON-string serializable");
+    let work_item_literal =
+        serde_json::to_string(slug).expect("work-item id is JSON-string serializable");
+    format!(
+        r#"{documentation}
+
+from __future__ import annotations
+
+
+__aw_artifact_id__ = {artifact_literal}
+__aw_work_item__ = {work_item_literal}
+
+
+def design_contract() -> str:
+    """Express the executable design contract for this bounded change."""
+
+    # {PYTHON_TD_FILL_MARKER}: replace this marker with executable Python TD declarations.
+    return "pending"
+"#
+    )
+}
+
+fn initialize_python_td_module(
+    module_path: &std::path::Path,
+    issue: &Issue,
+    slug: &str,
+) -> Result<bool> {
+    let expected_binding = format!("__aw_work_item__ = \"{slug}\"");
+    if module_path.exists() {
+        let content = std::fs::read_to_string(module_path)
+            .with_context(|| format!("read Python TD module {}", module_path.display()))?;
+        if !content.lines().any(|line| line.trim() == expected_binding) {
+            anyhow::bail!(
+                "Python TD module '{}' already exists but is not bound to WI #{}",
+                module_path.display(),
+                slug
+            );
+        }
+        return Ok(false);
+    }
+    if let Some(parent) = module_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create Python TD module parent {}", parent.display()))?;
+    }
+    std::fs::write(module_path, python_td_scaffold(issue, slug))
+        .with_context(|| format!("initialize Python TD module {}", module_path.display()))?;
+    Ok(true)
+}
+
+fn resolve_python_td_module_path(
+    project_root: &std::path::Path,
+    td_root: &std::path::Path,
+    spec_path: &str,
+) -> Result<std::path::PathBuf> {
+    let relative = std::path::Path::new(spec_path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "Python TD source path must be checkout-relative and normalized; got '{}'",
+            spec_path
+        );
+    }
+    let module_abs = project_root.join(relative);
+    let source_root = td_root.join("src");
+    if module_abs.extension().and_then(|value| value.to_str()) != Some("py")
+        || !module_abs.starts_with(&source_root)
+    {
+        anyhow::bail!(
+            "Python TD module must be a .py file below '{}'; got '{}'",
+            source_root.display(),
+            module_abs.display()
+        );
+    }
+    Ok(module_abs)
+}
+
+fn validate_python_td_authoring_module(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    slug: &str,
+    spec_path: &str,
+) -> Result<String> {
+    let (_, td_root) = python_td_root_for_issue(project_root, issue, slug)?;
+    let module_abs = resolve_python_td_module_path(project_root, &td_root, spec_path)?;
+    let content = std::fs::read_to_string(&module_abs)
+        .with_context(|| format!("read Python TD module {}", module_abs.display()))?;
+    if content.contains(PYTHON_TD_FILL_MARKER) {
+        anyhow::bail!(
+            "Python TD module '{}' is still an unfilled authoring scaffold",
+            module_abs.display()
+        );
+    }
+    let expected_binding = format!("__aw_work_item__ = \"{slug}\"");
+    if !content.lines().any(|line| line.trim() == expected_binding) {
+        anyhow::bail!(
+            "Python TD module '{}' must retain its exact WI binding: {}",
+            module_abs.display(),
+            expected_binding
+        );
+    }
+    let expected_artifact = python_td_artifact_id(issue, slug);
+    let ir = crate::services::python_td::compile_python_td_project(&td_root)?;
+    let module_rel = slash_path(
+        module_abs
+            .strip_prefix(&td_root)
+            .unwrap_or(&module_abs)
+            .to_path_buf(),
+    );
+    let module = ir
+        .modules
+        .iter()
+        .find(|module| module.path == module_rel)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "compiled Python TD inventory omitted authored module '{}'",
+                module_rel
+            )
+        })?;
+    if module.artifact_id.as_deref() != Some(expected_artifact.as_str()) {
+        anyhow::bail!(
+            "Python TD module '{}' must retain artifact identity '{}'",
+            module_abs.display(),
+            expected_artifact
+        );
+    }
+    if module.declarations.is_empty() {
+        anyhow::bail!(
+            "Python TD module '{}' must declare at least one executable design symbol",
+            module_abs.display()
+        );
+    }
+    Ok(ir.semantic_digest)
+}
+
 /// Resolve the TD documents owned by an existing issue without consulting
 /// checkout-global legacy discovery. Exact `Issue.implements` paths win;
 /// issues created before that field was populated recover through the same
@@ -3334,15 +3573,9 @@ pub async fn run(args: TdArgs) -> Result<()> {
         | TdCommand::Lock(_)
         | TdCommand::AuditRecord(_) => {}
         TdCommand::Create(a) => {
-            if a.from_source.is_some() {
-                // Folded `aw td code-claim` (#1273): same "any pending lock
-                // blocks it" guard the retired standalone verb used, since
-                // this mode has no single issue slug to scope the lock to.
-                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            } else {
-                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                    .await?;
-            }
+            validate_python_td_create_args(a)?;
+            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
+                .await?;
         }
         TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
@@ -3352,7 +3585,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
     match args.command {
         TdCommand::Create(a) => run_create(a, project.as_deref()).await,
         TdCommand::Check(a) => run_check(a, project.as_deref()),
-        TdCommand::Ast(a) => run_ast(a),
+        TdCommand::Ast(a) => run_ast(a, project.as_deref()),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
@@ -3369,18 +3602,56 @@ pub async fn run(args: TdArgs) -> Result<()> {
     }
 }
 
-/// `aw td check <target>` — the unified read-only TD checker (issue #1277).
-///
-/// Resolves `target` as either a slug (current checkout spec dir), a single
-/// file path (contains `/` or ends `.md` and points at a file), or a
-/// directory. Runs the unified rule registry; exits 0 with no findings,
-/// 1 with violations, 2 on invocation error.
+/// `aw td check <target>` — compile one canonical Python TD project root.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()> {
-    // R2 of #1212: section-type-conformance dispatch runs before any
-    // target resolution — the verb defaults to scanning the project root
-    // and treats `target` as an optional positional path.
+    if !crate::models::project::test_only_legacy_artifact_model_enabled() {
+        if args.section_type_conformance {
+            anyhow::bail!(
+                "`aw td check --section-type-conformance` is a retired Markdown reader; \
+                 use explicit migration tooling before entering the Python TD lifecycle"
+            );
+        }
+        let project_root = crate::find_project_root()?;
+        let target = args.target.trim();
+        if target.is_empty() {
+            anyhow::bail!("aw td check requires a Python TD project root");
+        }
+        let candidate = canonical_python_td_root(
+            &project_root,
+            std::path::Path::new(target),
+            configured_project,
+        )?;
+        let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
+        if args.json {
+            println!("{}", serde_json::to_string(&ir)?);
+        } else {
+            println!(
+                "Python TD check passed: {} module(s), semantic digest {}",
+                ir.modules.len(),
+                ir.semantic_digest
+            );
+        }
+        if let (Some(project), Some(wi)) = (configured_project, args.wi.as_deref()) {
+            let row = crate::services::project_registry::resolve_project_config_row(
+                &project_root,
+                project,
+            )?;
+            crate::cli::td_lock::write_project_td_lock_snapshot_at_root(&project_root, &row.name)?;
+            crate::cli::ec::persist_ec_first_next_action(
+                &project_root,
+                wi,
+                format!(
+                    "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                    row.name,
+                ),
+            )?;
+        }
+        return Ok(());
+    }
+
+    // Test-only isolation for the retired Markdown reader.
     if args.section_type_conformance {
         let path = if args.target.trim().is_empty() {
             None
@@ -3465,12 +3736,59 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
     run_slug_check(target, None, args.json)
 }
 
-/// Run `aw td ast <path>` — parse a Markdown, Python-project, or Python UI TD
-/// into its inspectable IR and emit JSON.
+fn canonical_python_td_root(
+    project_root: &std::path::Path,
+    input: &std::path::Path,
+    configured_project: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    if !input.is_dir() {
+        anyhow::bail!(
+            "canonical Python TD input must be a project root directory, not `{}`; \
+             Markdown specs and individual Python modules are not lifecycle inputs",
+            input.display()
+        );
+    }
+    let candidate = input
+        .canonicalize()
+        .with_context(|| format!("resolve Python TD root {}", input.display()))?;
+    if let Some(project) = configured_project {
+        let configured =
+            crate::services::project_registry::resolve_td_root_from_config(project_root, project)
+                .map_err(|error| anyhow::anyhow!("{}", error.message))?;
+        let expected = std::path::PathBuf::from(configured.root)
+            .canonicalize()
+            .with_context(|| format!("resolve configured Python TD root for `{project}`"))?;
+        if candidate != expected {
+            anyhow::bail!(
+                "Python TD input `{}` does not match configured project `{project}` root `{}`",
+                candidate.display(),
+                expected.display()
+            );
+        }
+    }
+    Ok(candidate)
+}
+
+/// Run `aw td ast <path>` — compile the canonical Python TD project IR.
 ///
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
-fn run_ast(args: AstArgs) -> Result<()> {
+fn run_ast(args: AstArgs, configured_project: Option<&str>) -> Result<()> {
     let path = std::path::PathBuf::from(&args.path);
+    if !crate::models::project::test_only_legacy_artifact_model_enabled() {
+        let project_root = crate::find_project_root()?;
+        let root = canonical_python_td_root(&project_root, &path, configured_project)?;
+        let ir = crate::services::python_td::compile_python_td_project(&root)?;
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&ir)
+        } else {
+            serde_json::to_string(&ir)
+        }
+        .context("failed to serialise Python TD IR")?;
+        println!("{}", json);
+        return Ok(());
+    }
+
+    // Test-only isolation for the retired single-file and Markdown readers.
     if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("py") {
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("read Python UI TD {}", path.display()))?;
@@ -3510,20 +3828,314 @@ fn run_ast(args: AstArgs) -> Result<()> {
 // ── td create ────────────────────────────────────────────────────────
 
 async fn run_create(args: CreateArgs, project: Option<&str>) -> Result<()> {
-    if let Some(source_path) = args.from_source.clone() {
-        return run_create_from_source(&args, source_path, project).await;
+    validate_python_td_create_args(&args)?;
+    if args.apply {
+        run_create_python_apply(&args, project).await
+    } else {
+        run_create_python_brief(&args, project).await
     }
-    if args.slug.trim().is_empty() {
+}
+
+fn validate_python_td_create_args(args: &CreateArgs) -> Result<()> {
+    if args.from_source.is_some() {
         anyhow::bail!(
-            "aw td create requires <slug> (or pass --from-source <code-path> to adopt existing \
-             code, folding the retired `aw td code-claim`)"
+            "`aw td create --from-source` is retired from the canonical Python TD producer; \
+             use an explicit migration work item instead of creating a Markdown TD"
         );
     }
-    if args.apply {
-        run_create_apply(&args).await
-    } else {
-        run_create_brief(&args).await
+    if args.slug.trim().is_empty() {
+        anyhow::bail!("aw td create requires <slug>");
     }
+    if args.phase.is_some() || args.section.is_some() {
+        anyhow::bail!(
+            "`--phase` and `--section` are retired Markdown payload inputs; edit the emitted \
+             Python source handoff and run its exact --apply command"
+        );
+    }
+    Ok(())
+}
+
+async fn prepare_python_td_workspace(
+    project_root: &std::path::Path,
+    issue_ref: &str,
+    slug: &str,
+    branch: &str,
+    bootstrap_phase: &str,
+) -> Result<()> {
+    if is_recoverable_td_authoring_phase(bootstrap_phase) {
+        let current = crate::branch_switch::current_branch(project_root)?;
+        let resume_workspace_present = !should_use_td_branch(&current)
+            || crate::branch_switch::branch_exists_local(project_root, branch).unwrap_or(false);
+        if resume_workspace_present {
+            td_activate_inplace_if_present(project_root, slug)?;
+        }
+        match super::cb::reachable_td_init_from_head(project_root, slug)? {
+            super::cb::TdInitReachability::Found(_) => {
+                if !resume_workspace_present {
+                    td_activate_inplace_if_present(project_root, slug)?;
+                }
+            }
+            super::cb::TdInitReachability::NoSlugHistory => {
+                reset_unreachable_td_init(project_root, issue_ref, slug, "no-slug-history", None)
+                    .await?;
+                provision_td_workspace(project_root, issue_ref, slug, branch, None).await?;
+            }
+            super::cb::TdInitReachability::SlugHistoryWithoutInit => {
+                reset_unreachable_td_init(
+                    project_root,
+                    issue_ref,
+                    slug,
+                    "slug-history-without-init",
+                    None,
+                )
+                .await?;
+                provision_td_workspace(project_root, issue_ref, slug, branch, None).await?;
+            }
+        }
+    } else if bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_") {
+        td_activate_inplace_if_present(project_root, slug)?;
+    } else {
+        provision_td_workspace(project_root, issue_ref, slug, branch, None).await?;
+    }
+    Ok(())
+}
+
+async fn run_create_python_brief(
+    args: &CreateArgs,
+    configured_project: Option<&str>,
+) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let issue_ref = &args.slug;
+    let bootstrap_issue = bootstrap_td_issue(&project_root, issue_ref).await?;
+    let slug = workflow_slug_for_issue(&bootstrap_issue, issue_ref);
+    let branch = td_branch_name(&slug);
+    let bootstrap_phase = bootstrap_issue.phase.as_deref().unwrap_or_default();
+    prepare_python_td_workspace(&project_root, issue_ref, &slug, &branch, bootstrap_phase).await?;
+    let active_branch = crate::branch_switch::current_branch(&project_root)?;
+    let backend = LocalBackend::from_project_root(&project_root);
+    let issue = match backend.get(issue_ref).await? {
+        Some(issue) => issue,
+        None => backend
+            .get(&slug)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in workspace", issue_ref))?,
+    };
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if phase != "td_inited" {
+        anyhow::bail!(
+            "issue '{}' has phase '{}', expected 'td_inited'",
+            issue_ref,
+            phase
+        );
+    }
+    let (project, td_root) = python_td_root_for_issue(&project_root, &issue, &slug)?;
+    if let Some(configured) = configured_project {
+        if configured != project {
+            anyhow::bail!(
+                "--project '{}' disagrees with WI #{} owner project '{}'",
+                configured,
+                slug,
+                project
+            );
+        }
+    }
+    let spec_path = match args.spec_path.as_deref() {
+        Some(path) => path.to_string(),
+        None => default_python_td_path_for_issue_in_project(&project_root, &issue, &slug)?,
+    };
+    let spec_abs = resolve_python_td_module_path(&project_root, &td_root, &spec_path)?;
+    let initialized = initialize_python_td_module(&spec_abs, &issue, &slug)?;
+    if !issue.implements.iter().any(|path| path == &spec_path) {
+        let mut updated = issue.clone();
+        updated.implements.push(spec_path.clone());
+        backend.write(&updated).await?;
+    }
+    let expected_command = format!(
+        "aw td create {} --apply --spec-path {} --project {}",
+        slug, spec_path, project
+    );
+    let already_locked =
+        super::workflow_guard::parse_projection(&issue.body).is_some_and(|projection| {
+            projection.locked
+                && projection.owner.as_deref() == Some("td")
+                && projection.expected_payload.as_deref() == Some(spec_path.as_str())
+                && projection.expected_command.as_deref() == Some(expected_command.as_str())
+        });
+    if !already_locked {
+        super::workflow_guard::create_issue_lock(
+            &project_root,
+            &super::workflow_guard::TransitionLock::new(&slug, "td", expected_command.clone())
+                .with_expected_payload(spec_path.clone())
+                .with_active_phase("td_inited")
+                .with_active_branch(active_branch.clone())
+                .with_dirty_paths([spec_path.clone()]),
+        )
+        .await?;
+        let current_issue = backend.get(&slug).await?.unwrap_or_else(|| issue.clone());
+        let issue_path = issue_path_arg(&backend, &current_issue);
+        commit_lifecycle_with_extra(
+            &project_root,
+            &slug,
+            "Python TD source initialized",
+            "Td-Python-Source",
+            &[spec_path.as_str(), issue_path.as_str()],
+            &[
+                ("Lifecycle-Phase", "td_inited"),
+                ("TD-Source", spec_path.as_str()),
+                ("Next-Command", expected_command.as_str()),
+            ],
+        )?;
+    }
+    let next = next_dispatch(
+        expected_command.clone(),
+        "author the WI-bound Python TD module, remove AW_TD_FILL, and apply it",
+        None,
+    );
+    let td_root_rel = slash_path(
+        td_root
+            .strip_prefix(&project_root)
+            .unwrap_or(&td_root)
+            .to_path_buf(),
+    );
+    let env = serde_json::json!({
+        "action": "dispatch",
+        "agent": null,
+        "slug": slug,
+        "next": next,
+        "artifact": {
+            "schema_version": "aw.python-td-authoring.v1",
+            "kind": "python_td",
+            "source_path": spec_path,
+            "initialized": initialized,
+            "work_item": slug,
+            "artifact_id": python_td_artifact_id(&issue, &slug),
+            "fill_marker": PYTHON_TD_FILL_MARKER,
+            "validation": format!("aw td check {} --project {} --wi {}", td_root_rel, project, slug),
+        },
+        "target": {
+            "source_path": spec_path,
+            "project": project,
+            "branch": active_branch,
+        },
+        "invoke": {
+            "command": "aw td create",
+            "args": {
+                "slug": slug,
+                "apply": true,
+                "spec_path": spec_path,
+                "project": project,
+                "source_path": spec_path,
+            },
+        },
+    });
+    print_json_value(&env, args.pretty)?;
+    let _ = args.json;
+    Ok(())
+}
+
+async fn run_create_python_apply(
+    args: &CreateArgs,
+    configured_project: Option<&str>,
+) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let slug = &args.slug;
+    let spec_path = args
+        .spec_path
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--spec-path is required with --apply"))?;
+    td_activate_inplace_for_scoped_mutation(&project_root, slug)?;
+    let worktree_abs = td_workspace_path(&project_root, slug);
+    let backend = LocalBackend::from_project_root(&worktree_abs);
+    let issue = backend
+        .get(slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if phase != "td_inited" {
+        return td_error(
+            slug,
+            format!("unexpected phase '{}' for Python td create --apply", phase),
+        );
+    }
+    let (project, td_root) = python_td_root_for_issue(&worktree_abs, &issue, slug)?;
+    if let Some(configured) = configured_project {
+        if configured != project {
+            anyhow::bail!(
+                "--project '{}' disagrees with WI #{} owner project '{}'",
+                configured,
+                slug,
+                project
+            );
+        }
+    }
+    let semantic_digest =
+        validate_python_td_authoring_module(&worktree_abs, &issue, slug, spec_path)?;
+    let mut updated_issue = issue.clone();
+    if !updated_issue
+        .implements
+        .iter()
+        .any(|path| path == spec_path)
+    {
+        updated_issue.implements.push(spec_path.to_string());
+    }
+    updated_issue.phase = Some("td_created".to_string());
+    updated_issue.validation_errors.clear();
+    backend.write(&updated_issue).await?;
+    super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
+    let refreshed = backend
+        .get(slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("issue '{}' disappeared after Python TD apply", slug))?;
+    let issue_path = issue_path_arg(&backend, &refreshed);
+    commit_lifecycle_with_extra(
+        &worktree_abs,
+        slug,
+        "Python TD authored",
+        "Td-Create",
+        &[spec_path, issue_path.as_str()],
+        &[
+            ("Lifecycle-Phase", "td_created"),
+            ("TD-Source", spec_path),
+            ("TD-Semantic-Digest", semantic_digest.as_str()),
+            ("Next-Command", "aw td check"),
+        ],
+    )?;
+    let td_root_rel = slash_path(
+        td_root
+            .strip_prefix(&worktree_abs)
+            .unwrap_or(&td_root)
+            .to_path_buf(),
+    );
+    let command = format!(
+        "aw td check {} --project {} --wi {}",
+        td_root_rel, project, slug
+    );
+    let env = serde_json::json!({
+        "action": "dispatch",
+        "agent": null,
+        "slug": slug,
+        "next": next_dispatch(
+            command.clone(),
+            "Python TD source compiled and the lifecycle advanced to td_created",
+            None,
+        ),
+        "artifact": {
+            "schema_version": "aw.python-td-authoring.v1",
+            "kind": "python_td",
+            "source_path": spec_path,
+            "work_item": slug,
+            "semantic_digest": semantic_digest,
+        },
+        "invoke": {
+            "command": "aw td check",
+            "args": {
+                "target": td_root_rel,
+                "project": project,
+                "wi": slug,
+            },
+        },
+    });
+    print_json_value(&env, args.pretty)
 }
 
 // `aw td create --from-source <code-path>` — folds the retired standalone
@@ -5679,6 +6291,48 @@ mod tests {
     }
 
     #[test]
+    fn python_td_canonical_routing_check_and_ast_require_configured_project_root() {
+        let root = tempfile::tempdir().unwrap();
+        let td_root = root.path().join("projects/demo/tech-design");
+        let module = td_root.join("src/demo/work_items/example.py");
+        std::fs::create_dir_all(module.parent().unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &module,
+            "__aw_artifact_id__ = \"artifact:demo/example\"\n\ndef example() -> None:\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(td_root.join("legacy.md"), "# Retired\n").unwrap();
+
+        assert_eq!(
+            canonical_python_td_root(root.path(), &td_root, Some("demo")).unwrap(),
+            td_root.canonicalize().unwrap()
+        );
+        let file_error = canonical_python_td_root(root.path(), &module, Some("demo"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            file_error.contains("project root directory"),
+            "{file_error}"
+        );
+
+        let other = root.path().join("other-tech-design");
+        std::fs::create_dir_all(&other).unwrap();
+        let mismatch = canonical_python_td_root(root.path(), &other, Some("demo"))
+            .unwrap_err()
+            .to_string();
+        assert!(mismatch.contains("does not match configured"), "{mismatch}");
+
+        let ir = crate::services::python_td::compile_python_td_project(&td_root).unwrap();
+        assert_eq!(ir.modules.len(), 1);
+        assert_eq!(ir.modules[0].path, "src/demo/work_items/example.py");
+    }
+
+    #[test]
     fn td_branch_activation_only_uses_main() {
         assert!(should_use_td_branch("main"));
         assert!(!should_use_td_branch("project-score"));
@@ -5844,6 +6498,114 @@ label = "app:agentic-workflow"
         assert_eq!(
             default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162").unwrap(),
             "apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
+        );
+    }
+
+    #[test]
+    fn python_td_create_initializes_only_wi_bound_python_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+td_path = "apps/agentic-workflow/tech-design"
+label = "app:agentic-workflow"
+"#,
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Make aw td create a Python TD producer");
+        issue.slug = "2711".to_string();
+        issue.github_id = Some(2711);
+        issue.labels = vec!["app:agentic-workflow".to_string()];
+        issue.body =
+            "## Capability Alignment\n\nCapability: project-local-td-and-ec-gates\n".to_string();
+
+        let path = default_python_td_path_for_issue_in_project(tmp.path(), &issue, "2711").unwrap();
+        assert_eq!(
+            path,
+            "apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/make_aw_td_create_a_python_td_producer.py"
+        );
+        let module = tmp.path().join(&path);
+        assert!(initialize_python_td_module(&module, &issue, "2711").unwrap());
+        assert!(!initialize_python_td_module(&module, &issue, "2711").unwrap());
+
+        let source = std::fs::read_to_string(&module).unwrap();
+        assert!(source.contains("__aw_work_item__ = \"2711\""));
+        assert!(source.contains(
+            "__aw_artifact_id__ = \"artifact:project-local-td-and-ec-gates/make-aw-td-create-a-python-td-producer-wi-2711\""
+        ));
+        assert!(source.contains(PYTHON_TD_FILL_MARKER));
+        let emitted = walkdir::WalkDir::new(tmp.path())
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| entry.path().to_path_buf())
+            .collect::<Vec<_>>();
+        assert!(!emitted.iter().any(|path| {
+            matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("md" | "json")
+            )
+        }));
+    }
+
+    #[test]
+    fn python_td_create_apply_rejects_scaffold_then_compiles_authored_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+td_path = "apps/agentic-workflow/tech-design"
+label = "app:agentic-workflow"
+"#,
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Python TD apply fixture");
+        issue.slug = "2711".to_string();
+        issue.github_id = Some(2711);
+        issue.labels = vec!["app:agentic-workflow".to_string()];
+        issue.body =
+            "## Capability Alignment\n\nCapability: project-local-td-and-ec-gates\n".to_string();
+        let path = default_python_td_path_for_issue_in_project(tmp.path(), &issue, "2711").unwrap();
+        let module = tmp.path().join(&path);
+        initialize_python_td_module(&module, &issue, "2711").unwrap();
+
+        let error = validate_python_td_authoring_module(tmp.path(), &issue, "2711", &path)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unfilled authoring scaffold"), "{error}");
+
+        let authored = std::fs::read_to_string(&module)
+            .unwrap()
+            .replace(
+                "    # AW_TD_FILL: replace this marker with executable Python TD declarations.",
+                "    # Executable Python TD contract.",
+            )
+            .replace(
+                "    return \"pending\"",
+                "    return \"aw.python-td-ir.v1\"",
+            );
+        std::fs::write(&module, authored).unwrap();
+        let digest =
+            validate_python_td_authoring_module(tmp.path(), &issue, "2711", &path).unwrap();
+        assert!(digest.starts_with("sha256:"), "{digest}");
+
+        let escape = validate_python_td_authoring_module(
+            tmp.path(),
+            &issue,
+            "2711",
+            "apps/agentic-workflow/tech-design/src/../escaped.py",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            escape.contains("checkout-relative and normalized"),
+            "{escape}"
         );
     }
 

@@ -78,11 +78,7 @@ pub struct EcArgs {
 pub enum EcCommand {
     /// Scaffold a project-local Python EC source/inventory under external-contracts/.
     Draft(EcDraftArgs),
-    /// Fill one section in a compatibility Markdown EC draft.
-    Fill(EcFillArgs),
-    /// Generate compatibility inventory/tests/tool configs from Markdown EC source.
-    Gen(EcGenArgs),
-    /// Check the Python pyproject.toml EC inventory or compatibility inventory drift.
+    /// Check the project-local Python pyproject.toml EC inventory.
     Check(EcCheckArgs),
     /// Write or verify the canonical EC IR lock.
     Lock(EcLockArgs),
@@ -90,7 +86,7 @@ pub enum EcCommand {
     Review(EcReviewArgs),
     /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
     Record(EcRecordArgs),
-    /// Run generated external-contract verification commands.
+    /// Run declared Python external-contract verification commands.
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
     Doc(EcDocArgs),
@@ -964,8 +960,6 @@ pub fn run(args: EcArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("ec requires --project <project>"))?;
     match args.command {
         EcCommand::Draft(args) => run_draft(&project, args),
-        EcCommand::Fill(args) => run_fill(&project, args),
-        EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
         EcCommand::Lock(args) => run_lock(&project, args),
         EcCommand::Review(args) => run_review(&project, args),
@@ -3217,6 +3211,77 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
 fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    // Python-v1 terminal verification runs as a separate `aw ec verify --wi`
+    // process after `aw cb check` dispatches it. Keep the same project-scoped
+    // process/fs2 lease that guarded the legacy in-process terminal gate;
+    // otherwise two root-runner retries can execute the same required EC
+    // inventory concurrently.
+    let _python_terminal_lock = if let Some(wi) = args
+        .wi
+        .as_deref()
+        .filter(|_| ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1)
+    {
+        let mut retry = format!("aw ec verify --project {}", ctx.project);
+        if args.required_only {
+            retry.push_str(" --required-only");
+        }
+        if let Some(stage) = args.stage.as_deref() {
+            retry.push_str(&format!(" --stage {stage}"));
+        }
+        retry.push_str(&format!(" --wi {wi}"));
+        match try_acquire_terminal_ec_gate_lock(&ctx.project_root, &ctx.project) {
+            Ok(Some(lock)) => Some(lock),
+            Ok(None) => {
+                let summary = terminal_ec_gate_blocked_summary(
+                    &ctx,
+                    "terminal-ec-single-flight",
+                    EcVerifyFailureKind::SingleFlight,
+                    "another terminal EC evaluation is already running; wait for it to finish, then retry the same EC verification command",
+                );
+                persist_ec_first_next_action(&project_root, wi, retry.clone())?;
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "summary": summary,
+                            "next": retry,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "ec verify {}: terminal evaluation already running",
+                        ctx.project
+                    );
+                    println!("next: {retry}");
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                let summary = terminal_ec_gate_blocked_summary(
+                    &ctx,
+                    "terminal-ec-lock-error",
+                    EcVerifyFailureKind::RunnerError,
+                    &format!("could not acquire the terminal EC single-flight lock: {error}"),
+                );
+                persist_ec_first_next_action(&project_root, wi, retry.clone())?;
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "summary": summary,
+                            "next": retry,
+                        }))?
+                    );
+                } else {
+                    println!("ec verify {}: terminal lock error", ctx.project);
+                    println!("next: {retry}");
+                }
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     // #2084: never execute commands from a generated inventory that no longer
     // matches the current EC sources. Besides being unsafe, recording those
     // stale failures as a normal red verifier result routes a cb_filled,
@@ -3691,9 +3756,9 @@ fn write_ec_lock_context_for_wi(
     Ok((write_ec_lock_snapshot(ctx, &snapshot)?, true))
 }
 
-/// A root-owned Python WI may replace a legacy `aw.toml`/Markdown lock only
-/// after independent semantic review accepted the complete current Python
-/// bundle. Project-global locking and every other removed-contract transition
+/// A root-owned Python WI may replace a legacy or prior Python lock only after
+/// independent semantic review accepted the complete current Python bundle.
+/// Project-global locking and every unreviewed removed-contract transition
 /// keep the default fail-closed migration guard.
 fn reviewed_python_inventory_replacement_allowed(ctx: &EcProjectContext) -> Result<bool> {
     if ctx.artifact_model != crate::models::project::ProjectArtifactModel::PythonV1 {
@@ -3710,7 +3775,10 @@ fn reviewed_python_inventory_replacement_allowed(ctx: &EcProjectContext) -> Resu
         == Some("aw.toml")
         || lock.inventory_path == relative_to(&ctx.project_root, &ctx.legacy_manifest_path);
     let python_inventory = relative_to(&ctx.project_root, &ctx.ec_root.join("pyproject.toml"));
-    if !locked_inventory_is_legacy_aw || ec_effective_inventory_path(ctx)? != python_inventory {
+    let locked_inventory_is_python = lock.inventory_path == python_inventory;
+    if (!locked_inventory_is_legacy_aw && !locked_inventory_is_python)
+        || ec_effective_inventory_path(ctx)? != python_inventory
+    {
         return Ok(false);
     }
     let manifest = build_expected_manifest(ctx)?;

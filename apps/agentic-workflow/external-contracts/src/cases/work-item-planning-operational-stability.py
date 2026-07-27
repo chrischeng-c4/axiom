@@ -2,7 +2,13 @@
 
 CASE_ID = "work-item-planning-operational-stability"
 CAPABILITY_ID = "work-item-planning"
-USE_CASE_ID = "epic-to-change-atomization"
+USE_CASE_ID = "work-item-planning-operational-stability"
 DIMENSION = "stability"
-TARGET_COMMAND = "cargo test -p agentic-workflow --lib prioritize_lanes_put_bounded_bug_in_ready_now -- --nocapture"
-ASSERTIONS = ("work-item-planning reports identical non-zero passed and zero-failed totals across two executions",)
+TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
+ASSERTIONS = ("two fresh native Python planning scenarios produce identical non-empty results and pass every representative assertion",)
+
+
+def verify() -> list[str]:
+    from migration_clusters.work_item_planning import verify as verify_cluster_case
+
+    return verify_cluster_case(CASE_ID)

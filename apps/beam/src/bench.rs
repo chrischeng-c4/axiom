@@ -191,7 +191,10 @@ fn assign_category_payloads(collection: &mut crate::collection::Collection) {
     use crate::payload::Payload;
     // Freshly-built corpus (no tombstones yet), so iterate physical rows.
     for i in 0..collection.capacity() {
-        collection.set_payload(i, Payload::new().with("category", i as i64 % FILTER_CATEGORIES));
+        collection.set_payload(
+            i,
+            Payload::new().with("category", i as i64 % FILTER_CATEGORIES),
+        );
     }
 }
 
@@ -272,7 +275,13 @@ fn run_hnsw(cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
             CLUSTER_JITTER,
             DATASET_SEED,
         );
-        let q = dataset::clustered_queries(cfg.queries, cfg.dim, num_clusters, CLUSTER_JITTER, QUERY_SEED);
+        let q = dataset::clustered_queries(
+            cfg.queries,
+            cfg.dim,
+            num_clusters,
+            CLUSTER_JITTER,
+            QUERY_SEED,
+        );
         (c, q, "isotropic clustered".to_string())
     };
 
@@ -352,14 +361,21 @@ fn run_hnsw(cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
         total += got.len();
     }
 
-    let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    let recall = if total == 0 {
+        1.0
+    } else {
+        matched as f64 / total as f64
+    };
     let avg_ms = query_elapsed.as_secs_f64() * 1000.0 / cfg.queries.max(1) as f64;
     let oracle_label = if filter.is_some() {
         "filtered flat oracle"
     } else {
         "flat oracle"
     };
-    println!("recall@{} vs {oracle_label}: {recall:.3} (approximate HNSW)", cfg.k);
+    println!(
+        "recall@{} vs {oracle_label}: {recall:.3} (approximate HNSW)",
+        cfg.k
+    );
     if cfg.rank == 0 {
         // Isotropic Gaussian blobs are the recall@k-BY-ROW worst case: within a
         // dense cluster hundreds of points sit at nearly identical distance to the
@@ -373,7 +389,10 @@ fn run_hnsw(cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
             "  note: isotropic clustered data is tie-heavy (recall@k by row understates quality); try --rank 16 for the realistic low-rank corpus"
         );
     }
-    println!("HNSW build: {build_ms:.1} ms for {} live vectors", index.len());
+    println!(
+        "HNSW build: {build_ms:.1} ms for {} live vectors",
+        index.len()
+    );
     println!(
         "HNSW query timing: avg {avg_ms:.3} ms/query over {} queries (ef_search={})",
         cfg.queries, cfg.ef_search
@@ -456,11 +475,18 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
             None => gpu_index.search_knn(q, cfg.k),
         };
         gpu_elapsed += t0.elapsed();
-        matched += gpu_res.iter().filter(|nb| cpu_rows.contains(&nb.row)).count();
+        matched += gpu_res
+            .iter()
+            .filter(|nb| cpu_rows.contains(&nb.row))
+            .count();
         total += gpu_res.len();
     }
 
-    let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    let recall = if total == 0 {
+        1.0
+    } else {
+        matched as f64 / total as f64
+    };
     let avg_ms = gpu_elapsed.as_secs_f64() * 1000.0 / cfg.queries.max(1) as f64;
     let label = if filter.is_some() {
         "filtered CPU oracle"
@@ -469,7 +495,10 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     };
     println!("recall vs {label}: {recall:.3} (exact flat)");
     println!("candidates scanned / n: 1.000 (brute force)");
-    println!("GPU query timing: avg {avg_ms:.3} ms/query over {} queries", cfg.queries);
+    println!(
+        "GPU query timing: avg {avg_ms:.3} ms/query over {} queries",
+        cfg.queries
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -516,10 +545,18 @@ fn run_flat_batched(
         qi_base += chunk.len();
     }
 
-    let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    let recall = if total == 0 {
+        1.0
+    } else {
+        matched as f64 / total as f64
+    };
     let nq = queries.len().max(1);
     let secs = elapsed.as_secs_f64();
-    let qps = if secs > 0.0 { nq as f64 / secs } else { f64::INFINITY };
+    let qps = if secs > 0.0 {
+        nq as f64 / secs
+    } else {
+        f64::INFINITY
+    };
     let amortized_ms = secs * 1000.0 / nq as f64;
     println!("recall vs CPU oracle: {recall:.3} (exact flat, batched)");
     println!(
@@ -739,7 +776,11 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
         total += res.len();
     }
 
-    let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    let recall = if total == 0 {
+        1.0
+    } else {
+        matched as f64 / total as f64
+    };
     let cand_ratio = cand_sum as f64 / (cfg.queries.max(1) as f64 * cfg.n.max(1) as f64);
     let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / cfg.queries.max(1) as f64;
 
@@ -837,14 +878,23 @@ fn run_persist(cfg: &BenchConfig, path: &str) -> anyhow::Result<ExitCode> {
                 CLUSTER_JITTER,
                 DATASET_SEED,
             ),
-            dataset::clustered_queries(cfg.queries, cfg.dim, num_clusters, CLUSTER_JITTER, QUERY_SEED),
+            dataset::clustered_queries(
+                cfg.queries,
+                cfg.dim,
+                num_clusters,
+                CLUSTER_JITTER,
+                QUERY_SEED,
+            ),
         ),
         IndexKind::Hnsw => unreachable!("hnsw persist is rejected above"),
     };
     // Per-row payloads + a deterministic delete set so payloads AND tombstones are
     // exercised across the round-trip.
     for i in 0..collection.capacity() {
-        collection.set_payload(i, Payload::new().with("category", i as i64 % FILTER_CATEGORIES));
+        collection.set_payload(
+            i,
+            Payload::new().with("category", i as i64 % FILTER_CATEGORIES),
+        );
     }
     for i in (0..collection.capacity()).step_by(13) {
         collection.delete(&format!("id-{i}"));
@@ -872,8 +922,11 @@ fn run_persist(cfg: &BenchConfig, path: &str) -> anyhow::Result<ExitCode> {
             return false;
         }
         let by_row: HashMap<u32, f32> = a.iter().map(|n| (n.row, n.score)).collect();
-        b.iter()
-            .all(|nb| by_row.get(&nb.row).is_some_and(|s| (s - nb.score).abs() <= 1e-3))
+        b.iter().all(|nb| {
+            by_row
+                .get(&nb.row)
+                .is_some_and(|s| (s - nb.score).abs() <= 1e-3)
+        })
     };
 
     // Always persist + reload the collection segment (the flat index's source-of-
@@ -886,7 +939,9 @@ fn run_persist(cfg: &BenchConfig, path: &str) -> anyhow::Result<ExitCode> {
         Some((backend, name)) => {
             println!("GPU present ({name}, {backend}): also verifying the GPU paths rebuild from the loaded state")
         }
-        None => println!("no GPU adapter: verifying the CPU path (GPU buffers rebuild on load when present)"),
+        None => println!(
+            "no GPU adapter: verifying the CPU path (GPU buffers rebuild on load when present)"
+        ),
     }
 
     let mut checked = 0usize;

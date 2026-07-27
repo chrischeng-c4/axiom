@@ -42,9 +42,27 @@ updates, closes, labels, or comments on an issue.
 
 `parent-epic:<id>`, `parent:<id>`, `Parent Epic:`, `Parent WI:`, generic
 `Parent:`, and the existing epic-targeting `related` / `implements` references
-are decode-only migration inputs. Closing punctuation on a body reference
-(for example, `Parent: #2284.`) is ignored. They normalize to the same graph
-as `epic:<id>` and do not cause tracker writes.
+are decode-only migration inputs. After a parent prefix, the first `#<digits>`
+reference is authoritative and trailing prose or later references are ignored.
+When no hash reference exists, the first bare id, slug, or
+`owner/repository/<id>` token remains supported; a prefix with no extractable
+reference declares no parent. Labels use the same extraction rule. These forms
+normalize to the same graph as `epic:<id>` and do not cause tracker writes.
+
+Body dependency text is also decode-only migration input; the canonical
+authoring form remains `depends-on:<change-id>`. Compatibility decoding accepts
+only declaration-shaped lines whose normalized content begins with `Depends
+on`, `Dependency`, `Dependencies`, `Blocked by`, or `Requires`, optionally
+followed by a colon, and whose first non-whitespace suffix character is `#`.
+Markdown list markers and bold field emphasis are ignored. Requirements,
+reproductions, prose, headings, and backtick-delimited syntax examples do not
+declare graph edges merely because they contain relation vocabulary and hash
+references. In particular, an indented bare prefix is a Markdown continuation,
+not a new declaration; indentation is accepted only when it precedes a list
+marker. One valid declaration returns every hash reference in encounter order;
+the graph's existing normalization then sorts and deduplicates them.
+The executable grammar is
+`src/agentic_workflow/work_items/dependency_reference_extraction.py`.
 
 ## Logic
 <!-- type: logic lang: markdown -->
@@ -73,8 +91,8 @@ The normalized graph contains:
 
 Validation fails closed for unowned or multiply-owned open changes,
 change-as-parent, missing parent, cross-project parent, invalid priority
-cardinality, missing/non-change/cross-project supersession targets, and
-non-sibling supersession.
+cardinality, missing/non-change/cross-project dependency or supersession
+targets, and non-sibling supersession.
 
 ## CLI
 <!-- type: cli lang: yaml -->
@@ -101,7 +119,10 @@ invalid_graph:
 - A valid fixture proves canonical and legacy parent forms normalize to one graph.
 - A child with its own priority proves explicit override; a sibling without one proves epic inheritance.
 - Supersession proves the original and replacements remain siblings and the mapping is bidirectional.
-- Invalid fixtures prove exact diagnostics for unowned, multiply-owned, missing, cross-project, and change-as-parent relations.
+- Invalid fixtures prove exact diagnostics for unowned, multiply-owned, missing, cross-project, change-as-parent, and unresolved dependency relations.
+- Source invariants prove explicit legacy body dependency declarations remain
+  readable while explanatory prose and syntax examples create no relation
+  edges.
 - Two unchanged reads prove byte-equivalent JSON and digest stability.
 - Before/after issue-file snapshots prove the CLI performs no backend writes.
 

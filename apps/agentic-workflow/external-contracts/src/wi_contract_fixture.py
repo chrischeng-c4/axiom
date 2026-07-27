@@ -1,0 +1,170 @@
+"""Black-box fixture helpers for hand-authored Python EC implementations."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+AW_BINARY = REPOSITORY_ROOT / "target" / "debug" / "aw"
+EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "evidence"
+_AW_READY = False
+
+
+def _ensure_aw_binary() -> None:
+    global _AW_READY
+    if _AW_READY:
+        return
+    rustup = shutil.which("rustup")
+    if rustup is None:
+        raise AssertionError("rustup is required to build the AW EC fixture binary")
+    completed = subprocess.run(
+        [
+            rustup,
+            "run",
+            "stable",
+            "cargo",
+            "build",
+            "-p",
+            "agentic-workflow",
+            "--bin",
+            "aw",
+        ],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(
+            f"failed to build aw:\nstdout={completed.stdout}\nstderr={completed.stderr}"
+        )
+    _AW_READY = True
+
+
+@contextmanager
+def project_fixture() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="aw-python-ec-") as raw_root:
+        root = Path(raw_root)
+        (root / "aw.toml").write_text(
+            """
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[agentic_workflow.issue_platform]
+type = "local"
+
+[[projects]]
+name = "demo"
+label = "app:demo"
+path = "."
+tech_design_path = "tech-design"
+
+[[projects.workspaces]]
+name = "demo"
+paths = ["**"]
+target = "rust"
+""".lstrip(),
+            encoding="utf-8",
+        )
+        yield root
+
+
+def run_aw(
+    root: Path,
+    *args: str,
+    expect_success: bool = True,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    _ensure_aw_binary()
+    env = os.environ.copy()
+    env["AW_FIXTURE_LOCAL_BACKEND"] = "1"
+    env["AW_DISABLE_CAP"] = "1"
+    if env_overrides:
+        env.update(env_overrides)
+    completed = subprocess.run(
+        [str(AW_BINARY), *args],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if expect_success and completed.returncode != 0:
+        raise AssertionError(
+            f"aw {' '.join(args)} failed:\n"
+            f"stdout={completed.stdout}\nstderr={completed.stderr}"
+        )
+    if not expect_success and completed.returncode == 0:
+        raise AssertionError(f"aw {' '.join(args)} unexpectedly succeeded")
+    return completed
+
+
+def final_json(completed: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    raw = completed.stdout
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    cursor = 0
+    while cursor < len(raw):
+        while cursor < len(raw) and raw[cursor].isspace():
+            cursor += 1
+        if cursor >= len(raw):
+            break
+        value, cursor = decoder.raw_decode(raw, cursor)
+        values.append(value)
+    if not values or not isinstance(values[-1], dict):
+        raise AssertionError(f"command emitted no JSON:\nstderr={completed.stderr}")
+    return values[-1]
+
+
+def create(root: Path, title: str, work_item_type: str, *extra: str) -> dict[str, Any]:
+    return final_json(
+        run_aw(
+            root,
+            "wi",
+            "create",
+            "--title",
+            title,
+            "--type",
+            work_item_type,
+            "--project",
+            "demo",
+            *extra,
+        )
+    )
+
+
+def show(root: Path, slug: str) -> dict[str, Any]:
+    payload = final_json(run_aw(root, "wi", "show", slug))
+    issue = payload.get("issue")
+    return issue if isinstance(issue, dict) else payload
+
+
+def record_evidence(case_id: str, assertions: list[str]) -> None:
+    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
+    (EVIDENCE_ROOT / f"{case_id}.json").write_text(
+        json.dumps(
+            {
+                "protocol": "aw.python-ec.evidence.v1",
+                "case_id": case_id,
+                "status": "passed",
+                "assertions": assertions,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def verify_case(case_id: str, verifier: Callable[[], list[str]]) -> None:
+    record_evidence(case_id, verifier())

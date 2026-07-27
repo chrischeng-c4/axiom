@@ -45,9 +45,9 @@ aw goal capability --project <name>
 
 `--label` is rejected on create. Labels are derived from typed flags:
 
-* `--type` (required, closed enum): `epic | change`
+* `--type` (required, closed enum): `epic | change | spike | report`
 * `--project <name>` (repeatable): resolved against `[[projects]]` in
-  `aw.toml`. `epic` accepts 0 or 1; `change` requires exactly 1.
+  `aw.toml`. `epic` accepts 0 or 1; every other type requires exactly 1.
 * `--priority <p0|p1|p2|p3>` (optional)
 * `--agent <name>` (optional): resolved against `[[agents]]` in
   `aw.toml`.
@@ -131,9 +131,14 @@ aw wi show <slug>
 
 Prefer `--project <name>` for project-scoped lists; it resolves the
 configured project label from `aw.toml`. Use `--label` only as a
-raw low-level label filter. Use `--type epic|change` for the canonical type
-filter; `change` also reads legacy `bug`, `enhancement`, `refactor`, and `test`
-labels without mutating tracker history.
+raw low-level label filter. Use `--type epic|change|spike|report` for the
+canonical type filter; `change` also reads legacy `bug`, `enhancement`,
+`refactor`, and `test` labels without mutating tracker history. Only `change`
+enters executable backlog work. `spike` terminates with an ADR-style decision
+and spawned WI refs or explicit no-action (`gave_up` on expiry). `report`
+remains in the intake queue until typed `aw wi triage` accepts and links
+spawned work or closes it as duplicate, invalid, or by-design. Neither type is
+converted in place.
 
 `graph` is the read-only project aggregate gate. It loads the complete tracker
 inventory, normalizes canonical and legacy epic ownership, and projects

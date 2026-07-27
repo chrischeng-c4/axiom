@@ -1,0 +1,919 @@
+{
+  "schema": "aw.ec-migration-reconciliation.v1",
+  "baseline": {
+    "legacy_rust_file_count": 164,
+    "delegated_case_count": 112
+  },
+  "legacy_rust_files": [
+    "apps/agentic-workflow/tests/artifact_model_config_test.rs",
+    "apps/agentic-workflow/tests/artifact_producer_cli_test.rs",
+    "apps/agentic-workflow/tests/behavior_api_contract_source_passes.rs",
+    "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs",
+    "apps/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs",
+    "apps/agentic-workflow/tests/behavior_authoritative_fixture_blocks_on_regenerability_gap.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_agent_orientation_surface.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_ec_first_phase_table.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_phase_less_admission.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_remote_ledger_admission.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_blocker_conformance.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_rollup_conformance.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_stage_conformance.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_prompt_vocabulary_and_grammar.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_typed_prompt_ir_and_envelope_projection.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_artifact_admission_gate.rs",
+    "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_loop_state_model.rs",
+    "apps/agentic-workflow/tests/behavior_aw_ec_zero_test_false_green.rs",
+    "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_chain.rs",
+    "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_focused.rs",
+    "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs",
+    "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_project_sweep.rs",
+    "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_readiness_reporting.rs",
+    "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
+    "apps/agentic-workflow/tests/behavior_capability_control_plane_missing_readme_initialization.rs",
+    "apps/agentic-workflow/tests/behavior_completeness_placeholder_unit_command.rs",
+    "apps/agentic-workflow/tests/behavior_ec_artifact_producer_cli_fixture.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_cb_and_cold_verification_gates.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_managed_and_semantic_production_gates.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_connection_budget.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_drain.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_http1_h2c_options.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_service_http_delegation.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs",
+    "apps/agentic-workflow/tests/behavior_existing_project_standardization_traceability_closure_gate.rs",
+    "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs",
+    "apps/agentic-workflow/tests/behavior_goal_backlog_drain.rs",
+    "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs",
+    "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_generated_manual_ec_evidence_schema.rs",
+    "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
+    "apps/agentic-workflow/tests/behavior_missing_source_review_fails.rs",
+    "apps/agentic-workflow/tests/behavior_placeholder_completeness_unit_gate.rs",
+    "apps/agentic-workflow/tests/behavior_project_health_no_regression.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_evidence_documentation.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_external_contract_source.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_tool_binding_dispatch.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_dirty_scope_protection.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_local_td_root_resolver.rs",
+    "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_td_lock_and_external_contract_target_resolution.rs",
+    "apps/agentic-workflow/tests/behavior_quality_primitive_metadata_contract_test.rs",
+    "apps/agentic-workflow/tests/behavior_reviewed_graph_root_parity.rs",
+    "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs",
+    "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs",
+    "apps/agentic-workflow/tests/behavior_self_hosting_goal_root_parity.rs",
+    "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs",
+    "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs",
+    "apps/agentic-workflow/tests/behavior_standardize_audit_first_contract_test.rs",
+    "apps/agentic-workflow/tests/behavior_td_artifact_producer_cli_fixture.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_retry.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_crrr_removal_linear_lifecycle.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_complete_evidence_gate.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_partial_evidence_gate.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_remove_td_merge_command.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs",
+    "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec.rs",
+    "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_td_gen_source_source_snapshot_projection_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_terminal_ec_cross_process_single_flight_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_terminal_ec_fast_green_stale_reader_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_terminal_ec_no_child_wrapper_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_terminal_ec_retry_transition_lease_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_terminal_touched_codegen_red_repair_green.rs",
+    "apps/agentic-workflow/tests/behavior_wi_artifact_producer_cli_fixture.rs",
+    "apps/agentic-workflow/tests/behavior_wi_close_remote_real_cli.rs",
+    "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs",
+    "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs",
+    "apps/agentic-workflow/tests/behavior_wi_create_remote_flag_tests.rs",
+    "apps/agentic-workflow/tests/behavior_wi_create_remote_unit_command.rs",
+    "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs",
+    "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_self_hosted_unit.rs",
+    "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_build.rs",
+    "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs",
+    "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_unit_command.rs",
+    "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
+    "apps/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs",
+    "apps/agentic-workflow/tests/behavior_workflow_root_runner_parent_rollup_routing.rs",
+    "apps/agentic-workflow/tests/behavior_workflow_root_runner_root_envelope_completion_contract.rs",
+    "apps/agentic-workflow/tests/cli/tests/cb_claim_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/cb_fill_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/cb_namespace_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/chain_liveness_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/fixture_loop_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/goal_backlog_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/in_place_lifecycle_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/merge_target_branch.rs",
+    "apps/agentic-workflow/tests/cli/tests/phase_migration_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/project_health_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/recovery_flow_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/standardize_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/td_check_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/td_claim_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/td_dispatch_chain_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs",
+    "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs",
+    "apps/agentic-workflow/tests/cli_tests.rs",
+    "apps/agentic-workflow/tests/codegen_full_test.rs",
+    "apps/agentic-workflow/tests/ddd_context_map_test.rs",
+    "apps/agentic-workflow/tests/ddd_meta_projection_test.rs",
+    "apps/agentic-workflow/tests/ec_python_inventory_check.rs",
+    "apps/agentic-workflow/tests/ec_python_review_lock.rs",
+    "apps/agentic-workflow/tests/efficiency_self_hosting_bounded_admission.rs",
+    "apps/agentic-workflow/tests/execution_modes_test.rs",
+    "apps/agentic-workflow/tests/from_td_ast_dispatch.rs",
+    "apps/agentic-workflow/tests/github_backend_tests.rs",
+    "apps/agentic-workflow/tests/gitlab_backend_tests.rs",
+    "apps/agentic-workflow/tests/inventory_plan_review_cli_test.rs",
+    "apps/agentic-workflow/tests/issues_remote_round_trip.rs",
+    "apps/agentic-workflow/tests/lens_dissolution_test.rs",
+    "apps/agentic-workflow/tests/mutation_evidence_cli_test.rs",
+    "apps/agentic-workflow/tests/mutation_execution_cli_test.rs",
+    "apps/agentic-workflow/tests/mutation_health_goal_cli_test.rs",
+    "apps/agentic-workflow/tests/mutation_operator_cli_test.rs",
+    "apps/agentic-workflow/tests/project_discovery_test.rs",
+    "apps/agentic-workflow/tests/project_registry_check_test.rs",
+    "apps/agentic-workflow/tests/project_registry_test.rs",
+    "apps/agentic-workflow/tests/python_artifact_dogfood.rs",
+    "apps/agentic-workflow/tests/python_artifact_protocol_test.rs",
+    "apps/agentic-workflow/tests/python_artifact_readiness.rs",
+    "apps/agentic-workflow/tests/python_backend_emitter.rs",
+    "apps/agentic-workflow/tests/python_backend_emitter_real.rs",
+    "apps/agentic-workflow/tests/python_spec_http_db_fixture.rs",
+    "apps/agentic-workflow/tests/python_spec_typer_fixture.rs",
+    "apps/agentic-workflow/tests/python_td_compiler.rs",
+    "apps/agentic-workflow/tests/python_td_target.rs",
+    "apps/agentic-workflow/tests/rust_source_unit_corpus.rs",
+    "apps/agentic-workflow/tests/sdd_coverage_test.rs",
+    "apps/agentic-workflow/tests/self_hosting_runner_policy_cli_test.rs",
+    "apps/agentic-workflow/tests/spec_alignment_phase2_tests.rs",
+    "apps/agentic-workflow/tests/spec_alignment_tests.rs",
+    "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs",
+    "apps/agentic-workflow/tests/stage_2b_golden_tests.rs",
+    "apps/agentic-workflow/tests/validate_all_snapshot.rs",
+    "apps/agentic-workflow/tests/wi_create_remote_lifecycle_test.rs",
+    "apps/agentic-workflow/tests/wi_epic_change_graph_cli_test.rs",
+    "apps/agentic-workflow/tests/wi_epic_change_taxonomy_cli_test.rs",
+    "apps/agentic-workflow/tests/wi_project_plan_transaction_cli_test.rs",
+    "apps/agentic-workflow/tests/wi_reviewed_graph_goal_cli_test.rs",
+    "apps/agentic-workflow/tests/wi_two_stage_project_plan_cli_test.rs"
+  ],
+  "clusters": [
+    {
+      "id": "existing-health",
+      "owner_wi": 2659,
+      "cases": [
+        {
+          "id": "artifact-preflight-health-rollup",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_artifact_preflight_health_rollup.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/project.rs"
+        },
+        {
+          "id": "authoritative-fixture-blocks-on-regenerability-gap",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_authoritative_fixture_blocks_on_regenerability_gap.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "aw-health-default-full-verification-smoke",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_health_default_full_verification_smoke.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "existing-project-standardization-brownfield-takeover-surface",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/standardize.rs"
+        },
+        {
+          "id": "existing-project-standardization-cb-and-cold-verification-gates",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_cb_and_cold_verification_gates.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
+        },
+        {
+          "id": "existing-project-standardization-managed-and-semantic-production-gates",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_managed_and_semantic_production_gates.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/standardize.rs"
+        },
+        {
+          "id": "existing-project-standardization-traceability-closure-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_traceability_closure_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/standardize.rs"
+        },
+        {
+          "id": "external-fixture-reports-advisory-gap",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_external_fixture_reports_advisory_gap.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "standardize-audit-first-contract-test",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_standardize_audit_first_contract_test.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "td-gen-source-source-snapshot-projection-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_gen_source_source_snapshot_projection_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
+        }
+      ]
+    },
+    {
+      "id": "existing-service-kit",
+      "owner_wi": 2660,
+      "cases": [
+        {
+          "id": "existing-project-standardization-shared-service-kit-connection-budget",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_connection_budget.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:libs/server-tcp/src/lib.rs"
+        },
+        {
+          "id": "existing-project-standardization-shared-service-kit-drain",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_drain.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:libs/server-lifecycle/src/drain.rs"
+        },
+        {
+          "id": "existing-project-standardization-shared-service-kit-http1-h2c-options",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_http1_h2c_options.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:libs/server-http/src/lib.rs"
+        },
+        {
+          "id": "existing-project-standardization-shared-service-kit-service-http-delegation",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_service_http_delegation.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:libs/service-http/src/transport.rs"
+        },
+        {
+          "id": "existing-project-standardization-shared-service-kit-substrate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:libs/server-tcp/src/lib.rs"
+        },
+        {
+          "id": "jet-health-verification-dedup-smoke",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_jet_health_verification_dedup_smoke.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/capability.rs"
+        },
+        {
+          "id": "project-health-no-regression",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_health_no_regression.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/project.rs"
+        },
+        {
+          "id": "existing-project-standardization-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "existing-project-standardization-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_existing_project_standardization_brownfield_takeover_surface.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        }
+      ]
+    },
+    {
+      "id": "td-source-target",
+      "owner_wi": 2661,
+      "cases": [
+        {
+          "id": "api-contract-source-passes",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_api_contract_source_passes.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/models/source_reference.rs"
+        },
+        {
+          "id": "artifact-quality-fixture-roundtrip",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/models/artifact_quality.rs"
+        },
+        {
+          "id": "aw-td-apply-section-lookup-parity-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        },
+        {
+          "id": "completeness-placeholder-unit-command",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_completeness_placeholder_unit_command.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
+        },
+        {
+          "id": "missing-source-review-fails",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_missing_source_review_fails.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/models/source_reference.rs"
+        },
+        {
+          "id": "placeholder-completeness-unit-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_placeholder_completeness_unit_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
+        },
+        {
+          "id": "quality-primitive-metadata-contract-test",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_quality_primitive_metadata_contract_test.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/generate/generators/quality_primitives.rs"
+        },
+        {
+          "id": "td-default-section-queue-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        },
+        {
+          "id": "td-generation-target-exact-partition-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        },
+        {
+          "id": "td-generation-target-generator-gap-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        }
+      ]
+    },
+    {
+      "id": "td-lifecycle-evidence",
+      "owner_wi": 2662,
+      "cases": [
+        {
+          "id": "td-cb-lifecycle-automation-chain-liveness-proof",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_proof.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-chain-liveness-retry",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_chain_liveness_retry.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-crrr-removal-linear-lifecycle",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_crrr_removal_linear_lifecycle.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/issues/types.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-hand-written-complete-evidence-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_complete_evidence_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-hand-written-implementation-evidence-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_implementation_evidence_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-hand-written-partial-evidence-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_hand_written_partial_evidence_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-remove-td-merge-command",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_remove_td_merge_command.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "td-generation-target-ownership-inferred-single-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        },
+        {
+          "id": "td-generation-target-ownership-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        }
+      ]
+    },
+    {
+      "id": "td-terminal",
+      "owner_wi": 2663,
+      "cases": [
+        {
+          "id": "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_self_ec_fixture_loop_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "terminal-ec-cross-process-single-flight-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_cross_process_single_flight_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "terminal-ec-fast-green-stale-reader-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_fast_green_stale_reader_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "terminal-ec-no-child-wrapper-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_no_child_wrapper_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "terminal-ec-retry-transition-lease-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_ec_retry_transition_lease_real_cli.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "terminal-touched-codegen-red-repair-green",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_terminal_touched_codegen_red_repair_green.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-operational-efficiency",
+          "legacy_test_path": null,
+          "migration_status": "native",
+          "rust_disposition": "retained_colocated"
+        },
+        {
+          "id": "td-cb-lifecycle-automation-operational-stability",
+          "legacy_test_path": null,
+          "migration_status": "native",
+          "rust_disposition": "retained_colocated"
+        }
+      ]
+    },
+    {
+      "id": "work-item-planning",
+      "owner_wi": 2664,
+      "cases": [
+        {
+          "id": "wi-close-remote-real-cli",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_close_remote_real_cli.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-create-help-command",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_help_command.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-create-help-smoke",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_help_smoke.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-create-remote-flag-tests",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_remote_flag_tests.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-create-remote-unit-command",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_create_remote_unit_command.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-remove-agent-estimate-build",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_build.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-remove-agent-estimate-spec-check",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-remove-agent-estimate-unit-command",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_remove_agent_estimate_unit_command.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "work-item-planning-epic-to-change-atomization",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "work-item-planning-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "work-item-planning-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_work_item_planning_epic_to_change_atomization.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        }
+      ]
+    },
+    {
+      "id": "capability-and-manual",
+      "owner_wi": 2665,
+      "cases": [
+        {
+          "id": "capability-control-plane-capability-project-sweep",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_project_sweep.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/capability.rs"
+        },
+        {
+          "id": "capability-control-plane-capability-readiness-reporting",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_capability_readiness_reporting.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/capability.rs"
+        },
+        {
+          "id": "capability-control-plane-markdown-capability-schema",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "capability-control-plane-missing-readme-initialization",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_missing_readme_initialization.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "capability-control-plane-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "capability-control-plane-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_capability_control_plane_markdown_capability_schema.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "manual-evidence-artifacts-generated-manual-ec-evidence-schema",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_generated_manual_ec_evidence_schema.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "manual-evidence-artifacts-manual-runner-output-convention",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "manual-evidence-artifacts-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "manual-evidence-artifacts-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_manual_evidence_artifacts_manual_runner_output_convention.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        }
+      ]
+    },
+    {
+      "id": "project-local-gates",
+      "owner_wi": 2666,
+      "cases": [
+        {
+          "id": "aw-ec-zero-test-false-green",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_ec_zero_test_false_green.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-cb-generation-and-standardize-scan-defaults",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/cb.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-ec-evidence-documentation",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_evidence_documentation.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-ec-external-contract-source",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_external_contract_source.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-ec-tool-binding-dispatch",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_ec_tool_binding_dispatch.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/project.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-project-dirty-scope-protection",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_dirty_scope_protection.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/standardize.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-project-local-td-root-resolver",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_project_local_td_root_resolver.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/services/project_registry.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-td-lock-and-external-contract-target-resolution",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_td_lock_and_external_contract_target_resolution.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "project-local-td-and-ec-gates-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_project_local_td_and_ec_gates_cb_generation_and_standardize_scan_defaults.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        }
+      ]
+    },
+    {
+      "id": "workflow-admission",
+      "owner_wi": 2667,
+      "cases": [
+        {
+          "id": "self-hosting-bounded-admission",
+          "legacy_test_path": "apps/agentic-workflow/tests/efficiency_self_hosting_bounded_admission.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "self-hosting-capability-admission",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "self-hosting-goal-root-parity",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_goal_root_parity.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "self-hosting-health-policy",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "self-hosting-identity-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/stability_self_hosting_identity_stability.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "self-hosting-wi-admission",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-ec-td-root-loop-self-hosted-unit",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_self_hosted_unit.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        }
+      ]
+    },
+    {
+      "id": "workflow-runner",
+      "owner_wi": 2668,
+      "cases": [
+        {
+          "id": "goal-backlog-drain",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_goal_backlog_drain.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/goal.rs"
+        },
+        {
+          "id": "reviewed-graph-root-parity",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_reviewed_graph_root_parity.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/goal.rs"
+        },
+        {
+          "id": "runtime-envelope-backward-compatibility",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_runtime_envelope_backward_compatibility.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/runtime/envelope.rs"
+        },
+        {
+          "id": "wi-ec-td-root-loop-fixture",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "workflow-root-runner-cli-workflow-chain",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
+        },
+        {
+          "id": "workflow-root-runner-parent-rollup-routing",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_parent_rollup_routing.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "workflow-root-runner-root-envelope-completion-contract",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_workflow_root_runner_root_envelope_completion_contract.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        }
+      ]
+    },
+    {
+      "id": "core-model",
+      "owner_wi": 2669,
+      "cases": [
+        {
+          "id": "aw-core-client-agent-first-cli-product-model",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/llm.rs"
+        },
+        {
+          "id": "aw-core-client-agent-orientation-surface",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_orientation_surface.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/llm.rs"
+        },
+        {
+          "id": "aw-core-client-core-concept-model-and-invariants",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/ec.rs"
+        },
+        {
+          "id": "aw-core-client-core-concept-model-ec-first-phase-table",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_ec_first_phase_table.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "aw-core-client-core-concept-model-phase-less-admission",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_phase_less_admission.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "aw-core-client-core-concept-model-remote-ledger-admission",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_remote_ledger_admission.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "aw-core-client-workitem-artifact-admission-gate",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_artifact_admission_gate.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/td.rs"
+        },
+        {
+          "id": "aw-core-client-workitem-loop-state-model",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_workitem_loop_state_model.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/loop_state.rs"
+        },
+        {
+          "id": "aw-epic-project-label-dispatch-chain",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_chain.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/chain.rs"
+        },
+        {
+          "id": "aw-epic-project-label-dispatch-focused",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_focused.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        }
+      ]
+    },
+    {
+      "id": "core-prompt-artifacts",
+      "owner_wi": 2670,
+      "cases": [
+        {
+          "id": "aw-core-client-lifecycle-prompt-blocker-conformance",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_blocker_conformance.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "aw-core-client-lifecycle-prompt-rollup-conformance",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_rollup_conformance.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "aw-core-client-lifecycle-prompt-stage-conformance",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_lifecycle_prompt_stage_conformance.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "aw-core-client-prompt-vocabulary-and-grammar",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_prompt_vocabulary_and_grammar.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/llm.rs"
+        },
+        {
+          "id": "aw-core-client-typed-prompt-ir-and-envelope-projection",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_typed_prompt_ir_and_envelope_projection.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/run.rs"
+        },
+        {
+          "id": "ec-artifact-producer-cli-fixture",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_ec_artifact_producer_cli_fixture.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/artifact_producer.rs"
+        },
+        {
+          "id": "td-artifact-producer-cli-fixture",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_td_artifact_producer_cli_fixture.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "wi-artifact-producer-cli-fixture",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_wi_artifact_producer_cli_fixture.rs",
+          "migration_status": "rust_invariant",
+          "rust_disposition": "relocated:apps/agentic-workflow/src/cli/artifact_producer.rs"
+        },
+        {
+          "id": "aw-core-client-operational-efficiency",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        },
+        {
+          "id": "aw-core-client-operational-stability",
+          "legacy_test_path": "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs",
+          "migration_status": "native",
+          "rust_disposition": "removed"
+        }
+      ]
+    }
+  ]
+}

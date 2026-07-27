@@ -244,6 +244,12 @@ pub fn build_planning_transaction_manifest(
             format!("priority:{}", proposal.priority),
             format!("epic:{}", proposal.owner_epic),
         ];
+        labels.extend(
+            proposal
+                .dependencies
+                .iter()
+                .map(|dependency| format!("depends-on:{dependency}")),
+        );
         if let Some(source) = &proposal.source_change {
             labels.push(format!("supersedes:{source}"));
         }
@@ -455,9 +461,22 @@ pub fn build_planning_transaction_manifest(
         PlanningStage::Verify => false,
     });
 
+    let dependency_depths = create_dependency_depths(&mutations);
     mutations.sort_by(|left, right| {
         mutation_action_rank(&left.action, &left.issue_type)
             .cmp(&mutation_action_rank(&right.action, &right.issue_type))
+            .then_with(|| {
+                dependency_depths
+                    .get(&left.target)
+                    .copied()
+                    .unwrap_or_default()
+                    .cmp(
+                        &dependency_depths
+                            .get(&right.target)
+                            .copied()
+                            .unwrap_or_default(),
+                    )
+            })
             .then_with(|| reference_sort_key(&left.target).cmp(&reference_sort_key(&right.target)))
     });
     for (index, mutation) in mutations.iter_mut().enumerate() {
@@ -479,6 +498,58 @@ pub fn build_planning_transaction_manifest(
         apply_command: apply_command.to_string(),
         terminal_next: terminal_next.to_string(),
     }
+}
+
+fn create_dependency_depths(mutations: &[PlanningMutation]) -> BTreeMap<String, usize> {
+    let create_targets = mutations
+        .iter()
+        .filter(|mutation| mutation.action == "create")
+        .map(|mutation| mutation.target.clone())
+        .collect::<BTreeSet<_>>();
+    let dependencies = mutations
+        .iter()
+        .filter(|mutation| mutation.action == "create")
+        .map(|mutation| {
+            let values = mutation
+                .add_labels
+                .iter()
+                .filter_map(|label| label.strip_prefix("depends-on:"))
+                .filter(|dependency| create_targets.contains(*dependency))
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            (mutation.target.clone(), values)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    fn depth(
+        target: &str,
+        dependencies: &BTreeMap<String, Vec<String>>,
+        visiting: &mut BTreeSet<String>,
+        memo: &mut BTreeMap<String, usize>,
+    ) -> usize {
+        if let Some(depth) = memo.get(target) {
+            return *depth;
+        }
+        if !visiting.insert(target.to_string()) {
+            return 0;
+        }
+        let value = dependencies
+            .get(target)
+            .into_iter()
+            .flatten()
+            .map(|dependency| depth(dependency, dependencies, visiting, memo) + 1)
+            .max()
+            .unwrap_or_default();
+        visiting.remove(target);
+        memo.insert(target.to_string(), value);
+        value
+    }
+
+    let mut memo = BTreeMap::new();
+    for target in create_targets {
+        depth(&target, &dependencies, &mut BTreeSet::new(), &mut memo);
+    }
+    memo
 }
 
 /// Apply or reconcile the reviewed mutation manifest. Preflight finishes
@@ -510,10 +581,64 @@ pub async fn apply_planning_transaction(
 
     for mutation in &manifest.mutations {
         let resolved = resolve_mutation(mutation, &resolutions);
-        if let Some(existing) = mutation_already_applied(&resolved, &current, &resolutions) {
-            if mutation.action == "create" {
+        if mutation.action == "create" {
+            if let Some(existing) = created_target(mutation, &current) {
                 resolutions.insert(mutation.target.clone(), existing.clone());
+                let resolved = resolve_mutation(mutation, &resolutions);
+                let issue = current
+                    .iter()
+                    .find(|issue| issue_key(issue) == existing)
+                    .expect("created target resolved from current inventory");
+                let exact_graph_labels = graph_labels(&issue.labels, &manifest.project_label)
+                    == graph_labels(&resolved.add_labels, &manifest.project_label);
+                if mutation_matches_issue(&resolved, issue) && exact_graph_labels {
+                    reconciled_count += 1;
+                    results.push(PlanningMutationResult {
+                        order: mutation.order,
+                        idempotency_key: mutation.idempotency_key.clone(),
+                        target: mutation.target.clone(),
+                        resolved_issue: existing,
+                        status: "reconciled".to_string(),
+                    });
+                    continue;
+                }
+
+                let (add_labels, remove_labels) =
+                    managed_label_delta(issue, &resolved.add_labels, true);
+                let repaired = backend
+                    .update(
+                        &existing,
+                        &IssuePatch {
+                            title: resolved.title.clone(),
+                            body: resolved.body.clone(),
+                            add_labels,
+                            remove_labels,
+                            ..IssuePatch::default()
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("planning transaction repair `{}` failed", mutation.target)
+                    })?;
+                replace_current_issue(&mut current, repaired);
+                applied_count += 1;
+                let result = PlanningMutationResult {
+                    order: mutation.order,
+                    idempotency_key: mutation.idempotency_key.clone(),
+                    target: mutation.target.clone(),
+                    resolved_issue: existing,
+                    status: "repaired".to_string(),
+                };
+                results.push(result.clone());
+                checkpoint
+                    .results
+                    .retain(|item| item.idempotency_key != result.idempotency_key);
+                checkpoint.results.push(result);
+                write_checkpoint(checkpoint_path, &checkpoint)?;
+                continue;
             }
+        }
+        if let Some(existing) = mutation_already_applied(&resolved, &current, &resolutions) {
             reconciled_count += 1;
             results.push(PlanningMutationResult {
                 order: mutation.order,
@@ -966,18 +1091,27 @@ fn mutation_already_applied(
     resolutions: &BTreeMap<String, String>,
 ) -> Option<String> {
     if mutation.action == "create" {
-        return current
-            .iter()
-            .find(|issue| {
-                issue
-                    .body
-                    .contains(&transaction_marker(&mutation.idempotency_key))
-            })
-            .map(issue_key);
+        return created_target(mutation, current).filter(|id| {
+            current
+                .iter()
+                .find(|issue| issue_key(issue) == *id)
+                .is_some_and(|issue| mutation_matches_issue(mutation, issue))
+        });
     }
     let target = resolve_reference(&mutation.target, resolutions);
     let issue = current.iter().find(|issue| issue_key(issue) == target)?;
     mutation_matches_issue(mutation, issue).then_some(target)
+}
+
+fn created_target(mutation: &PlanningMutation, current: &[Issue]) -> Option<String> {
+    current
+        .iter()
+        .find(|issue| {
+            issue
+                .body
+                .contains(&transaction_marker(&mutation.idempotency_key))
+        })
+        .map(issue_key)
 }
 
 fn mutation_matches_issue(mutation: &PlanningMutation, issue: &Issue) -> bool {
@@ -1045,7 +1179,11 @@ fn resolve_mutation(
 
 fn resolve_text(value: &str, resolutions: &BTreeMap<String, String>) -> String {
     let mut resolved = value.to_string();
-    for (symbolic, actual) in resolutions {
+    let mut replacements = resolutions.iter().collect::<Vec<_>>();
+    replacements.sort_by(|(left, _), (right, _)| {
+        right.len().cmp(&left.len()).then_with(|| left.cmp(right))
+    });
+    for (symbolic, actual) in replacements {
         resolved = resolved.replace(symbolic, actual);
     }
     resolved
@@ -1411,6 +1549,120 @@ mod tests {
             "aw wi plan-review --evidence-file /tmp/review.json",
             "aw wi graph --project demo --json",
         )
+    }
+
+    #[tokio::test]
+    async fn proposed_requirement_dependencies_create_in_order_and_resolve_labels() {
+        let mut source = epic();
+        source.body = "## Requirements\n\n- R1: Publish the native Python EC replacement.\n- R2: Delete the delegated Rust EC wrapper.\n\n## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | `python3 native_ec.py` | Native EC passes. | - |\n| R2 | `test ! -e delegated.rs` | Delegated wrapper is absent. | R1 |\n".to_string();
+        let manifest = manifest(&source);
+        let creates = manifest
+            .mutations
+            .iter()
+            .filter(|mutation| mutation.action == "create")
+            .collect::<Vec<_>>();
+        assert_eq!(creates.len(), 2);
+        assert!(creates[0].target.ends_with("requirement-1"));
+        assert!(creates[1].target.ends_with("requirement-2"));
+        assert!(creates[1]
+            .add_labels
+            .contains(&format!("depends-on:{}", creates[0].target)));
+
+        let backend = FailingBackend::new(vec![source], false);
+        let temp = tempfile::tempdir().unwrap();
+        let checkpoint = temp.path().join("transaction.json");
+        apply_planning_transaction(&backend, &manifest, "review-digest", &checkpoint)
+            .await
+            .unwrap();
+
+        let published = backend.snapshot();
+        let prerequisite = published
+            .iter()
+            .find(|issue| issue.title.contains("Publish the native Python EC"))
+            .map(issue_key)
+            .unwrap();
+        let dependent = published
+            .iter()
+            .find(|issue| issue.title.contains("Delete the delegated Rust EC"))
+            .unwrap();
+        assert!(dependent
+            .labels
+            .contains(&format!("depends-on:{prerequisite}")));
+    }
+
+    #[test]
+    fn symbolic_resolution_prefers_longest_prefix_overlapping_id() {
+        let resolutions = BTreeMap::from([
+            (
+                "proposal:change:2654:requirement-1".to_string(),
+                "2657".to_string(),
+            ),
+            (
+                "proposal:change:2654:requirement-10".to_string(),
+                "2659".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            resolve_text(
+                "depends-on:proposal:change:2654:requirement-10",
+                &resolutions
+            ),
+            "depends-on:2659"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_repairs_marker_owned_create_with_corrupted_dependency_label() {
+        let mut source = epic();
+        source.body = "## Requirements\n\n- R1: Publish the native Python EC replacement.\n- R2: Delete the delegated Rust EC wrapper.\n\n## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | `python3 native_ec.py` | Native EC passes. | - |\n| R2 | `test ! -e delegated.rs` | Delegated wrapper is absent. | R1 |\n".to_string();
+        let manifest = manifest(&source);
+        let backend = FailingBackend::new(vec![source], false);
+        let temp = tempfile::tempdir().unwrap();
+        let checkpoint = temp.path().join("transaction.json");
+
+        apply_planning_transaction(&backend, &manifest, "review-digest", &checkpoint)
+            .await
+            .unwrap();
+        {
+            let mut issues = backend.issues.lock().unwrap();
+            let dependent = issues
+                .iter_mut()
+                .find(|issue| issue.title.contains("Delete the delegated Rust EC"))
+                .unwrap();
+            dependent
+                .labels
+                .retain(|label| !label.starts_with("depends-on:"));
+            dependent.labels.push("depends-on:26570".to_string());
+        }
+
+        let repaired =
+            apply_planning_transaction(&backend, &manifest, "review-digest", &checkpoint)
+                .await
+                .unwrap();
+        assert_eq!(
+            backend.snapshot().len(),
+            3,
+            "retry must not duplicate creates"
+        );
+        assert!(repaired
+            .results
+            .iter()
+            .any(|result| result.status == "repaired"));
+
+        let published = backend.snapshot();
+        let prerequisite = published
+            .iter()
+            .find(|issue| issue.title.contains("Publish the native Python EC"))
+            .map(issue_key)
+            .unwrap();
+        let dependent = published
+            .iter()
+            .find(|issue| issue.title.contains("Delete the delegated Rust EC"))
+            .unwrap();
+        assert!(dependent
+            .labels
+            .contains(&format!("depends-on:{prerequisite}")));
+        assert!(!dependent.labels.contains(&"depends-on:26570".to_string()));
     }
 
     #[tokio::test]

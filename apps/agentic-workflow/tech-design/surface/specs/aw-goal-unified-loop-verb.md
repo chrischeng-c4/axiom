@@ -121,15 +121,13 @@ non-graph labels may advance after publication without invalidating the plan.
 ## Self-hosting admission parity (R6)
 <!-- type: doc lang: markdown -->
 
-The `aw-self-hosting-runner-policy.md` (#1501) admission check runs
-identically for every goal-namespace lifecycle root: `run_wi_root`,
-`run_capability_root`, and `run_backlog_root` all call
-`is_self_hosting_project`/`issue_is_self_hosting` before touching loop state
-or dispatch, and return the same terminal `self_hosting_policy` envelope the
-retired runners returned. The retired verbs' redirect envelopes do not
-themselves re-check self-hosting -- admission happens once the agent runs
-the named `aw goal` replacement, exactly as it would have for a fresh
-invocation of the retired verb.
+The `aw-self-hosting-runner-policy.md` (#2446) contract applies identically to
+every goal-namespace lifecycle root: `run_wi_root`, `run_capability_root`, and
+`run_backlog_root` admit Agentic Workflow through the same normal Python-first
+runner used by other projects. Identity, reviewed-graph, EC, TD, CB,
+persistence, and completion failures remain fail-closed. Bounded direct repair
+is reserved for the exact current worker verb that is broken and must resume
+the original goal root afterward.
 
 ## Skill and docs convergence (R5)
 <!-- type: doc lang: markdown -->
@@ -203,14 +201,14 @@ scenarios:
       - "epic and backlog roots dispatch no change"
       - "the blocked envelope names the exact issue inspection or project replanning command"
   - id: S6
-    title: self-hosting admission rejects every goal lifecycle root type identically
+    title: self-hosting admission enables every goal lifecycle root type identically
     given:
       - "a WI, capability, or project root that resolves to the agentic-workflow project itself"
     when:
       - "aw goal wi, aw goal capability, or aw goal backlog is invoked against that root"
     then:
-      - "a terminal self_hosting_policy envelope is returned before loop state or dispatch is touched"
-      - "the fixture tree is byte-for-byte unchanged"
+      - "the root enters normal Python-first lifecycle routing"
+      - "normal fail-closed gates return machine-actionable remediation instead of a policy rejection"
 ```
 
 ## CLI
@@ -347,9 +345,10 @@ e2e_tests:
   - id: self-hosting-goal-root-parity
     capability_id: workflow-root-runner
     claim_id: goal-unified-loop-verb
-    command: cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_wi_identity_and_rollup_never_reenter_root_runner -- --nocapture
+    command: python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission
     assertions:
-      - "self-AW WI identity resolution and rollup routing reject before loop-state or dispatch touch the fixture tree"
+      - "self-AW WI, capability, and backlog roots use normal lifecycle admission"
+      - "no root returns the retired self_hosting_policy envelope"
 ```
 
 ## Changes

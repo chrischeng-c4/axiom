@@ -261,8 +261,9 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 - What to test is DERIVED FROM caps. That derivation is the single human +
   agent collaboration point (HITL) -- and the only place a review belongs,
   because a wrong ec yields a false green nothing downstream can catch.
-- The approval path is `draft -> fill -> check -> review`. `needs_revision`
-  routes back to bounded `fill`; `accepted` advances to staged verification.
+- The approval path is `draft -> check -> review -> lock`. `needs_revision`
+  routes back to bounded edits of the emitted Python inventory/source;
+  `accepted` advances to locking and staged verification.
   Production-required EC needs digest-bound independent review evidence.
   `ec_review_backing` (either default, agent-first | agent | human, opt-in
   blocking human-only review) picks who may back it; same-agent self-review
@@ -285,6 +286,22 @@ const WI_MD: &str = r#"# aw llm --topic wi -- the loop state + how to operate th
 A work-item IS the loop's durable state. You operate aw by reading one JSON
 envelope (schema `aw.cli.v1`) and running the command it hands back, until the
 loop converges on ec green.
+
+## Terminology-first work-item types
+
+Each closed-enum type is defined by its terminal state:
+
+| type | terminal state |
+|------|----------------|
+| `epic` | all owned children are terminal |
+| `change` | EC is green for the generated codebase and the lifecycle closes the change |
+| `spike` | an ADR-style decision records spawned WI refs or explicit no-action; expiry converges to `gave_up` |
+| `report` | typed `triage` either accepts and links a spawned change/epic, or closes as `duplicate`, `invalid`, or `by-design` |
+
+Only `change` is executable backlog work. A `spike` is a timeboxed
+investigation, never product-source implementation. A `report` enters the
+project's intake queue until triage. Both converge by spawn-and-link rather
+than changing type in place.
 
 ## The loop state (carried in the WI)
 
@@ -313,7 +330,7 @@ Drive it: `aw goal wi <id>` for one work item, or `aw goal capability
 the `goal` topic for the full root-type map); the linear authoring path is
 `skeleton -> fill -> validate`; unresolved product decisions become HITL.
 There is no WI review or arbitration phase. The implementation path is
-`wi -> ec draft/fill/check/review -> td -> ec[td] -> cb -> ec[cb] -> code-check
+`wi -> ec draft/check/review/lock -> td -> ec[td] -> cb -> ec[cb] -> code-check
 -> parent rollup`; capability is the META-doc goal ledger and `aw health` is
 read-only observation, not an authoring step.
 
@@ -737,7 +754,13 @@ completion.workflow_complete == true\n\
                 "prompt topic must define canonical operator `{operator}`"
             );
         }
-        for stale in ["Mermaid Plus", "YAML IR", "ec skeleton/fill/review/gen"] {
+        for stale in [
+            "Mermaid Plus",
+            "YAML IR",
+            "ec skeleton/fill/review/gen",
+            "draft -> fill",
+            "ec draft/fill",
+        ] {
             assert!(
                 ![MODEL_MD, TD_MD, EC_MD, WI_MD, GOAL_MD, PROMPT_MD]
                     .iter()

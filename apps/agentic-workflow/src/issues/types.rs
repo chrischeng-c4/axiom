@@ -258,6 +258,10 @@ pub enum IssueType {
     Epic,
     /// Canonical executable work-item leaf.
     Change,
+    /// Timeboxed investigation that converges to an ADR-style decision.
+    Spike,
+    /// Inbound needs-triage report that converges through a typed verdict.
+    Report,
     /// Legacy compatibility alias decoded from existing tracker history.
     Bug,
     /// Legacy compatibility alias decoded from existing tracker history.
@@ -285,7 +289,7 @@ pub enum ShipStatus {
 }
 // CODEGEN-END
 
-// HANDWRITE-BEGIN gap="missing-generator:schema-enum-compatibility-codec" tracker="#2385" reason="IssueType keeps legacy Rust variants for source compatibility while exposing only canonical epic/change wire values."
+// HANDWRITE-BEGIN gap="missing-generator:schema-enum-compatibility-codec" tracker="#2593" reason="IssueType keeps legacy Rust variants for source compatibility while exposing the canonical epic/change/spike/report wire values."
 impl PartialEq for IssueType {
     fn eq(&self, other: &Self) -> bool {
         self.workflow_role() == other.workflow_role()
@@ -311,7 +315,7 @@ impl<'de> Deserialize<'de> for IssueType {
         let value = String::deserialize(deserializer)?;
         Self::parse(&value).ok_or_else(|| {
             serde::de::Error::custom(format!(
-                "unsupported issue type `{value}`; expected epic or change"
+                "unsupported issue type `{value}`; expected epic, change, spike, or report"
             ))
         })
     }
@@ -787,6 +791,8 @@ impl IssueType {
     pub fn as_str(&self) -> &'static str {
         match self {
             IssueType::Epic => "epic",
+            IssueType::Spike => "spike",
+            IssueType::Report => "report",
             IssueType::Change
             | IssueType::Bug
             | IssueType::Enhancement
@@ -799,6 +805,8 @@ impl IssueType {
         match s.to_ascii_lowercase().as_str() {
             "epic" => Some(IssueType::Epic),
             "change" => Some(IssueType::Change),
+            "spike" => Some(IssueType::Spike),
+            "report" => Some(IssueType::Report),
             "bug" => Some(IssueType::Bug),
             "enhancement" | "feature" => Some(IssueType::Enhancement),
             "refactor" => Some(IssueType::Refactor),
@@ -809,6 +817,13 @@ impl IssueType {
 
     pub fn workflow_role(&self) -> &'static str {
         self.as_str()
+    }
+
+    /// True only for executable change leaves. Legacy aliases retain their
+    /// compatibility role as changes; spike/report are deliberately parked
+    /// outside the executable backlog graph.
+    pub fn is_change(&self) -> bool {
+        self.workflow_role() == "change"
     }
 
     /// Extract the issue type from a list of labels by finding the

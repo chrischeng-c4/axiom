@@ -24,6 +24,9 @@ use crate::cli::standardize::{
     DriftMarkerCoverage, RegenerabilityCoverage, SemanticCoverage, StackMigrationCoverage,
     StandardizationCoverage, TakeoverAuditCoverage, TraceabilityCoverage,
 };
+use crate::issues::{
+    make_backend, resolve_default_backend, Issue, IssueFilter, IssueState, IssueType,
+};
 use crate::models::preflight::PreFlightGateReport;
 use crate::models::project::EcBinding;
 
@@ -158,6 +161,7 @@ pub struct ProjectHealthReport {
     pub mutation_adequacy: crate::services::python_td_mutation_health::PythonTdMutationAdequacy,
     pub ec: ProjectEcGateReport,
     pub claim_closure: ProjectClaimClosureReport,
+    pub intake_queue: IntakeQueueHealthReport,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
     pub preflight_gate_reports: Vec<PreFlightGateReport>,
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -217,6 +221,18 @@ pub struct ProjectHealthReport {
     // check, folded in from the retired `aw standardize audit check`.
     // Brownfield-only/advisory -- never a `next.command` source.
     pub takeover_audit: TakeoverAuditCoverage,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct IntakeQueueHealthReport {
+    pub evaluated: bool,
+    pub status: String,
+    pub open_report_count: usize,
+    pub expired_spike_count: usize,
+    pub open_reports: Vec<String>,
+    pub expired_spikes: Vec<String>,
+    pub next_command: Option<String>,
+    pub finding: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -1359,6 +1375,7 @@ impl ProjectHealthReport {
                 },
             ec: ProjectEcGateReport::not_evaluated(project),
             claim_closure: ProjectClaimClosureReport::not_evaluated(project),
+            intake_queue: IntakeQueueHealthReport::default(),
             preflight_gate_reports: Vec::new(),
             optional_quality_warnings: Vec::new(),
             managed_percent: managed.percent,
@@ -2256,9 +2273,9 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#2446" reason="logic section in project.rs is hand-written pending codegen support">
-/// Self-AW health remains a read-only policy report. Agentic Workflow repairs
-/// use the sanctioned direct-commit path because requiring a potentially
-/// broken lifecycle to repair itself would deadlock self-hosting.
+/// Self-AW health remains a read-only policy report. Agentic Workflow dogfoods
+/// its Python-first roots; bounded direct repair is reserved for the exact
+/// worker verb that is broken, rather than being the default admission path.
 fn add_self_hosting_policy_fields(
     report: &ProjectHealthReport,
     mut summary: serde_json::Value,
@@ -2279,11 +2296,19 @@ fn add_self_hosting_policy_fields(
     );
     object.insert(
         "root_runner_allowed".to_string(),
-        serde_json::Value::Bool(false),
+        serde_json::Value::Bool(true),
     );
     object.insert(
         "direct_repair_default".to_string(),
-        serde_json::Value::Bool(true),
+        serde_json::Value::Bool(false),
+    );
+    object.insert(
+        "direct_repair_fallback".to_string(),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_FALLBACK_MODE.to_string()),
+    );
+    object.insert(
+        "fallback_trigger".to_string(),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_FALLBACK_TRIGGER.to_string()),
     );
     object.insert(
         "hard_gates".to_string(),
@@ -2376,6 +2401,7 @@ fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Valu
         "td_gen": project_health_td_gen_axis(report),
         "drift_marker": project_health_drift_marker_axis(report),
         "takeover_audit": project_health_takeover_audit_axis(report),
+        "intake_queue": &report.intake_queue,
     })
 }
 
@@ -2936,7 +2962,7 @@ fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     let caps_ec_only = project_health_caps_ec_only(&report.project);
-    if report.production_ready || (!caps_ec_only && report.workflow_lock_count > 0) {
+    if report.production_ready || project_health_requires_hitl(report) {
         return None;
     }
     if !caps_ec_only {
@@ -3088,6 +3114,13 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if report.production_ready {
         return "project production readiness is complete".to_string();
     }
+    if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
+        return report
+            .ec
+            .note
+            .clone()
+            .unwrap_or_else(|| "EC lock migration requires HITL resolution".to_string());
+    }
     if !caps_ec_only && report.workflow_lock_count > 0 {
         return report
             .blockers
@@ -3208,6 +3241,123 @@ fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json:
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+async fn apply_intake_queue_to_report(report: &mut ProjectHealthReport) {
+    let result = async {
+        let project_root = crate::find_project_root()?;
+        let project_label =
+            crate::cli::issues::resolve_project_label(&project_root, &report.project)
+                .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
+        let (kind, repo, host) = resolve_default_backend(&project_root)?;
+        let backend = make_backend(&kind, &project_root, repo, host)?;
+        let issues = backend
+            .list(&IssueFilter {
+                state: Some(IssueState::Open),
+                issue_type: None,
+                label: Some(project_label),
+                author: None,
+            })
+            .await?;
+        Ok::<Vec<Issue>, anyhow::Error>(issues)
+    }
+    .await;
+
+    let issues = match result {
+        Ok(issues) => issues,
+        Err(error) => {
+            report.intake_queue = IntakeQueueHealthReport {
+                status: "unavailable".to_string(),
+                finding: Some(error.to_string()),
+                ..Default::default()
+            };
+            return;
+        }
+    };
+    let mut open_reports = issues
+        .iter()
+        .filter(|issue| issue.issue_type == IssueType::Report)
+        .map(health_issue_ref)
+        .collect::<Vec<_>>();
+    let now = chrono::Utc::now();
+    let mut expired_spikes = issues
+        .iter()
+        .filter(|issue| issue.issue_type == IssueType::Spike)
+        .filter(|issue| spike_health_expiry(issue).is_some_and(|expiry| expiry <= now))
+        .map(health_issue_ref)
+        .collect::<Vec<_>>();
+    open_reports.sort();
+    expired_spikes.sort();
+    let next_command = open_reports
+        .first()
+        .map(|id| format!("aw wi triage {id} --verdict accepted"))
+        .or_else(|| {
+            expired_spikes
+                .first()
+                .map(|id| format!("aw wi spike expire {id}"))
+        });
+    report.intake_queue = IntakeQueueHealthReport {
+        evaluated: true,
+        status: if next_command.is_some() {
+            "pending".to_string()
+        } else {
+            "clean".to_string()
+        },
+        open_report_count: open_reports.len(),
+        expired_spike_count: expired_spikes.len(),
+        open_reports,
+        expired_spikes,
+        next_command,
+        finding: None,
+    };
+}
+
+fn health_issue_ref(issue: &Issue) -> String {
+    issue
+        .github_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| issue.slug.clone())
+}
+
+fn spike_health_expiry(issue: &Issue) -> Option<chrono::DateTime<chrono::Utc>> {
+    let mut in_timebox = false;
+    let mut lines = Vec::new();
+    for line in issue.body.lines() {
+        if line.starts_with("## ") {
+            if in_timebox {
+                break;
+            }
+            in_timebox = line.trim() == "## Timebox";
+            continue;
+        }
+        if in_timebox {
+            lines.push(line.trim());
+        }
+    }
+    if let Some(raw) = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("Expires At:"))
+    {
+        return chrono::DateTime::parse_from_rfc3339(raw.trim())
+            .ok()
+            .map(|value| value.with_timezone(&chrono::Utc));
+    }
+    let budget = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("Budget:"))?
+        .trim();
+    let (amount, unit) = budget.split_at(budget.len().checked_sub(1)?);
+    let amount = amount.trim().parse::<i64>().ok()?;
+    let duration = match unit {
+        "m" => chrono::Duration::minutes(amount),
+        "h" => chrono::Duration::hours(amount),
+        "d" => chrono::Duration::days(amount),
+        _ => return None,
+    };
+    let created_at = chrono::DateTime::parse_from_rfc3339(issue.created_at.as_deref()?)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    Some(created_at + duration)
+}
+
 pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     if args.section == Some(ProjectHealthSection::Mutation) {
         let project_root = crate::find_project_root()?;
@@ -3242,6 +3392,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     )?;
     apply_td_lock_to_report(&mut report)?;
     apply_workflow_locks_to_report(&mut report).await?;
+    apply_intake_queue_to_report(&mut report).await;
     apply_meta_to_report(&mut report);
     let payload_path = write_health_payload(&report)?;
     if args.human {
@@ -5042,6 +5193,19 @@ mod tests {
         let full = project_health_summary(&report);
         assert_eq!(full["axes"]["meta"]["clean"], true);
         assert_eq!(full["axes"]["meta"]["coverage_percent"], 100);
+    }
+
+    #[test]
+    fn self_hosting_health_allows_python_roots_and_scopes_direct_repair_to_fallback() {
+        let report = ready_project_health_report("agentic-workflow");
+        let summary = project_health_summary(&report);
+
+        assert_eq!(summary["policy_mode"], "python_first_lifecycle");
+        assert_eq!(summary["root_runner_allowed"], true);
+        assert_eq!(summary["direct_repair_default"], false);
+        assert_eq!(summary["direct_repair_fallback"], "bounded_direct_repair");
+        assert_eq!(summary["fallback_trigger"], "current_worker_verb_broken");
+        assert_eq!(summary["required_trailer"], "Refs #<issue>");
     }
 
     #[test]

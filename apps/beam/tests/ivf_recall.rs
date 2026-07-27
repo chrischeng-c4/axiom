@@ -107,7 +107,10 @@ fn ivf_flat_full_probe_is_exact() {
     let oracle = CpuFlatIndex::new(&corpus);
 
     let recall = mean_recall(&scanner, &index, &oracle, &queries, index.nlist());
-    eprintln!("  IVFFlat recall@{K} at nprobe=nlist={}: {recall:.4}", index.nlist());
+    eprintln!(
+        "  IVFFlat recall@{K} at nprobe=nlist={}: {recall:.4}",
+        index.nlist()
+    );
     assert_eq!(
         recall, 1.0,
         "Flat + full probe must equal the exact oracle (IVF gather/assignment bug otherwise)"
@@ -142,8 +145,14 @@ fn ivf_flat_recall_grows_with_nprobe() {
     }
     // At nprobe = nlist/4, recall should be strong on clustered data.
     let quarter = mean_recall(&scanner, &index, &oracle, &queries, NLIST / 4);
-    eprintln!("  IVFFlat recall@{K} at nprobe=nlist/4={}: {quarter:.4}", NLIST / 4);
-    assert!(quarter >= 0.85, "recall@nlist/4 should clear 0.85, got {quarter}");
+    eprintln!(
+        "  IVFFlat recall@{K} at nprobe=nlist/4={}: {quarter:.4}",
+        NLIST / 4
+    );
+    assert!(
+        quarter >= 0.85,
+        "recall@nlist/4 should clear 0.85, got {quarter}"
+    );
 }
 
 /// (3) PQ / ADC accuracy: Pq refine + probe-every-cell ⇒ recall@10 >= 0.70 (the
@@ -161,8 +170,14 @@ fn ivf_pq_full_probe_recall() {
     let oracle = CpuFlatIndex::new(&corpus);
 
     let recall = mean_recall(&scanner, &index, &oracle, &queries, index.nlist());
-    eprintln!("  IVFPQ (m=16) recall@{K} at nprobe=nlist={}: {recall:.4}", index.nlist());
-    assert!(recall >= 0.70, "PQ full-probe recall should clear 0.70, got {recall}");
+    eprintln!(
+        "  IVFPQ (m=16) recall@{K} at nprobe=nlist={}: {recall:.4}",
+        index.nlist()
+    );
+    assert!(
+        recall >= 0.70,
+        "PQ full-probe recall should clear 0.70, got {recall}"
+    );
 }
 
 /// (4) Kernel exactness: the GPU candidate distances equal the CPU reference
@@ -247,8 +262,7 @@ fn ivf_pq_recall_low_rank_beats_isotropic() {
 
     // Isotropic clustered corpus — PQ's worst case (within-cluster spread is
     // full-rank Gaussian, nothing for the subspace codebooks to exploit).
-    let iso =
-        dataset::clustered_collection("iso", LN, LDIM, Metric::L2, LCLUST, JIT, CORPUS_SEED);
+    let iso = dataset::clustered_collection("iso", LN, LDIM, Metric::L2, LCLUST, JIT, CORPUS_SEED);
     let iso_q = dataset::clustered_queries(N_QUERIES, LDIM, LCLUST, JIT, QUERY_SEED);
     let iso_idx = IvfPqIndex::train(&iso, cfg(Refine::Pq { m: LM })).unwrap();
     let iso_oracle = CpuFlatIndex::new(&iso);
@@ -256,9 +270,8 @@ fn ivf_pq_recall_low_rank_beats_isotropic() {
 
     // Low-rank (embedding-like) corpus — within-cluster variation lives near a
     // 16-dim manifold, so PQ resolves distances finely.
-    let lr = dataset::low_rank_collection(
-        "lr", LN, LDIM, Metric::L2, LRANK, LCLUST, JIT, CORPUS_SEED,
-    );
+    let lr =
+        dataset::low_rank_collection("lr", LN, LDIM, Metric::L2, LRANK, LCLUST, JIT, CORPUS_SEED);
     let lr_q = dataset::low_rank_queries(N_QUERIES, LDIM, LRANK, LCLUST, JIT, QUERY_SEED);
     let lr_idx = IvfPqIndex::train(&lr, cfg(Refine::Pq { m: LM })).unwrap();
     let lr_oracle = CpuFlatIndex::new(&lr);
@@ -295,9 +308,7 @@ fn small_nprobe_scans_few_candidates() {
     }
     let avg = total as f64 / queries.len() as f64;
     let ratio = avg / N as f64;
-    eprintln!(
-        "  nprobe={nprobe}: avg candidates {avg:.0} of n={N} → ratio {ratio:.4} (<< 1)"
-    );
+    eprintln!("  nprobe={nprobe}: avg candidates {avg:.0} of n={N} → ratio {ratio:.4} (<< 1)");
     assert!(
         ratio < 0.25,
         "at nprobe={nprobe} the scan should touch < n/4 vectors, got ratio {ratio}"

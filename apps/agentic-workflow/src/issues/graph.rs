@@ -134,7 +134,7 @@ pub fn build_work_item_graph(
     for issue in relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
     {
         let id = issue_key(issue);
         let resolution =
@@ -170,7 +170,7 @@ pub fn build_work_item_graph(
     for issue in relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
     {
         let source = issue_key(issue);
         for raw_target in relation_labels(issue, "supersedes:") {
@@ -266,7 +266,7 @@ pub fn build_work_item_graph(
     let mut changes = relevant
         .iter()
         .copied()
-        .filter(|issue| issue.issue_type != IssueType::Epic)
+        .filter(|issue| issue.issue_type.is_change())
         .map(|issue| {
             let id = issue_key(issue);
             let parent = parent_by_change.get(&id).and_then(Clone::clone);
@@ -290,9 +290,29 @@ pub fn build_work_item_graph(
                 unset_priority()
             };
 
-            let mut dependencies = relation_labels(issue, "depends-on:");
-            dependencies.extend(body_dependency_references(issue));
-            dependencies = resolve_relation_list(&dependencies, &indexed, &aliases);
+            let mut raw_dependencies = relation_labels(issue, "depends-on:");
+            raw_dependencies.extend(body_dependency_references(issue));
+            let mut dependencies = if issue.state == IssueState::Open {
+                raw_dependencies
+                    .iter()
+                    .filter_map(|dependency| {
+                        resolve_relation_target(
+                            &id,
+                            dependency,
+                            "depends-on",
+                            project_label,
+                            &indexed,
+                            &aliases,
+                            &mut diagnostics,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                resolve_relation_list(&raw_dependencies, &indexed, &aliases)
+            };
+            dependencies
+                .sort_by(|left, right| reference_sort_key(left).cmp(&reference_sort_key(right)));
+            dependencies.dedup();
 
             let duplicates =
                 resolve_relation_list(&relation_labels(issue, "duplicate-of:"), &indexed, &aliases);
@@ -499,12 +519,12 @@ fn resolve_relation_target(
         return None;
     };
     let target_id = issue_key(target);
-    if target.issue_type == IssueType::Epic {
+    if !target.issue_type.is_change() {
         diagnostics.push(diagnostic(
             "relation_target_not_change",
             source,
             Some(target_id.clone()),
-            format!("change `{source}` has {relation} relation to epic `{target_id}`"),
+            format!("change `{source}` has {relation} relation to non-change `{target_id}`"),
             format!("change target replacing {relation}:{target_id} on {source}"),
         ));
         return None;
@@ -529,7 +549,9 @@ fn declared_parent_references(issue: &Issue) -> Vec<String> {
     for label in &issue.labels {
         for prefix in ["epic:", "parent-epic:", "parent:"] {
             if let Some(reference) = label.strip_prefix(prefix) {
-                refs.push(reference.trim().to_string());
+                if let Some(reference) = extract_parent_reference(reference) {
+                    refs.push(reference);
+                }
                 break;
             }
         }
@@ -544,7 +566,9 @@ fn declared_parent_references(issue: &Issue) -> Vec<String> {
         let lower = trimmed.to_ascii_lowercase();
         for prefix in ["parent epic:", "parent wi:", "parent:"] {
             if lower.starts_with(prefix) {
-                refs.push(trimmed[prefix.len()..].trim().trim_matches('`').to_string());
+                if let Some(reference) = extract_parent_reference(&trimmed[prefix.len()..]) {
+                    refs.push(reference);
+                }
                 break;
             }
         }
@@ -552,20 +576,88 @@ fn declared_parent_references(issue: &Issue) -> Vec<String> {
     refs
 }
 
-fn body_dependency_references(issue: &Issue) -> Vec<String> {
+/// Extract one declared owner from the value following a parent prefix.
+///
+/// The first hash reference is authoritative when trailing prose names
+/// another work item. Compatibility forms without a hash retain only their
+/// first token, preserving bare ids, slugs, and owner/repository/id paths.
+fn extract_parent_reference(value: &str) -> Option<String> {
+    if let Some(reference) = hash_references(value).into_iter().next() {
+        return Some(reference);
+    }
+
+    let token = value.trim().split_whitespace().next()?.trim_matches('`');
+    let normalized = normalize_reference(token);
+    (!normalized.is_empty()
+        && normalized.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        && normalized
+            .chars()
+            .any(|character| character.is_ascii_alphanumeric()))
+    .then_some(normalized)
+}
+
+/// Decode body dependencies only from declaration-shaped compatibility lines.
+///
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/dependency_reference_extraction.py
+pub(crate) fn body_dependency_references(issue: &Issue) -> Vec<String> {
     let mut refs = Vec::new();
     for line in issue.body.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("depends on")
-            || lower.contains("dependency")
-            || lower.contains("dependencies")
-            || lower.contains("blocked by")
-            || lower.contains("requires #")
-        {
-            refs.extend(hash_references(line));
+        let Some(normalized) = normalize_dependency_declaration_line(line) else {
+            continue;
+        };
+        let lower = normalized.to_ascii_lowercase();
+        for prefix in [
+            "depends on",
+            "dependencies",
+            "dependency",
+            "blocked by",
+            "requires",
+        ] {
+            let Some(mut suffix) = lower
+                .starts_with(prefix)
+                .then(|| &normalized[prefix.len()..])
+            else {
+                continue;
+            };
+            if let Some(without_colon) = suffix.strip_prefix(':') {
+                suffix = without_colon;
+            }
+            suffix = suffix.trim_start();
+            if suffix.starts_with('#') {
+                refs.extend(hash_references(suffix));
+            }
+            break;
         }
     }
     refs
+}
+
+fn normalize_dependency_declaration_line(line: &str) -> Option<String> {
+    let trimmed_start = line.trim_start();
+    let bytes = trimmed_start.as_bytes();
+    let is_list_item = bytes.len() >= 2
+        && matches!(bytes[0], b'-' | b'*' | b'+')
+        && bytes[1].is_ascii_whitespace();
+    if trimmed_start.len() != line.len() && !is_list_item {
+        return None;
+    }
+
+    let mut normalized = trimmed_start.trim_end().to_string();
+    if is_list_item {
+        normalized = normalized[1..].trim_start().to_string();
+    }
+
+    if normalized.starts_with("**") {
+        if let Some(relative_closing) = normalized[2..].find("**") {
+            let closing = relative_closing + 2;
+            normalized = format!("{}{}", &normalized[2..closing], &normalized[closing + 2..])
+                .trim()
+                .to_string();
+        }
+    }
+    Some(normalized)
 }
 
 fn hash_references(value: &str) -> Vec<String> {
@@ -793,6 +885,100 @@ mod tests {
     }
 
     #[test]
+    fn body_parent_reference_extracts_first_hash_and_ignores_trailing_prose() {
+        for body in [
+            "Parent epic: #2600 (Operations baseline row 5).",
+            "Parent epic: #2600 (Operations baseline row 7).",
+            "Parent epic: #2600 (Operations baseline row 6).",
+            "Parent epic: #2600 (Operations baseline row 4).",
+            "Parent epic: #2600 (Operations baseline row 4). Depends on #2620, which gives the shared",
+        ] {
+            let change = issue(2601, "change", "open", &["type:change"], body);
+            assert_eq!(
+                declared_parent_references(&change),
+                vec!["2600"],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn body_parent_reference_preserves_legacy_non_hash_tokens() {
+        for (body, expected) in [
+            ("Parent epic: #2600.", "2600"),
+            ("Parent: #2600", "2600"),
+            ("Parent WI: #2600", "2600"),
+            ("Parent: 2600.", "2600"),
+            ("Parent: local-epic.", "local-epic"),
+            ("Parent: owner/repository/2600.", "2600"),
+        ] {
+            let change = issue(2601, "change", "open", &["type:change"], body);
+            assert_eq!(
+                declared_parent_references(&change),
+                vec![expected],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_parent_reference_uses_the_same_extraction_rule() {
+        let change = issue(
+            2601,
+            "change",
+            "open",
+            &[
+                "type:change",
+                "epic:#2600 (owner) #2620",
+                "parent-epic:owner/repository/2601.",
+                "parent:",
+            ],
+            "",
+        );
+
+        assert_eq!(declared_parent_references(&change), vec!["2600", "2601"]);
+    }
+
+    #[test]
+    fn parent_prefix_documentation_does_not_declare_a_parent() {
+        let change = issue(
+            2688,
+            "change",
+            "open",
+            &["type:change"],
+            "`Parent epic:`, `Parent WI:`, and `Parent:` are decode-only migration inputs.",
+        );
+
+        assert!(declared_parent_references(&change).is_empty());
+    }
+
+    #[test]
+    fn missing_parent_diagnostic_names_only_the_extracted_reference() {
+        let graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[issue(
+                2601,
+                "change",
+                "open",
+                &["type:change", "app:demo"],
+                "Parent epic: #2600 (Operations baseline row 5).",
+            )],
+        );
+
+        let diagnostic = graph
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "missing_epic_parent")
+            .expect("missing parent diagnostic");
+        assert_eq!(diagnostic.related.as_deref(), Some("2600"));
+        assert_eq!(
+            diagnostic.remediation_target,
+            "existing epic target for epic:2600 on 2601"
+        );
+    }
+
+    #[test]
     fn explicit_priority_overrides_inheritance_and_supersession_is_sibling_only() {
         let graph = build_work_item_graph(
             "demo",
@@ -836,6 +1022,81 @@ mod tests {
         assert_eq!(graph.changes[1].dependencies, vec!["2"]);
         assert_eq!(graph.changes[1].priority.source, "explicit");
         assert_eq!(graph.changes[1].priority.value.as_deref(), Some("p0"));
+    }
+
+    #[test]
+    fn missing_dependency_target_fails_graph_closed() {
+        let graph = build_work_item_graph(
+            "demo",
+            "app:demo",
+            &[
+                issue(
+                    1,
+                    "epic",
+                    "open",
+                    &["type:epic", "app:demo", "priority:p1"],
+                    "",
+                ),
+                issue(
+                    2,
+                    "change",
+                    "open",
+                    &["type:change", "app:demo", "epic:1", "depends-on:26570"],
+                    "",
+                ),
+            ],
+        );
+
+        assert!(!graph.valid);
+        assert!(graph.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "missing_relation_target"
+                && diagnostic.issue == "2"
+                && diagnostic.related.as_deref() == Some("26570")
+        }));
+    }
+
+    #[test]
+    fn body_dependencies_require_declaration_shaped_lines() {
+        let change = issue(
+            2691,
+            "change",
+            "open",
+            &["type:change"],
+            "\
+Depends on #12.
+  - **Blocked by:** #13 and #14.
++ Requires #15 before #16.
+Dependency: #17
+Dependencies: #18, #19
+R1: This behavior depends on #20.
+The dependency example references #21.
+`Depends on #22` is decode-only syntax.
+Depends on labels such as #23.
+## Dependencies #24",
+        );
+
+        assert_eq!(
+            body_dependency_references(&change),
+            vec!["12", "13", "14", "15", "16", "17", "18", "19"]
+        );
+    }
+
+    #[test]
+    fn explanatory_relation_prose_creates_no_dependency_edges() {
+        let change = issue(
+            2687,
+            "change",
+            "closed",
+            &["type:change"],
+            "\
+The body decoder does not extract a reference; it takes the rest of the line.
+The correct extractor is already in the same file. `hash_references` scans #2620 and #2621.
+Dependency, duplicate, and supersession decoding are described by #2677 and #2680.
+R7: requirements prose depends on the graph contract tracked by #2600.
+  Depends on #2680.",
+        );
+
+        assert!(body_dependency_references(&change).is_empty());
     }
 
     #[test]

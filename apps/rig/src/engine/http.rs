@@ -106,7 +106,9 @@ pub(super) fn execute_with_agent(
                 Ok(false) => {
                     violation = Some(format!(
                         "jsonpath `{path}` = {} violates `{predicate}`",
-                        actual.map(|v| v.to_string()).unwrap_or_else(|| "<missing>".into())
+                        actual
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "<missing>".into())
                     ));
                     break;
                 }

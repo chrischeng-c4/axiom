@@ -57,6 +57,10 @@ pub enum IssuesCommand {
     Update(UpdateArgs),
     /// Close a work-item, optionally with a reason.
     Close(CloseArgs),
+    /// Converge a timeboxed Spike to its typed terminal record.
+    Spike(SpikeArgs),
+    /// Triage a Report to a typed verdict, optionally spawning delivery work.
+    Triage(TriageArgs),
     /// Search work-items by text query.
     Find(FindArgs),
     /// Drive the canonical staged epic/change project-plan root.
@@ -272,7 +276,7 @@ pub struct CreateArgs {
     #[arg(long, required_unless_present = "draft_path")]
     pub title: Option<String>,
 
-    /// Work-item type. Closed enum: epic | change.
+    /// Work-item type. Closed enum: epic | change | spike | report.
     /// Emits a canonical `type:<value>` label.
     #[arg(long = "type", required_unless_present = "draft_path")]
     pub issue_type: Option<TypeFilter>,
@@ -400,6 +404,108 @@ pub struct CloseArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeArgs {
+    #[command(subcommand)]
+    pub command: SpikeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpikeCommand {
+    /// Record an ADR-style decision and close the Spike.
+    Resolve(SpikeResolveArgs),
+    /// Close an expired Spike with terminal state `gave_up`.
+    Expire(SpikeExpireArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeResolveArgs {
+    /// Spike identifier.
+    pub id: String,
+    /// ADR-style decision reached from the evidence.
+    #[arg(long)]
+    pub decision: String,
+    /// Spawned follow-up work-item reference; repeat for multiple WIs.
+    #[arg(long = "spawned-wi")]
+    pub spawned_wis: Vec<String>,
+    /// Explicitly record that the decision requires no follow-up work.
+    #[arg(long, conflicts_with = "spawned_wis")]
+    pub no_action: bool,
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SpikeExpireArgs {
+    /// Spike identifier.
+    pub id: String,
+    /// Optional evidence explaining why the timebox expired.
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// GitHub/GitLab repo override.
+    #[arg(long)]
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TriageVerdict {
+    Accepted,
+    Duplicate,
+    Invalid,
+    ByDesign,
+}
+
+impl TriageVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Duplicate => "duplicate",
+            Self::Invalid => "invalid",
+            Self::ByDesign => "by-design",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TriageSpawnType {
+    Change,
+    Epic,
+}
+
+impl From<TriageSpawnType> for IssueType {
+    fn from(value: TriageSpawnType) -> Self {
+        match value {
+            TriageSpawnType::Change => IssueType::Change,
+            TriageSpawnType::Epic => IssueType::Epic,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct TriageArgs {
+    /// Report identifier.
+    pub id: String,
+    /// Typed terminal verdict.
+    #[arg(long)]
+    pub verdict: TriageVerdict,
+    /// Reason or supporting evidence for the verdict.
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// Type of delivery WI spawned by an accepted verdict.
+    #[arg(long, value_enum, default_value = "change")]
+    pub spawn_type: TriageSpawnType,
+    /// Override the spawned WI title.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Epic owner for an accepted spawned Change.
+    #[arg(long)]
+    pub epic: Option<String>,
     /// GitHub/GitLab repo override.
     #[arg(long)]
     pub repo: Option<String>,
@@ -699,6 +805,8 @@ impl From<StateFilter> for IssueState {
 pub enum TypeFilter {
     Epic,
     Change,
+    Spike,
+    Report,
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
@@ -707,6 +815,8 @@ impl From<TypeFilter> for IssueType {
         match t {
             TypeFilter::Epic => IssueType::Epic,
             TypeFilter::Change => IssueType::Change,
+            TypeFilter::Spike => IssueType::Spike,
+            TypeFilter::Report => IssueType::Report,
         }
     }
 }
@@ -767,13 +877,23 @@ fn read_body_file(path: &str) -> Result<String> {
     }
 }
 
-fn default_structured_issue_body(title: &str) -> String {
+fn default_structured_issue_body(issue_type: IssueType, title: &str) -> String {
     let title = title.trim();
     let title = if title.is_empty() {
         "the requested work"
     } else {
         title
     };
+    if issue_type == IssueType::Spike {
+        return format!(
+            "## Question\n\n{title}\n\n## Evidence Plan\n\n- Gather evidence sufficient to answer the question.\n\n## Exit Criteria\n\n- Record one ADR-style decision and spawn linked work items, or record explicit no-action.\n\n## Timebox\n\nBudget: 1d\n"
+        );
+    }
+    if issue_type == IssueType::Report {
+        return format!(
+            "## Repro\n\n- Reproduce: {title}\n\n## Diagnostics\n\n- Capture diagnostics for {title}.\n\n## Expected vs Actual\n\nExpected: The reported behavior does not occur.\nActual: {title}\n"
+        );
+    }
     let table_title = markdown_table_cell(title);
     format!(
         "## Problem\n\n{title}\n\n## Capability Alignment\n\nCapability: {title}\nCapability Gap: {title} is not yet delivered.\nProgress Evidence: Completion evidence is recorded on this work item.\n\n## Requirements\n\n- R1: Deliver {title}.\n\n## Scope\n\n### In Scope\n- Deliver the bounded change described by {title}.\n\n### Out of Scope\n- Unrelated work outside this work item.\n\n## Acceptance Criteria\n\n- AC1: {title} is implemented and verified.\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| {table_title} | source request |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| wi-draft | update | {table_title} |\n"
@@ -781,6 +901,7 @@ fn default_structured_issue_body(title: &str) -> String {
 }
 
 fn body_from_inputs(
+    issue_type: IssueType,
     title: &str,
     body: &Option<String>,
     body_file: &Option<String>,
@@ -790,32 +911,42 @@ fn body_from_inputs(
     } else if let Some(b) = body {
         Ok(b.clone())
     } else {
-        Ok(default_structured_issue_body(title))
+        Ok(default_structured_issue_body(issue_type, title))
     }
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-draft-valid-by-construction.md#draft_authoring_contract
 fn draft_body_from_inputs(
+    issue_type: IssueType,
     title: &str,
     body: &Option<String>,
     body_file: &Option<String>,
 ) -> Result<String> {
-    let raw = body_from_inputs(title, body, body_file)?;
-    Ok(normalize_initial_draft_body(title, &raw))
+    let raw = body_from_inputs(issue_type, title, body, body_file)?;
+    Ok(normalize_initial_draft_body(issue_type, title, &raw))
 }
 
-fn normalize_initial_draft_body(title: &str, raw_body: &str) -> String {
+fn normalize_initial_draft_body(issue_type: IssueType, title: &str, raw_body: &str) -> String {
     let body = raw_body.trim_start();
     if body.trim().is_empty() {
-        return default_structured_issue_body(title);
+        return default_structured_issue_body(issue_type, title);
     }
-    let base = default_structured_issue_body(title);
+    let base = default_structured_issue_body(issue_type, title);
     let merged = if looks_like_structured_attempt(body) {
         merge_all_sections(&base, body)
     } else {
-        replace_h2_content(&base, "## Problem", &format!("\n{}\n\n", body))
+        let first_heading = match issue_type {
+            IssueType::Spike => "## Question",
+            IssueType::Report => "## Repro",
+            _ => "## Problem",
+        };
+        replace_h2_content(&base, first_heading, &format!("\n{}\n\n", body))
     };
-    normalize_known_draft_sections(&merged)
+    if issue_type.is_change() || issue_type == IssueType::Epic {
+        normalize_known_draft_sections(&merged)
+    } else {
+        merged
+    }
 }
 
 fn replace_h2_content(body: &str, heading: &str, replacement: &str) -> String {
@@ -1076,6 +1207,8 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Create(a) => run_create(a).await,
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
+        IssuesCommand::Spike(a) => run_spike(a).await,
+        IssuesCommand::Triage(a) => run_triage(a).await,
         IssuesCommand::Find(a) => run_find(a).await,
         IssuesCommand::Plan(a) => run_plan(a).await,
         IssuesCommand::PlanReview(a) => run_plan_review(a).await,
@@ -1882,6 +2015,9 @@ fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
         errors.push("body must contain structured work-item sections".to_string());
         return errors;
     }
+    if issue.issue_type == IssueType::Spike || issue.issue_type == IssueType::Report {
+        return validate_type_template_profile(issue);
+    }
     for section in [
         crate::issues::IssueSection::Problem,
         crate::issues::IssueSection::Requirements,
@@ -1893,6 +2029,75 @@ fn validate_publishable_issue_body(issue: &Issue) -> Vec<String> {
     errors.extend(validate_planning_alignment(issue));
     if let Err(e) = validate_structured_issue(&issue.body, IssueState::Open) {
         errors.push(e.error);
+    }
+    if issue.issue_type == IssueType::Epic && issue.state != IssueState::Draft {
+        errors.extend(crate::issues::planner::validate_requirement_verification_inventory(issue));
+    }
+    errors
+}
+
+fn validate_type_template_profile(issue: &Issue) -> Vec<String> {
+    let required: &[&str] = match (issue.issue_type, issue.state) {
+        (IssueType::Spike, IssueState::Closed) => &[
+            "## Question",
+            "## Evidence Plan",
+            "## Exit Criteria",
+            "## Timebox",
+            "## Decision",
+        ],
+        (IssueType::Spike, _) => &[
+            "## Question",
+            "## Evidence Plan",
+            "## Exit Criteria",
+            "## Timebox",
+        ],
+        (IssueType::Report, IssueState::Closed) => &[
+            "## Repro",
+            "## Diagnostics",
+            "## Expected vs Actual",
+            "## Triage",
+        ],
+        (IssueType::Report, _) => &["## Repro", "## Diagnostics", "## Expected vs Actual"],
+        _ => return Vec::new(),
+    };
+    let headings = split_body_by_h2(&issue.body)
+        .into_iter()
+        .filter_map(|(heading, _)| (!heading.is_empty()).then_some(heading))
+        .collect::<Vec<_>>();
+    let mut errors = Vec::new();
+    for heading in required {
+        match section_content(&issue.body, heading) {
+            Some(content)
+                if content
+                    .lines()
+                    .any(|line| is_real_planning_value(line.trim_start_matches("- ").trim())) => {}
+            Some(_) => errors.push(format!(
+                "{} must contain real, non-placeholder content",
+                heading
+            )),
+            None => errors.push(format!("missing required {} section", heading)),
+        }
+    }
+    for heading in &headings {
+        if !required.contains(&heading.as_str()) {
+            errors.push(format!(
+                "{} work-item accepts only these H2 sections: {}",
+                issue.issue_type.as_str(),
+                required.join(", ")
+            ));
+            break;
+        }
+    }
+    if headings.len() != required.len() {
+        let duplicates = headings.len().saturating_sub(
+            headings
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+        );
+        if duplicates > 0 {
+            errors.push("work-item template contains duplicate H2 sections".to_string());
+        }
     }
     errors
 }
@@ -2171,7 +2376,7 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
 
     let issue_type: IssueType = args.issue_type.into();
-    let body = draft_body_from_inputs(&args.title, &args.body, &args.body_file)?;
+    let body = draft_body_from_inputs(issue_type, &args.title, &args.body, &args.body_file)?;
     let type_label = format!("type:{}", issue_type.as_str());
     let priority_label_owned = args
         .priority
@@ -2283,9 +2488,8 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
 
     // Resolve body content — inject structured skeleton when no body provided.
     // The skeleton gives the issue-author subagent sections to fill.
-    let body = draft_body_from_inputs(title, &args.body, &args.body_file)?;
-
     let issue_type: IssueType = issue_type_arg.into();
+    let body = draft_body_from_inputs(issue_type, title, &args.body, &args.body_file)?;
 
     // Cardinality: epic accepts 0 or 1, others require exactly 1.
     if let Err(e) = check_project_cardinality(issue_type, args.projects.len()) {
@@ -2441,7 +2645,9 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         // Validates the temp-hosted issue file. Rollback removes the file
         // from the temp issue store; the branch stays in place so the user can
         // retry `aw wi create` without cleaning up manually.
-        if looks_like_structured_attempt(&created.body) {
+        if (created.issue_type.is_change() || created.issue_type == IssueType::Epic)
+            && looks_like_structured_attempt(&created.body)
+        {
             if let Err(verr) = validate_structured_issue(&created.body, created.state) {
                 let issue_path = backend.issue_path(&created);
                 let _ = std::fs::remove_file(&issue_path);
@@ -2462,8 +2668,10 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
 fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool) -> Result<()> {
     let backend = LocalBackend::from_project_root(project_root);
     let payload = fill_section_payload_path(project_root, &created.slug);
-    let payload_initialized =
-        initialize_payload_file(&payload, &fill_section_payload_template("all")?)?;
+    let payload_initialized = initialize_payload_file(
+        &payload,
+        &fill_section_payload_template(created.issue_type, "all")?,
+    )?;
     let issue_path = backend.issue_path(created);
     let artifact = super::artifact_producer::wi_contract(
         &created.slug,
@@ -2498,7 +2706,16 @@ fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool
 // continue to work without forcing the new section discipline.
 // @spec structured-issue#R1
 fn looks_like_structured_attempt(body: &str) -> bool {
-    body.contains("## Problem") || body.contains("## Requirements")
+    [
+        "## Problem",
+        "## Requirements",
+        "## Question",
+        "## Evidence Plan",
+        "## Repro",
+        "## Diagnostics",
+    ]
+    .iter()
+    .any(|heading| body.contains(heading))
 }
 
 // ---------------------------------------------------------------------------
@@ -2530,9 +2747,34 @@ fn initialize_payload_file(path: &Path, content: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn fill_section_payload_template(section_arg: &str) -> Result<String> {
+fn fill_section_payload_template(issue_type: IssueType, section_arg: &str) -> Result<String> {
     if section_arg_is_all(section_arg) {
-        return Ok(concat!(
+        if issue_type == IssueType::Spike {
+            return Ok(concat!(
+                "## Question\n\n",
+                "(fill)\n\n",
+                "## Evidence Plan\n\n",
+                "- (fill)\n\n",
+                "## Exit Criteria\n\n",
+                "- (fill)\n\n",
+                "## Timebox\n\n",
+                "Budget: (fill)\n",
+            )
+            .to_string());
+        }
+        if issue_type == IssueType::Report {
+            return Ok(concat!(
+                "## Repro\n\n",
+                "- (fill)\n\n",
+                "## Diagnostics\n\n",
+                "- (fill)\n\n",
+                "## Expected vs Actual\n\n",
+                "Expected: (fill)\n",
+                "Actual: (fill)\n",
+            )
+            .to_string());
+        }
+        let mut template = concat!(
             "## Problem\n\n",
             "(fill)\n\n",
             "## Capability Alignment\n\n",
@@ -2548,6 +2790,17 @@ fn fill_section_payload_template(section_arg: &str) -> Result<String> {
             "- (fill)\n\n",
             "## Acceptance Criteria\n\n",
             "- AC1: (fill)\n\n",
+        )
+        .to_string();
+        if issue_type == IssueType::Epic {
+            template.push_str(concat!(
+                "## Verification Inventory\n\n",
+                "| Requirement | Gate | Oracle | Depends On |\n",
+                "|-------------|------|--------|------------|\n",
+                "| R1 | (fill) | (fill) | - |\n\n",
+            ));
+        }
+        template.push_str(concat!(
             "## Reference Context\n\n",
             "### Related Specs\n",
             "| Spec | Relevance |\n",
@@ -2557,8 +2810,8 @@ fn fill_section_payload_template(section_arg: &str) -> Result<String> {
             "| Spec ID | Action | Main Spec Ref |\n",
             "|---------|--------|---------------|\n",
             "| (fill) | create | (fill) |\n",
-        )
-        .to_string());
+        ));
+        return Ok(template);
     }
 
     let sections = parse_section_arg(section_arg)?;
@@ -2632,8 +2885,10 @@ async fn run_fill_section_brief(
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
 
     let payload = fill_section_payload_path(worktree_abs, slug);
-    let payload_created =
-        initialize_payload_file(&payload, &fill_section_payload_template(section)?)?;
+    let payload_created = initialize_payload_file(
+        &payload,
+        &fill_section_payload_template(issue.issue_type, section)?,
+    )?;
 
     println!("# score-issue-author brief");
     println!();
@@ -2653,13 +2908,24 @@ async fn run_fill_section_brief(
     println!();
     println!("## Task");
     println!();
-    match section {
-        "all" => {
+    match (issue.issue_type, section) {
+        (IssueType::Spike, "all") => {
             println!(
-                "Fill every structured section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Reference Context)."
+                "Fill the exact Spike profile (Question, Evidence Plan, Exit Criteria, Timebox)."
             );
         }
-        other => {
+        (IssueType::Report, "all") => {
+            println!("Fill the exact Report profile (Repro, Diagnostics, Expected vs Actual).");
+        }
+        (IssueType::Epic, "all") => {
+            println!(
+                "Fill every Epic section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Verification Inventory, Reference Context)."
+            );
+        }
+        (_, "all") => {
+            println!("Fill every structured section (Problem, Capability Alignment, Requirements, Scope, Acceptance Criteria, Reference Context).");
+        }
+        (_, other) => {
             println!(
                 "Fill the `{}` section; leave other sections unchanged.",
                 other
@@ -2669,13 +2935,30 @@ async fn run_fill_section_brief(
     println!();
     println!("## Constraints");
     println!("- English only (see feedback_english_only_specs).");
-    println!("- Each Requirements item MUST match `^R\\d+:` (e.g. `- R1: ...`).");
-    println!(
-        "- Capability Alignment MUST include Capability, Capability Gap, and Progress Evidence."
-    );
-    println!("- Scope MUST contain both `### In Scope` and `### Out of Scope`.");
-    println!("- Acceptance Criteria MUST contain at least one real list item.");
-    println!("- Reference Context MUST contain `### Related Specs` and `### Spec Plan` tables.");
+    match issue.issue_type {
+        IssueType::Spike => {
+            println!("- Use only the four Spike H2 sections; every section must be substantive.");
+            println!("- Timebox MUST state a bounded budget or expiry.");
+        }
+        IssueType::Report => {
+            println!("- Use only the three Report H2 sections; every section must be substantive.");
+            println!("- Do not add Capability Alignment during intake.");
+        }
+        _ => {
+            println!("- Each Requirements item MUST match `^R\\d+:` (e.g. `- R1: ...`).");
+            println!("- Capability Alignment MUST include Capability, Capability Gap, and Progress Evidence.");
+            println!("- Scope MUST contain both `### In Scope` and `### Out of Scope`.");
+            println!("- Acceptance Criteria MUST contain at least one real list item.");
+            if issue.issue_type == IssueType::Epic {
+                println!(
+                    "- Verification Inventory MUST map every Requirement to a runnable Gate and observable Oracle; use the optional Depends On column for requirement ordering."
+                );
+            }
+            println!(
+                "- Reference Context MUST contain `### Related Specs` and `### Spec Plan` tables."
+            );
+        }
+    }
     println!();
     println!("## Output contract");
     println!();
@@ -2868,6 +3151,7 @@ fn merge_all_sections(base_body: &str, payload_body: &str) -> String {
 }
 
 fn validate_wi_fill_payload_scope(
+    issue_type: IssueType,
     section_arg: &str,
     payload_body: &str,
     targets: &[crate::issues::IssueSection],
@@ -2880,16 +3164,40 @@ fn validate_wi_fill_payload_scope(
         anyhow::bail!("payload contains content outside an allowed H2 fill slot");
     }
     let allowed = if section_arg_is_all(section_arg) {
-        [
-            "## Problem",
-            "## Capability Alignment",
-            "## Requirements",
-            "## Scope",
-            "## Acceptance Criteria",
-            "## Reference Context",
-        ]
-        .into_iter()
-        .collect::<BTreeSet<_>>()
+        match issue_type {
+            IssueType::Spike => [
+                "## Question",
+                "## Evidence Plan",
+                "## Exit Criteria",
+                "## Timebox",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+            IssueType::Report => ["## Repro", "## Diagnostics", "## Expected vs Actual"]
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+            IssueType::Epic => [
+                "## Problem",
+                "## Capability Alignment",
+                "## Requirements",
+                "## Scope",
+                "## Acceptance Criteria",
+                "## Verification Inventory",
+                "## Reference Context",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+            _ => [
+                "## Problem",
+                "## Capability Alignment",
+                "## Requirements",
+                "## Scope",
+                "## Acceptance Criteria",
+                "## Reference Context",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        }
     } else {
         targets
             .iter()
@@ -2978,9 +3286,14 @@ async fn run_fill_section_apply(
         .validate_slot_payload(section_arg, &payload_body)
         .err()
         .or_else(|| {
-            validate_wi_fill_payload_scope(section_arg, &payload_body, &targets)
-                .err()
-                .map(|error| artifact.schema_violation(section_arg, error.to_string()))
+            validate_wi_fill_payload_scope(
+                existing.issue_type,
+                section_arg,
+                &payload_body,
+                &targets,
+            )
+            .err()
+            .map(|error| artifact.schema_violation(section_arg, error.to_string()))
         });
     if let Some(error) = payload_error {
         print_envelope(&IssueEnvelope::Error {
@@ -3111,6 +3424,23 @@ fn build_update_patch(
         .iter()
         .map(|label| canonicalize_type_label_for_write(label))
         .collect::<Result<Vec<_>>>()?;
+    if let Some(current) = current {
+        let current_type_label = format!("type:{}", current.issue_type.as_str());
+        if add_labels
+            .iter()
+            .any(|label| label.starts_with("type:") && label != &current_type_label)
+            || args.remove_labels.iter().any(|label| {
+                canonicalize_type_label_for_write(label)
+                    .is_ok_and(|label| label == current_type_label)
+            })
+        {
+            anyhow::bail!(
+                "work-item type is immutable; `{}` cannot be changed from type:{}",
+                current.slug,
+                current.issue_type.as_str()
+            );
+        }
+    }
     let mut patch = IssuePatch {
         title: args.title.clone(),
         state: args.state.map(Into::into),
@@ -3143,7 +3473,7 @@ fn canonicalize_type_label_for_write(label: &str) -> Result<String> {
     };
     let issue_type = IssueType::parse(raw_type).ok_or_else(|| {
         anyhow::anyhow!(
-            "unsupported issue type label `{label}`; canonical values are type:epic or type:change"
+            "unsupported issue type label `{label}`; canonical values are type:epic, type:change, type:spike, or type:report"
         )
     })?;
     Ok(format!("type:{}", issue_type.as_str()))
@@ -3430,6 +3760,357 @@ async fn run_close(args: CloseArgs) -> Result<()> {
         println!("Closed {}", args.id);
     }
     Ok(())
+}
+
+async fn run_spike(args: SpikeArgs) -> Result<()> {
+    match args.command {
+        SpikeCommand::Resolve(args) => run_spike_resolve(args).await,
+        SpikeCommand::Expire(args) => run_spike_expire(args).await,
+    }
+}
+
+async fn load_spike_backend(
+    id: &str,
+    repo: Option<String>,
+) -> Result<(Box<dyn IssueBackend>, Issue)> {
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(repo, &project_root)?;
+    let backend =
+        make_backend(&kind, &project_root, repo, host).context("Failed to create Spike backend")?;
+    let issue = backend
+        .get(id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Spike `{id}` was not found"))?;
+    if issue.issue_type != IssueType::Spike {
+        anyhow::bail!(
+            "work-item `{id}` has immutable type `{}`; `aw wi spike` accepts only type:spike",
+            issue.issue_type.as_str()
+        );
+    }
+    if issue.state == IssueState::Closed {
+        anyhow::bail!("Spike `{id}` is already terminal");
+    }
+    Ok((backend, issue))
+}
+
+fn spike_decision_body(
+    issue: &Issue,
+    status: &str,
+    decision: &str,
+    spawned_wis: &[String],
+    no_action: bool,
+) -> String {
+    let mut body = issue.body.trim_end().to_string();
+    body.push_str("\n\n## Decision\n\n");
+    body.push_str(&format!("Status: {status}\n"));
+    body.push_str(&format!("Decision: {}\n", decision.trim()));
+    if no_action {
+        body.push_str("Follow-up: no-action\n");
+    } else {
+        body.push_str("Spawned Work Items:\n");
+        for wi in spawned_wis {
+            body.push_str(&format!("- {}\n", wi.trim()));
+        }
+    }
+    body.push_str(&format!("Closed At: {}\n", chrono::Utc::now().to_rfc3339()));
+    body
+}
+
+async fn close_spike_with_body(
+    backend: &dyn IssueBackend,
+    issue: &Issue,
+    body: String,
+    terminal_state: &str,
+) -> Result<()> {
+    backend
+        .update(
+            &issue.slug,
+            &IssuePatch {
+                body: Some(body),
+                ..Default::default()
+            },
+        )
+        .await?;
+    backend
+        .close(
+            &issue.slug,
+            Some(&format!("Spike terminal state: {terminal_state}")),
+        )
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "done",
+            "type": "spike",
+            "id": issue.slug,
+            "terminal_state": terminal_state,
+            "completion": {
+                "workflow_complete": true
+            },
+            "next": {
+                "terminal": true,
+                "reason": "Spike reached a typed terminal state"
+            }
+        }))?
+    );
+    Ok(())
+}
+
+async fn run_spike_resolve(args: SpikeResolveArgs) -> Result<()> {
+    if !is_real_planning_value(&args.decision) {
+        anyhow::bail!("--decision must contain a real ADR-style decision");
+    }
+    if !args.no_action && args.spawned_wis.is_empty() {
+        anyhow::bail!(
+            "resolved Spike must provide at least one --spawned-wi or explicit --no-action"
+        );
+    }
+    if args
+        .spawned_wis
+        .iter()
+        .any(|reference| !is_real_planning_value(reference))
+    {
+        anyhow::bail!("--spawned-wi values must be real work-item references");
+    }
+    let (backend, issue) = load_spike_backend(&args.id, args.repo).await?;
+    let body = spike_decision_body(
+        &issue,
+        "decided",
+        &args.decision,
+        &args.spawned_wis,
+        args.no_action,
+    );
+    close_spike_with_body(backend.as_ref(), &issue, body, "decided").await
+}
+
+fn spike_expiry(issue: &Issue) -> Result<chrono::DateTime<chrono::Utc>> {
+    let timebox = section_content(&issue.body, "## Timebox")
+        .ok_or_else(|| anyhow::anyhow!("Spike `{}` has no ## Timebox", issue.slug))?;
+    if let Some(raw) = timebox
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Expires At:"))
+    {
+        return chrono::DateTime::parse_from_rfc3339(raw.trim())
+            .map(|value| value.with_timezone(&chrono::Utc))
+            .context("Spike `Expires At:` must be RFC3339");
+    }
+    let budget = timebox
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Budget:"))
+        .map(str::trim)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Spike `{}` Timebox must contain `Expires At:` or `Budget:`",
+                issue.slug
+            )
+        })?;
+    let (amount, unit) = budget.split_at(budget.len().saturating_sub(1));
+    let amount = amount
+        .trim()
+        .parse::<i64>()
+        .context("Spike Budget must be an integer followed by m, h, or d")?;
+    let duration = match unit {
+        "m" => chrono::Duration::minutes(amount),
+        "h" => chrono::Duration::hours(amount),
+        "d" => chrono::Duration::days(amount),
+        _ => anyhow::bail!("Spike Budget unit must be m, h, or d"),
+    };
+    let created_at = issue
+        .created_at
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Spike `{}` has no creation time", issue.slug))?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+        .context("Spike creation time must be RFC3339")?
+        .with_timezone(&chrono::Utc);
+    Ok(created_at + duration)
+}
+
+async fn run_spike_expire(args: SpikeExpireArgs) -> Result<()> {
+    let (backend, issue) = load_spike_backend(&args.id, args.repo).await?;
+    let expires_at = spike_expiry(&issue)?;
+    if chrono::Utc::now() < expires_at {
+        anyhow::bail!(
+            "Spike `{}` has not expired; expires at {}",
+            issue.slug,
+            expires_at.to_rfc3339()
+        );
+    }
+    let reason = args
+        .reason
+        .unwrap_or_else(|| "The timebox expired before a decision was reached.".to_string());
+    let body = spike_decision_body(&issue, "gave_up", &reason, &[], true);
+    close_spike_with_body(backend.as_ref(), &issue, body, "gave_up").await
+}
+
+async fn run_triage(args: TriageArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let (kind, repo, host) = resolve_backend(args.repo, &project_root)?;
+    let backend = make_backend(&kind, &project_root, repo, host)
+        .context("Failed to create Report backend")?;
+    let report = backend
+        .get(&args.id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Report `{}` was not found", args.id))?;
+    if report.issue_type != IssueType::Report {
+        anyhow::bail!(
+            "work-item `{}` has immutable type `{}`; `aw wi triage` accepts only type:report",
+            args.id,
+            report.issue_type.as_str()
+        );
+    }
+    if report.state == IssueState::Closed {
+        anyhow::bail!("Report `{}` is already terminal", args.id);
+    }
+
+    let spawned = if matches!(args.verdict, TriageVerdict::Accepted) {
+        Some(
+            spawn_triaged_work_item(
+                backend.as_ref(),
+                &report,
+                args.spawn_type,
+                args.title.as_deref(),
+                args.epic.as_deref(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let reason = args
+        .reason
+        .unwrap_or_else(|| format!("Report triaged as {}.", args.verdict.as_str()));
+    let mut body = report.body.trim_end().to_string();
+    body.push_str("\n\n## Triage\n\n");
+    body.push_str(&format!("Verdict: {}\n", args.verdict.as_str()));
+    body.push_str(&format!("Reason: {}\n", reason.trim()));
+    if let Some(spawned) = &spawned {
+        body.push_str(&format!("Spawned Work Item: {}\n", spawned.slug));
+    } else {
+        body.push_str("Spawned Work Item: none\n");
+    }
+    backend
+        .update(
+            &report.slug,
+            &IssuePatch {
+                body: Some(body),
+                ..Default::default()
+            },
+        )
+        .await?;
+    backend
+        .close(
+            &report.slug,
+            Some(&format!("Report verdict: {}", args.verdict.as_str())),
+        )
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "action": "done",
+            "type": "report",
+            "id": report.slug,
+            "terminal_state": args.verdict.as_str(),
+            "spawned": spawned.as_ref().map(|issue| serde_json::json!({
+                "id": issue.slug,
+                "type": issue.issue_type.as_str(),
+            })),
+            "completion": {
+                "workflow_complete": true
+            },
+            "next": {
+                "terminal": true,
+                "reason": "Report reached a typed triage verdict"
+            }
+        }))?
+    );
+    Ok(())
+}
+
+async fn spawn_triaged_work_item(
+    backend: &dyn IssueBackend,
+    report: &Issue,
+    spawn_type: TriageSpawnType,
+    title: Option<&str>,
+    epic: Option<&str>,
+) -> Result<Issue> {
+    let issue_type: IssueType = spawn_type.into();
+    let inherited_epics = report
+        .labels
+        .iter()
+        .filter(|label| label.starts_with("epic:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let epic_label = epic
+        .map(|id| format!("epic:{}", id.trim().trim_start_matches('#')))
+        .or_else(|| (inherited_epics.len() == 1).then(|| inherited_epics[0].clone()));
+    if issue_type == IssueType::Change && epic_label.is_none() {
+        anyhow::bail!(
+            "accepted Report spawning a Change requires --epic <id> or one inherited epic:<id> label"
+        );
+    }
+
+    let title = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Follow up: {}", report.title));
+    let mut labels = report
+        .labels
+        .iter()
+        .filter(|label| !label.starts_with("type:") && !label.starts_with("epic:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    labels.push(format!("type:{}", issue_type.as_str()));
+    if let Some(epic_label) = epic_label.filter(|_| issue_type == IssueType::Change) {
+        labels.push(epic_label);
+    }
+    let mut body = default_structured_issue_body(issue_type, &title);
+    body.push_str(&format!(
+        "\nSource Report: {}\n",
+        report
+            .github_id
+            .map(|id| format!("#{id}"))
+            .unwrap_or_else(|| report.slug.clone())
+    ));
+    let now = chrono::Utc::now().to_rfc3339();
+    let spawned = Issue {
+        issue_type,
+        title,
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels,
+        created_at: Some(now.clone()),
+        updated_at: Some(now),
+        slug: String::new(),
+        body,
+        related: vec![report.slug.clone()],
+        implements: vec![],
+        phase: (issue_type == IssueType::Change)
+            .then(|| crate::issues::IssuePhase::Created.as_str().to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: vec![],
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&spawned).await
 }
 
 // ---------------------------------------------------------------------------
@@ -4758,11 +5439,25 @@ async fn run_plan_apply(args: PlanApplyArgs) -> Result<()> {
             None,
         )
     };
-    let manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let mut manifest_body = std::fs::read_to_string(&manifest_path)?;
+    let mut plan_body = std::fs::read_to_string(&plan_path)?;
+    let mut actual_source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
+    if actual_source_digest != source_digest {
+        if let Some(decision) = decision.as_ref() {
+            let immutable_plan_path =
+                digest_bound_project_plan_path(&plan_path, decision.stage, &source_digest)?;
+            let immutable_manifest_path =
+                capability_plan_sidecar_path(&immutable_plan_path, "manifest.json");
+            if immutable_plan_path.is_file() && immutable_manifest_path.is_file() {
+                plan_body = std::fs::read_to_string(&immutable_plan_path)?;
+                manifest_body = std::fs::read_to_string(&immutable_manifest_path)?;
+                actual_source_digest =
+                    planning_transaction_source_digest(&plan_body, &manifest_body);
+            }
+        }
+    }
     let manifest: PlanningTransactionManifest = serde_json::from_str(&manifest_body)?;
-    let plan_body = std::fs::read_to_string(&plan_path)?;
     let plan: ProjectPlan = serde_json::from_str(&plan_body)?;
-    let actual_source_digest = planning_transaction_source_digest(&plan_body, &manifest_body);
     if manifest.plan_digest != plan.digest
         || manifest.root_id != plan.root_id
         || manifest.stage != plan.stage
@@ -4789,7 +5484,12 @@ async fn run_plan_apply(args: PlanApplyArgs) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("atomize apply requires agent review evidence"))?;
             let review: CapabilityPlanReviewRecord =
                 serde_json::from_str(&std::fs::read_to_string(review_path)?)?;
-            validate_capability_plan_review_record(&project_root, &review)?;
+            validate_capability_plan_review_record_with_artifacts(
+                &project_root,
+                &review,
+                &plan_body,
+                &manifest_body,
+            )?;
             if review.decision != CapabilityPlanReviewDecision::Accepted
                 || review.source_digest != decision.source_digest
                 || !matches!(review.reviewer_kind.as_str(), "agent" | "human")
@@ -4889,6 +5589,26 @@ fn validate_capability_plan_review_record(
     project_root: &Path,
     record: &CapabilityPlanReviewRecord,
 ) -> Result<()> {
+    let plan_path = PathBuf::from(&record.plan_path);
+    let manifest_path = PathBuf::from(&record.manifest_path);
+    let plan_body = std::fs::read_to_string(&plan_path)
+        .with_context(|| format!("read reviewed plan {}", plan_path.display()))?;
+    let manifest_body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read reviewed manifest {}", manifest_path.display()))?;
+    validate_capability_plan_review_record_with_artifacts(
+        project_root,
+        record,
+        &plan_body,
+        &manifest_body,
+    )
+}
+
+fn validate_capability_plan_review_record_with_artifacts(
+    project_root: &Path,
+    record: &CapabilityPlanReviewRecord,
+    plan_body: &str,
+    manifest_body: &str,
+) -> Result<()> {
     if record.version != CAPABILITY_PLAN_REVIEW_VERSION {
         anyhow::bail!(
             "capability-plan review version {} is unsupported; expected {}",
@@ -4917,10 +5637,6 @@ fn validate_capability_plan_review_record(
     }
     resolve_project_label(project_root, &record.project)
         .map_err(|error| anyhow::anyhow!(error.to_envelope_message()))?;
-    let plan_body = std::fs::read_to_string(&plan_path)
-        .with_context(|| format!("read reviewed plan {}", plan_path.display()))?;
-    let manifest_body = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("read reviewed manifest {}", manifest_path.display()))?;
     let actual_digest = capability_plan_source_digest(&plan_body, &manifest_body);
     if actual_digest != record.source_digest {
         anyhow::bail!(
@@ -5247,6 +5963,16 @@ fn prepare_inventory_plan_review(
     };
     write_file_atomically(&manifest_path, &manifest_body)?;
     let source_digest = capability_plan_source_digest(&plan_body, &manifest_body);
+    if kind == "project_plan" {
+        let plan: ProjectPlan = serde_json::from_str(&plan_body)
+            .context("decode project plan for immutable review snapshot")?;
+        let immutable_plan_path =
+            digest_bound_project_plan_path(plan_path, plan.stage, &source_digest)?;
+        let immutable_manifest_path =
+            capability_plan_sidecar_path(&immutable_plan_path, "manifest.json");
+        write_file_atomically(&immutable_plan_path, &plan_body)?;
+        write_file_atomically(&immutable_manifest_path, &manifest_body)?;
+    }
     let review_path = capability_plan_sidecar_path(plan_path, "review.json");
     let author_path = capability_plan_sidecar_path(plan_path, "author.json");
     let author_record = CapabilityPlanAuthorRecord {
@@ -5367,6 +6093,18 @@ fn capability_plan_source_digest(plan_body: &str, manifest_body: &str) -> String
 
 fn capability_plan_sidecar_path(plan_path: &Path, extension: &str) -> PathBuf {
     plan_path.with_extension(extension)
+}
+
+fn digest_bound_project_plan_path(
+    plan_path: &Path,
+    stage: PlanningStage,
+    source_digest: &str,
+) -> Result<PathBuf> {
+    let stem = plan_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow::anyhow!("project-plan path has no UTF-8 file stem"))?;
+    Ok(plan_path.with_file_name(format!("{stem}.{}.{source_digest}.json", stage.as_str())))
 }
 
 fn write_project_plan_decision_payload(
@@ -5567,6 +6305,8 @@ fn priority_label(issue: &Issue) -> &'static str {
 fn type_rank(issue_type: IssueType) -> u8 {
     match issue_type {
         IssueType::Epic => 1,
+        IssueType::Spike => 2,
+        IssueType::Report => 3,
         IssueType::Change
         | IssueType::Bug
         | IssueType::Enhancement
@@ -5628,7 +6368,10 @@ fn section_has_real_list_item(content: &str) -> bool {
 }
 
 fn validate_planning_alignment(issue: &Issue) -> Vec<String> {
-    if issue.issue_type == IssueType::Epic {
+    if issue.issue_type == IssueType::Epic
+        || issue.issue_type == IssueType::Spike
+        || issue.issue_type == IssueType::Report
+    {
         return Vec::new();
     }
 
@@ -5743,19 +6486,10 @@ fn has_open_dependency(issue: &Issue, open_numbers: &std::collections::HashSet<u
 
 #[cfg(test)]
 fn dependency_numbers(issue: &Issue) -> std::collections::HashSet<u64> {
-    let mut numbers = std::collections::HashSet::new();
-    for line in issue.body.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("depends on")
-            || lower.contains("dependency")
-            || lower.contains("dependencies")
-            || lower.contains("blocked by")
-            || lower.contains("requires #")
-        {
-            numbers.extend(extract_hash_numbers(line));
-        }
-    }
-    numbers
+    crate::issues::graph::body_dependency_references(issue)
+        .into_iter()
+        .filter_map(|reference| reference.parse::<u64>().ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -5807,6 +6541,7 @@ fn group_issues_for_epicize(issues: &[Issue]) -> EpicizeGroups<'_> {
         match issue.issue_type {
             IssueType::Epic => groups.existing_epics.push(issue),
             IssueType::Change => groups.capability_work.push(issue),
+            IssueType::Spike | IssueType::Report => groups.needs_triage.push(issue),
             IssueType::Bug if priority_rank(issue) <= 1 => groups.urgent_fixes.push(issue),
             IssueType::Bug => groups.quality.push(issue),
             IssueType::Enhancement => groups.capability_work.push(issue),
@@ -7827,9 +8562,14 @@ async fn run_validate_legacy(
     backend: &dyn IssueBackend,
     issue: &Issue,
 ) -> Result<()> {
-    let quality = crate::services::issue_parser::validate_issue_quality(&issue.body);
-    let mut quality_errors = quality.errors.clone();
-    quality_errors.extend(validate_planning_alignment(issue));
+    let quality_errors = if issue.issue_type == IssueType::Epic && issue.state == IssueState::Draft
+    {
+        let mut publish_candidate = issue.clone();
+        publish_candidate.state = IssueState::Open;
+        validate_publishable_issue_body(&publish_candidate)
+    } else {
+        validate_publishable_issue_body(issue)
+    };
 
     if !quality_errors.is_empty() {
         let patch = IssuePatch {
@@ -8396,6 +9136,21 @@ label = "app:jet"
             .blocked_by_dependency
             .iter()
             .any(|issue| issue.title == "dependent"));
+    }
+
+    #[test]
+    fn prioritize_lanes_ignore_relation_prose() {
+        let blocker = planning_issue(IssueType::Bug, "blocker", Some("p0"), 1);
+        let mut dependent = planning_issue(IssueType::Enhancement, "dependent", Some("p1"), 2);
+        dependent.body.push_str(
+            "\n## Requirements\n\n- R1: This behavior depends on the contract tracked by #1.\n",
+        );
+        let lanes = prioritize_lanes(&[blocker, dependent]);
+        assert!(lanes
+            .ready_now
+            .iter()
+            .any(|issue| issue.title == "dependent"));
+        assert!(lanes.blocked_by_dependency.is_empty());
     }
 
     #[test]
@@ -9315,6 +10070,26 @@ label = "app:score"
         );
     }
 
+    #[test]
+    fn boundedness_classifier_ignores_problem_and_anti_scope_prose() {
+        let mut issue = planning_issue(
+            IssueType::Change,
+            "Fix one parser diagnostic",
+            Some("p2"),
+            91,
+        );
+        issue.body = format!(
+            "## Problem\n\nThe entire project currently exposes this message.\n\n## Scope\n\n### In Scope\n- Fix one parser diagnostic.\n\n### Out of Scope\n- Rework the whole suite.\n\n## Reference Context\n\nThe complete platform is discussed elsewhere."
+        );
+        assert!(
+            !looks_too_large_for_atomic_wi(&issue),
+            "only title and Scope should determine atomic boundedness"
+        );
+
+        issue.body = "## Scope\n\n### In Scope\n- Rewrite the entire project.\n\n### Out of Scope\n- Nothing.\n".to_string();
+        assert!(looks_too_large_for_atomic_wi(&issue));
+    }
+
     /// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
     #[test]
     fn too_large_gate_regression_false_positives_pass_issue_1294() {
@@ -9975,7 +10750,7 @@ labels:\n\
             planning_issue(IssueType::Enhancement, "Fix config parsing", Some("p2"), 14);
         issue.state = IssueState::Draft;
         issue.slug = "wi-demo".to_string();
-        issue.body = default_structured_issue_body("Fix config parsing");
+        issue.body = default_structured_issue_body(IssueType::Change, "Fix config parsing");
 
         let errors = validate_draft_issue(tmp.path(), &path, &issue, &meta);
         assert!(
@@ -10023,6 +10798,7 @@ labels:\n\
     #[test]
     fn initial_draft_body_normalizes_unnumbered_requirements_and_flat_scope() {
         let body = normalize_initial_draft_body(
+            IssueType::Change,
             "Fix config parsing",
             "## Problem\n\nParser errors hide the line number.\n\n## Requirements\n\n- report the failing line number\n\n## Scope\n\n- parser diagnostics only\n",
         );
@@ -10058,7 +10834,7 @@ labels:\n\
 
     #[test]
     fn merge_all_sections_replaces_alignment_without_estimate_section() {
-        let base = default_structured_issue_body("Fix config parsing");
+        let base = default_structured_issue_body(IssueType::Change, "Fix config parsing");
         let payload = "## Problem\n\nFix config parsing.\n\n## Capability Alignment\n\nCapability: Config correctness\nCapability Gap: malformed config errors are unclear\nProgress Evidence: parser fixture reports line number\n\n## Requirements\n\n- R1: Report the line number for malformed config.\n\n## Scope\n\n### In Scope\n- Config parser error fixture.\n\n### Out of Scope\n- New config schema format.\n\n## Acceptance Criteria\n\n- AC1: malformed config fixture reports the line number\n\n## Reference Context\n\n### Related Specs\n| Spec | Relevance |\n|------|-----------|\n| foo.md | high |\n\n### Spec Plan\n| Spec ID | Action | Main Spec Ref |\n|---------|--------|---------------|\n| foo | create | foo.md |\n";
         let merged = merge_all_sections(&base, payload);
         assert!(merged.contains("Capability: Config correctness"));
@@ -10071,8 +10847,26 @@ labels:\n\
     }
 
     #[test]
+    fn type_specific_templates_are_exact_and_report_skips_alignment() {
+        let mut spike = planning_issue(IssueType::Spike, "Choose a retry policy", Some("p2"), 17);
+        spike.body = default_structured_issue_body(IssueType::Spike, &spike.title);
+        assert!(validate_publishable_issue_body(&spike).is_empty());
+        assert!(!spike.body.contains("## Capability Alignment"));
+
+        let mut report = planning_issue(IssueType::Report, "Runner exits silently", Some("p2"), 18);
+        report.body = default_structured_issue_body(IssueType::Report, &report.title);
+        assert!(validate_publishable_issue_body(&report).is_empty());
+        assert!(!report.body.contains("## Capability Alignment"));
+
+        report.body.push_str("\n## Scope\n\n- forbidden\n");
+        assert!(validate_publishable_issue_body(&report)
+            .iter()
+            .any(|error| error.contains("accepts only")));
+    }
+
+    #[test]
     fn fill_section_payload_template_all_scaffolds_required_sections() {
-        let template = fill_section_payload_template("all").unwrap();
+        let template = fill_section_payload_template(IssueType::Change, "all").unwrap();
         for heading in [
             "## Problem",
             "## Capability Alignment",
@@ -10092,8 +10886,140 @@ labels:\n\
     }
 
     #[test]
+    fn fill_section_epic_template_requires_planner_verification_inventory() {
+        let template = fill_section_payload_template(IssueType::Epic, "all").unwrap();
+        for fragment in [
+            "## Verification Inventory",
+            "| Requirement | Gate | Oracle | Depends On |",
+            "| R1 | (fill) | (fill) | - |",
+        ] {
+            assert!(
+                template.contains(fragment),
+                "epic template missing {fragment}"
+            );
+        }
+        validate_wi_fill_payload_scope(IssueType::Epic, "all", &template, &[]).unwrap();
+
+        let without_inventory = template.replace(
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | (fill) | (fill) | - |\n\n",
+            "",
+        );
+        let error = validate_wi_fill_payload_scope(IssueType::Epic, "all", &without_inventory, &[])
+            .unwrap_err();
+        assert!(error.to_string().contains("## Verification Inventory"));
+
+        let error =
+            validate_wi_fill_payload_scope(IssueType::Change, "all", &template, &[]).unwrap_err();
+        assert!(error.to_string().contains("outside requested slot `all`"));
+    }
+
+    #[test]
+    fn epic_publish_validation_requires_verification_for_every_requirement() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            19,
+        );
+        epic.body = epic.body.replace(
+            "- R1: Deliver Retire app-level Rust EC tests.",
+            "- R1: Inventory delegated EC cases.\n- R2: Migrate delegated EC cases.",
+        );
+
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            errors.iter().any(|error| error.contains("map R1")),
+            "missing R1 verification error: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("map R2")),
+            "missing R2 verification error: {errors:?}"
+        );
+
+        epic.body = epic.body.replace(
+            "## Reference Context",
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle |\n|-------------|------|--------|\n| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |\n\n## Reference Context",
+        );
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            !errors.iter().any(|error| error.contains("map R1")),
+            "R1 should be verified: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("map R2")),
+            "R2 should remain unverified: {errors:?}"
+        );
+
+        epic.body = epic.body.replace(
+            "| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |",
+            "| R1 | `aw ec check --project agentic-workflow` | Inventory reports no unmapped delegated case. |\n| R2 | `aw ec verify --project agentic-workflow` | Native Python EC cases pass without cargo delegation. |",
+        );
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.starts_with("verification:")),
+            "all requirements should be verified: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn epic_draft_validation_enforces_inventory_before_promotion() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            20,
+        );
+        epic.state = IssueState::Draft;
+        assert!(
+            validate_publishable_issue_body(&epic)
+                .iter()
+                .all(|error| !error.starts_with("verification:")),
+            "draft creation must remain valid by construction"
+        );
+
+        let mut publish_candidate = epic;
+        publish_candidate.state = IssueState::Open;
+        assert!(validate_publishable_issue_body(&publish_candidate)
+            .iter()
+            .any(|error| error.contains("map R1")));
+    }
+
+    #[test]
+    fn epic_publish_validation_rejects_invalid_requirement_dependencies() {
+        let mut epic = planning_issue(
+            IssueType::Epic,
+            "Retire app-level Rust EC tests",
+            Some("p1"),
+            21,
+        );
+        epic.body = epic.body.replace(
+            "- R1: Deliver Retire app-level Rust EC tests.",
+            "- R1: Inventory delegated EC cases.\n- R2: Delete the legacy test tree.",
+        );
+        epic.body = epic.body.replace(
+            "## Reference Context",
+            "## Verification Inventory\n\n| Requirement | Gate | Oracle | Depends On |\n|-------------|------|--------|------------|\n| R1 | `python3 inventory.py` | Inventory is complete. | R2 |\n| R2 | `test ! -d apps/agentic-workflow/tests` | Legacy tree is absent. | R1, R3 |\n\n## Reference Context",
+        );
+
+        let errors = validate_publishable_issue_body(&epic);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("R2 depends on unknown R3")),
+            "unknown dependency must fail: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("must be acyclic")),
+            "dependency cycle must fail: {errors:?}"
+        );
+    }
+
+    #[test]
     fn fill_section_payload_template_specific_sections_are_bounded() {
-        let template = fill_section_payload_template("requirements,scope").unwrap();
+        let template =
+            fill_section_payload_template(IssueType::Change, "requirements,scope").unwrap();
         assert!(template.contains("## Requirements"));
         assert!(template.contains("- R1: (fill)"));
         assert!(template.contains("## Scope"));
@@ -10104,20 +11030,33 @@ labels:\n\
 
     #[test]
     fn fill_section_payload_scope_accepts_only_declared_slots() {
-        let all = fill_section_payload_template("all").unwrap();
-        validate_wi_fill_payload_scope("all", &all, &[]).unwrap();
+        let all = fill_section_payload_template(IssueType::Change, "all").unwrap();
+        validate_wi_fill_payload_scope(IssueType::Change, "all", &all, &[]).unwrap();
 
         let extra = format!("{all}\n## Surprise\n\noutside the producer contract\n");
-        let error = validate_wi_fill_payload_scope("all", &extra, &[]).unwrap_err();
+        let error =
+            validate_wi_fill_payload_scope(IssueType::Change, "all", &extra, &[]).unwrap_err();
         assert!(error.to_string().contains("outside requested slot `all`"));
 
         let targets = parse_section_arg("requirements,scope").unwrap();
-        let specific = fill_section_payload_template("requirements,scope").unwrap();
-        validate_wi_fill_payload_scope("requirements,scope", &specific, &targets).unwrap();
+        let specific =
+            fill_section_payload_template(IssueType::Change, "requirements,scope").unwrap();
+        validate_wi_fill_payload_scope(
+            IssueType::Change,
+            "requirements,scope",
+            &specific,
+            &targets,
+        )
+        .unwrap();
 
-        let wrong = fill_section_payload_template("reference_context").unwrap();
-        let error =
-            validate_wi_fill_payload_scope("requirements,scope", &wrong, &targets).unwrap_err();
+        let wrong = fill_section_payload_template(IssueType::Change, "reference_context").unwrap();
+        let error = validate_wi_fill_payload_scope(
+            IssueType::Change,
+            "requirements,scope",
+            &wrong,
+            &targets,
+        )
+        .unwrap_err();
         assert!(error
             .to_string()
             .contains("outside requested slot `requirements,scope`"));
@@ -10225,7 +11164,7 @@ labels:\n\
     }
 
     #[test]
-    fn type_filter_exposes_only_epic_and_change_for_authoring() {
+    fn type_filter_exposes_all_four_canonical_authoring_types() {
         use clap::ValueEnum as _;
 
         let values = TypeFilter::value_variants()
@@ -10234,7 +11173,7 @@ labels:\n\
             .map(|value| value.get_name().to_string())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, vec!["epic", "change"]);
+        assert_eq!(values, vec!["epic", "change", "spike", "report"]);
     }
 
     #[test]

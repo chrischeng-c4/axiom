@@ -42,9 +42,9 @@ For goal roots, completion means `completion.workflow_complete=true`.
 `action=done` can finish only the current child. A HITL envelope requires real
 human input; never fabricate approval.
 
-Agentic Workflow itself uses the sanctioned self-hosting path: capability work
-root, direct implementation commit with `Refs #<issue>`, and focused evidence.
-Do not make a potentially broken AW lifecycle repair itself.
+Agentic Workflow dogfoods the same Python-first `aw goal` roots as every other
+project. Use a bounded direct implementation commit with `Refs #<issue>` only
+when the exact worker verb required by the current root is itself broken.
 
 Codex should translate Claude slash-command references such as `/aw:td` or
 `/aw:wi` to the equivalent `aw ...` CLI command unless the user
@@ -68,6 +68,22 @@ The lifecycle is linear: `aw wi` → `aw ec` → `aw td` → `aw cb`. Drive one
 root with `aw goal wi <id>`, `aw goal capability --project <project>`, or
 `aw goal backlog --project <project>`, then follow the emitted command.
 `aw health` is read-only and names its worker remediation in `next.command`.
+
+### Work-item terminal states
+
+The closed work-item enum is terminology-first:
+
+| Type | Terminal state |
+|---|---|
+| `epic` | all owned children are terminal |
+| `change` | EC is green for the generated codebase and the lifecycle closes the change |
+| `spike` | an ADR-style decision records spawned WI refs or explicit no-action; expiry converges to `gave_up` |
+| `report` | typed `triage` accepts and links a spawned change/epic, or closes as `duplicate`, `invalid`, or `by-design` |
+
+Only `change` enters executable backlog work. A `spike` never lands
+investigation code in product source. A `report` remains in the intake queue
+until triage, and both converge by spawn-and-link instead of changing type in
+place.
 
 Canonical reusable instructions live one concern per `.agents/rules` file.
 Codex follows the generated AGENTS index, Claude receives `.claude/rules`

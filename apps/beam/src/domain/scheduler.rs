@@ -61,21 +61,24 @@ where
             }
 
             // Phase 3: GPU Batch Computation (WGPU GEMM)
-            let scores = self.calc.compute_batched(query, &targets, collection.dim).await?;
+            let scores = self
+                .calc
+                .compute_batched(query, &targets, collection.dim)
+                .await?;
 
             // Phase 4: CPU Top-K Reduction
-            let mut candidate_scores: Vec<(String, f32)> = candidates
-                .into_iter()
-                .zip(scores.into_iter())
-                .collect();
+            let mut candidate_scores: Vec<(String, f32)> =
+                candidates.into_iter().zip(scores.into_iter()).collect();
 
             // Sort ascending for L2 (smaller distance is better), descending for Inner Product
             if collection.metric == crate::collection::Metric::Cosine
                 || collection.metric == crate::collection::Metric::Dot
             {
-                candidate_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                candidate_scores
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             } else {
-                candidate_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                candidate_scores
+                    .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             }
 
             candidate_scores.truncate(batch.k);
