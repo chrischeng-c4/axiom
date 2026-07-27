@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:48:44.170916+00:00"
-digest = "sha256:c1af9629f958007575fd48a2f0860548014a901b8d2718dac51962b020febfc7"
-source_digest = "sha256:c1af9629f958007575fd48a2f0860548014a901b8d2718dac51962b020febfc7"
-ir_digest = "sha256:0a663ef1cf3e4212e36f131372cb8b9c8981b04698ef5e006986670c54e4af7b"
+generated_at = "2026-07-27T13:52:26.631249+00:00"
+digest = "sha256:499c2b0023be6f25862bf37717997a536056e6db905c55c50a4315a8c92f2d0b"
+source_digest = "sha256:499c2b0023be6f25862bf37717997a536056e6db905c55c50a4315a8c92f2d0b"
+ir_digest = "sha256:08515b7dbcfcdc215268551f77db83ad39bfd8f3a608702191c38d67babdcd89"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -2262,6 +2262,22 @@ digest = "sha256:d40cd76d18d011952f1e20c4dc9d0018abb130a582c3d6edc447fb60bd660b3
 [[files]]
 path = "src/agentic_workflow/migrated/surface/validate/tests/wi_close_remote_test.py"
 digest = "sha256:7472b67a2d8b142b7926eed788922188787e1c98e1215fc6869e390550da0711"
+
+[[files]]
+path = "src/agentic_workflow/migrated/validate/aw_review_structured_observability_raft_telemetry_conformance_ru.py"
+digest = "sha256:4b69a212b83d32d990b70b511b80347b415a4d92d829bb787365f28defa1e435"
+
+[[files]]
+path = "src/agentic_workflow/migrated/validate/health_defaults_to_streaming_full_verification.py"
+digest = "sha256:96fcce932a373b7a1de146701f3b8666a283345dc1c2541ef25f37c3b7633200"
+
+[[files]]
+path = "src/agentic_workflow/migrated/validate/review_skill_doc_trait_projection_with_drift_tests.py"
+digest = "sha256:d4536fd98cb93414ccdc0492fadd1cdc3b5212d7c444b880c40c0cec4941f509"
+
+[[files]]
+path = "src/agentic_workflow/migrated/validate/rust_source_unit_ir_lossless_cst_parse_to_structured_item_tree_b.py"
+digest = "sha256:e7338afe25a07f75e69181264f1c30936fb1eff07092cb9e00e0d68513b36450"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"

@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:58d624a9758f78dece1c8c96a760db9198405aab65cafead212c17330f0d7b95",
+  "digest": "sha256:8012bb07d6fd9535fc99c364f91e441a8b4c579a27c5b8476bb544e0ee67a346",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -12135,7 +12135,7 @@
       "path": "apps/agentic-workflow/tech-design/validate/aw-review-structured-observability-raft-telemetry-conformance-ru.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:de5c464e386b674d6f73f98fd9a504268508df80db6b95b7c2236f625955df2d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/validate/aw_review_structured_observability_raft_telemetry_conformance_ru.py"
     },
     {
@@ -12145,7 +12145,7 @@
       "path": "apps/agentic-workflow/tech-design/validate/health-defaults-to-streaming-full-verification.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:410990fcc2ea901b89243f8c347d0f61b365023ed454d0539663fc5e876866c1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/validate/health_defaults_to_streaming_full_verification.py"
     },
     {
@@ -12155,7 +12155,7 @@
       "path": "apps/agentic-workflow/tech-design/validate/review-skill-doc-trait-projection-with-drift-tests.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:603a889521f311412c5d2ac80acdea375fded20727152e561b5be98e3bbb85be",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/validate/review_skill_doc_trait_projection_with_drift_tests.py"
     },
     {
@@ -12165,7 +12165,7 @@
       "path": "apps/agentic-workflow/tech-design/validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:67f023339f2c4b564f42c122f5c287fe26febd7984b3d9906db7f971dca1e019",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/validate/rust_source_unit_ir_lossless_cst_parse_to_structured_item_tree_b.py"
     }
   ],
