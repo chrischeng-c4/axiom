@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:698abd5e37efa322259099c5a3619d8f39413175fa86a223672d11e6d9847c25",
+  "digest": "sha256:bc7f3ce6d7d1d0fd175cd877aaf6f936533e8e2e233fc88766634a676243331a",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -7595,7 +7595,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/analyze/mod.md",
       "role": "generated_mirror",
       "sha256": "sha256:30b94e13920bfd636b31ce97d48760c0de92f487bf1979adff9fce786070d613",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/analyze/mod.py"
     },
     {
@@ -7605,7 +7605,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/analyze/python.md",
       "role": "generated_mirror",
       "sha256": "sha256:a6ed63c9023de238fcce672c2d4a7e72c0ee9f6951693d4c72a6b7a8a239bd4b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/analyze/python.py"
     },
     {
@@ -7615,7 +7615,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/analyze/rust_lang.md",
       "role": "generated_mirror",
       "sha256": "sha256:16664cec80f088895d6580b2f13aba1ce3ea90cae20d3976b3bda62c3f355165",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/analyze/rust_lang.py"
     },
     {
@@ -7625,7 +7625,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/analyze/suggestions.md",
       "role": "generated_mirror",
       "sha256": "sha256:a753e8df09b341916d7b6f1ab3a87937161eca47f4211c7fa2a6ce2458ec8837",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/analyze/suggestions.py"
     },
     {
@@ -7635,7 +7635,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/analyze/typescript.md",
       "role": "generated_mirror",
       "sha256": "sha256:fdaa621e1b0b685a13d887eccc49f6a251f36150d73d1ca83c09a437f792d2a7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/analyze/typescript.py"
     },
     {
@@ -7645,7 +7645,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/artifact_read.md",
       "role": "generated_mirror",
       "sha256": "sha256:777b68af94c6b66f300018354f9d2cbdff91a513e481a6b69c6d02ea9068eae9",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/artifact_read.py"
     },
     {
@@ -7655,7 +7655,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/artifact_write.md",
       "role": "generated_mirror",
       "sha256": "sha256:bc41f769371f2d00c9c32096935ca85b9bf9090ee0707a82415c99b064fe90e8",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/artifact_write.py"
     },
     {
@@ -7665,7 +7665,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/clarifications/append.md",
       "role": "generated_mirror",
       "sha256": "sha256:1a4af4d2dc05befeea9a8040f83332c08154c3798c4b7a583c8b1bb0badaa44f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/clarifications/append.py"
     },
     {
@@ -7675,7 +7675,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/clarifications/definition.md",
       "role": "generated_mirror",
       "sha256": "sha256:905c51bbde1fb854677f4d65e3c0243a3b6ae6a389ea97f3e14dbdcb31f4fbc1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/clarifications/definition.py"
     },
     {
@@ -7685,7 +7685,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/clarifications/execute.md",
       "role": "generated_mirror",
       "sha256": "sha256:e66525eb69d9d6fc24db9ba2b43baa03bd16d041925e4b936ea64cf9cb856ef2",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/clarifications/execute.py"
     },
     {
@@ -7695,7 +7695,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/clarifications/post-clarifications.md",
       "role": "generated_mirror",
       "sha256": "sha256:89c761713f56cb0ea9fcc3cfcc60e69361770ba8399f92d2df2d8ba116200576",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/clarifications/post_clarifications.py"
     },
     {
@@ -7705,7 +7705,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/clarifications/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:5269ebbdefc5ae277d31099f0f92873f226c34b1c7f1baf07094ff3ff9f21f58",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/clarifications/tests.py"
     },
     {
@@ -7725,7 +7725,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/codegen-eligibility.md",
       "role": "generated_mirror",
       "sha256": "sha256:80e8542f90202ea743085f8e119603b19daed9d2b6b4b55ce47843e466e1c4bb",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/codegen_eligibility.py"
     },
     {
@@ -7735,7 +7735,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/execution-order.md",
       "role": "generated_mirror",
       "sha256": "sha256:5dfc99af43d9d69c5da6b041317c663d532d6c121aea221721e2033f3d5141fe",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/execution_order.py"
     },
     {
@@ -7745,7 +7745,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/inline-reviews.md",
       "role": "generated_mirror",
       "sha256": "sha256:3d88044aaf33c58576410c91ad42ba8048f761dd66d141d01985cd99ae4abbb3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/inline_reviews.py"
     },
     {
@@ -7755,7 +7755,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/refs-frontmatter.md",
       "role": "generated_mirror",
       "sha256": "sha256:a449194d4a173c3b883ab6fc5ea0dfc2ec24a110ac61ba8a2c7e313a235d93f1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/refs_frontmatter.py"
     },
     {
@@ -7765,7 +7765,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/resolver.md",
       "role": "generated_mirror",
       "sha256": "sha256:cdd30c7df585902fa257a66c7412768d5d286698510b1dd4a38d3d56385be2d3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/resolver.py"
     },
     {
@@ -7775,7 +7775,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/spec-paths.md",
       "role": "generated_mirror",
       "sha256": "sha256:7ccf34f4c8b7e0840d7551f354fc3e10071e2c8032d09420c71c85787c9ee4d3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/spec_paths.py"
     },
     {
@@ -7785,7 +7785,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_impl/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:e92728f6d08814645ca1d4dd82450197b2a4cfe855bd08002eef53100e126333",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_impl/tests.py"
     },
     {
@@ -7805,7 +7805,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_spec/helpers.md",
       "role": "generated_mirror",
       "sha256": "sha256:f02effeee4068c23968d70d955493a0d54962e90aa2052e2f6cad74c15ef7139",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_spec/helpers.py"
     },
     {
@@ -7815,7 +7815,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_spec/preamble.md",
       "role": "generated_mirror",
       "sha256": "sha256:067a41fabb5e4b3e6618b05332792b73c848b0e01e016786e7ddbc130bc1affd",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_spec/preamble.py"
     },
     {
@@ -7825,7 +7825,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_change_spec/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:d9127432a72389e5e8eb6c811785fa9ce0f32d522d30d951af79f6f9d5ba47f9",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_change_spec/tests.py"
     },
     {
@@ -7845,7 +7845,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/common_reference_context/helpers.md",
       "role": "generated_mirror",
       "sha256": "sha256:72725fbda8b9866d50bc140ebbe38ce9275dd9c3e837ffcbac491945d73135ff",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/common_reference_context/helpers.py"
     },
     {
@@ -7865,7 +7865,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/context.md",
       "role": "generated_mirror",
       "sha256": "sha256:bb41d18889b9dcea14eedef602538e2be7859600324ed5e4441004e2292e4235",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/context.py"
     },
     {
@@ -7875,7 +7875,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_docs/artifact.md",
       "role": "generated_mirror",
       "sha256": "sha256:5feb8eccad19442d72b0f57222f30315d050ca0012d4e01e724d659c5febbf76",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_docs/artifact.py"
     },
     {
@@ -7885,7 +7885,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_docs/helpers.md",
       "role": "generated_mirror",
       "sha256": "sha256:043f7e26546148a2fba4a64fc27da002a71c2ba0e7ffb8b6c0bbd752d7bb4e56",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_docs/helpers.py"
     },
     {
@@ -7895,7 +7895,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_docs/preamble-definitions.md",
       "role": "generated_mirror",
       "sha256": "sha256:2f3d2e398d057618b2f75a879747e71bb6fc61b83ed80441dd63b33332cc4988",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_docs/preamble_definitions.py"
     },
     {
@@ -7905,7 +7905,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_docs/workflow.md",
       "role": "generated_mirror",
       "sha256": "sha256:716a32a43548b09266106a3daa30c064c9d404468c2ab31f5a2a09bb2b627357",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_docs/workflow.py"
     },
     {
@@ -7915,7 +7915,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_impl/prompts.md",
       "role": "generated_mirror",
       "sha256": "sha256:a0fd5e7139e1807f8edfbe0c428211a6f5678ee0678c0eecb870e10fc15ad174",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_impl/prompts.py"
     },
     {
@@ -7925,7 +7925,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_impl/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:a2e5091c421c08cba9b90d327d9ae74202ec8c62844b22051ac5acdae3ce84ac",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_impl/tests.py"
     },
     {
@@ -7935,7 +7935,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_impl/utils.md",
       "role": "generated_mirror",
       "sha256": "sha256:056a0ccb06f2582d5f5f14617fe176d7c6f18f61bfa2ec099486ffb862c5389d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_impl/utils.py"
     },
     {
@@ -7945,7 +7945,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_impl.md",
       "role": "generated_mirror",
       "sha256": "sha256:a4cbb8bf2b1cd985492a60e1d97b4c4cbff2edc023d2bdeccc9524b7189aece9",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_impl.py"
     },
     {
@@ -7955,7 +7955,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/alignment-and-archive.md",
       "role": "generated_mirror",
       "sha256": "sha256:dc12eac2625f61c227453c4257b84a30c07cd829f112012777b6083a750c260d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/alignment_and_archive.py"
     },
     {
@@ -7965,7 +7965,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/definition.md",
       "role": "generated_mirror",
       "sha256": "sha256:71c84ec98eb2905ec595de212eaa899ce4c71e750c0871771e42343bab4d8d33",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/definition.py"
     },
     {
@@ -7975,7 +7975,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/issue-close.md",
       "role": "generated_mirror",
       "sha256": "sha256:69cfd034f6380759a3295d61fb0117942fff267a70b8ba58aa05b02857adb143",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/issue_close.py"
     },
     {
@@ -7985,7 +7985,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/merge-helpers.md",
       "role": "generated_mirror",
       "sha256": "sha256:ef16b214240bd66afb8064c74a529d476c17fe9891ee7d34426d478981474404",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/merge_helpers.py"
     },
     {
@@ -7995,7 +7995,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/preflight.md",
       "role": "generated_mirror",
       "sha256": "sha256:5c05491229e02ac82d7207e3d60a4f6aae326c46418513061ceb5cfdac15b79d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/preflight.py"
     },
     {
@@ -8005,7 +8005,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/test-support.md",
       "role": "generated_mirror",
       "sha256": "sha256:2eb95b8d6d7796916b278cac291e8dad4516d54ad677e15d0f97b27f9ca91a7b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/test_support.py"
     },
     {
@@ -8015,7 +8015,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:004ef1cc4915974a0da2b1c71e821f3d512a339ae4996febc837cf4da0e2dadf",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/tests.py"
     },
     {
@@ -8025,7 +8025,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_merge/workflow.md",
       "role": "generated_mirror",
       "sha256": "sha256:2fe1613d29737b46de3b33ebd0e925da097e480200ba2a369cceb6fbe32e77a4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_merge/workflow.py"
     },
     {
@@ -8035,7 +8035,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/artifact.md",
       "role": "generated_mirror",
       "sha256": "sha256:216f3cb2cf7e67540cbacd5c28dfdd400f0a15298187de3441e713a212e04325",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/artifact.py"
     },
     {
@@ -8045,7 +8045,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/preamble-definitions.md",
       "role": "generated_mirror",
       "sha256": "sha256:3248c3f9b1394afccaa6c51204417704d54ec97aeac77397d5725b0da27d5246",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/preamble_definitions.py"
     },
     {
@@ -8055,7 +8055,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/prompts.md",
       "role": "generated_mirror",
       "sha256": "sha256:de3f42255d26d117d15c3db0472346b24e0122900eecb946ced482b1d18a09c8",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/prompts.py"
     },
     {
@@ -8065,7 +8065,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/resolve-spec-path.md",
       "role": "generated_mirror",
       "sha256": "sha256:7a9b751e0118523ca228fb95402dec930743b154b82bf30f256d5858f53425f6",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/resolve_spec_path.py"
     },
     {
@@ -8075,7 +8075,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/tests.md",
       "role": "generated_mirror",
       "sha256": "sha256:c5f8ef528cc2068d48cc9475b43c5a0722d086a52554ec48074266d90eb55a17",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/tests.py"
     },
     {
@@ -8085,7 +8085,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_change_spec/workflow.md",
       "role": "generated_mirror",
       "sha256": "sha256:fcf70b84e9e736071b4bea33c0ef87e365d7f3999cd32be9da2c2717be1d5844",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_change_spec/workflow.py"
     },
     {
@@ -8095,7 +8095,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_post_clarifications.md",
       "role": "generated_mirror",
       "sha256": "sha256:e74005472005f87f441979d2b7a174377b1a21b6c3436134af55eed20a6fe41a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_post_clarifications.py"
     },
     {
@@ -8105,7 +8105,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_pre_clarifications/append.md",
       "role": "generated_mirror",
       "sha256": "sha256:f53869c1bc40d80f85c9a6293403795a4b3954344978a297fe42fa7223eef35c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_pre_clarifications/append.py"
     },
     {
@@ -8115,7 +8115,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_pre_clarifications/artifact.md",
       "role": "generated_mirror",
       "sha256": "sha256:3b7cc6c190d01f3392520997e587ae55e3e38c4fa66c0adb851a7b4743554edf",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_pre_clarifications/artifact.py"
     },
     {
@@ -8125,7 +8125,7 @@
       "path": "apps/agentic-workflow/tech-design/core/tools/create_pre_clarifications/definition.md",
       "role": "generated_mirror",
       "sha256": "sha256:2fc25149c689b12eca7694f496f384e3f04dd55bb9979044bfa38086cacf2f77",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/tools/create_pre_clarifications/definition.py"
     },
     {
