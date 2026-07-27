@@ -6486,19 +6486,10 @@ fn has_open_dependency(issue: &Issue, open_numbers: &std::collections::HashSet<u
 
 #[cfg(test)]
 fn dependency_numbers(issue: &Issue) -> std::collections::HashSet<u64> {
-    let mut numbers = std::collections::HashSet::new();
-    for line in issue.body.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("depends on")
-            || lower.contains("dependency")
-            || lower.contains("dependencies")
-            || lower.contains("blocked by")
-            || lower.contains("requires #")
-        {
-            numbers.extend(extract_hash_numbers(line));
-        }
-    }
-    numbers
+    crate::issues::graph::body_dependency_references(issue)
+        .into_iter()
+        .filter_map(|reference| reference.parse::<u64>().ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -9145,6 +9136,21 @@ label = "app:jet"
             .blocked_by_dependency
             .iter()
             .any(|issue| issue.title == "dependent"));
+    }
+
+    #[test]
+    fn prioritize_lanes_ignore_relation_prose() {
+        let blocker = planning_issue(IssueType::Bug, "blocker", Some("p0"), 1);
+        let mut dependent = planning_issue(IssueType::Enhancement, "dependent", Some("p1"), 2);
+        dependent.body.push_str(
+            "\n## Requirements\n\n- R1: This behavior depends on the contract tracked by #1.\n",
+        );
+        let lanes = prioritize_lanes(&[blocker, dependent]);
+        assert!(lanes
+            .ready_now
+            .iter()
+            .any(|issue| issue.title == "dependent"));
+        assert!(lanes.blocked_by_dependency.is_empty());
     }
 
     #[test]

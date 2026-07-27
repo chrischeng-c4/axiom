@@ -598,20 +598,66 @@ fn extract_parent_reference(value: &str) -> Option<String> {
     .then_some(normalized)
 }
 
-fn body_dependency_references(issue: &Issue) -> Vec<String> {
+/// Decode body dependencies only from declaration-shaped compatibility lines.
+///
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/dependency_reference_extraction.py
+pub(crate) fn body_dependency_references(issue: &Issue) -> Vec<String> {
     let mut refs = Vec::new();
     for line in issue.body.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("depends on")
-            || lower.contains("dependency")
-            || lower.contains("dependencies")
-            || lower.contains("blocked by")
-            || lower.contains("requires #")
-        {
-            refs.extend(hash_references(line));
+        let Some(normalized) = normalize_dependency_declaration_line(line) else {
+            continue;
+        };
+        let lower = normalized.to_ascii_lowercase();
+        for prefix in [
+            "depends on",
+            "dependencies",
+            "dependency",
+            "blocked by",
+            "requires",
+        ] {
+            let Some(mut suffix) = lower
+                .starts_with(prefix)
+                .then(|| &normalized[prefix.len()..])
+            else {
+                continue;
+            };
+            if let Some(without_colon) = suffix.strip_prefix(':') {
+                suffix = without_colon;
+            }
+            suffix = suffix.trim_start();
+            if suffix.starts_with('#') {
+                refs.extend(hash_references(suffix));
+            }
+            break;
         }
     }
     refs
+}
+
+fn normalize_dependency_declaration_line(line: &str) -> Option<String> {
+    let trimmed_start = line.trim_start();
+    let bytes = trimmed_start.as_bytes();
+    let is_list_item = bytes.len() >= 2
+        && matches!(bytes[0], b'-' | b'*' | b'+')
+        && bytes[1].is_ascii_whitespace();
+    if trimmed_start.len() != line.len() && !is_list_item {
+        return None;
+    }
+
+    let mut normalized = trimmed_start.trim_end().to_string();
+    if is_list_item {
+        normalized = normalized[1..].trim_start().to_string();
+    }
+
+    if normalized.starts_with("**") {
+        if let Some(relative_closing) = normalized[2..].find("**") {
+            let closing = relative_closing + 2;
+            normalized = format!("{}{}", &normalized[2..closing], &normalized[closing + 2..])
+                .trim()
+                .to_string();
+        }
+    }
+    Some(normalized)
 }
 
 fn hash_references(value: &str) -> Vec<String> {
@@ -1007,6 +1053,50 @@ mod tests {
                 && diagnostic.issue == "2"
                 && diagnostic.related.as_deref() == Some("26570")
         }));
+    }
+
+    #[test]
+    fn body_dependencies_require_declaration_shaped_lines() {
+        let change = issue(
+            2691,
+            "change",
+            "open",
+            &["type:change"],
+            "\
+Depends on #12.
+  - **Blocked by:** #13 and #14.
++ Requires #15 before #16.
+Dependency: #17
+Dependencies: #18, #19
+R1: This behavior depends on #20.
+The dependency example references #21.
+`Depends on #22` is decode-only syntax.
+Depends on labels such as #23.
+## Dependencies #24",
+        );
+
+        assert_eq!(
+            body_dependency_references(&change),
+            vec!["12", "13", "14", "15", "16", "17", "18", "19"]
+        );
+    }
+
+    #[test]
+    fn explanatory_relation_prose_creates_no_dependency_edges() {
+        let change = issue(
+            2687,
+            "change",
+            "closed",
+            &["type:change"],
+            "\
+The body decoder does not extract a reference; it takes the rest of the line.
+The correct extractor is already in the same file. `hash_references` scans #2620 and #2621.
+Dependency, duplicate, and supersession decoding are described by #2677 and #2680.
+R7: requirements prose depends on the graph contract tracked by #2600.
+  Depends on #2680.",
+        );
+
+        assert!(body_dependency_references(&change).is_empty());
     }
 
     #[test]
