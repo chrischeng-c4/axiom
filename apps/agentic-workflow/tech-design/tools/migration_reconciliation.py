@@ -51,8 +51,8 @@ LOCK_INPUTS = {
     "apps/agentic-workflow/external-contracts/ec.lock",
 }
 CONTROL_PATHS = {
-    "apps/agentic-workflow/tech-design/src/migration_reconciliation.py",
-    "apps/agentic-workflow/tech-design/src/migration_reconciliation_manifest.json",
+    "apps/agentic-workflow/tech-design/tools/migration_reconciliation.py",
+    "apps/agentic-workflow/tech-design/tools/migration_reconciliation_manifest.json",
 }
 TEXT_SUFFIXES = {".lock", ".md", ".rs", ".py", ".toml", ".json"}
 SOURCE_REFERENCE_TOKENS = (

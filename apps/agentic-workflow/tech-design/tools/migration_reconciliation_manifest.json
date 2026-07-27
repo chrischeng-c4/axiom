@@ -1700,7 +1700,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
-      "sha256": "sha256:1944e2efcd9b74e36a9aa46a53944e390b1648893e643ded145dddf01dabd0bf",
+      "sha256": "sha256:2a5aef8ee79795923905c3ecb1b4c2443d6a949ad3fa02a21b3f4b7ac7c223f5",
       "status": "pending"
     },
     {
@@ -2022,7 +2022,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/run.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:a9cf135b213894f815d1eff69794248cebfc859ef36e89940cef1ee548ce68c1",
+      "sha256": "sha256:fbcbb5098edac89139bbf74fe20b158038b068bbfe8f9566e07c238b3d59467d",
       "status": "pending"
     },
     {
@@ -2036,7 +2036,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:2d941984e4e1a3c47097d0e45493033db6b33a331d3be26ced7ff3a4397d2d56",
+      "sha256": "sha256:6613eefbd535f53a42858b8a2f3c697a1ac50c275647f49efa1f76a738e431b4",
       "status": "pending"
     },
     {
@@ -2050,7 +2050,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td_lock.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:858e0e97ee11aa3866e04495572e884c6356df3c8f08007349a7b70ee5a2504b",
+      "sha256": "sha256:10963f3175d9255854cb641b5eae168970b5dfbc2d92ab533aca34b1816541f5",
       "status": "pending"
     },
     {
@@ -2148,7 +2148,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_artifact_code_check.rs",
       "role": "runtime_consumer",
-      "sha256": "sha256:f5966c9ecbf09db2d42b486523d67b81d1e0a5ee226abf202ad9ba7be58e3469",
+      "sha256": "sha256:5ba07f5e58c06ab57483d0df91de7c6b7276df245e11c831d39dcc9647ed3bb5",
       "status": "pending"
     },
     {
@@ -2302,7 +2302,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/tech-design/td.lock",
       "role": "lock_input",
-      "sha256": "sha256:033113f1bc19ea75bb19bee5f9f5d24ef150aa6106db36242b667f68d8e9e592",
+      "sha256": "sha256:5a4c71f6c2eeea074f751bcce87fe8f5df945bed729c0bf8663a4f2cdb856208",
       "status": "pending"
     },
     {
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:83b3a7e7aaf14b17ca731e74ea45ad7e5856be5834ea62ca8f777ff18c8b0b36",
+  "digest": "sha256:ca3eed9a2866cf49f543c8db629c73ff1a55b9d08253c5b205baf739c31df47b",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10014,7 +10014,7 @@
       "family": "logic",
       "path": "apps/agentic-workflow/tech-design/logic/aw-python-artifact-trace-code-check.md",
       "role": "legacy_markdown_td",
-      "sha256": "sha256:322a2911577d22ea2c0287ca4b0e9892a91612194f8b830edac536c50bad2c3e",
+      "sha256": "sha256:1947a4e1626febb2f14970eeeead3830565a50daed4c756463a24cba767c8f95",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/logic/aw_python_artifact_trace_code_check.py"
     },
@@ -10254,7 +10254,7 @@
       "family": "semantic",
       "path": "apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md",
       "role": "generated_mirror",
-      "sha256": "sha256:2249c058b03beb6add3f689c3afd96c0fff7ff30c8db86fdeb37ddc8c193f65d",
+      "sha256": "sha256:a2c554aad63cb662c8c36ac3431647280bb302bd779f4ab8d0d26ab9badcc550",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
     },
@@ -11154,7 +11154,7 @@
       "family": "surface/interfaces",
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/td.md",
       "role": "generated_mirror",
-      "sha256": "sha256:0a39d9a0ecec35d86c2ea4317e704f2e67fd13a0f81223407db57c764d8f40a6",
+      "sha256": "sha256:853b4c7d2f73a9ebc82d3ea4b63d97c122db79125fbd4abea780a3db5e6d9edb",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/td.py"
     },

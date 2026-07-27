@@ -33,16 +33,12 @@ pub struct TdArgs {
 pub enum TdCommand {
     /// Author and validate a WI-bound Python tech-design module.
     Create(CreateArgs),
-    /// Read-only rule-registry check against a project's `tech-design/`
-    /// files. Accepts a slug (resolved in the current checkout), a single
-    /// file path, or a directory. Runs the unified rule registry; no
-    /// commit, no phase advance, no envelope. Exits non-zero on any
-    /// violation. The sole authoritative read-only TD checker — folds in
-    /// the retired `aw td validate`'s read-only rule check (issue #1277).
+    /// Compile and check one canonical Python TD project root.
+    /// The retired Markdown rule registry remains available only to isolated
+    /// regression fixtures, never as an implicit lifecycle fallback.
     /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
     Check(CheckArgs),
-    /// Parse a TD spec file into the unified TDAst and dump it as JSON.
-    /// Debug/inspection verb — accepts a file path (no slug context).
+    /// Compile a canonical Python TD project root and dump its IR as JSON.
     Ast(AstArgs),
     /// Convert legacy mermaid blocks to Mermaid Plus format.
     /// @spec apps/agentic-workflow/tech-design/generate/diagrams/mermaid_plus/migrate.md#cli
@@ -124,7 +120,7 @@ pub struct TdAuditRecordArgs {
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
 #[derive(Debug, Args)]
 pub struct AstArgs {
-    /// Path to the TD spec markdown file (relative or absolute).
+    /// Path to the Python TD project root (relative or absolute).
     pub path: String,
     /// Pretty-print the JSON output (default: compact).
     #[arg(long)]
@@ -187,33 +183,23 @@ pub struct GenCodeArgs {
     pub spec_path: Option<String>,
 }
 
-/// Args for `aw td check <target>` — the unified read-only TD checker.
+/// Args for `aw td check <target>` — compile the canonical Python TD project.
 ///
-/// This is the sole authoritative read-only checker (issue #1277): it folds
-/// in the retired `aw td validate`'s spec-content rule check (path, prefix,
-/// and slug shapes all shared the same rule registry already) plus the
-/// section-type registry conformance pass below.
-///
-/// `--section-type-conformance` switches to the registry-conformance pass
-/// (R2 of #1212): walks a project's `tech-design/**/*.md` under the
-/// resolved scope and reports per-spec headings whose `<!-- type: ... -->`
-/// annotation is unknown / deprecated / missing.
+/// Markdown paths, slugs, and the retired section-type reader are preserved
+/// only behind the test-only legacy seam while their corpus is migrated.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-td-check-section-type-conformance.md#schema
 #[derive(Debug, Args)]
 pub struct CheckArgs {
-    /// Issue slug, spec file path, or directory to check. Optional when
-    /// `--section-type-conformance` is set (defaults to project root).
+    /// Python TD project root to compile and check.
     #[arg(default_value = "")]
     pub target: String,
     /// Emit findings as a JSON array.
     #[arg(long)]
     pub json: bool,
-    /// Run the section-type registry conformance pass instead of the
-    /// rule-registry check. Reads a project's
-    /// `tech-design/surface/specs/score-section-type-registry.md`.
-    #[arg(long)]
+    /// Retired Markdown section-type compatibility input.
+    #[arg(long, hide = true)]
     pub section_type_conformance: bool,
     /// Root-owned Python artifact lifecycle WI. A successful Python TD check
     /// records target generation rather than requiring root re-discovery.
@@ -3599,7 +3585,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
     match args.command {
         TdCommand::Create(a) => run_create(a, project.as_deref()).await,
         TdCommand::Check(a) => run_check(a, project.as_deref()),
-        TdCommand::Ast(a) => run_ast(a),
+        TdCommand::Ast(a) => run_ast(a, project.as_deref()),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
@@ -3616,18 +3602,56 @@ pub async fn run(args: TdArgs) -> Result<()> {
     }
 }
 
-/// `aw td check <target>` — the unified read-only TD checker (issue #1277).
-///
-/// Resolves `target` as either a slug (current checkout spec dir), a single
-/// file path (contains `/` or ends `.md` and points at a file), or a
-/// directory. Runs the unified rule registry; exits 0 with no findings,
-/// 1 with violations, 2 on invocation error.
+/// `aw td check <target>` — compile one canonical Python TD project root.
 ///
 /// @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()> {
-    // R2 of #1212: section-type-conformance dispatch runs before any
-    // target resolution — the verb defaults to scanning the project root
-    // and treats `target` as an optional positional path.
+    if !crate::models::project::test_only_legacy_artifact_model_enabled() {
+        if args.section_type_conformance {
+            anyhow::bail!(
+                "`aw td check --section-type-conformance` is a retired Markdown reader; \
+                 use explicit migration tooling before entering the Python TD lifecycle"
+            );
+        }
+        let project_root = crate::find_project_root()?;
+        let target = args.target.trim();
+        if target.is_empty() {
+            anyhow::bail!("aw td check requires a Python TD project root");
+        }
+        let candidate = canonical_python_td_root(
+            &project_root,
+            std::path::Path::new(target),
+            configured_project,
+        )?;
+        let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
+        if args.json {
+            println!("{}", serde_json::to_string(&ir)?);
+        } else {
+            println!(
+                "Python TD check passed: {} module(s), semantic digest {}",
+                ir.modules.len(),
+                ir.semantic_digest
+            );
+        }
+        if let (Some(project), Some(wi)) = (configured_project, args.wi.as_deref()) {
+            let row = crate::services::project_registry::resolve_project_config_row(
+                &project_root,
+                project,
+            )?;
+            crate::cli::td_lock::write_project_td_lock_snapshot_at_root(&project_root, &row.name)?;
+            crate::cli::ec::persist_ec_first_next_action(
+                &project_root,
+                wi,
+                format!(
+                    "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                    row.name,
+                ),
+            )?;
+        }
+        return Ok(());
+    }
+
+    // Test-only isolation for the retired Markdown reader.
     if args.section_type_conformance {
         let path = if args.target.trim().is_empty() {
             None
@@ -3712,12 +3736,59 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
     run_slug_check(target, None, args.json)
 }
 
-/// Run `aw td ast <path>` — parse a Markdown, Python-project, or Python UI TD
-/// into its inspectable IR and emit JSON.
+fn canonical_python_td_root(
+    project_root: &std::path::Path,
+    input: &std::path::Path,
+    configured_project: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    if !input.is_dir() {
+        anyhow::bail!(
+            "canonical Python TD input must be a project root directory, not `{}`; \
+             Markdown specs and individual Python modules are not lifecycle inputs",
+            input.display()
+        );
+    }
+    let candidate = input
+        .canonicalize()
+        .with_context(|| format!("resolve Python TD root {}", input.display()))?;
+    if let Some(project) = configured_project {
+        let configured =
+            crate::services::project_registry::resolve_td_root_from_config(project_root, project)
+                .map_err(|error| anyhow::anyhow!("{}", error.message))?;
+        let expected = std::path::PathBuf::from(configured.root)
+            .canonicalize()
+            .with_context(|| format!("resolve configured Python TD root for `{project}`"))?;
+        if candidate != expected {
+            anyhow::bail!(
+                "Python TD input `{}` does not match configured project `{project}` root `{}`",
+                candidate.display(),
+                expected.display()
+            );
+        }
+    }
+    Ok(candidate)
+}
+
+/// Run `aw td ast <path>` — compile the canonical Python TD project IR.
 ///
 /// @spec apps/agentic-workflow/tech-design/td_ast/types.md#changes
-fn run_ast(args: AstArgs) -> Result<()> {
+fn run_ast(args: AstArgs, configured_project: Option<&str>) -> Result<()> {
     let path = std::path::PathBuf::from(&args.path);
+    if !crate::models::project::test_only_legacy_artifact_model_enabled() {
+        let project_root = crate::find_project_root()?;
+        let root = canonical_python_td_root(&project_root, &path, configured_project)?;
+        let ir = crate::services::python_td::compile_python_td_project(&root)?;
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&ir)
+        } else {
+            serde_json::to_string(&ir)
+        }
+        .context("failed to serialise Python TD IR")?;
+        println!("{}", json);
+        return Ok(());
+    }
+
+    // Test-only isolation for the retired single-file and Markdown readers.
     if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("py") {
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("read Python UI TD {}", path.display()))?;
@@ -6217,6 +6288,48 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn python_td_canonical_routing_check_and_ast_require_configured_project_root() {
+        let root = tempfile::tempdir().unwrap();
+        let td_root = root.path().join("projects/demo/tech-design");
+        let module = td_root.join("src/demo/work_items/example.py");
+        std::fs::create_dir_all(module.parent().unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &module,
+            "__aw_artifact_id__ = \"artifact:demo/example\"\n\ndef example() -> None:\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(td_root.join("legacy.md"), "# Retired\n").unwrap();
+
+        assert_eq!(
+            canonical_python_td_root(root.path(), &td_root, Some("demo")).unwrap(),
+            td_root.canonicalize().unwrap()
+        );
+        let file_error = canonical_python_td_root(root.path(), &module, Some("demo"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            file_error.contains("project root directory"),
+            "{file_error}"
+        );
+
+        let other = root.path().join("other-tech-design");
+        std::fs::create_dir_all(&other).unwrap();
+        let mismatch = canonical_python_td_root(root.path(), &other, Some("demo"))
+            .unwrap_err()
+            .to_string();
+        assert!(mismatch.contains("does not match configured"), "{mismatch}");
+
+        let ir = crate::services::python_td::compile_python_td_project(&td_root).unwrap();
+        assert_eq!(ir.modules.len(), 1);
+        assert_eq!(ir.modules[0].path, "src/demo/work_items/example.py");
     }
 
     #[test]

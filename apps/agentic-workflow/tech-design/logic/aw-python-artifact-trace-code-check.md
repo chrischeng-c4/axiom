@@ -131,7 +131,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Lock Python TD source and semantic digests without Markdown AST fallback."
+    description: "Lock the exact Python compiler-owned module and referenced OpenAPI inputs plus their semantic digest without Markdown AST fallback (#2713)."
   - path: apps/agentic-workflow/src/cli/cb.rs
     action: modify
     section: logic

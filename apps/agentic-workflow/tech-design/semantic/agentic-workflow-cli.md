@@ -4036,6 +4036,10 @@ changes:
       create label vector, and `default_spec_path_for_issue_in_project`.
       Libraries resolve under `libs/<name>/tech-design`, apps retain their
       existing root, and a raw `project:` issue label still fails loudly.
+      Issue #2713 removes implicit Markdown fallback from the public `aw td
+      check` and `aw td ast` consumers. Both commands compile the complete
+      Python TD project root, and a configured project rejects any other root
+      or individual source file.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify
@@ -4074,6 +4078,9 @@ changes:
       lock must be a non-symlink regular file at that exact canonical leaf.
       External TD-directory and lock-leaf symlink regressions prove external
       bytes, HEAD, and repository status remain unchanged on rejection.
+      Issue #2713 derives Python TD lock entries from the compiler-owned module
+      inventory and referenced OpenAPI documents. Retired Markdown and runtime
+      cache files no longer affect the Python source or semantic lock digest.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/validate_proposal.rs"
     action: modify

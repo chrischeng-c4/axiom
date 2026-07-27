@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -283,6 +283,8 @@ fn write_project_td_lock_file_at_root(
         }
     }
     let snapshot = snapshot_td_lock_target(&target)?;
+    let td_ir_count = snapshot.td_ir_count;
+    let td_ir_error_count = snapshot.td_ir_error_count;
     let lock = TdLockFile {
         version: TD_LOCK_VERSION,
         project: target.project.clone(),
@@ -303,16 +305,6 @@ fn write_project_td_lock_file_at_root(
         .clone()
         .unwrap_or_else(|| "sha256:missing-td-ir".to_string());
     let file_count = lock.files.len();
-    let td_ir_count = lock
-        .files
-        .iter()
-        .filter(|entry| entry.ir_digest.is_some())
-        .count();
-    let td_ir_error_count = lock
-        .files
-        .iter()
-        .filter(|entry| entry.parse_error.is_some())
-        .count();
     Ok((
         status_from_parts(
             &target,
@@ -552,16 +544,8 @@ pub(crate) fn check_project_td_lock_at_root(
             current_digest,
             locked_digest: None,
             file_count,
-            td_ir_count: current
-                .files
-                .iter()
-                .filter(|entry| entry.ir_digest.is_some())
-                .count(),
-            td_ir_error_count: current
-                .files
-                .iter()
-                .filter(|entry| entry.parse_error.is_some())
-                .count(),
+            td_ir_count: current.td_ir_count,
+            td_ir_error_count: current.td_ir_error_count,
             changed: Vec::new(),
             added: Vec::new(),
             removed: Vec::new(),
@@ -604,16 +588,8 @@ pub(crate) fn check_project_td_lock_at_root(
             current.ir_digest,
             locked_ir_digest,
             file_count,
-            current
-                .files
-                .iter()
-                .filter(|entry| entry.ir_digest.is_some())
-                .count(),
-            current
-                .files
-                .iter()
-                .filter(|entry| entry.parse_error.is_some())
-                .count(),
+            current.td_ir_count,
+            current.td_ir_error_count,
             changed,
             added,
             removed,
@@ -643,16 +619,8 @@ pub(crate) fn check_project_td_lock_at_root(
         current.ir_digest,
         locked_ir_digest,
         file_count,
-        current
-            .files
-            .iter()
-            .filter(|entry| entry.ir_digest.is_some())
-            .count(),
-        current
-            .files
-            .iter()
-            .filter(|entry| entry.parse_error.is_some())
-            .count(),
+        current.td_ir_count,
+        current.td_ir_error_count,
         changed,
         added,
         removed,
@@ -834,6 +802,8 @@ struct TdSnapshot {
     source_digest: String,
     ir_digest: String,
     files: Vec<TdLockEntry>,
+    td_ir_count: usize,
+    td_ir_error_count: usize,
 }
 
 fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
@@ -842,39 +812,63 @@ fn snapshot_td_root(td_root: &Path) -> Result<TdSnapshot> {
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let source_digest = root_digest(&files);
     let ir_digest = root_ir_digest(&files);
+    let td_ir_count = files
+        .iter()
+        .filter(|entry| entry.ir_digest.is_some())
+        .count();
+    let td_ir_error_count = files
+        .iter()
+        .filter(|entry| entry.parse_error.is_some())
+        .count();
     Ok(TdSnapshot {
         source_digest,
         ir_digest,
         files,
+        td_ir_count,
+        td_ir_error_count,
     })
 }
 
 fn snapshot_td_lock_target(target: &TdLockTarget) -> Result<TdSnapshot> {
     let python_v1 = target.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1;
-    let mut snapshot = if python_v1 {
-        let mut files = Vec::new();
-        collect_td_files_with_policy(&target.td_path, &target.td_path, &mut files, true)?;
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        TdSnapshot {
-            source_digest: root_digest(&files),
-            ir_digest: root_ir_digest(&files),
-            files,
-        }
-    } else {
-        snapshot_td_root(&target.td_path)?
-    };
     if python_v1 {
-        snapshot.ir_digest =
-            crate::services::python_td::compile_python_td_project(&target.td_path)?.semantic_digest;
-        // Python-v1 has one compiler-owned semantic root digest. Markdown
-        // per-file AST parse failures are not meaningful for this adapter.
-        for entry in &mut snapshot.files {
-            entry.ir_digest = None;
-            entry.parse_error = None;
-            entry.section_count = None;
+        let ir = crate::services::python_td::compile_python_td_project(&target.td_path)?;
+        let mut compiler_inputs = ir
+            .modules
+            .iter()
+            .map(|module| module.path.clone())
+            .collect::<BTreeSet<_>>();
+        for module in &ir.modules {
+            if let Some(crate::services::python_td::PythonTdCodegen::OpenApi(openapi)) =
+                module.codegen.as_ref()
+            {
+                compiler_inputs.insert(openapi.document_path.clone());
+            }
         }
+        let files = compiler_inputs
+            .into_iter()
+            .map(|relative| {
+                let path = target.td_path.join(&relative);
+                let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+                Ok(TdLockEntry {
+                    path: relative,
+                    digest: digest_bytes(&bytes),
+                    ir_digest: None,
+                    parse_error: None,
+                    section_count: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let td_ir_count = ir.modules.len();
+        return Ok(TdSnapshot {
+            source_digest: root_digest(&files),
+            ir_digest: ir.semantic_digest,
+            files,
+            td_ir_count,
+            td_ir_error_count: 0,
+        });
     }
-    Ok(snapshot)
+    snapshot_td_root(&target.td_path)
 }
 
 #[cfg(test)]
@@ -1432,7 +1426,7 @@ path = "projects/demo"
     }
 
     #[test]
-    fn python_v1_lock_snapshot_uses_python_semantic_digest_not_markdown_ast() {
+    fn python_td_canonical_routing_lock_uses_only_compiler_inventory() {
         let root = TempDir::new().unwrap();
         write(
             &root.path().join("aw.toml"),
@@ -1444,26 +1438,66 @@ path = "projects/demo"
         std::fs::create_dir_all(&td_root).unwrap();
         write(
             &td_root.join("invoice.py"),
-            "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\ndef issue_invoice() -> None:\n    pass\n",
+            "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\n@openapi_client(source=\"openapi.json\", python=\"python-3.11\", typescript=\"typescript-5.0\", rust=\"rust-2021\")\nclass InvoiceClient:\n    pass\n\ndef issue_invoice() -> None:\n    pass\n",
+        );
+        write(
+            &root
+                .path()
+                .join("projects/demo/tech-design/openapi.json"),
+            "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Invoice\",\"version\":\"1\"},\"paths\":{}}\n",
         );
         write(
             &td_root.join("__pycache__/invoice.cpython-313.pyc"),
             "runtime cache\n",
         );
+        write(
+            &root
+                .path()
+                .join("projects/demo/tech-design/legacy-design.md"),
+            "retired Markdown input\n",
+        );
 
         let target = resolve_td_lock_target(root.path(), "demo").unwrap();
-        let snapshot = snapshot_td_lock_target(&target).unwrap();
+        let before = snapshot_td_lock_target(&target).unwrap();
         let compiled =
             crate::services::python_td::compile_python_td_project(&target.td_path).unwrap();
 
-        assert_eq!(snapshot.ir_digest, compiled.semantic_digest);
-        assert!(snapshot
-            .files
-            .iter()
-            .all(|entry| entry.parse_error.is_none()));
-        assert!(snapshot.files.iter().all(|entry| entry.ir_digest.is_none()));
-        assert_eq!(snapshot.files.len(), 1);
-        assert_eq!(snapshot.files[0].path, "src/demo/domain/invoice.py");
+        assert_eq!(before.ir_digest, compiled.semantic_digest);
+        assert!(before.files.iter().all(|entry| entry.parse_error.is_none()));
+        assert!(before.files.iter().all(|entry| entry.ir_digest.is_none()));
+        assert_eq!(before.files.len(), 2);
+        assert_eq!(before.td_ir_count, 1);
+        assert_eq!(before.td_ir_error_count, 0);
+        assert_eq!(before.files[0].path, "openapi.json");
+        assert_eq!(before.files[1].path, "src/demo/domain/invoice.py");
+
+        write(
+            &root
+                .path()
+                .join("projects/demo/tech-design/legacy-design.md"),
+            "changed retired Markdown input\n",
+        );
+        let after_markdown = snapshot_td_lock_target(&target).unwrap();
+        assert_eq!(before.source_digest, after_markdown.source_digest);
+        assert_eq!(before.ir_digest, after_markdown.ir_digest);
+
+        write(
+            &root
+                .path()
+                .join("projects/demo/tech-design/openapi.json"),
+            "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Invoice v2\",\"version\":\"1\"},\"paths\":{}}\n",
+        );
+        let after_openapi = snapshot_td_lock_target(&target).unwrap();
+        assert_ne!(before.source_digest, after_openapi.source_digest);
+        assert_ne!(before.ir_digest, after_openapi.ir_digest);
+
+        write(
+            &td_root.join("invoice.py"),
+            "__aw_artifact_id__ = \"artifact:billing/issue-invoice\"\n\n@openapi_client(source=\"openapi.json\", python=\"python-3.11\", typescript=\"typescript-5.0\", rust=\"rust-2021\")\nclass InvoiceClient:\n    pass\n\ndef issue_invoice(reference: str) -> None:\n    pass\n",
+        );
+        let after_python = snapshot_td_lock_target(&target).unwrap();
+        assert_ne!(after_openapi.source_digest, after_python.source_digest);
+        assert_ne!(after_openapi.ir_digest, after_python.ir_digest);
     }
 
     #[test]

@@ -4296,7 +4296,7 @@ target = "{target}"
     }
 
     #[test]
-    fn python_artifact_goal_routing_uses_one_ec_first_phase_table() {
+    fn python_td_canonical_routing_goal_uses_one_ec_first_phase_table() {
         let root = python_project_root();
         let cases = [
             (None, "aw ec check --project demo --wi 42"),

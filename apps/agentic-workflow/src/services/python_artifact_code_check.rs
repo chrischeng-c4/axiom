@@ -430,13 +430,20 @@ evidence_paths = ["evidence/efficiency.json"]
     }
 
     #[test]
-    fn python_artifact_code_check_closes_graph_and_rejects_stale_target() {
+    fn python_td_canonical_routing_readiness_cb_and_code_check_share_one_ir() {
         let root = tempfile::tempdir().unwrap();
         write_graph_fixture(root.path());
 
+        let readiness = crate::services::python_artifact_readiness::evaluate(root.path(), "demo")
+            .unwrap()
+            .unwrap();
         let clean = verify_python_artifact_code_check(root.path(), "demo")
             .unwrap()
             .unwrap();
+        assert_eq!(
+            readiness.td_semantic_digest.as_deref(),
+            Some(clean.td_semantic_digest.as_str())
+        );
         assert!(clean.clean, "{clean:#?}");
         assert_eq!(clean.artifact_ids, vec!["artifact:orders/create-order"]);
         assert!(clean.td_lock_clean && clean.ec_lock_clean && clean.native_unit_clean);
