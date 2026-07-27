@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T12:34:16.895046+00:00"
-digest = "sha256:139905b45a8a3dd9479dc2b9183a45200b44196623462907a00993608b57bd7f"
-source_digest = "sha256:139905b45a8a3dd9479dc2b9183a45200b44196623462907a00993608b57bd7f"
-ir_digest = "sha256:63beaee7807be6dd88e857e5b8ad743b54617e5b1b94e60741a176bdf97fa21a"
+generated_at = "2026-07-27T12:40:04.303439+00:00"
+digest = "sha256:57ce4eb18f7f17f50e54694bc79d207e57490eb5aa801fdcb2b244a00fcae0ab"
+source_digest = "sha256:57ce4eb18f7f17f50e54694bc79d207e57490eb5aa801fdcb2b244a00fcae0ab"
+ir_digest = "sha256:c57021c94ca4e933cf2252b610540f0d2bce7db55a3718fb689723acd560488e"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -22,6 +22,18 @@ digest = "sha256:248029b8567dc11c14814b1bfc255caeb709ff8d06b2a44d502c2c4a8954282
 [[files]]
 path = "src/agentic_workflow/migrated/config/ec_tool_binding_config_ec_category_verify_ec_dispatch_with_manif.py"
 digest = "sha256:17fe925f89c88ab20504917762f89e821edf23649f6261e4229389dd8a349112"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/config/agents.py"
+digest = "sha256:0c287ee06e63ba9176642100f841fbb23f0c4aad3c16b53420da47e42aea16b1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/config/platform.py"
+digest = "sha256:9d65fac345a7fdd47040da47a619cac0db0561992aece72f158cf3bef83a2a75"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/config/platform_sync.py"
+digest = "sha256:c9d457e357e7eb18bac014cc7f3eb0c80e535affe793b8c0359a1cc0e2a4b29e"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/agents/analyst.py"
