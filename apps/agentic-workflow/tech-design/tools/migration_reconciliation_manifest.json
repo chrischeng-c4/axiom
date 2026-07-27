@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:1dfc20817e8f844c56ab157aa224198c2677cc29d059c96d9a027fec094d67fe",
+  "digest": "sha256:2a5eb4832faa17b61ab98c8c9206b4bb20108f84546a844ab7610a8864605e73",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -7425,7 +7425,7 @@
       "path": "apps/agentic-workflow/tech-design/core/skills/agent.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:19658ebb3076f549a166e049a3f6ecb3085676cd1405755226268288fa873e0e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/skills/agent.py"
     },
     {
@@ -7435,7 +7435,7 @@
       "path": "apps/agentic-workflow/tech-design/core/skills/fillback.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:fe5fb10308a57266ae8ebba45ed96fda039fc78bfb7364f5adb85ecd1e157763",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/skills/fillback.py"
     },
     {
@@ -7445,7 +7445,7 @@
       "path": "apps/agentic-workflow/tech-design/core/skills/merge.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:498b66dae6b2172d3491f31ede154bb058321a6e80314feafc428b3fbd1d3266",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/skills/merge.py"
     },
     {
@@ -7455,7 +7455,7 @@
       "path": "apps/agentic-workflow/tech-design/core/skills/revise-artifact.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:dae2a06530dbac22372c4649209edabd2a7198f8c30fe7320d331ed595a975b0",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/skills/revise_artifact.py"
     },
     {
@@ -7465,7 +7465,7 @@
       "path": "apps/agentic-workflow/tech-design/core/skills/run-change.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:0c85d4c98dd17061e59dea639b1d1073e45bb34c8a4ef3deee8b43598889d0b4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/core/skills/run_change.py"
     },
     {

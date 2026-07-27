@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T12:51:36.527018+00:00"
-digest = "sha256:b27a677b2aa4d21f2acf52aef7af99f3e2b6fc76654e374dc94bcb3a26dfb9d6"
-source_digest = "sha256:b27a677b2aa4d21f2acf52aef7af99f3e2b6fc76654e374dc94bcb3a26dfb9d6"
-ir_digest = "sha256:74b015ef4fcbda37ea03727adca49aeb3fa3d1498b93a8d038ed0405c0a122c1"
+generated_at = "2026-07-27T12:56:40.044201+00:00"
+digest = "sha256:22ac3b65b159323495530cad12163b7a4c6ff1660c3bca0999742928186293f3"
+source_digest = "sha256:22ac3b65b159323495530cad12163b7a4c6ff1660c3bca0999742928186293f3"
+ir_digest = "sha256:e9df1d663ff15e172f0696b6108cbbc1822477e3b8a1d3fb0aefa2ee20a13bf8"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -830,6 +830,26 @@ digest = "sha256:c6defba3593ff0d2fa598368e44366958798ff1fafb03b975b05e3f9c33255c
 [[files]]
 path = "src/agentic_workflow/migrated/core/logic/spec_store.py"
 digest = "sha256:a293c4cc450ef31a007c16ec0524fd6c6fae20c06c84774a989d23edcc7258ee"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/skills/agent.py"
+digest = "sha256:82de9e57822256e9f58a9be953c4af7d61e80e84f0516cf930e3bdb3dca61dfe"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/skills/fillback.py"
+digest = "sha256:fd218de8092afa73e463caaf5cd53a07a19e1b4b824a0d5fa5ee6cf6f4e2d957"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/skills/merge.py"
+digest = "sha256:729b36edb18b5809959993f4bf9510ba60cdcb254083974231fef1ebff68b4f3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/skills/revise_artifact.py"
+digest = "sha256:88fa533fe59fd04c296af4db265156f8f99d9eab3d87e428b5a9261aeb3b6fae"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/skills/run_change.py"
+digest = "sha256:61eec3fc20cff107efe3833311be440e0913b517e3631fa32126745f4d3dd5fa"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/analyze/mod.py"
