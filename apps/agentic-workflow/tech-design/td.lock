@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:24:56.412048+00:00"
-digest = "sha256:c2066024402692dc0f0e1996e7530c3446143a266bc2d495cd9fc729fcb9d08a"
-source_digest = "sha256:c2066024402692dc0f0e1996e7530c3446143a266bc2d495cd9fc729fcb9d08a"
-ir_digest = "sha256:b89165ea0e68a11095af0ca732c75c19cffa0f67f3d38b32ff81534ad1a059d8"
+generated_at = "2026-07-27T13:29:21.208520+00:00"
+digest = "sha256:d93eb5247507e7de934bb0dad1115192179e67803862da75ab90f9f90e1d0e88"
+source_digest = "sha256:d93eb5247507e7de934bb0dad1115192179e67803862da75ab90f9f90e1d0e88"
+ir_digest = "sha256:e18533f96ac03b98f311f378274d446374d7283a6fecc4ee7aa03e76fbe55e42"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1790,6 +1790,10 @@ digest = "sha256:a476bb7b7ee8c1c0a5f5c148e82a631bd117fca743a6a18acb4dabeadbbb571
 [[files]]
 path = "src/agentic_workflow/migrated/surface/bugs/td_merge_and_issues_merge_hard_code_target_branch.py"
 digest = "sha256:54951ce62e64f2d0f1f5465df17acaa7be10202611357fba5251ec3bcd51c677"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/changes/r4_bulk_drop_deprecated_h2.py"
+digest = "sha256:33eaaf46c30f7e4ccb27c8ea746549600c3ac96a4c600d08471ce0c8bfceb82f"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/commands/proposal.py"

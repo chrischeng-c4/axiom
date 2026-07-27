@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:2259ffd3c81dffeff7223ce699bf47e176dd72dfcc5f9024bc56f51cf020d438",
+  "digest": "sha256:6f032cd4e519288bfcec5c61a9f04023faf002a09f3c06d2bd38e4a365575261",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10775,7 +10775,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/changes/r4-bulk-drop-deprecated-h2.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:97acc42bab3016c37613772daec7f45ce3c4d8b4cc9f32439438d417922bc82c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/changes/r4_bulk_drop_deprecated_h2.py"
     },
     {
