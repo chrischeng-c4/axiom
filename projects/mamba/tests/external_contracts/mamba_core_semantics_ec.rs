@@ -847,11 +847,12 @@ fn type_wall_conformance_determinism() {
     );
     assert_eq!(baseline.row_count, 7407, "Baseline row_count mismatch");
     assert_eq!(
-        baseline.command, "cargo test -p mamba --release --test conformance -- --nocapture",
+        baseline.command,
+        "cargo test -p mamba --release --test cpython_ported_integration cpython_ported::gen::_type -- --nocapture",
         "Baseline command mismatch"
     );
     assert_eq!(
-        baseline.source_revision, "36f80b5dc530649c366b6d5848b1cca333de63c5",
+        baseline.source_revision, "9113cc02e6f38321092e308726bf968b4c709438",
         "Baseline source_revision mismatch"
     );
     assert_eq!(
@@ -902,6 +903,61 @@ fn type_wall_conformance_determinism() {
         baseline.environment_fingerprint, env_fp_before,
         "Baseline environment_fingerprint mismatch: expected {}, got {}",
         env_fp_before, baseline.environment_fingerprint
+    );
+
+    // 2.5 Execute full and filtered --list subprocess preflights
+    println!("Executing full-target --list preflight...");
+    let (full_list_set, _full_list_raw) = execute_list_preflight(
+        &[
+            "test",
+            "-p",
+            "mamba",
+            "--release",
+            "--test",
+            "cpython_ported_integration",
+            "--",
+            "--list",
+        ],
+        Duration::from_secs(1200),
+    );
+    assert_eq!(
+        full_list_set.len(),
+        13767,
+        "Full target list count mismatch: expected 13767, got {}",
+        full_list_set.len()
+    );
+    for d in &denom_rows {
+        assert!(
+            full_list_set.contains(d),
+            "Denominator row {} missing from full target list",
+            d
+        );
+    }
+
+    println!("Executing filtered-target --list preflight...");
+    let (filtered_list_set, _filtered_list_raw) = execute_list_preflight(
+        &[
+            "test",
+            "-p",
+            "mamba",
+            "--release",
+            "--test",
+            "cpython_ported_integration",
+            "cpython_ported::gen::_type",
+            "--",
+            "--list",
+        ],
+        Duration::from_secs(1200),
+    );
+    assert_eq!(
+        filtered_list_set.len(),
+        7407,
+        "Filtered target list count mismatch: expected 7407, got {}",
+        filtered_list_set.len()
+    );
+    assert_eq!(
+        filtered_list_set, denom_rows,
+        "Filtered target list set mismatch with denominator.txt set"
     );
 
     // 3. Execute 3 fresh isolated release conformance runs with per-run timeout >= 1200s & run-local capture
@@ -1303,6 +1359,218 @@ impl Drop for ProcessGroupGuard {
 
 static RUN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+fn execute_list_preflight(args: &[&str], timeout: Duration) -> (BTreeSet<String>, String) {
+    let package_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let run_seq = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let pid = std::process::id();
+    let epoch_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stdout_path = std::env::temp_dir().join(format!(
+        "mamba_list_stdout_{pid}_{epoch_nanos}_{run_seq}.log"
+    ));
+    let stderr_path = std::env::temp_dir().join(format!(
+        "mamba_list_stderr_{pid}_{epoch_nanos}_{run_seq}.log"
+    ));
+
+    let stdout_file =
+        std::fs::File::create(&stdout_path).expect("create run-local --list stdout temp file");
+    let stderr_file =
+        std::fs::File::create(&stderr_path).expect("create run-local --list stderr temp file");
+
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("cargo");
+    cmd.args(args)
+        .current_dir(&package_dir)
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = std::fs::remove_file(&stdout_path);
+            let _ = std::fs::remove_file(&stderr_path);
+            panic!("spawn cargo test --list subprocess failed: {e}");
+        }
+    };
+    let pgid = child.id() as i32;
+    let mut pg_guard = ProcessGroupGuard {
+        pgid,
+        reaped: false,
+    };
+
+    let start = Instant::now();
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                pg_guard.reaped = true;
+                if let Some(code) = status.code() {
+                    break code;
+                } else {
+                    let _ = std::fs::remove_file(&stdout_path);
+                    let _ = std::fs::remove_file(&stderr_path);
+                    panic!(
+                        "cargo test --list subprocess terminated by signal: {:?}",
+                        status
+                    );
+                }
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    pg_guard.kill_all();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&stdout_path);
+                    let _ = std::fs::remove_file(&stderr_path);
+                    panic!(
+                        "cargo test --list subprocess execution timed out after {:?}",
+                        timeout
+                    );
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                pg_guard.kill_all();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&stdout_path);
+                let _ = std::fs::remove_file(&stderr_path);
+                panic!("Error waiting on cargo test --list subprocess: {e}");
+            }
+        }
+    };
+
+    let stdout_bytes = match std::fs::read(&stdout_path) {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = std::fs::remove_file(&stdout_path);
+            let _ = std::fs::remove_file(&stderr_path);
+            panic!("read --list stdout temp file failed: {e}");
+        }
+    };
+    let stderr_bytes = match std::fs::read(&stderr_path) {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = std::fs::remove_file(&stdout_path);
+            let _ = std::fs::remove_file(&stderr_path);
+            panic!("read --list stderr temp file failed: {e}");
+        }
+    };
+    let _ = std::fs::remove_file(&stdout_path);
+    let _ = std::fs::remove_file(&stderr_path);
+
+    if exit_code != 0 {
+        let stderr_lossy = String::from_utf8_lossy(&stderr_bytes);
+        panic!(
+            "cargo test --list failed with exit code {}\nstderr:\n{}",
+            exit_code, stderr_lossy
+        );
+    }
+
+    let stdout = match String::from_utf8(stdout_bytes) {
+        Ok(s) => s,
+        Err(e) => panic!("cargo test --list stdout not valid UTF-8: {e}"),
+    };
+    let _stderr = match String::from_utf8(stderr_bytes) {
+        Ok(s) => s,
+        Err(e) => panic!("cargo test --list stderr not valid UTF-8: {e}"),
+    };
+
+    let mut names = BTreeSet::new();
+    let mut summary_parsed: Option<(usize, usize)> = None;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        assert!(
+            summary_parsed.is_none(),
+            "Unexpected non-empty line after terminal summary in cargo test --list output: {:?}",
+            line
+        );
+
+        if trimmed.ends_with(": test") {
+            let name = trimmed[..trimmed.len() - 6].trim().to_string();
+            assert!(
+                !name.is_empty(),
+                "Empty test name in cargo test --list output: {:?}",
+                line
+            );
+            assert!(
+                names.insert(name.clone()),
+                "Duplicate test name observed in cargo test --list output: {}",
+                name
+            );
+        } else if trimmed.ends_with(" benchmarks") && trimmed.contains(" tests, ") {
+            let parts: Vec<&str> = trimmed.split(',').collect();
+            if parts.len() == 2 {
+                let tests_part = parts[0].trim();
+                let bench_part = parts[1].trim();
+
+                let tests_tokens: Vec<&str> = tests_part.split_whitespace().collect();
+                let bench_tokens: Vec<&str> = bench_part.split_whitespace().collect();
+
+                if tests_tokens.len() == 2
+                    && tests_tokens[1] == "tests"
+                    && bench_tokens.len() == 2
+                    && bench_tokens[1] == "benchmarks"
+                {
+                    let count: usize = tests_tokens[0]
+                        .parse()
+                        .expect("parse summary test count in cargo test --list");
+                    let bench: usize = bench_tokens[0]
+                        .parse()
+                        .expect("parse summary benchmark count in cargo test --list");
+
+                    summary_parsed = Some((count, bench));
+                } else {
+                    panic!(
+                        "Unparseable/unexpected non-empty line in cargo test --list output: {:?}",
+                        line
+                    );
+                }
+            } else {
+                panic!(
+                    "Unparseable/unexpected non-empty line in cargo test --list output: {:?}",
+                    line
+                );
+            }
+        } else {
+            panic!(
+                "Unparseable/unexpected non-empty line in cargo test --list output: {:?}",
+                line
+            );
+        }
+    }
+
+    let (summary_count, benchmarks_count) = summary_parsed.expect(
+        "Missing terminal summary line ('<count> tests, 0 benchmarks') in cargo test --list output",
+    );
+
+    assert_eq!(
+        benchmarks_count, 0,
+        "Summary benchmark count must be 0, got {}",
+        benchmarks_count
+    );
+
+    assert_eq!(
+        summary_count,
+        names.len(),
+        "Summary test count ({summary_count}) does not match unique parsed test count ({})",
+        names.len()
+    );
+
+    (names, stdout)
+}
+
 fn execute_conformance_run_with_timeout(timeout: Duration) -> (String, String, i32) {
     let package_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let run_seq = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1331,7 +1599,8 @@ fn execute_conformance_run_with_timeout(timeout: Duration) -> (String, String, i
         "mamba",
         "--release",
         "--test",
-        "conformance",
+        "cpython_ported_integration",
+        "cpython_ported::gen::_type",
         "--",
         "--nocapture",
     ])
@@ -1347,7 +1616,14 @@ fn execute_conformance_run_with_timeout(timeout: Duration) -> (String, String, i
         });
     }
 
-    let mut child = cmd.spawn().expect("spawn cargo test subprocess");
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = std::fs::remove_file(&stdout_path);
+            let _ = std::fs::remove_file(&stderr_path);
+            panic!("spawn cargo test subprocess failed: {e}");
+        }
+    };
     let pgid = child.id() as i32;
     let mut pg_guard = ProcessGroupGuard {
         pgid,
@@ -1483,17 +1759,27 @@ fn parse_and_verify_run_outcomes(
         measured_parsed
     );
     assert_eq!(
-        filtered_parsed, 0,
-        "Full suite summary filtered count must be 0, got {}",
+        filtered_parsed, 6360,
+        "Full suite summary filtered count must be 6360, got {}",
         filtered_parsed
     );
 
-    let summary_total =
-        passed_parsed + failed_parsed + ignored_parsed + measured_parsed + filtered_parsed;
+    let executed_summary_total = passed_parsed + failed_parsed + ignored_parsed + measured_parsed;
     let full_observed_total = full_observed_map.len();
     assert_eq!(
-        full_observed_total, summary_total,
-        "Sum of full observed terminal lines ({full_observed_total}) does not match summary total ({summary_total})"
+        full_observed_total, executed_summary_total,
+        "Sum of full observed terminal lines ({full_observed_total}) does not match executed summary total ({executed_summary_total})"
+    );
+    assert_eq!(
+        executed_summary_total, 7407,
+        "Executed summary total must be 7407, got {}",
+        executed_summary_total
+    );
+    assert_eq!(
+        executed_summary_total + filtered_parsed,
+        13767,
+        "Whole list total (executed + filtered) must be 13767, got {}",
+        executed_summary_total + filtered_parsed
     );
 
     assert_eq!(
