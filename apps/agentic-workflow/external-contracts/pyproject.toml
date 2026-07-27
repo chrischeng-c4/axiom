@@ -340,6 +340,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/wi-typed-epic-owner.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "wi-typed-priority-label"
+artifact_id = "artifact:agentic-workflow/wi-typed-priority-label"
+capability_id = "work-item-planning"
+use_case_id = "typed-priority-label-authoring"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-typed-priority-label.py"
+promise = "typed priority authoring documents and emits the canonical single-colon priority:<value> label and never publishes priority::<value>"
+oracle = "Native Python black-box assertions inspect repo-built aw help and create a local work item through the real CLI."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
+evidence_paths = ["evidence/wi-typed-priority-label.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "wi-create-help-command"
 artifact_id = "artifact:agentic-workflow/wi-create-help-command"
 capability_id = "work-item-planning"

@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T16:11:42.759935+00:00"
-ir_digest = "sha256:b87ec7331927b18a11c3e92e981c815c35eac7f965f61b98a7fb4fbc0631e24f"
-source_digest = "sha256:9e6b0c4d749cf2752cc8c345f13b0e25311d9324682d99b5c15f6f9288a567f0"
+generated_at = "2026-07-27T16:51:30.774692+00:00"
+ir_digest = "sha256:b2edd18b8b686b4017b16484e80bc35000cad048f9e13122f754039751c0b434"
+source_digest = "sha256:c421f3d05d892643308dea6f70546cf66a7a332c76d6b26b064e3a9db28c33df"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:694aaf4e96c44f45dc31cd7207bbdede941ca4af87f066cd50d4bf2345187450"
+digest = "sha256:9dbe5f0f60b035108065c6298f74d4e6e51256474d7625072c76b429d256fabd"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -161,6 +161,10 @@ path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-epic-owner.p
 digest = "sha256:63f6ca1ca466d62f22ebf0a6669bc515555485cbd04a4aa387a50e34149f0cd9"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-priority-label.py"
+digest = "sha256:ff9c2b4c5d603f07e77710aacc97831b2fe8a37b2e9552665553e485e3aacec3"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
 digest = "sha256:4d7018c0c60a61b1904d622438687fd83bd343481a61024044286968fdbd97db"
 
@@ -258,7 +262,7 @@ digest = "sha256:18b7d77ce6fef3eda2aee7cd6b15221597df5818702bdcda2083c24f0dee50f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py"
-digest = "sha256:909602e50e9740c2269217269180acecca4bd613dc7dd2892cc12e8022047cc2"
+digest = "sha256:ff1ec40824047ee1e8757b063818dbb568d777b32b2ad4bff42328409dffdb47"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/workflow_runner.py"
@@ -1029,6 +1033,26 @@ assertions = [
 evidence_digest = "sha256:e57d7d65f09c4daaeada55ea5d199f1c210fbc9787489cf1b55a1b7b5d074714"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:7c42b1d766acaedb60b431146b96fec934a8b00ae5bb199f1bd175e978e1f212"
+
+[[cases]]
+id = "wi-typed-priority-label"
+capability_id = "work-item-planning"
+claim_id = "typed-priority-label-authoring"
+contract_id = "wi-typed-priority-label"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-typed-priority-label"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-priority-label.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-priority-label"
+required_for_production = true
+assertions = [
+    "typed priority authoring documents and emits the canonical single-colon priority:<value> label and never publishes priority::<value>",
+    "artifact: artifact:agentic-workflow/wi-typed-priority-label",
+    "oracle: Native Python black-box assertions inspect repo-built aw help and create a local work item through the real CLI.",
+    "target: rust",
+]
+evidence_digest = "sha256:05ca0312934c06b3bcb3e46f092da0babf90aec747935feae982b6cc2f9962dc"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cad30eaa89f928e6caf876c967f6b35b869418ea94073cee5454c73ceeaa3421"
 
 [[cases]]
 id = "work-item-four-type-taxonomy"

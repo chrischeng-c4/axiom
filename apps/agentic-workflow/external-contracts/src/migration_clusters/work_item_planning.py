@@ -27,6 +27,7 @@ CASE_IDS = {
     "wi-remove-agent-estimate-spec-check",
     "wi-remove-agent-estimate-unit-command",
     "wi-typed-epic-owner",
+    "wi-typed-priority-label",
     "work-item-planning-epic-to-change-atomization",
     "work-item-planning-operational-efficiency",
     "work-item-planning-operational-stability",
@@ -354,6 +355,30 @@ human_attention: confirm
 
 
 def _verify_planning(case_id: str) -> list[str]:
+    if case_id == "wi-typed-priority-label":
+        with project_fixture() as root:
+            help_result = run_aw(root, "wi", "create", "--help")
+            assert "priority:<value>" in help_result.stdout
+            assert "priority::<value>" not in help_result.stdout
+
+            created = create(
+                root,
+                "Typed priority change",
+                "change",
+                "--priority",
+                "p2",
+                "--body",
+                BOUNDED_BODY,
+            )
+            issue = show(root, created["slug"])
+            assert "priority:p2" in issue["labels"]
+            assert "priority::p2" not in issue["labels"]
+        return [
+            "create help documents the canonical single-colon priority label",
+            "typed priority emits priority:p2",
+            "typed priority never emits priority::p2",
+        ]
+
     if case_id == "wi-typed-epic-owner":
         with project_fixture() as root:
             help_result = run_aw(root, "wi", "create", "--help")

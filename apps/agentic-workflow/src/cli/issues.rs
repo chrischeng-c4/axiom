@@ -299,7 +299,8 @@ pub struct CreateArgs {
     pub projects: Vec<String>,
 
     /// Priority level. Closed enum: p0 | p1 | p2 | p3.
-    /// Emits a `priority::<value>` scoped label.
+    /// Emits a canonical `priority:<value>` scoped label.
+    // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/typed_priority_label.py
     #[arg(long = "priority")]
     pub priority: Option<PriorityFilter>,
 
@@ -342,7 +343,7 @@ pub enum PriorityFilter {
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 impl PriorityFilter {
-    /// Returns the label suffix for `priority::<suffix>`.
+    /// Returns the value appended after the single `priority:` separator.
     pub fn as_label_suffix(&self) -> &'static str {
         match self {
             PriorityFilter::P0 => "p0",
@@ -11451,6 +11452,23 @@ labels:\n\
         assert!(
             !help.contains("--remote"),
             "create help should not expose deprecated --remote flag:\n{}",
+            help
+        );
+    }
+
+    #[test]
+    fn wi_create_priority_help_uses_canonical_single_colon_label() {
+        let mut command = create_args_test_command();
+        let help = command.render_long_help().to_string();
+
+        assert!(
+            help.contains("priority:<value>"),
+            "create help should document the canonical priority label:\n{}",
+            help
+        );
+        assert!(
+            !help.contains("priority::<value>"),
+            "create help must not document the malformed double-colon label:\n{}",
             help
         );
     }

@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:c624b77074c7385c5ee8c7c23a40fae3d4a180a00d5777f8bf17bd95110535f8",
+  "source_digest": "sha256:1a078d18fb2c3bf1b35267c7181a32f521d1394249ae9f21ed430ceecb84a6b4",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T16:10:07.315001+00:00",
-  "summary": "Accepted: the project-local TD/EC stability claim, inventory promise, wrapper, and verifier consistently cover current artifact identities plus inventory, source, validation, and continuation routes. The direct case is repeatable and all structural, inventory, claim, migration, oracle-independence, loophole, and false-green checks are clean.",
+  "reviewed_at": "2026-07-27T16:51:12.690850+00:00",
+  "summary": "Accepted: WI #2767 adds a runnable source-independent black-box behavior contract that checks the real aw create help, creates through an isolated local backend with typed priority p2, and re-reads persisted labels through aw wi show. Its hard-coded single-colon and double-colon assertions are specific, fail on broken runtime behavior, cannot pass through a zero-test filter, and prove authoring behavior without claiming cleanup of pre-existing tracker history. The complete 48-case inventory and all reconciliation guards are clean.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
