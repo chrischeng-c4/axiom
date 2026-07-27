@@ -1,0 +1,19 @@
+"""Canonical Python producer for `apps/agentic-workflow/tech-design/core/config/platform_sync_config_runtime_source.md`.
+
+Migrated by batch `projection-core-config-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-config/core-config-platform-sync-config-runtime-source"
+__legacy_projection_path__ = "apps/agentic-workflow/tech-design/core/config/platform_sync_config_runtime_source.md"
+__legacy_projection_digest__ = "sha256:683489ee64db3215a3eaa97ae2004e2d1fac909f8a4b80a0bc67030ad4a68c61"
+
+
+def render_markdown() -> Annotated[str, "sha256:683489ee64db3215a3eaa97ae2004e2d1fac909f8a4b80a0bc67030ad4a68c61"]:
+    """Render the preserved generated projection byte-for-byte."""
+
+    return "---\nid: sdd-config-platform-sync-config-runtime-source\nfill_sections: [overview, source, changes]\ncapability_refs:\n  - id: aw-core-client-model-workitem-first-artifact-lifecycle\n    role: primary\n    gap: agent-first-cli-product-model\n    claim: agent-first-cli-product-model\n    coverage: full\n    rationale: \"Config and platform TDs support the agent-first CLI project boundary.\"\n---\n\n# Platform Sync Config Runtime Source\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nPublic API manifest for `apps/agentic-workflow/src/services/platform_sync/config.rs` generated from AST during Score force-regeneration standardization.\n\n### Symbols\n\n| Name | Target | Kind | Visibility | Line | Signature |\n|------|--------|------|------------|------|-----------|\n| `AuthConfig` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 19 |  |\n| `LabelConfig` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 29 |  |\n| `PlatformConfig` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 48 |  |\n| `ScopeAutoDetect` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 77 |  |\n| `ScopeConfig` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 85 |  |\n| `StatusLabels` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 98 |  |\n| `TitleConfig` | apps/agentic-workflow/src/services/platform_sync/config.rs | struct | pub | 114 |  |\n| `extract_scope_labels` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 258 | extract_scope_labels(&self, affected_code: &[String]) -> Vec<String> |\n| `format_proposal_title` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 234 | format_proposal_title(&self, change_id: &str, title: &str) -> String |\n| `format_spec_title` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 246 | format_spec_title(&self, change_id: &str, spec_id: &str) -> String |\n| `get_token` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 194 | get_token(&self, project_root: &Path) -> Result<Option<String>> |\n| `load` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 127 | load(project_root: &Path) -> Result<Self> |\n| `proposal_label` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 224 | proposal_label(&self) -> Option<&str> |\n| `spec_label` | apps/agentic-workflow/src/services/platform_sync/config.rs | function | pub | 229 | spec_label(&self) -> Option<&str> |\n## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: handwrite-gap platform-sync-config-runtime -->\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/services/platform_sync/config.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n    replaces:\n      - \"<handwrite-gap:platform-sync-config-runtime>\"\n    description: \"Source template owns platform sync config runtime behavior and tests.\"\n```\n"

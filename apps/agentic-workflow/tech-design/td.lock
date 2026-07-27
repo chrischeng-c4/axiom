@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:52:26.631249+00:00"
-digest = "sha256:499c2b0023be6f25862bf37717997a536056e6db905c55c50a4315a8c92f2d0b"
-source_digest = "sha256:499c2b0023be6f25862bf37717997a536056e6db905c55c50a4315a8c92f2d0b"
-ir_digest = "sha256:08515b7dbcfcdc215268551f77db83ad39bfd8f3a608702191c38d67babdcd89"
+generated_at = "2026-07-27T14:00:27.592270+00:00"
+digest = "sha256:ad9d1bd2910aba7117a1169ff660a1c4d4ad48722db899253dcd61994377e2cd"
+source_digest = "sha256:ad9d1bd2910aba7117a1169ff660a1c4d4ad48722db899253dcd61994377e2cd"
+ir_digest = "sha256:b14e5b630eb51ac1e977779a0ae50438e4c032a2f3b20f1d141309418c5e2675"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -34,6 +34,14 @@ digest = "sha256:9d65fac345a7fdd47040da47a619cac0db0561992aece72f158cf3bef83a2a7
 [[files]]
 path = "src/agentic_workflow/migrated/core/config/platform_sync.py"
 digest = "sha256:c9d457e357e7eb18bac014cc7f3eb0c80e535affe793b8c0359a1cc0e2a4b29e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/config/platform_sync_config_preamble_source.py"
+digest = "sha256:2fb84b7ed454778ab06879a337ad3dbf7d6c5a8d6b2c278d61c649adc3df49c9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/config/platform_sync_config_runtime_source.py"
+digest = "sha256:9719a4c7756852bbee75c1740586fc17cdbb832848358cc81ad70ac84834ea32"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/generate/architecture.py"
