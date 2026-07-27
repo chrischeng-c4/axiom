@@ -2,7 +2,7 @@
   "baseline": {
     "markdown_td": 979,
     "max_batch_artifacts": 50,
-    "python_td": 11
+    "python_td": 12
   },
   "batches": [
     {
@@ -1686,7 +1686,7 @@
       "disposition": "migrate",
       "path": "AGENTS.md",
       "role": "documentation_reference",
-      "sha256": "sha256:c7a50836d7ba9d770c7297a7df48d7b6b70200961c546edd8307aefcf3a7bee3",
+      "sha256": "sha256:b35727fa1661140f02e87de9aa43b26b931729f9c56eb84686e5a3d56c5b3339",
       "status": "pending"
     },
     {
@@ -1700,7 +1700,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
-      "sha256": "sha256:69fcc68843590101baceb00782fa80fd7ac54563c5bf6a143551294cbc475944",
+      "sha256": "sha256:08387e307dde08da3fea5e12755cfdfe0e6f490b4cd4c2da40b976a3f185c061",
       "status": "pending"
     },
     {
@@ -1721,14 +1721,14 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/ec.lock",
       "role": "lock_input",
-      "sha256": "sha256:63126e7193989e22c779b7b800de86cba3a20d9cf35e1c5fc8aa5cb440052d82",
+      "sha256": "sha256:83e878b8ac08affff2f3e3d7067fe709fd305bf8906f0f3381656dee573be3f9",
       "status": "pending"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/pyproject.toml",
       "role": "lock_input",
-      "sha256": "sha256:e7e7a1d3a89f7d3eef9aa8c72bc9d19ef406d100a757e47d3e7c44e63e27191d",
+      "sha256": "sha256:afdcaaf0ffd4fe09282cb4c776b9c392af4982fca90b69ac92a51a027a52dec5",
       "status": "pending"
     },
     {
@@ -1791,21 +1791,21 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/prompt_artifacts.py",
       "role": "configuration_or_guidance",
-      "sha256": "sha256:f0bb6f46004459c52eafb00d5e8c1b9cdeac1d33cf3e5a571790a0046c6ccaa7",
+      "sha256": "sha256:86b4aff2e016e82895e4a7115c99f656c3e1f823d518148e9ea42183814da033",
       "status": "pending"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py",
       "role": "configuration_or_guidance",
-      "sha256": "sha256:1073d7079588f12be02784ed7150bd78034be5df3da80c3b8b3dec975405e824",
+      "sha256": "sha256:d543a8477b45bee3c6e3c3256925f36f4de0ea56b1b6af5e06c2c837d8a287a0",
       "status": "pending"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py",
       "role": "configuration_or_guidance",
-      "sha256": "sha256:435ce252d0542b03003c11746ae0de490b378b1ce48dc28bc93f5ffed99349c0",
+      "sha256": "sha256:2c4c51457a1ec10851502733ea5ccf358561bec642d288052eec45d4082836aa",
       "status": "pending"
     },
     {
@@ -1847,7 +1847,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_reconciliation_manifest.json",
       "role": "configuration_or_guidance",
-      "sha256": "sha256:92216b54a3e688ebf16996804ce1aaf2524cf9556a12a122db23b62da0459052",
+      "sha256": "sha256:58a588ee85c1ea7b82474ce87c14301ee5f7bee8c13b4c395f4ae90b4053a942",
       "status": "pending"
     },
     {
@@ -1889,7 +1889,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/capability.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:89977d5ede50276cce79e634557ebaf4a8517d40afd5f1b8833afb98a315958b",
+      "sha256": "sha256:b37292db67be0a32d8178a909223e189a9e380238420e8c6e49703c2c8ab4bd7",
       "status": "pending"
     },
     {
@@ -1917,7 +1917,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/chain.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:073cc962c472683002d09077c9031ff1c8af74ef0b071a7e423b787d0e2ce45e",
+      "sha256": "sha256:fab60998d2ead9de551828d0c2c83750330ae2b874ca562ace788943eaefbe33",
       "status": "pending"
     },
     {
@@ -1938,7 +1938,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/ec.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:009555b6be09547232e6ba140ff75c6f4d71e284a1eb65771c4055eae60027b9",
+      "sha256": "sha256:04595a16a0a3cc730eab5ebd8c1daa60b3466921be69b6de2d76f93bfcf3ca95",
       "status": "pending"
     },
     {
@@ -2008,7 +2008,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/project.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:d084fafe5b98bf81a6be07236825ee38aec4f55bf9d24ca0573c141c70529c14",
+      "sha256": "sha256:949cc382934b946e5d25ef8c30b818e6648df705eff6cb1cd76b228f7e8e3b26",
       "status": "pending"
     },
     {
@@ -2022,14 +2022,14 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/run.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:fbcbb5098edac89139bbf74fe20b158038b068bbfe8f9566e07c238b3d59467d",
+      "sha256": "sha256:a585aaf1e558428681a13e08191504f050176d14d1cdc589a6df979a6a58f504",
       "status": "pending"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/standardize.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:557098d42fd9313ac93a1475e6c45ffdc5546c989505d123b8aa8417aa63c4c1",
+      "sha256": "sha256:a9d45db79e3c6d9fcc9a38257ae5fae99b8f0f58c3a5cefc6e7ea72660d4dc51",
       "status": "pending"
     },
     {
@@ -2204,7 +2204,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_rust_target.rs",
       "role": "runtime_consumer",
-      "sha256": "sha256:56a620ef8b901f902ba6163eafd1de07ecf52f6de9afb1a4c6f720b155e444dc",
+      "sha256": "sha256:41bfbd3841bf05484a2466017d9fe229a8c88eba048893ab38a1448e8da5e71e",
       "status": "pending"
     },
     {
@@ -2302,7 +2302,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/tech-design/td.lock",
       "role": "lock_input",
-      "sha256": "sha256:5a4c71f6c2eeea074f751bcce87fe8f5df945bed729c0bf8663a4f2cdb856208",
+      "sha256": "sha256:140daf72b59cd891aeeb6d1e83c6afd3da23fc2644c19f941cbdab7768ab2bf5",
       "status": "pending"
     },
     {
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:6d7391c1a6fe625e621fe49ca5fe1cb84105569d0800d22bbe11a6513a224fa4",
+  "digest": "sha256:686a558e50a904c287cd1d4fd0f5cdd8d0e06b39bf855303c5730834c8ab982d",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10094,7 +10094,7 @@
       "family": "logic",
       "path": "apps/agentic-workflow/tech-design/logic/aw-self-hosting-allow-python-first-lifecycle-roots-with-bounded.md",
       "role": "legacy_markdown_td",
-      "sha256": "sha256:ee8bf114681da2e1081ac9e280acbf92dd493df60190df57a9aa6d141308917c",
+      "sha256": "sha256:bf92a2bdcd6e17daa0424acc245dfcf5567b0880e135b0aeb8a3aeeeb8a5a308",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/logic/aw_self_hosting_allow_python_first_lifecycle_roots_with_bounded.py"
     },
@@ -10254,7 +10254,7 @@
       "family": "semantic",
       "path": "apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md",
       "role": "generated_mirror",
-      "sha256": "sha256:a2c554aad63cb662c8c36ac3431647280bb302bd779f4ab8d0d26ab9badcc550",
+      "sha256": "sha256:657042e3481f684b54cf742c00380e719e77139cf8657bad5f2e9c6783f32769",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
     },
@@ -10854,7 +10854,7 @@
       "family": "surface/generate",
       "path": "apps/agentic-workflow/tech-design/surface/generate/project-health-source.md",
       "role": "generated_mirror",
-      "sha256": "sha256:57f252812359d0a805ac954cdfcf9a7d3ec9082dc799b8042eac9ac3df8f562e",
+      "sha256": "sha256:fd8b1c9bd6d1dbd93a607d2f93382511185920527ef8b9d0b16376af2769b6f4",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/generate/project_health_source.py"
     },
@@ -10864,7 +10864,7 @@
       "family": "surface/generate",
       "path": "apps/agentic-workflow/tech-design/surface/generate/project-health-test-source.md",
       "role": "legacy_markdown_td",
-      "sha256": "sha256:f2fe391aeb1ba591915175c065ba0c5c29c9a670f1bedbdf9c7c4e6ec3271b1e",
+      "sha256": "sha256:8fdc548420db7f23bfcaa73d5682fa28cbdf1bad658f07e2422afd1585a972b1",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/generate/project_health_test_source.py"
     },
@@ -10934,7 +10934,7 @@
       "family": "surface/interfaces",
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/chain.md",
       "role": "generated_mirror",
-      "sha256": "sha256:97167efc31db849d5f9193aa28c139b0747647437108ff64fdbad9f5105e261d",
+      "sha256": "sha256:a980d20439ac8d161ca1fae11edfed70dc5267b171da21302d917425282a7fff",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/chain.py"
     },
@@ -11414,7 +11414,7 @@
       "family": "surface/specs",
       "path": "apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md",
       "role": "legacy_markdown_td",
-      "sha256": "sha256:46f78effc5ea213e1eb902cc010021f105e9debd1aa0d3d5f984ad48e6623c28",
+      "sha256": "sha256:bbac3da0aa8d65b72e182ecbab7482dbd127a7a49d9940ff91c96a5ec7a2afe6",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_goal_unified_loop_verb.py"
     },
@@ -11484,7 +11484,7 @@
       "family": "surface/specs",
       "path": "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md",
       "role": "legacy_markdown_td",
-      "sha256": "sha256:8d51fd3dff7ca484164801c749e14daa56124316c557b7b621ecec75da2b4cab",
+      "sha256": "sha256:6ae765e78eb0139fe1a326ee598e5f383ca1c312b8bb6fc62afc376a813f923d",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_self_hosting_runner_policy.py"
     },
@@ -12191,6 +12191,13 @@
       "path": "apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/intake_health.py",
       "role": "canonical_python_td",
       "sha256": "sha256:249df6e6f443e28d25ab7b2d29cdd2da76bb3fbc384a84bd06f5a91adcffd68c",
+      "status": "canonical"
+    },
+    {
+      "disposition": "historical_evidence",
+      "path": "apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/migration_batch_projection_core_interfaces_01_materialize_the_te.py",
+      "role": "canonical_python_td",
+      "sha256": "sha256:baa5625eb8cd1f8ef19a9734668b9126d34e117b15f711c83485213058912a17",
       "status": "canonical"
     },
     {
