@@ -1700,7 +1700,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
-      "sha256": "sha256:f172c5d0819ae80d636907d7b1fe5046494bba86b4bb7bbd416195849a58bb2b",
+      "sha256": "sha256:c0dc49b180bf52b66142d42d48f4c4f47c0275380fb4a6ad367677dfd05097e4",
       "status": "pending"
     },
     {
@@ -2036,7 +2036,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:13ef28a147e24b4f6fd1b82c224b32cdc9db141501c6862270249b1607273303",
+      "sha256": "sha256:2d941984e4e1a3c47097d0e45493033db6b33a331d3be26ced7ff3a4397d2d56",
       "status": "pending"
     },
     {
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:5a51b2c206a71158f4aacf0862561da94ed077210103fa4f6a1cc0bcee77f160",
+  "digest": "sha256:cd38e407b23381616da6c58a9ee057bbf960e3f0155e38a2796cae181507b768",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -11154,7 +11154,7 @@
       "family": "surface/interfaces",
       "path": "apps/agentic-workflow/tech-design/surface/interfaces/src/td.md",
       "role": "generated_mirror",
-      "sha256": "sha256:f7f99a8d57fe0bb0b019c74a9ca1696fa4966d6b31afe5908c90567496d64c27",
+      "sha256": "sha256:0a39d9a0ecec35d86c2ea4317e704f2e67fd13a0f81223407db57c764d8f40a6",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/interfaces/src/td.py"
     },
