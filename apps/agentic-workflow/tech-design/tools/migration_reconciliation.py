@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -28,6 +30,11 @@ BASELINE_MARKDOWN_COUNT = 979
 BASELINE_PYTHON_COUNT = 11
 MAX_BATCH_ARTIFACTS = 50
 FOUNDATION_DEPENDENCIES = ("2711", "2712", "2713")
+PUBLICATION_OWNER_WI = "2714"
+PUBLICATION_EPIC = "2707"
+PUBLICATION_PROJECT = "agentic-workflow"
+TERMINAL_GUIDANCE_ID = "guidance-retirement"
+TERMINAL_PROOF_ID = "lock-proof-dogfood"
 DISPOSITIONS = {"migrate", "generated_projection", "historical_evidence", "delete"}
 REFERENCE_TOKENS = (
     "aw td",
@@ -99,18 +106,34 @@ def _arguments() -> argparse.Namespace:
     )
     refresh.add_argument("--output", type=Path, default=MANIFEST_PATH)
 
+    render = subcommands.add_parser(
+        "render-project-plan",
+        help="project the frozen batch manifest into epic requirements",
+    )
+    render.add_argument("--body", type=Path, required=True)
+    render.add_argument("--output", type=Path, required=True)
+
     verify = subcommands.add_parser("verify")
     verify.add_argument("--baseline", action="store_true")
     verify.add_argument("--batch-plan", action="store_true")
+    verify.add_argument("--published-batches", action="store_true")
+    verify.add_argument("--guidance-retired", action="store_true")
+    verify.add_argument("--migration-complete", action="store_true")
     verify.add_argument("--batch")
     args = parser.parse_args()
     if (
         args.command == "verify"
         and not args.baseline
         and not args.batch_plan
+        and not args.published_batches
+        and not args.guidance_retired
+        and not args.migration_complete
         and args.batch is None
     ):
-        parser.error("verify requires --baseline, --batch-plan, or --batch <id>")
+        parser.error(
+            "verify requires --baseline, --batch-plan, --published-batches, "
+            "--guidance-retired, --migration-complete, or --batch <id>"
+        )
     return args
 
 
@@ -436,8 +459,12 @@ def _verify_entry(entry: dict[str, Any]) -> list[str]:
         disposition = entry["disposition"]
         target_value = entry.get("target_path")
         target = REPOSITORY_ROOT / target_value if target_value else None
-        if disposition == "migrate" and (source.exists() or target is None or not target.is_file()):
-            failures.append(f"{entry['path']}: incomplete migration")
+        if disposition == "migrate":
+            if target is None:
+                if not source.is_file():
+                    failures.append(f"{entry['path']}: incomplete in-place reconciliation")
+            elif source.exists() or not target.is_file():
+                failures.append(f"{entry['path']}: incomplete migration")
         if disposition == "delete" and source.exists():
             failures.append(f"{entry['path']}: incomplete deletion")
         if disposition == "generated_projection" and (
@@ -610,6 +637,497 @@ def _batch_plan(manifest: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _publication_requirements(
+    manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Project one bounded requirement per batch plus two terminal changes."""
+
+    requirements: list[dict[str, Any]] = []
+    requirement_by_batch: dict[str, str] = {}
+    for offset, batch in enumerate(manifest["batches"], start=6):
+        requirement_id = f"R{offset}"
+        requirement_by_batch[batch["id"]] = requirement_id
+        dependencies = ["R5"]
+        dependencies.extend(
+            requirement_by_batch[dependency.removeprefix("batch:")]
+            for dependency in batch["depends_on"]
+            if dependency.startswith("batch:")
+        )
+        requirements.append(
+            {
+                "id": requirement_id,
+                "kind": "batch",
+                "batch_id": batch["id"],
+                "text": (
+                    f"Migration batch `{batch['id']}`: materialize the terminal "
+                    f"disposition of exactly {batch['artifact_count']} manifest-owned "
+                    f"artifact(s) in family `{batch['family']}` without modifying "
+                    "artifacts owned by another batch. Preserve every manifest identity "
+                    "and update an entry to terminal status only after its Python source "
+                    "or generated projection is complete."
+                ),
+                "gate": batch["checker"],
+                "oracle": (
+                    f"Batch `{batch['id']}` owns exactly "
+                    f"{batch['artifact_count']} artifact(s), reports terminal status, "
+                    "and rejects missing sources, producers, or manifest identity drift"
+                ),
+                "depends_on": dependencies,
+            }
+        )
+
+    batch_requirement_ids = [item["id"] for item in requirements]
+    guidance_requirement_id = f"R{len(requirements) + 6}"
+    requirements.append(
+        {
+            "id": guidance_requirement_id,
+            "kind": "terminal",
+            "terminal_id": TERMINAL_GUIDANCE_ID,
+            "text": (
+                f"Migration terminal `{TERMINAL_GUIDANCE_ID}`: after all "
+                f"{len(batch_requirement_ids)} corpus batches are green, update "
+                "CLI/help/guidance projections and remove retired Markdown TD/EC "
+                "implementation without changing migrated product behavior."
+            ),
+            "gate": (
+                "python3 apps/agentic-workflow/tech-design/tools/"
+                "migration_reconciliation.py verify --guidance-retired"
+            ),
+            "oracle": (
+                "Every manifest batch is terminal, coupled guidance is reconciled, "
+                "and no active or canonical Markdown TD/EC authoring path remains"
+            ),
+            "depends_on": batch_requirement_ids,
+        }
+    )
+    requirements.append(
+        {
+            "id": f"R{len(requirements) + 6}",
+            "kind": "terminal",
+            "terminal_id": TERMINAL_PROOF_ID,
+            "text": (
+                f"Migration terminal `{TERMINAL_PROOF_ID}`: regenerate Python EC/TD "
+                "locks, obtain digest-bound independent EC acceptance, pass the final "
+                "Python/cold/Rust invariant gates, and run existing #2688 to terminal "
+                "without creating duplicate dogfood work."
+            ),
+            "gate": (
+                "python3 apps/agentic-workflow/tech-design/tools/"
+                "migration_reconciliation.py verify --migration-complete"
+            ),
+            "oracle": (
+                "Reports all published migration children terminal, exact disposition "
+                "totals, zero active canonical Markdown, accepted locks/evidence, and "
+                "#2688 terminal"
+            ),
+            "depends_on": [guidance_requirement_id],
+        }
+    )
+    return requirements
+
+
+def _replace_markdown_section(body: str, heading: str, content: str) -> str:
+    pattern = re.compile(
+        rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)"
+    )
+    replacement = f"## {heading}\n\n{content.rstrip()}\n\n"
+    if not pattern.search(body):
+        raise RuntimeError(f"epic body is missing ## {heading}")
+    return pattern.sub(replacement, body, count=1).rstrip() + "\n"
+
+
+def _render_project_plan_body(
+    manifest: dict[str, Any],
+    source_body: str,
+) -> str:
+    requirements = _publication_requirements(manifest)
+    source_requirements = re.search(
+        r"(?ms)^## Requirements\n\n(.*?)(?=^## |\Z)",
+        source_body,
+    )
+    if source_requirements is None:
+        raise RuntimeError("epic body is missing ## Requirements")
+    foundation = [
+        requirement
+        for requirement in re.split(
+            r"\n(?=- R\d+:)",
+            source_requirements.group(1).strip(),
+        )
+        if re.match(r"- R[1-5]:", requirement)
+    ]
+    if len(foundation) != 5:
+        raise RuntimeError(
+            "epic body must retain exactly R1-R5 before batch projection"
+        )
+    requirement_lines = [
+        *foundation,
+        *(
+            f"- {requirement['id']}: {requirement['text']}"
+            for requirement in requirements
+        ),
+    ]
+    body = _replace_markdown_section(
+        source_body,
+        "Requirements",
+        "\n".join(requirement_lines),
+    )
+
+    source_inventory = re.search(
+        r"(?ms)^## Verification Inventory\n\n(.*?)(?=^## |\Z)",
+        source_body,
+    )
+    if source_inventory is None:
+        raise RuntimeError("epic body is missing ## Verification Inventory")
+    inventory_rows = [
+        line
+        for line in source_inventory.group(1).splitlines()
+        if line.startswith("|")
+    ]
+    if len(inventory_rows) < 7:
+        raise RuntimeError("epic verification inventory is incomplete")
+    foundation_rows = [
+        row for row in inventory_rows[2:] if re.match(r"\| R[1-5] \|", row)
+    ]
+    if len(foundation_rows) != 5:
+        raise RuntimeError(
+            "epic verification inventory must retain exactly R1-R5"
+        )
+    projected_rows = []
+    for requirement in requirements:
+        dependencies = ", ".join(requirement["depends_on"]) or "-"
+        projected_rows.append(
+            f"| {requirement['id']} | `{requirement['gate']}` | "
+            f"{requirement['oracle']} | {dependencies} |"
+        )
+    inventory = "\n".join(
+        [
+            "| Requirement | Gate | Oracle | Depends On |",
+            "|---|---|---|---|",
+            *foundation_rows,
+            *projected_rows,
+        ]
+    )
+    return _replace_markdown_section(body, "Verification Inventory", inventory)
+
+
+def _aw_binary() -> str:
+    configured = os.environ.get("AW_BIN")
+    if configured:
+        return configured
+    local = REPOSITORY_ROOT / "target" / "debug" / "aw"
+    if local.is_file():
+        return str(local)
+    installed = shutil.which("aw")
+    if installed:
+        return installed
+    raise RuntimeError("cannot locate aw binary; set AW_BIN")
+
+
+def _run_aw_json(*args: str) -> Any:
+    completed = subprocess.run(
+        [_aw_binary(), *args],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
+def _published_issue_inventory() -> list[dict[str, Any]]:
+    graph = _run_aw_json(
+        "wi",
+        "graph",
+        "--project",
+        PUBLICATION_PROJECT,
+        "--json",
+    )
+    if not graph.get("valid"):
+        raise RuntimeError("published work-item graph is invalid")
+    children = [
+        change
+        for change in graph.get("changes", [])
+        if change.get("parent") == PUBLICATION_EPIC
+    ]
+    inventory = []
+    for child in children:
+        issue = _run_aw_json("wi", "show", str(child["id"]))
+        issue["dependencies"] = child.get("dependencies", [])
+        inventory.append(issue)
+    return inventory
+
+
+def _body_marker(body: str, marker: str) -> str | None:
+    match = re.search(
+        rf"{re.escape(marker)}\s+`([^`]+)`",
+        body,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _publication_projection(
+    manifest: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[str]]:
+    failures: list[str] = []
+    batches: dict[str, dict[str, Any]] = {}
+    terminals: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        body = issue.get("body", "")
+        batch_id = _body_marker(body, "Migration batch")
+        terminal_id = _body_marker(body, "Migration terminal")
+        if batch_id:
+            if batch_id in batches:
+                failures.append(f"{batch_id}: duplicate published batch")
+            batches[batch_id] = issue
+        if terminal_id:
+            if terminal_id in terminals:
+                failures.append(f"{terminal_id}: duplicate terminal change")
+            terminals[terminal_id] = issue
+
+    expected_batch_ids = {batch["id"] for batch in manifest["batches"]}
+    unknown_batches = sorted(set(batches) - expected_batch_ids)
+    missing_batches = sorted(expected_batch_ids - set(batches))
+    if unknown_batches:
+        failures.append(f"unknown published batches: {unknown_batches}")
+    if missing_batches:
+        failures.append(f"missing published batches: {missing_batches}")
+    expected_terminals = {TERMINAL_GUIDANCE_ID, TERMINAL_PROOF_ID}
+    if set(terminals) != expected_terminals:
+        failures.append(
+            "terminal changes mismatch: "
+            f"expected={sorted(expected_terminals)} actual={sorted(terminals)}"
+        )
+    return batches, terminals, failures
+
+
+def _published_batches(
+    manifest: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    failures = _verify_structure(manifest)
+    failures.extend(_batch_plan(manifest).get("failures", []))
+    inventory = _published_issue_inventory() if issues is None else issues
+    batches, terminals, projection_failures = _publication_projection(
+        manifest,
+        inventory,
+    )
+    failures.extend(projection_failures)
+    published_id_by_batch = {
+        batch_id: str(issue.get("github_id"))
+        for batch_id, issue in batches.items()
+    }
+    previous_by_family: dict[str, str] = {}
+    for batch in manifest["batches"]:
+        issue = batches.get(batch["id"])
+        if issue is None:
+            continue
+        body = issue.get("body", "")
+        dependencies = {str(value) for value in issue.get("dependencies", [])}
+        if batch["checker"] not in body:
+            failures.append(f"{batch['id']}: checker is missing from issue body")
+        if "aw:planning-transaction:" not in body:
+            failures.append(
+                f"{batch['id']}: reviewed planning transaction marker is missing"
+            )
+        if PUBLICATION_OWNER_WI not in dependencies:
+            failures.append(
+                f"{batch['id']}: dependency on publication WI #{PUBLICATION_OWNER_WI} is missing"
+            )
+        previous = previous_by_family.get(batch["family"])
+        if previous:
+            expected = published_id_by_batch.get(previous)
+            if expected is None or expected not in dependencies:
+                failures.append(
+                    f"{batch['id']}: published dependency on prior batch {previous} is missing"
+                )
+        previous_by_family[batch["family"]] = batch["id"]
+
+    guidance = terminals.get(TERMINAL_GUIDANCE_ID)
+    proof = terminals.get(TERMINAL_PROOF_ID)
+    if guidance is not None:
+        dependencies = {str(value) for value in guidance.get("dependencies", [])}
+        expected = set(published_id_by_batch.values())
+        if dependencies != expected:
+            failures.append(
+                f"{TERMINAL_GUIDANCE_ID}: dependency set does not equal all published batches"
+            )
+        if "aw:planning-transaction:" not in guidance.get("body", ""):
+            failures.append(
+                f"{TERMINAL_GUIDANCE_ID}: reviewed planning transaction marker is missing"
+            )
+    if proof is not None:
+        dependencies = {str(value) for value in proof.get("dependencies", [])}
+        guidance_id = str(guidance.get("github_id")) if guidance else None
+        if guidance_id is None or dependencies != {guidance_id}:
+            failures.append(
+                f"{TERMINAL_PROOF_ID}: dependency must be exactly the guidance terminal"
+            )
+        body = proof.get("body", "")
+        if "#2688" not in body:
+            failures.append(f"{TERMINAL_PROOF_ID}: existing #2688 dogfood is not referenced")
+        if "aw:planning-transaction:" not in body:
+            failures.append(
+                f"{TERMINAL_PROOF_ID}: reviewed planning transaction marker is missing"
+            )
+
+    result = {
+        "schema": manifest["schema"],
+        "batch_count": len(batches),
+        "terminal_change_count": len(terminals),
+        "published_change_count": len(batches) + len(terminals),
+        "unmatched": len(failures),
+        "duplicate": sum("duplicate" in failure for failure in failures),
+        "manifest_digest": manifest["digest"],
+    }
+    if failures:
+        result["failures"] = failures
+        raise RuntimeError(json.dumps(result, sort_keys=True))
+    return result
+
+
+def _migration_complete(
+    manifest: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    guidance = _guidance_retired(manifest, issues)
+    publication = guidance["publication"]
+    failures: list[str] = []
+    disposition_counts: dict[str, int] = defaultdict(int)
+    terminal_counts: dict[str, int] = defaultdict(int)
+    for entry in manifest["markdown_td"]:
+        disposition_counts[entry["disposition"]] += 1
+        terminal = entry["status"] == "completed" or (
+            entry["disposition"] == "historical_evidence"
+            and entry["status"] == "classified"
+            and not (REPOSITORY_ROOT / entry["path"]).is_relative_to(
+                TECH_DESIGN_ROOT / "src"
+            )
+        )
+        if terminal:
+            terminal_counts[entry["disposition"]] += 1
+        else:
+            failures.append(f"{entry['path']}: disposition is not terminal")
+        failures.extend(_verify_entry(entry))
+    live_issues = guidance["issues"]
+    _, terminals, _ = _publication_projection(manifest, live_issues)
+    migration_children = [
+        issue
+        for issue in live_issues
+        if _body_marker(issue.get("body", ""), "Migration batch")
+        or _body_marker(issue.get("body", ""), "Migration terminal")
+    ]
+    open_children = [
+        (
+            str(issue.get("github_id")),
+            _body_marker(issue.get("body", ""), "Migration terminal"),
+        )
+        for issue in migration_children
+        if issue.get("state") != "closed"
+    ]
+    blocking_open_children = [
+        issue_id
+        for issue_id, terminal_id in open_children
+        if terminal_id != TERMINAL_PROOF_ID
+    ]
+    if blocking_open_children:
+        failures.append(
+            "published migration prerequisites are not terminal: "
+            f"{blocking_open_children}"
+        )
+    if terminals and TERMINAL_PROOF_ID not in terminals:
+        failures.append("terminal lock-proof change is missing")
+    if issues is None:
+        dogfood = _run_aw_json("wi", "show", "2688")
+        if dogfood.get("state") != "closed":
+            failures.append("#2688 is not terminal")
+    result = {
+        "schema": manifest["schema"],
+        "children_terminal": (
+            f"{len(migration_children) - len(open_children)}/"
+            f"{len(migration_children)}"
+        ),
+        "terminal_proof_ready": not blocking_open_children,
+        "migrated": (
+            f"{terminal_counts['migrate']}/{disposition_counts['migrate']}"
+        ),
+        "projections_terminal": (
+            f"{terminal_counts['generated_projection']}/"
+            f"{disposition_counts['generated_projection']}"
+        ),
+        "historical_evidence": (
+            f"{terminal_counts['historical_evidence']}/"
+            f"{disposition_counts['historical_evidence']}"
+        ),
+        "reconciled": (
+            f"{sum(terminal_counts.values())}/"
+            f"{len(manifest['markdown_td'])}"
+        ),
+        "active_markdown_td": sum(
+            entry["status"] != "completed"
+            and entry["disposition"] != "historical_evidence"
+            for entry in manifest["markdown_td"]
+        ),
+        "published_change_count": publication["published_change_count"],
+        "manifest_digest": manifest["digest"],
+    }
+    if failures:
+        result["failures"] = failures
+        raise RuntimeError(json.dumps(result, sort_keys=True))
+    return result
+
+
+def _guidance_retired(
+    manifest: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    live_issues = _published_issue_inventory() if issues is None else issues
+    publication = _published_batches(manifest, live_issues)
+    failures: list[str] = []
+    batch_issues = [
+        issue
+        for issue in live_issues
+        if _body_marker(issue.get("body", ""), "Migration batch")
+    ]
+    open_batches = [
+        str(issue.get("github_id"))
+        for issue in batch_issues
+        if issue.get("state") != "closed"
+    ]
+    if open_batches:
+        failures.append(f"published migration batches are not terminal: {open_batches}")
+    pending_coupled = []
+    for entry in manifest["coupled_artifacts"]:
+        if entry["status"] != "completed":
+            pending_coupled.append(entry["path"])
+        failures.extend(_verify_entry(entry))
+    if pending_coupled:
+        failures.append(
+            f"coupled guidance is not reconciled: {pending_coupled}"
+        )
+    result = {
+        "schema": manifest["schema"],
+        "batches_terminal": f"{len(batch_issues) - len(open_batches)}/{len(batch_issues)}",
+        "coupled_terminal": (
+            f"{len(manifest['coupled_artifacts']) - len(pending_coupled)}/"
+            f"{len(manifest['coupled_artifacts'])}"
+        ),
+        "publication": publication,
+        "issues": live_issues,
+        "manifest_digest": manifest["digest"],
+    }
+    if failures:
+        public_result = {
+            key: value
+            for key, value in result.items()
+            if key not in {"publication", "issues"}
+        }
+        public_result["failures"] = failures
+        raise RuntimeError(json.dumps(public_result, sort_keys=True))
+    return result
+
+
 def _batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any]:
     batch = next(
         (item for item in manifest["batches"] if item["id"] == batch_id),
@@ -627,6 +1145,11 @@ def _batch(manifest: dict[str, Any], batch_id: str) -> dict[str, Any]:
         if entry is None:
             failures.append(f"{path}: missing manifest entry")
             continue
+        if entry["status"] != "completed" and not (
+            entry["disposition"] == "historical_evidence"
+            and entry["status"] == "classified"
+        ):
+            failures.append(f"{path}: disposition is not terminal")
         failures.extend(_verify_entry(entry))
     result = {
         "schema": manifest["schema"],
@@ -661,6 +1184,21 @@ def main() -> None:
                 "batch_count": len(manifest["batches"]),
                 "manifest_digest": manifest["digest"],
             }
+        elif args.command == "render-project-plan":
+            manifest = _load_manifest()
+            rendered = _render_project_plan_body(
+                manifest,
+                args.body.read_text(encoding="utf-8"),
+            )
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+            result = {
+                "status": "rendered",
+                "path": args.output.resolve().as_posix(),
+                "batch_requirement_count": len(manifest["batches"]),
+                "terminal_requirement_count": 2,
+                "manifest_digest": manifest["digest"],
+            }
         else:
             manifest = _load_manifest()
             result: dict[str, Any] = {}
@@ -668,6 +1206,17 @@ def main() -> None:
                 result["baseline"] = _baseline(manifest)
             if args.batch_plan:
                 result["batch_plan"] = _batch_plan(manifest)
+            if args.published_batches:
+                result["published_batches"] = _published_batches(manifest)
+            if args.guidance_retired:
+                guidance = _guidance_retired(manifest)
+                result["guidance_retired"] = {
+                    key: value
+                    for key, value in guidance.items()
+                    if key not in {"publication", "issues"}
+                }
+            if args.migration_complete:
+                result["migration_complete"] = _migration_complete(manifest)
             if args.batch is not None:
                 result["batch"] = _batch(manifest, args.batch)
             if len(result) == 1:

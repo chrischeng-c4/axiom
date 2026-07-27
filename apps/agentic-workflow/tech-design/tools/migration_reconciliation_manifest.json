@@ -1700,7 +1700,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
-      "sha256": "sha256:2a5aef8ee79795923905c3ecb1b4c2443d6a949ad3fa02a21b3f4b7ac7c223f5",
+      "sha256": "sha256:69fcc68843590101baceb00782fa80fd7ac54563c5bf6a143551294cbc475944",
       "status": "pending"
     },
     {
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:8f63c8e3be421a85516b20f8fa4874565fb0c1e542f3f04f0bb1ee6da5d9b80a",
+  "digest": "sha256:c414c177553b3b40e0d407d5bd456da439bbea6a5ad1563f9650a87f1941cfb1",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
