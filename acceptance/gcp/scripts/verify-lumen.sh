@@ -460,8 +460,12 @@ spec:
   replicasPerShard: 1
   voterCount: 1
   logFormat: json
-  # #2678: `auth` fails closed. This restore leg probes /search unauthenticated,
-  # so it opts out explicitly; the auth legs live in their own CRs below.
+  # #2678: auth fails closed, so every CR this script writes by hand must say
+  # what it wants. This restore leg probes /search unauthenticated and opts out;
+  # the auth legs live in their own CRs below.
+  #
+  # No backticks in a heredoc comment: <<EOF is unquoted, so the shell runs
+  # command substitution on this line too — comment or not.
   auth: disabled
   serving:
     cpu: 500m
@@ -711,6 +715,8 @@ spec:
   replicasPerShard: 2
   voterCount: 2
   logFormat: json
+  # #2678: this leg proves peer naming and quorum, not auth. Opt out explicitly.
+  auth: disabled
   serving:
     cpu: 250m
     memory: 512Mi
@@ -882,6 +888,8 @@ spec:
   replicasPerShard: 1
   voterCount: 1
   logFormat: json
+  # #2678: this leg proves scheduling, not auth. Opt out explicitly.
+  auth: disabled
   placement:
     nodeSelector:
       ${placement_label_key}: ${placement_label_value}
@@ -1054,6 +1062,10 @@ spec:
     replicasPerShard: 1
     voterCount: 1
     logFormat: json
+    # #2678: this leg proves fan-out and inheritance, not auth. Opting out in
+    # defaults is also the shape a platform-wide default is meant to take —
+    # unlike identities, a scalar merges cleanly into every instance.
+    auth: disabled
     serving:
       cpu: 250m
       memory: 512Mi
