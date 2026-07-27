@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:cb630b3e73d7a0191d69702964e82ae283ea885a32cff1f71ad7e352b41667cb",
+  "digest": "sha256:c5a0461f61e98c1a7e8643a092461b1b4d2860229364b106f8fb78223c4363da",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -11245,7 +11245,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md",
       "role": "generated_mirror",
       "sha256": "sha256:1ecc4043ab03aa9adf4bc89262f194c3072198bf616662c7510450aa76f1989f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_artifact_preflight_gates.py"
     },
     {
@@ -11255,7 +11255,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md",
       "role": "generated_mirror",
       "sha256": "sha256:7f1e35c61f0ac697fa0d697bf60936b882e536bd8e01c508c87af63184022876",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_artifact_quality_profile.py"
     },
     {
@@ -11665,7 +11665,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md",
       "role": "generated_mirror",
       "sha256": "sha256:68cac36c49d2abbe8f624ae133e75f06a532510fa6c35f30cb3168834b69110f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/project_health_governance_report.py"
     },
     {

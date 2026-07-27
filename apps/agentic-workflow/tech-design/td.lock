@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T12:21:07.597569+00:00"
-digest = "sha256:aa682307193d6deb027091e6d098cb1907d25968a443f7c958db6e1ae9d2d298"
-source_digest = "sha256:aa682307193d6deb027091e6d098cb1907d25968a443f7c958db6e1ae9d2d298"
-ir_digest = "sha256:b4e8e5bd777caa82a89a42ec364d0eb69d0aa06e2132656c45f7abb1fe4bfc37"
+generated_at = "2026-07-27T12:24:43.703163+00:00"
+digest = "sha256:3f730cae70f9fd50f215e7dfd7342d4f45a858e4d52188c5f0f5cbbc1b727e7d"
+source_digest = "sha256:3f730cae70f9fd50f215e7dfd7342d4f45a858e4d52188c5f0f5cbbc1b727e7d"
+ir_digest = "sha256:7c1cfadb49f82c1811e55ba617669c2af98b70b3e509cef8e241d7eac85815c3"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -738,6 +738,18 @@ digest = "sha256:8cd039ab59892ed3d6b8c0d1fedb9507305410e628cd27e5bc63846eb5d36c2
 [[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/workflow_guard.py"
 digest = "sha256:0fead9e3bf7c4f853fa1b9444d5d67b61f527f74ee9666434278430bb4b98593"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_artifact_preflight_gates.py"
+digest = "sha256:4f1889c42d3f41ccb255f8ffa1117be7477bf0a650aeb940414a14925da9f776"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_artifact_quality_profile.py"
+digest = "sha256:d622a99e639e7dc2946d2eca6f9cd4da30b6f87b1a91feb99125f61741a91018"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/project_health_governance_report.py"
+digest = "sha256:86a61c0827a00187dfe18b2363076352e5451a1a0d58d5745c4281272d602ac2"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"
