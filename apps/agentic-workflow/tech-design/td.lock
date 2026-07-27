@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:16:52.291928+00:00"
-digest = "sha256:0f3c28398c5209e09492ada66d1918cc8bf795c0897eaa6ac0772c1fadd76d79"
-source_digest = "sha256:0f3c28398c5209e09492ada66d1918cc8bf795c0897eaa6ac0772c1fadd76d79"
-ir_digest = "sha256:35851f972f3d2269baf26463cc39f7e272640601474c7f920d67c492d2f2aad8"
+generated_at = "2026-07-27T13:20:49.964569+00:00"
+digest = "sha256:9603961b8ab9b98fa608076c5c00359f25f9fbdfeaeb34fe462488b44e0d0a29"
+source_digest = "sha256:9603961b8ab9b98fa608076c5c00359f25f9fbdfeaeb34fe462488b44e0d0a29"
+ir_digest = "sha256:d61b1b0a29c29d0f0f35ca60f516c4b8f1e8897d127fce438890dfb0e92fa0d7"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1734,6 +1734,58 @@ digest = "sha256:a5d98c32a1adee36dffd5410ef38facfc40216268d0ae9d51a0da5f3eeae235
 [[files]]
 path = "src/agentic_workflow/migrated/semantic/wi_close_remote_rehydration.py"
 digest = "sha256:7aebd5839efee499b153477b01cbdd69279a34d20349903928c8eaf670d5cba6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_2222.py"
+digest = "sha256:de8e0611dae70d31574968114ab8b3032db1ac9569d5b288f800dfc85b33bc7d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3698.py"
+digest = "sha256:3ca95b6642f44ecd2d62e400888a9e6f95e04dbd268a5f00b228d03d1e92df99"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3876.py"
+digest = "sha256:36f933b91e171dd0962f6fb35f414ea74fd8ddadb8612f9ed1e53b8312a5bad0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3901.py"
+digest = "sha256:28cbe435ece4a1463ca8238b2ac6fc879bab02374f34c6a4d3db610861f0cfdf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3903.py"
+digest = "sha256:4d4c9b15a66fe802f92ed84afee3bab3e3640e23c28b478e44b926688f75b64a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3904.py"
+digest = "sha256:a3371d4129b5867a35c4c2cfd21ccc2948febfdc638686a07bcc6d01cd3cd721"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3905.py"
+digest = "sha256:bda9e726fea2c4f8ce066c18baffa84a5562594b2dfbc2715d8b90b47d95e773"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3906.py"
+digest = "sha256:5bfaaa41d1dd1a733bd49e9422d47d822910e88bd67c41af0c232761343208e1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3907.py"
+digest = "sha256:1295edca8de820417a0ec6cf5e2ff8e934d2ada373573da819cf920552bd6d1c"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3908.py"
+digest = "sha256:927cca312b89c6526e67ae205dfdc7a5e1b90881cc829fae4f59c1adb99dcc83"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3909.py"
+digest = "sha256:a05195f85a5cc0ad0160ab2459ebc9b9f52386fa61ef1e61e5feb51f3bd8100c"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_3910.py"
+digest = "sha256:0d64cd2f8a2064f2c012394812f74df9d257b78c80ed5241348d3c2c2c3f4e85"
+
+[[files]]
+path = "src/agentic_workflow/migrated/specs/td_4124.py"
+digest = "sha256:a476bb7b7ee8c1c0a5f5c148e82a631bd117fca743a6a18acb4dabeadbbb5713"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/commands/proposal.py"
