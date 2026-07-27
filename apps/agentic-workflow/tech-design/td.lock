@@ -2,14 +2,26 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T12:24:43.703163+00:00"
-digest = "sha256:3f730cae70f9fd50f215e7dfd7342d4f45a858e4d52188c5f0f5cbbc1b727e7d"
-source_digest = "sha256:3f730cae70f9fd50f215e7dfd7342d4f45a858e4d52188c5f0f5cbbc1b727e7d"
-ir_digest = "sha256:7c1cfadb49f82c1811e55ba617669c2af98b70b3e509cef8e241d7eac85815c3"
+generated_at = "2026-07-27T12:34:16.895046+00:00"
+digest = "sha256:139905b45a8a3dd9479dc2b9183a45200b44196623462907a00993608b57bd7f"
+source_digest = "sha256:139905b45a8a3dd9479dc2b9183a45200b44196623462907a00993608b57bd7f"
+ir_digest = "sha256:63beaee7807be6dd88e857e5b8ad743b54617e5b1b94e60741a176bdf97fa21a"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
 digest = "sha256:ac7ca2ce12be72d04439f24317a0a39816e1d7f0e1105bdf923f3cea4a1e5106"
+
+[[files]]
+path = "src/agentic_workflow/migrated/config/aw_review_resolve_project_profile_cli_report_skeleton.py"
+digest = "sha256:2ab1013f21b0b24adb1ebe07cef3e02cefb4184c40c798e6b28d41b49f25bc64"
+
+[[files]]
+path = "src/agentic_workflow/migrated/config/aw_review_shared_service_kit_adoption_rules_profile_negative_ass.py"
+digest = "sha256:248029b8567dc11c14814b1bfc255caeb709ff8d06b2a44d502c2c4a89542828"
+
+[[files]]
+path = "src/agentic_workflow/migrated/config/ec_tool_binding_config_ec_category_verify_ec_dispatch_with_manif.py"
+digest = "sha256:17fe925f89c88ab20504917762f89e821edf23649f6261e4229389dd8a349112"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/agents/analyst.py"

@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:c5a0461f61e98c1a7e8643a092461b1b4d2860229364b106f8fb78223c4363da",
+  "digest": "sha256:0c1b48e91421faf7aed5a25e13f1e91e86fd7f08b592f2009e4f647680b61e42",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -2385,7 +2385,7 @@
       "path": "apps/agentic-workflow/tech-design/config/aw-review-resolve-project-profile-cli-report-skeleton.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:03e485bb38562b06342f6b633f212cc93793c988ddc7dfc8ca54347c0b967e41",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/config/aw_review_resolve_project_profile_cli_report_skeleton.py"
     },
     {
@@ -2395,7 +2395,7 @@
       "path": "apps/agentic-workflow/tech-design/config/aw-review-shared-service-kit-adoption-rules-profile-negative-ass.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:4c3dddc161c5890de64b0d765f721b2cfc56204af5c9492b0ba2292e8cc339ce",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/config/aw_review_shared_service_kit_adoption_rules_profile_negative_ass.py"
     },
     {
@@ -2405,7 +2405,7 @@
       "path": "apps/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:05cb16b0e638be78eb0d7dcf49cd1e66e52a07434e44e143e37ec5bf2e8aae11",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/config/ec_tool_binding_config_ec_category_verify_ec_dispatch_with_manif.py"
     },
     {
