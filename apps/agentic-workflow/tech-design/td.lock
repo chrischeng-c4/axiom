@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T14:45:03.665410+00:00"
-digest = "sha256:a4fd9bbc3b46685cf9a4b954e092c66c691dc60830ba566901b8d36c073e9c1e"
-source_digest = "sha256:a4fd9bbc3b46685cf9a4b954e092c66c691dc60830ba566901b8d36c073e9c1e"
-ir_digest = "sha256:8cc8a2b4700f35c711c421327cbcab2366535390d6b0d86694a612c9ed9d6075"
+generated_at = "2026-07-27T14:49:07.179375+00:00"
+digest = "sha256:4795e6c624afcb8b98a5d72968ec478fcef0529ae763d9a7c45e152bb3461cb2"
+source_digest = "sha256:4795e6c624afcb8b98a5d72968ec478fcef0529ae763d9a7c45e152bb3461cb2"
+ir_digest = "sha256:a962d9bb6215ff5994fc6c3b6e7c3ef6a3e0b4c01850ef7ef919dd0d2f803b94"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1516,8 +1516,100 @@ path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/check.py"
 digest = "sha256:0cf55807cee9fbd0242b28c79b202ae760735f0e847a38834e64d7510c6e864e"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/coverage.py"
+digest = "sha256:109b27f32230a52ac7b0c22bb7e942be8b02f5adff415d0058572b79917975c5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/format_rules_preamble_source.py"
+digest = "sha256:ec2b7ed068ea3c9cdade8746e9d3faf21f5aeedd70846e1cf9f8e7bcee91cc69"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/format_rules_runtime_source.py"
+digest = "sha256:10491fc215db6f655fe2243e18022982f497bb708dd01da32fc8a7e77651dbdc"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/logical_rules.py"
+digest = "sha256:ba414a9b9ef1fac74111d33339d0e17939cc108b0fd87baa4870e75dbba86095"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/mod.py"
+digest = "sha256:9cdaa9fd1e22780474a92b99a2ca489004e8e76c7666b5220716cadb628caf9b"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/models.py"
 digest = "sha256:14916275de4724c08ecf558577aaee49beff75b8c9746620e0cbe2314b1e0dcf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/models_impl_source.py"
+digest = "sha256:36ad268a5e81a52b6e65b0a7fb1a75818d7c49837fc22951a100129b6dc38acf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/models_preamble_source.py"
+digest = "sha256:49a50c26ec92a67895fb1823af849f170b25d87a8db9bac255605bcbe8307fb0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/parser.py"
+digest = "sha256:e912db5afd6b915a5c3b483afb04ad8954809934ed9398c075ed8fcb1929b1f3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/requirement_coverage.py"
+digest = "sha256:609adf14c44def2d7f1e92ea53605ea91f965bd1a731c2b6a2c51dc0ef9a4f32"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_alignment/schema_struct.py"
+digest = "sha256:4fcbe901913f0cbedc6c55d8a4b4b206c94e7d5bbf936496ce809edebdb6dc33"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/codegen.py"
+digest = "sha256:3e02cb55f691e983d0a0858512e30e5d303171429b9fbaee95037bc8ab1b9973"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/generator.py"
+digest = "sha256:84f64eab9f1ea9a46672cf2e01a5e25b58f05843ef4099e4a326a95931ee583a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/migration.py"
+digest = "sha256:759d7ebee16415914515c61da66f5a51080aa3ae1a706bbf8067a0d43925b892"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/mod.py"
+digest = "sha256:5d17574f755ff1473d399250f4cbd15ae5e1ec0819dd5e8eb0058e335c31c81d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/orchestrator.py"
+digest = "sha256:8f812a30dc192b23d3f1ebbf5993c90d3111e66f7735194607605e6dfeac76b8"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/spec_ir/types.py"
+digest = "sha256:da423c4a47ca04f277a0293c861c240de9156f40b07d55435e3f3ebe52ce9579"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/state/manager.py"
+digest = "sha256:fada5904588fd661a8caf15ab17c96b65869618db316352493ea8bc5dd4ef32e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/state/mod.py"
+digest = "sha256:98d345dc0d1eb17e3820de7004a01b0af0a6c4e1dab5e82c48a506f72c0cf260"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/td_ast/entities.py"
+digest = "sha256:875ee4a44bc2a5552814c4d3b6504f2448f29687d67f0dca2d1fe318fc19a55b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/td_ast/parse.py"
+digest = "sha256:da31d25aead0686e0fc1bf271c9ccb3ad9ec2a8bbe420a4da5bbc717b0a6df9d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/td_ast/payloads.py"
+digest = "sha256:de194ae81928d7c74c37a10e9c2a2e45deef67ff5f7f6c564ec48848ab3a3256"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/td_ast/query.py"
+digest = "sha256:9d6b3918ceee074c49ee231d26fb99f111de84da2734d4adec84830ebcbd77df"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/td_ast/types.py"
+digest = "sha256:71d296fe6f10e6c78db6fd557bc2da1e435fcc7c7a66a98123ee4d613e2964c3"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/tools/utility_tools.py"
@@ -1528,12 +1620,56 @@ path = "src/agentic_workflow/migrated/core/interfaces/ui/colors_types.py"
 digest = "sha256:c1ce378129e23f4bec3b9ef95ac7b7e6cedf663b7e4561ed768ea3b5b398b966"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/ui/mod.py"
+digest = "sha256:4488f5f9f07879ef18dd3e6e67d2fefb4b0e0ead67c9f5835789568ca9edf28c"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/ui/progress_types.py"
 digest = "sha256:a421ef73959426ea3f38f2a8c88ae85b45e3ebe85b956441046a53ce48afa549"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/interfaces/ui/tables_types.py"
 digest = "sha256:1b03145ec23f6c1ba1837dd2e75bed965da2f198ea2249b087ea4f6d43715005"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/clarify.py"
+digest = "sha256:12289870e85e4dd3f151ca175b87a324acd43dffbf9c93493b5a230e3e8b19cd"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/helpers.py"
+digest = "sha256:9818ebd0045fc2c54c6a5cc6e97984fdb19ef58d62d65836e427ac3d4a37b440"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/implement.py"
+digest = "sha256:9adfdf9936da4f7cc7849fd0706fa455c1de67e7fbb19278599a0e1863cad6d9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/merge.py"
+digest = "sha256:3a5a89008bb91ca497c10ad20ac16b082459199a6850cf17644afa5e3bbd2fdf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/mod.py"
+digest = "sha256:e291cf67a039bd83b5d3261894fb6785ecea2e30aedf9116c2308d32318c0fb4"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/post_clarifications.py"
+digest = "sha256:9a8b3b593d2bed8c0883c55e5be6df84ae66dd21603346d2ed252883f3ca0b81"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/scope.py"
+digest = "sha256:aa50bb43354b6d168e389a0622e7a86a5c3a70dfaad829dcdf9c034faa062075"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/spec.py"
+digest = "sha256:84119f986ab9479b3fc861169146a7e0e01fd60b0e80d0b2baf8aabcd066b93e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/task_graph.py"
+digest = "sha256:0ec46614383ec2c7efeed6d24fc3582629be194d8c148a0b953ce9c5f9e91761"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/interfaces/workflow/test_gate.py"
+digest = "sha256:81306d41356bf49c01da1e516db3faf9c8c773ce9a981dee20c0d2e1f6050bc7"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/logic/analysis_tools.py"
