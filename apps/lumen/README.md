@@ -752,7 +752,7 @@ that namespace; cluster-wide operation is an optional platform mode. HPA may
 scale stateless or near-stateless query/read workers, but never changes shard
 ownership.
 Gate Inventory:
-- apps/lumen/k8s; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/scripts/kind-e2e.sh; benchmarks/gcp-operator-acceptance/scripts/run.sh
+- apps/lumen/k8s; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/scripts/kind-e2e.sh; acceptance/gcp/scripts/run.sh
 
 Verified GKE evidence (2026-07-23, run `0723041614`, source `f4762759d8`):
 the persistent Standard GKE cluster reconciled a fresh 1×1 Lumen instance,
@@ -762,7 +762,7 @@ disk-pressure 1→2 shard split with two serving pods and PVCs. The harness
 created only the run-scoped bucket, backup GSA, bucket writer binding, and
 `lumen/lumen-backup` Workload Identity binding; all four were destroyed and
 the cleanup verifier reported `clean`. Reproduce with an immutable Lumen image:
-`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash benchmarks/gcp-operator-acceptance/scripts/run.sh`.
+`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash acceptance/gcp/scripts/run.sh`.
 This proof deliberately excludes Sift collection, CPU/memory actuation, live
 replica membership, and cold restore from GCS; each has its own gate.
 

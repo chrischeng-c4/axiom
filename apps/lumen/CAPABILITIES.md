@@ -562,7 +562,10 @@ Standard GKE operator acceptance evidence for Lumen (epic #2434 ordered
 service 1, before Tape run `0723135853`). The machine-readable capability
 contract currently lives in `apps/lumen/README.md` (`cap_path`); this
 section records real-cloud proof runs until the #1848 cap_path relocation
-lands. Harness: `benchmarks/gcp-operator-acceptance` (mode noted per run).
+lands. Harness: `acceptance/gcp` (mode noted per run). Runs recorded below
+that predate #2705 executed the same harness at its former path
+`benchmarks/gcp-operator-acceptance`; the relocation is a rename with no
+behaviour change.
 
 ### GKE acceptance run 0726092400 (2026-07-26, Lumen phase PASSED — Wave 2 row 4 proven; run capped before the Sift phase)
 

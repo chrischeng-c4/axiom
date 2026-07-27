@@ -340,7 +340,7 @@ const STORAGE_DEGRADED_RUNBOOK: &str = "#2573: The node hit ENOSPC on its journa
 /// cloud object store, so its ServiceAccount is the binding target for cloud
 /// IAM — GKE Workload Identity annotates it, and the GCP acceptance harness
 /// already pre-creates `<name>-backup` for exactly that
-/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`). An
+/// (`acceptance/gcp/scripts/render-manifests.sh`). An
 /// identity that blinked in and out with the schedule would drop that binding
 /// every time the policy was toggled off, so its lifecycle is deliberately
 /// decoupled from the policy's. Like every other child it is owned by the

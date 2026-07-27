@@ -569,7 +569,7 @@ fn backup_cron_job_omits_unset_retention_and_token() {
 /// hypothetical: this test's byte-equality half caught the committed file
 /// still missing `spec.topics` from #2557, which had never been regenerated.
 /// The acceptance harness renders the CRD from the binary
-/// (`benchmarks/gcp-operator-acceptance/scripts/render-manifests.sh`), so the
+/// (`acceptance/gcp/scripts/render-manifests.sh`), so the
 /// stale file went unnoticed there.
 #[test]
 fn generated_crd_carries_the_backup_properties() {

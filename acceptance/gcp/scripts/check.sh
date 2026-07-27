@@ -38,4 +38,4 @@ done
 # did not run -- and this gate was silently red for several commits before
 # anyone noticed. Say so out loud, and name what comes next.
 echo "static acceptance gate: ok"
-echo "next: PROJECT_ID=<project> benchmarks/gcp-operator-acceptance/scripts/run.sh"
+echo "next: PROJECT_ID=<project> acceptance/gcp/scripts/run.sh"

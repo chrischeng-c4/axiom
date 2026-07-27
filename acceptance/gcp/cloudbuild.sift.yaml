@@ -1,14 +1,14 @@
 steps:
-  - id: lumen
+  - id: sift
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.lumen
-      - --tag=${_REGISTRY}/lumen:${_TAG}
+      - --file=acceptance/gcp/images/Dockerfile.sift
+      - --tag=${_REGISTRY}/sift:${_TAG}
       - .
 
 images:
-  - ${_REGISTRY}/lumen:${_TAG}
+  - ${_REGISTRY}/sift:${_TAG}
 
 timeout: 2700s
 

@@ -3,7 +3,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.tape
+      - --file=acceptance/gcp/images/Dockerfile.tape
       - --tag=${_REGISTRY}/tape:${_TAG}
       - .
 

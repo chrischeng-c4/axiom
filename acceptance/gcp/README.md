@@ -88,7 +88,7 @@ an isolated `terraform init -backend=false`, and `terraform validate`; it does
 not contact your GCP project or create resources.
 
 ```bash
-benchmarks/gcp-operator-acceptance/scripts/check.sh
+acceptance/gcp/scripts/check.sh
 ```
 
 Then run acceptance with the billing project explicit. Region and existing
@@ -99,7 +99,7 @@ PROJECT_ID=axiom-502607 \
 REGION=asia-east1 \
 GKE_ZONE=asia-east1-a \
 ARTIFACT_REGISTRY_REPOSITORY=courier \
-benchmarks/gcp-operator-acceptance/scripts/run.sh
+acceptance/gcp/scripts/run.sh
 ```
 
 `ACCEPTANCE_APPS` selects the mode and its value set is closed: `lumen sift`
@@ -118,7 +118,7 @@ to name the exact bytes it proved:
 PROJECT_ID=axiom-502607 \
 LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
 SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
-benchmarks/gcp-operator-acceptance/scripts/run.sh
+acceptance/gcp/scripts/run.sh
 ```
 
 Omit both to build from the working tree via Cloud Build. That path requires
@@ -136,7 +136,7 @@ seed survival, failover, and cleanup.
 PROJECT_ID=axiom-502607 \
 ACCEPTANCE_APPS=tape \
 TAPE_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/tape@sha256:<digest> \
-benchmarks/gcp-operator-acceptance/scripts/run.sh
+acceptance/gcp/scripts/run.sh
 ```
 
 `ACCEPTANCE_APPS=tape` rejects `LUMEN_PRIOR_ACCEPTANCE`. The terminal
@@ -164,7 +164,7 @@ already pinned by digest; feed that to `TAPE_IMAGE` verbatim:
 PROJECT_ID=axiom-502607 \
 ACCEPTANCE_APPS=tape \
 TAPE_IMAGE=ghcr.io/chrischeng-c4/tape:sha-<git12>@sha256:<digest> \
-benchmarks/gcp-operator-acceptance/scripts/run.sh
+acceptance/gcp/scripts/run.sh
 ```
 
 The harness needs no flag for this — a caller-supplied image is already
@@ -187,7 +187,7 @@ replace just one service; the harness builds only the missing service target.
 PROJECT_ID=axiom-502607 \
 LUMEN_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/lumen@sha256:<digest> \
 SIFT_IMAGE=asia-east1-docker.pkg.dev/axiom-502607/courier/sift@sha256:<digest> \
-benchmarks/gcp-operator-acceptance/scripts/run.sh
+acceptance/gcp/scripts/run.sh
 ```
 
 The first run bootstraps `axiom-operator-acceptance`; later runs reuse it. To
@@ -196,7 +196,7 @@ create it explicitly (or select a different persistent name), run:
 ```bash
 PROJECT_ID=axiom-502607 REGION=asia-east1 GKE_ZONE=asia-east1-a \
 PERSISTENT_CLUSTER_NAME=axiom-operator-acceptance \
-benchmarks/gcp-operator-acceptance/scripts/bootstrap-cluster.sh
+acceptance/gcp/scripts/bootstrap-cluster.sh
 ```
 
 `run.sh` performs this order:
@@ -234,11 +234,11 @@ with the values printed in `run.json`:
 PROJECT_ID=axiom-502607 REGION=asia-east1 GKE_ZONE=asia-east1-a RUN_ID=0722123456 \
 STATE_DIR=/tmp/axiom-gcp-operator-0722123456 \
 EVIDENCE_DIR=/tmp/axiom-gcp-operator-evidence/0722123456 \
-ACCEPTANCE_ROOT="$PWD/benchmarks/gcp-operator-acceptance" \
+ACCEPTANCE_ROOT="$PWD/acceptance/gcp" \
 REGISTRY=asia-east1-docker.pkg.dev/axiom-502607/courier \
 IMAGE_TAG=<git-sha>-0722123456 \
 GCS_SOURCE_PREFIX=gs://axiom-502607_cloudbuild/source/axiom-gcp-operator-0722123456 \
-benchmarks/gcp-operator-acceptance/scripts/cleanup.sh
+acceptance/gcp/scripts/cleanup.sh
 ```
 
 Terraform state remains under `/tmp/axiom-gcp-operator-<run-id>/` so a failed

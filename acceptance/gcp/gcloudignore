@@ -7,4 +7,4 @@ target/**
 node_modules
 **/node_modules/**
 .DS_Store
-benchmarks/gcp-operator-acceptance/evidence
+acceptance/gcp/evidence

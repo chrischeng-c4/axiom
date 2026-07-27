@@ -3,7 +3,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
+      - --file=acceptance/gcp/images/Dockerfile.services
       - --target=lumen
       - --tag=${_REGISTRY}/lumen:${_TAG}
       - .
@@ -13,7 +13,7 @@ steps:
     waitFor: ["lumen"]
     args:
       - build
-      - --file=benchmarks/gcp-operator-acceptance/images/Dockerfile.services
+      - --file=acceptance/gcp/images/Dockerfile.services
       - --target=sift
       - --tag=${_REGISTRY}/sift:${_TAG}
       - .
