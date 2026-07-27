@@ -1,0 +1,19 @@
+"""Canonical Python producer for `apps/agentic-workflow/tech-design/core/logic/defaults.md`.
+
+Migrated by batch `projection-core-logic-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-logic/core-logic-defaults"
+__legacy_projection_path__ = "apps/agentic-workflow/tech-design/core/logic/defaults.md"
+__legacy_projection_digest__ = "sha256:07d288af45b343eee6dc190225119943a2cf1ca3766b94f1a5b0432578935703"
+
+
+def render_markdown() -> Annotated[str, "sha256:07d288af45b343eee6dc190225119943a2cf1ca3766b94f1a5b0432578935703"]:
+    """Render the preserved generated projection byte-for-byte."""
+
+    return "---\nid: projects-sdd-src-defaults-rs\nfill_sections: [overview, source, changes]\ncapability_refs:\n  - id: aw-core-client-model-workitem-first-artifact-lifecycle\n    role: primary\n    gap: core-concept-model-and-invariants\n    claim: core-concept-model-and-invariants\n    coverage: full\n    rationale: \"Core logic modules define AW Core defaults, exports, and workflow invariants.\"\n---\n\n# Standardized apps/agentic-workflow/src/defaults.rs\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nPublic API manifest for `apps/agentic-workflow/src/defaults.rs` generated from AST during Score force-regeneration standardization.\n\n### Symbols\n\n| Name | Target | Kind | Visibility | Line | Signature |\n|------|--------|------|------------|------|-----------|\n| `CLAUDE_BALANCED_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 22 |  |\n| `CLAUDE_DEEP_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 23 |  |\n| `CLAUDE_FAST_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 21 |  |\n| `CODEX_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 11 |  |\n| `CODEX_REASONING_HIGH` | apps/agentic-workflow/src/defaults.rs | constant | pub | 14 |  |\n| `CODEX_REASONING_LOW` | apps/agentic-workflow/src/defaults.rs | constant | pub | 12 |  |\n| `CODEX_REASONING_MEDIUM` | apps/agentic-workflow/src/defaults.rs | constant | pub | 13 |  |\n| `CODEX_REASONING_XHIGH` | apps/agentic-workflow/src/defaults.rs | constant | pub | 15 |  |\n| `CODEX_SPARK_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 18 |  |\n| `GEMINI_FLASH_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 7 |  |\n| `GEMINI_PRO_MODEL` | apps/agentic-workflow/src/defaults.rs | constant | pub | 8 |  |\n## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: handwrite-gap standardize:claim-code -->\n\n<!-- source-snapshot: path=apps/agentic-workflow/src/defaults.rs -->\n```rust\n//! Default model names and reasoning levels for LLM providers.\n//! Change here to upgrade model versions across the codebase.\n\n// Gemini\npub const GEMINI_FLASH_MODEL: &str = \"gemini-3-flash-preview\";\npub const GEMINI_PRO_MODEL: &str = \"gemini-3.1-pro-preview\";\n\n// Codex — base model + reasoning tiers\npub const CODEX_MODEL: &str = \"gpt-5.4\";\npub const CODEX_REASONING_LOW: &str = \"low\";\npub const CODEX_REASONING_MEDIUM: &str = \"medium\";\npub const CODEX_REASONING_HIGH: &str = \"high\";\npub const CODEX_REASONING_XHIGH: &str = \"xhigh\";\n\n// Codex Spark — lighter variant\npub const CODEX_SPARK_MODEL: &str = \"gpt-5.4-mini\";\n\n// Claude\npub const CLAUDE_FAST_MODEL: &str = \"claude-haiku-4-5\";\npub const CLAUDE_BALANCED_MODEL: &str = \"claude-sonnet-4-6\";\npub const CLAUDE_DEEP_MODEL: &str = \"claude-opus-4-6\";\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/defaults.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n    replaces:\n      - \"<handwrite-gap:standardize:claim-code>\"\n    description: |\n      Source template owns the default model and reasoning-level constants.\n```\n"
