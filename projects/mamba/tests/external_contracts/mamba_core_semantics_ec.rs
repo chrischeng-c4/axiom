@@ -728,6 +728,7 @@ print("DONE", total)
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
 #[test]
 fn to_thread_gather_efficiency() {
     let logical_cpus = std::thread::available_parallelism()
@@ -816,3 +817,4 @@ asyncio.run(main())
         speedup
     );
 }
+// </HANDWRITE>
