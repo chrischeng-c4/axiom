@@ -188,9 +188,11 @@ def verify(case_id: str) -> list[str]:
             "all representative assertions pass without cargo delegation",
         ]
     second = _artifact_snapshot()
-    assert first["td"]["identity"] == second["td"]["identity"]
+    assert first["td"] == second["td"]
     assert first["ec"]["artifacts"] == second["ec"]["artifacts"]
+    assert first["ec"]["invoke"] == second["ec"]["invoke"]
+    assert first["ec"]["next"] == second["ec"]["next"]
     return [
         "two project-local TD/EC producer runs preserve artifact identities",
-        "both runs emit the same inventory, source, validation, and generation routes",
+        "both runs emit the same inventory, source, validation, and continuation routes",
     ]

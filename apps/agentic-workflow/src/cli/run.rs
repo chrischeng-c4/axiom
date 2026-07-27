@@ -533,6 +533,19 @@ pub(crate) fn python_target_gen_command(
     wi: &str,
 ) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    if is_self_hosting_project(&row.name) {
+        // AW cannot require its greenfield whole-project native emitter to
+        // overwrite the existing AW crate in order to repair that emitter.
+        // Self-hosting policy makes CB/cold/regenerability advisory and keeps
+        // configured EC claim verification hard. A bounded direct repair is
+        // therefore verified by the CB-stage EC gate after the TD-stage gate
+        // proves the reference contract.
+        // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_self_hosting_runner_policy.py
+        return Ok(format!(
+            "aw ec verify --project {} --required-only --stage cb --wi {wi}",
+            row.name
+        ));
+    }
     let output_dir = project_root
         .join(&row.path)
         .canonicalize()
@@ -4189,6 +4202,48 @@ target = "{target}"
                 expected
             );
         }
+    }
+
+    #[test]
+    fn self_hosting_target_generation_routes_bounded_repair_to_cb_stage_ec() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(
+            root.path()
+                .join("apps/agentic-workflow/tech-design/src/agentic_workflow"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+artifact_model = "python-v1"
+
+[[projects.workspaces]]
+paths = ["apps/agentic-workflow/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            python_target_gen_command(root.path(), "agentic-workflow", "rust", "2688").unwrap(),
+            "aw ec verify --project agentic-workflow --required-only --stage cb --wi 2688"
+        );
+        let step = python_artifact_lifecycle_step(
+            root.path(),
+            "agentic-workflow",
+            "2688",
+            Some("ec_td_green"),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(step.phase, PythonArtifactPhase::CbGenerate);
+        assert_eq!(
+            step.command,
+            "aw ec verify --project agentic-workflow --required-only --stage cb --wi 2688"
+        );
     }
 
     #[test]

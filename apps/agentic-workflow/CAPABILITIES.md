@@ -269,7 +269,7 @@ EC Dimensions:
 - behavior: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring` - public EC authoring, checking, review, locking, and verification remain Python-only even with a retired legacy selector value.
 - behavior: `cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture` - EC verification rejects cargo-test false greens that run zero tests and keeps precise cargo target selectors when known.
 - efficiency: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-efficiency` - the native project-local TD and EC producer scenario completes within 120 seconds.
-- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability` - two fresh producer scenarios preserve artifact identities and inventory, source, validation, and generation routes.
+- stability: `python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability` - two fresh producer scenarios preserve artifact identities and inventory, source, validation, and continuation routes.
 Root WI: #13
 Status: verified
 Required Verification: smoke

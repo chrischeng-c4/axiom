@@ -326,6 +326,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/wi-close-remote-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "wi-typed-epic-owner"
+artifact_id = "artifact:agentic-workflow/wi-typed-epic-owner"
+capability_id = "work-item-planning"
+use_case_id = "typed-epic-owner-authoring"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/wi-typed-epic-owner.py"
+promise = "typed epic ownership is authorable on create/update, canonical in labels, visible in graph projection, body-only compatibility remains readable, and unowned creation emits an exact actionable command template"
+oracle = "Native Python black-box assertions drive the repo-built aw binary in an isolated local tracker."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
+evidence_paths = ["evidence/wi-typed-epic-owner.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "wi-create-help-command"
 artifact_id = "artifact:agentic-workflow/wi-create-help-command"
 capability_id = "work-item-planning"
@@ -594,7 +608,7 @@ use_case_id = "project-local-td-and-ec-gates-operational-stability"
 dimension = "stability"
 applicability = "post-gen"
 test_path = "src/cases/project-local-td-and-ec-gates-operational-stability.py"
-promise = "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and generation routes."
+promise = "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and continuation routes."
 oracle = "Native Python black-box assertions execute the real aw product surface without cargo delegation."
 threshold = "two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0"
 target = "rust"

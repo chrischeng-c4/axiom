@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T09:23:31.893034+00:00"
-ir_digest = "sha256:fd9c8694995ee0165a3c70887e402fdb6d7dcd086941efb806007688124f6793"
-source_digest = "sha256:5cc30e07903b06160602338c97b7e15b376064cf0c401f2070188b70df3e178b"
+generated_at = "2026-07-27T16:11:42.759935+00:00"
+ir_digest = "sha256:b87ec7331927b18a11c3e92e981c815c35eac7f965f61b98a7fb4fbc0631e24f"
+source_digest = "sha256:9e6b0c4d749cf2752cc8c345f13b0e25311d9324682d99b5c15f6f9288a567f0"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:afdcaaf0ffd4fe09282cb4c776b9c392af4982fca90b69ac92a51a027a52dec5"
+digest = "sha256:694aaf4e96c44f45dc31cd7207bbdede941ca4af87f066cd50d4bf2345187450"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -157,6 +157,10 @@ path = "apps/agentic-workflow/external-contracts/src/cases/wi-remove-agent-estim
 digest = "sha256:f2f5b46a8f07a206850ed82a7b9f382a05a95e4b63d46800a65d3fa48e5d9fc2"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-epic-owner.py"
+digest = "sha256:63f6ca1ca466d62f22ebf0a6669bc515555485cbd04a4aa387a50e34149f0cd9"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/work-item-four-type-taxonomy.py"
 digest = "sha256:4d7018c0c60a61b1904d622438687fd83bd343481a61024044286968fdbd97db"
 
@@ -230,7 +234,7 @@ digest = "sha256:74dca45f06d9bf53e0f76aa0c01ee1079d9d9ebd5569ea3acf1b9d726c908d9
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/project_local_gates.py"
-digest = "sha256:c6e7f788d57cd0135892c7b64298242882b0d90756b0196e5ef6bc34cb1f55df"
+digest = "sha256:1b768f87bb59ac1d053de044cad81f3347f799f839bea2f687189af6d2e96a8b"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/prompt_artifacts.py"
@@ -254,7 +258,7 @@ digest = "sha256:18b7d77ce6fef3eda2aee7cd6b15221597df5818702bdcda2083c24f0dee50f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py"
-digest = "sha256:54f259073f797e6e6af882c88e27be352af5151ee374adc5307b0befb3058e53"
+digest = "sha256:909602e50e9740c2269217269180acecca4bd613dc7dd2892cc12e8022047cc2"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/workflow_runner.py"
@@ -592,7 +596,7 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-local-td-and-ec-gates-operational-stability"
 required_for_production = true
 assertions = [
-    "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and generation routes.",
+    "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and continuation routes.",
     "artifact: artifact:agentic-workflow/project-local-td-and-ec-gates-operational-stability",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
@@ -600,7 +604,7 @@ assertions = [
 ]
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:750b689374e10eb1a68ae54c401e37a0d84e3552e7be98bc81d6658ace817ecb"
+digest = "sha256:b85c7796d997d3d81b9c78d6c2a717ecbde18342b336249e7f83569966335784"
 
 [[cases]]
 id = "python-ec-only-authoring"
@@ -1005,6 +1009,26 @@ assertions = [
 evidence_digest = "sha256:24d579566dcccd2528c5e912fa4637ce1939a857a51a773b9cff2c20982ed4ae"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:d39ba92867b48363cd140edb6f95997009cf129f7d33b4562d0d977b43216508"
+
+[[cases]]
+id = "wi-typed-epic-owner"
+capability_id = "work-item-planning"
+claim_id = "typed-epic-owner-authoring"
+contract_id = "wi-typed-epic-owner"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:wi-typed-epic-owner"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/wi-typed-epic-owner.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case wi-typed-epic-owner"
+required_for_production = true
+assertions = [
+    "typed epic ownership is authorable on create/update, canonical in labels, visible in graph projection, body-only compatibility remains readable, and unowned creation emits an exact actionable command template",
+    "artifact: artifact:agentic-workflow/wi-typed-epic-owner",
+    "oracle: Native Python black-box assertions drive the repo-built aw binary in an isolated local tracker.",
+    "target: rust",
+]
+evidence_digest = "sha256:e57d7d65f09c4daaeada55ea5d199f1c210fbc9787489cf1b55a1b7b5d074714"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7c42b1d766acaedb60b431146b96fec934a8b00ae5bb199f1bd175e978e1f212"
 
 [[cases]]
 id = "work-item-four-type-taxonomy"

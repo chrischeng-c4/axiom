@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import stat
 import tempfile
 import threading
@@ -25,6 +26,7 @@ CASE_IDS = {
     "wi-remove-agent-estimate-build",
     "wi-remove-agent-estimate-spec-check",
     "wi-remove-agent-estimate-unit-command",
+    "wi-typed-epic-owner",
     "work-item-planning-epic-to-change-atomization",
     "work-item-planning-operational-efficiency",
     "work-item-planning-operational-stability",
@@ -352,6 +354,186 @@ human_attention: confirm
 
 
 def _verify_planning(case_id: str) -> list[str]:
+    if case_id == "wi-typed-epic-owner":
+        with project_fixture() as root:
+            help_result = run_aw(root, "wi", "create", "--help")
+            assert "--epic <ID>" in help_result.stdout
+
+            epic = create(root, "Typed owner epic", "epic", "--priority", "p1")
+            run_aw(root, "wi", "update", epic["slug"], "--state", "open")
+            owned = create(
+                root,
+                "Typed owner change",
+                "change",
+                "--epic",
+                epic["slug"],
+                "--body",
+                BOUNDED_BODY,
+            )
+            run_aw(root, "wi", "update", owned["slug"], "--state", "open")
+            owned_issue = show(root, owned["slug"])
+            assert f"epic:{epic['slug']}" in owned_issue["labels"]
+
+            body_owned = create(
+                root,
+                "Body compatibility owner change",
+                "change",
+                "--body",
+                BOUNDED_BODY + f"\nParent epic: #{epic['slug']}.\n",
+            )
+            run_aw(root, "wi", "update", body_owned["slug"], "--state", "open")
+            graph = final_json(
+                run_aw(root, "wi", "graph", "--project", "demo", "--json")
+            )
+            assert graph["valid"] is True
+            assert any(
+                change["id"] == owned["slug"]
+                and change["parent"] == epic["slug"]
+                for change in graph["changes"]
+            )
+            assert any(
+                change["id"] == body_owned["slug"]
+                and change["parent"] == epic["slug"]
+                for change in graph["changes"]
+            )
+
+            unowned = create(
+                root,
+                "Unowned change",
+                "change",
+                "--body",
+                BOUNDED_BODY,
+            )
+            ownership = unowned["invoke"]["args"]["ownership"]
+            assert ownership["status"] == "unowned"
+            command_template = ownership["remediation_command_template"]
+            assert command_template == (
+                f"aw wi update {unowned['slug']} --epic <epic-id> --push"
+            )
+            resolved_command = command_template.replace("<epic-id>", epic["slug"])
+            resolved_args = shlex.split(resolved_command)
+            assert resolved_args[0] == "aw"
+            run_aw(root, *resolved_args[1:])
+            assert f"epic:{epic['slug']}" in show(root, unowned["slug"])["labels"]
+            updated_graph = final_json(
+                run_aw(root, "wi", "graph", "--project", "demo", "--json")
+            )
+            assert any(
+                change["id"] == unowned["slug"]
+                and change["parent"] == epic["slug"]
+                for change in updated_graph["changes"]
+            )
+
+            missing = run_aw(
+                root,
+                "wi",
+                "create",
+                "--title",
+                "Missing owner",
+                "--type",
+                "change",
+                "--project",
+                "demo",
+                "--epic",
+                "does-not-exist",
+                "--body",
+                BOUNDED_BODY,
+                expect_success=False,
+            )
+            assert "does not resolve" in missing.stderr
+
+            wrong_type = run_aw(
+                root,
+                "wi",
+                "create",
+                "--title",
+                "Wrong owner type",
+                "--type",
+                "change",
+                "--project",
+                "demo",
+                "--epic",
+                unowned["slug"],
+                "--body",
+                BOUNDED_BODY,
+                expect_success=False,
+            )
+            assert "not type:epic" in wrong_type.stderr
+
+            epic_with_owner = run_aw(
+                root,
+                "wi",
+                "create",
+                "--title",
+                "Epic cannot have an owner",
+                "--type",
+                "epic",
+                "--project",
+                "demo",
+                "--epic",
+                epic["slug"],
+                expect_success=False,
+            )
+            assert "valid only with --type change" in epic_with_owner.stderr
+
+            conflicting_body = run_aw(
+                root,
+                "wi",
+                "create",
+                "--title",
+                "Conflicting owner",
+                "--type",
+                "change",
+                "--project",
+                "demo",
+                "--epic",
+                epic["slug"],
+                "--body",
+                BOUNDED_BODY + "\nParent: #different-owner\n",
+                expect_success=False,
+            )
+            assert "conflicts with body parent declaration" in conflicting_body.stderr
+            assert epic["slug"] in conflicting_body.stderr
+            assert "different-owner" in conflicting_body.stderr
+
+            other_project_epic = create(root, "Other project epic", "epic")
+            run_aw(
+                root,
+                "wi",
+                "update",
+                other_project_epic["slug"],
+                "--remove-label",
+                "app:demo",
+                "--add-label",
+                "app:other",
+            )
+            cross_project = run_aw(
+                root,
+                "wi",
+                "create",
+                "--title",
+                "Cross-project owner",
+                "--type",
+                "change",
+                "--project",
+                "demo",
+                "--epic",
+                other_project_epic["slug"],
+                "--body",
+                BOUNDED_BODY,
+                expect_success=False,
+            )
+            assert "is not in the change project" in cross_project.stderr
+        return [
+            "create help documents --epic",
+            "typed owner emits the canonical epic label",
+            "graph resolves the change under its declared epic",
+            "body-only parent compatibility still establishes ownership",
+            "unowned create emits an exact actionable update command template",
+            "resolving and executing the template assigns typed ownership",
+            "invalid, cross-project, non-epic, and conflicting owners are rejected",
+        ]
+
     if case_id == "work-item-planning-operational-efficiency":
         started = time.monotonic()
         snapshot = _planning_snapshot()

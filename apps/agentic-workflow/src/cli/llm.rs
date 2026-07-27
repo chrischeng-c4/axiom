@@ -341,6 +341,11 @@ policy is independent-agent-first; `capability_plan_review_backing = "human"`
 is the explicit blocking human-only opt-in. Accepted review publishes only
 bounded, deduplicated claim WIs; `needs_revision` publishes nothing.
 
+Declare change ownership with `aw wi create --type change --epic <epic-id>`
+or repair an unowned change with `aw wi update <id> --epic <epic-id> --push`.
+The target must be an epic in the same project; legacy body parent prose is
+decode-only compatibility input and cannot conflict with the typed flag.
+
 For exact flags, run `aw goal wi --help`, `aw goal capability --help`, or
 `aw wi --help`.
 "#;
@@ -678,11 +683,15 @@ completion.workflow_complete == true\n\
             ("CAPABILITIES", include_str!("../../CAPABILITIES.md")),
             (
                 "project iteration model TD",
-                include_str!("../../tech-design/surface/specs/aw-core-client-model.md"),
+                include_str!(
+                    "../../tech-design/src/agentic_workflow/migrated/surface/specs/aw_core_client_model.py"
+                ),
             ),
             (
                 "CLI product boundary TD",
-                include_str!("../../tech-design/surface/specs/aw-client-boundaries.md"),
+                include_str!(
+                    "../../tech-design/src/agentic_workflow/migrated/surface/specs/aw_client_boundaries.py"
+                ),
             ),
         ];
 

@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T14:59:05.161750+00:00"
-digest = "sha256:b3a7fe709d5977c49d53f2a2b7317f5ef513758161ad0fc7f48ce0c79c3a69ac"
-source_digest = "sha256:b3a7fe709d5977c49d53f2a2b7317f5ef513758161ad0fc7f48ce0c79c3a69ac"
-ir_digest = "sha256:4c3a62a3a0deef1de20a95a726a270679a2d180452eb5c71e3d9f80f4efe7de2"
+generated_at = "2026-07-27T15:58:03.189633+00:00"
+digest = "sha256:4e01cac02a2ddfeb338c27532aaa7a679718120645568eb96581f2bf568c70c6"
+source_digest = "sha256:4e01cac02a2ddfeb338c27532aaa7a679718120645568eb96581f2bf568c70c6"
+ir_digest = "sha256:3e7e5317548bdf7d3da6cd79341fc0480964f1b89e05899cf9d62f69842cebe9"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3926,6 +3926,10 @@ digest = "sha256:e7338afe25a07f75e69181264f1c30936fb1eff07092cb9e00e0d68513b3645
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"
 digest = "sha256:700e6bb6aa2cd40287d9f1d0a8827b7e3fe41162bed13d68d3c35ad858166f06"
+
+[[files]]
+path = "src/agentic_workflow/work_items/epic_owner_authoring.py"
+digest = "sha256:4bb5278732ab93afa1848cf2c7e950e2c752fea76886239be7e51122a2140d96"
 
 [[files]]
 path = "src/agentic_workflow/work_items/intake_health.py"
