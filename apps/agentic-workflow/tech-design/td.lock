@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T14:49:07.179375+00:00"
-digest = "sha256:4795e6c624afcb8b98a5d72968ec478fcef0529ae763d9a7c45e152bb3461cb2"
-source_digest = "sha256:4795e6c624afcb8b98a5d72968ec478fcef0529ae763d9a7c45e152bb3461cb2"
-ir_digest = "sha256:a962d9bb6215ff5994fc6c3b6e7c3ef6a3e0b4c01850ef7ef919dd0d2f803b94"
+generated_at = "2026-07-27T14:53:00.140785+00:00"
+digest = "sha256:6430c55b64c81d7048021dd9a86e6c2521b8fe5e4688076fc0a491e0da398ce9"
+source_digest = "sha256:6430c55b64c81d7048021dd9a86e6c2521b8fe5e4688076fc0a491e0da398ce9"
+ir_digest = "sha256:ba0d908acbe52d9414d3e59a346298a3a12c28538abb56add4f7f16219f4fa64"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -2516,32 +2516,152 @@ path = "src/agentic_workflow/migrated/core/tools/review_reference_context.py"
 digest = "sha256:6ca2d57bed69db9014cb387c38b8aafbeef1a4c37f9f8808903990606025128e"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/review_reference_context/artifact.py"
+digest = "sha256:b4e7fb97d3050624077c05cf4cd72fe0f7bf20660d4d1ccc15877251069477e6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/review_reference_context/definitions.py"
+digest = "sha256:371c4b8c13f35c215ae9027e25a789fd362341e50af9c8e98a22346a1cfdf591"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/review_reference_context/prompt.py"
+digest = "sha256:9c16b0b9e47be5ad940f3c39e56e248be234057af5063b8052b97153656dd06a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/review_reference_context/tests.py"
+digest = "sha256:bfb6128d1b15f27e374a000c9ffa57dca09cd0648aab57e12edea2e70ffd5136"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/review_reference_context/workflow.py"
+digest = "sha256:5169a742041663cd012165af7f3c8c974c2d58ae2bb6c1bdd1cb9fb4a4914bc9"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/revise_change_docs.py"
 digest = "sha256:1f6cc8b189db485b35273738945a67c8089beeb486a963441459a31cf48f7fd0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_docs/artifact.py"
+digest = "sha256:97662ac567266cc81e8dc1c1b84214b557bf9a22f48cd49c5c5a2377e7223038"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_docs/preamble_definitions.py"
+digest = "sha256:075d17a78255eaed567c22973088a68ac80c1482d2533dc7ad43b305b40bff92"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_docs/prompt.py"
+digest = "sha256:da531e32e5c6dc7ae047388623c9f48285718cb38e22e03ec62ce52b1f439452"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_docs/workflow.py"
+digest = "sha256:5a488885568b261fb2a4787354d49af6ea962fcae27053b451fabb60a398460b"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/revise_change_impl.py"
 digest = "sha256:72b1c86295d25295e03fe6756e215f1db8caa59cb159c11199eb898aa93e9c12"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_impl/source.py"
+digest = "sha256:8596a5fa879b843c6763a02d4652369ce8499734428eddae7fb061466a708aad"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/revise_change_spec.py"
 digest = "sha256:dd6a0d968a2d026a09146323c8ac2ea0f099889e9e3404d8cd7ea7f6ff9712f2"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_spec/artifact.py"
+digest = "sha256:60152df0abc3866abf4588badbd37dd384b4a9fc62a0526137fc0afccfa6fb72"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_spec/frontmatter_and_prompt.py"
+digest = "sha256:178d7e8a07434c87729e2ab06b9dd1ed2e14029439612a71c05138ec4e914d4d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_spec/preamble_definitions.py"
+digest = "sha256:b262ae7197bc374c5196c7c148df343749fa9ec183d2f9d7db399cd34cc290e2"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_spec/revision_loop.py"
+digest = "sha256:583ece92872954a09a0e42144f2690a2fafe0d6aef720bd5c990c1f24a158db1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_change_spec/workflow.py"
+digest = "sha256:68d56426072e5adcfb0c75f933119638ffbf0a52160f73a64af4a2a936bc717e"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/revise_reference_context.py"
 digest = "sha256:ec80c5b83f364a382fcf142e38b2cc19ed42096c2e3c6ec5cacd8c8c52680467"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_reference_context/artifact.py"
+digest = "sha256:2a15f5544f8f5583761c8d6294c62aba57c04afe317e86a2e9fcc68bde3547b5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_reference_context/definitions.py"
+digest = "sha256:7d30acb7fec30a3b68c603d98c2cbddcfd99a509825475c413a3b166ee45500e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_reference_context/prompt.py"
+digest = "sha256:8dfe61e65139f313a1df2e428ed9ed96a0768a80c1cc14530d3e7a1aa9214fb4"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_reference_context/tests.py"
+digest = "sha256:1cabb66a767d255c4f6c77c314c04576de8d275e53431f60d91220d934544132"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/revise_reference_context/workflow.py"
+digest = "sha256:8fcbb626a5513addd04c80a0f8ef46cc439274107cfce1d7b651603ff7f39fe4"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/sdd_codegen_testgen_spec.py"
 digest = "sha256:56664331ff01c1b0d1be975ebec482ea0149e11f59257e75afedca13b9f7e013"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec.py"
+digest = "sha256:7aff182e24c90163c5a7e581517805f907dd2684a88c1771be539ac9c5739799"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec/definition.py"
+digest = "sha256:43937affefb27be28687eb3bdda4103864b5acf682d14a95ae6140d114d0d2c1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec/execute.py"
+digest = "sha256:b2576253b55bfcdabc2cad0a69cd8f8d4c9d926e94a73aac4231d29682fe13b1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec/preamble.py"
+digest = "sha256:e24a574e91338a77033fbaeceef47709861090970d11d8079ad802c415d26da0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec/review.py"
+digest = "sha256:919d43e862608dc8a38241d66c76755b1a5cd5721124504e397b3b0829e6cf89"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec/tests.py"
+digest = "sha256:2da3b14b584dd036d6d11e617bd530ef26f5ac41ad2628515c375adaa0453fc3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec_plan/file_preparation.py"
+digest = "sha256:d71f958a41340d290266f0128e754ed118a55e06c7d71db70f589bea4c3dbb82"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/spec_plan/section_suggestions.py"
+digest = "sha256:9f45ba6c0516794a0941307c1dfad28b3cf83a4711d30ed9cb26b6cab34b4a5b"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/spec_plan_entry.py"
 digest = "sha256:26ce3571c6c53ecde873a1800818b27384e929c65d9c9b797b7bb321f2246f60"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/state_update.py"
+digest = "sha256:3a3079f3843ed8f87fbc00ece9a8f8615d8473d8e41cc33554c7b8ccac21ead3"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/task.py"
 digest = "sha256:1dbcf38f5015ac2fdf8d3c7be87293dfd1dd24483af3ac95ae65c598e8bccfe5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/task/runtime.py"
+digest = "sha256:caf1afa1ba3275fc7a27f40cad2fdcaa28a7fd16d68554a752ae937eebada61b"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/utils/analyze_code_for_spec.py"
@@ -2584,20 +2704,80 @@ path = "src/agentic_workflow/migrated/core/tools/utils/write_artifact.py"
 digest = "sha256:1613f39ef62a73459c916876a8a40b86c571b622753d97fc77e65a808b1273c2"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate.py"
+digest = "sha256:868a2560af47e05add83a1f86f2b9dcf7ebc888bbf408f7b7dc7da457775c32d"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/validate_proposal.py"
 digest = "sha256:0905723447369dbaaf58e6b14d4823596987c673653ad6a5a60dd00d6048fb5f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_proposal/command_flow.py"
+digest = "sha256:25c975f9a72aab785a962ca8c65d076ea472c65b1c1b2140d69290ec70f15f59"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_proposal/error_accumulator.py"
+digest = "sha256:4ecddaad4d95c216c712d3a1f705c5f9b623bd41373c0de03f9241553ae54f8b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_proposal/summary_behavior.py"
+digest = "sha256:9ba883a7ade8f21933143a23d01eee8aea955cf8ebc98e5f622a85a1db8e22b1"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/tools/validate_spec.py"
 digest = "sha256:a0aa571b3fbfd4596871e6cb120a7a4aab5f4cee5a0b1eb8f694659b522bc9c0"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_spec/execute_logic.py"
+digest = "sha256:92b8aab3dbdc53cb6f4cd121405225322f6dd86eee899231ea76f2591a09a97d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_spec/preamble_definition.py"
+digest = "sha256:80e4a54354c62fab12f1d0e8d4db8aa18a0b46bd22ac6df521869232737f25dc"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/validate_spec/tests.py"
+digest = "sha256:33ba7c1356b3ecd48b3b98c85f261a7157a07afe53c77a67f2740a593e727007"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/workflow_common.py"
 digest = "sha256:beaa00d72076a150700fae781877fe388ffc1fa49b09a93792c71087e5d21e6e"
 
 [[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/git_status.py"
+digest = "sha256:e5fb4a1c17aab6788a27e1153fe828d9aec0cbe982541508e5f070cc2457d338"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/group_issues_hint.py"
+digest = "sha256:df9399ac7cfeba3b5aecad362df19d12d0bd5b94ea0682dd335a6c033f7216a0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/interface_and_groups.py"
+digest = "sha256:b25a1bcc78afa6f698705a089fb8a06542e986b2a042c1694b772c6d18aa7cc1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/phase_and_executor.py"
+digest = "sha256:b7875945e077a3034b0404e67f84ae299a94c421d9a82e521d81a30d96ccde00"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/prompt_response.py"
+digest = "sha256:de3515cc641b356fb9e18a0cdb47a41b55e757cbb7d75fbbed192d423c5ee239"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/tests.py"
+digest = "sha256:9837dec36f496f9a954a58247f8784d1e2fe6188ee134b5a2f4cb8708cc2bd9a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_common/validation_and_paths.py"
+digest = "sha256:4aedc8d3008943688be1185b4f29c3e62060841e21027c64e5a7e05a6624e428"
+
+[[files]]
 path = "src/agentic_workflow/migrated/core/tools/workflow_validate.py"
 digest = "sha256:2d478e8d1d80205b6ae3a0ae35ec5a5285bcf45765389ff602595a276c616e30"
+
+[[files]]
+path = "src/agentic_workflow/migrated/core/tools/workflow_validate/definition.py"
+digest = "sha256:f7e1eb071bcd0f2116920fa8fa4741c49e935321dc93b068348a9baa0eb63deb"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/validate/codegen_full_test.py"
