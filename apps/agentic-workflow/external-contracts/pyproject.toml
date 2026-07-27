@@ -646,3 +646,17 @@ threshold = "two attempts; identical representative assertion results"
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case work-item-planning-operational-stability"
 evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
+
+[[tool.aw.python-ec.cases]]
+id = "python-ec-only-authoring"
+artifact_id = "artifact:agentic-workflow/python-ec-only-authoring"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-only-authoring"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/python-ec-only-authoring.py"
+promise = "Public EC authoring, checking, review, locking, and verification operate only on the project-local Python EC project, even when legacy spec_model configuration is present."
+oracle = "A hand-authored Python black-box fixture executes the real aw CLI, inspects help and artifacts, independently supplies digest-bound review evidence, and rejects retired fill/gen commands."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
+evidence_paths = ["evidence/python-ec-only-authoring.json"]

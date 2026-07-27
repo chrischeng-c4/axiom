@@ -3512,8 +3512,10 @@ changes:
       path creates only `pyproject.toml`, `src/runner.py`, one bounded
       `src/<id>.py` contract source, and `evidence/`; it emits the exact
       follow-up check and never creates a Markdown fallback. Clap help names
-      the Python/pyproject contract while retaining fill/gen as compatibility
-      surfaces.
+      the Python/pyproject contract. #2712 removes the compatibility Markdown
+      `fill` and `gen` commands from the public EC lifecycle; draft, check,
+      independent review, lock, and verification remain Python-project
+      operations even when a retired `spec_model` value is still present.
       #1469: `verify_ec_context` gained a `required_only: bool` execution-time
       filter parameter. When `true`, a `required_for_production: false` case
       is never executed — it still gets a `status: "skipped"` entry in

@@ -78,11 +78,7 @@ pub struct EcArgs {
 pub enum EcCommand {
     /// Scaffold a project-local Python EC source/inventory under external-contracts/.
     Draft(EcDraftArgs),
-    /// Fill one section in a compatibility Markdown EC draft.
-    Fill(EcFillArgs),
-    /// Generate compatibility inventory/tests/tool configs from Markdown EC source.
-    Gen(EcGenArgs),
-    /// Check the Python pyproject.toml EC inventory or compatibility inventory drift.
+    /// Check the project-local Python pyproject.toml EC inventory.
     Check(EcCheckArgs),
     /// Write or verify the canonical EC IR lock.
     Lock(EcLockArgs),
@@ -90,7 +86,7 @@ pub enum EcCommand {
     Review(EcReviewArgs),
     /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
     Record(EcRecordArgs),
-    /// Run generated external-contract verification commands.
+    /// Run declared Python external-contract verification commands.
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
     Doc(EcDocArgs),
@@ -964,8 +960,6 @@ pub fn run(args: EcArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("ec requires --project <project>"))?;
     match args.command {
         EcCommand::Draft(args) => run_draft(&project, args),
-        EcCommand::Fill(args) => run_fill(&project, args),
-        EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
         EcCommand::Lock(args) => run_lock(&project, args),
         EcCommand::Review(args) => run_review(&project, args),

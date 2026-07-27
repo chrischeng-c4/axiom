@@ -488,7 +488,7 @@ def _guidance(manifest: dict[str, Any]) -> dict[str, Any]:
             "there is no app-level Rust EC wrapper tree",
         ),
         "apps/agentic-workflow/CAPABILITIES.md": (
-            "canonical 44-case inventory",
+            "canonical 45-case inventory",
             "37 migrated Python cases",
             "75 separately retained Rust invariants",
         ),

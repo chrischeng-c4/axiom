@@ -1700,7 +1700,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
-      "sha256": "sha256:c0dc49b180bf52b66142d42d48f4c4f47c0275380fb4a6ad367677dfd05097e4",
+      "sha256": "sha256:1944e2efcd9b74e36a9aa46a53944e390b1648893e643ded145dddf01dabd0bf",
       "status": "pending"
     },
     {
@@ -1721,14 +1721,14 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/ec.lock",
       "role": "lock_input",
-      "sha256": "sha256:4f12d2fdfbfe79a1a1c07ba9ef9fbff08d5becf377c0ca51d36b09387c70041f",
+      "sha256": "sha256:63126e7193989e22c779b7b800de86cba3a20d9cf35e1c5fc8aa5cb440052d82",
       "status": "pending"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/pyproject.toml",
       "role": "lock_input",
-      "sha256": "sha256:2169562e9eaac7b4b5d2bb2035402b95652ee6a7819373795ebd56f45d734690",
+      "sha256": "sha256:e7e7a1d3a89f7d3eef9aa8c72bc9d19ef406d100a757e47d3e7c44e63e27191d",
       "status": "pending"
     },
     {
@@ -1840,7 +1840,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py",
       "role": "configuration_or_guidance",
-      "sha256": "sha256:3436535f0b44a466ff43263a70a8bae3ae380b8ebbc14a3d497ff59e96def34c",
+      "sha256": "sha256:be59adbe9070c888611272ec539bab31771e683e522debf5d724639a076565eb",
       "status": "pending"
     },
     {
@@ -1938,7 +1938,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/ec.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:efb423c93b74eb98f1ec6c7fbd0fe10f9f0ad7d7d4e751286339653354f88694",
+      "sha256": "sha256:009555b6be09547232e6ba140ff75c6f4d71e284a1eb65771c4055eae60027b9",
       "status": "pending"
     },
     {
@@ -1980,7 +1980,7 @@
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/llm.rs",
       "role": "legacy_cli_entry_point",
-      "sha256": "sha256:69a92460497056e00ee209f13d7300b5f15089f851b9165016dcf373f711f266",
+      "sha256": "sha256:86500c959530de070305c2bc2ea997a2ae81be05c788d0301edfe01ebee0b1f2",
       "status": "pending"
     },
     {
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:cd38e407b23381616da6c58a9ee057bbf960e3f0155e38a2796cae181507b768",
+  "digest": "sha256:83b3a7e7aaf14b17ca731e74ea45ad7e5856be5834ea62ca8f777ff18c8b0b36",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10254,7 +10254,7 @@
       "family": "semantic",
       "path": "apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md",
       "role": "generated_mirror",
-      "sha256": "sha256:71f64ddb1b6fc59bfd85e1f4fc4b824c657d88c250cc56392772d3b001f1013b",
+      "sha256": "sha256:2249c058b03beb6add3f689c3afd96c0fff7ff30c8db86fdeb37ddc8c193f65d",
       "status": "pending",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
     },

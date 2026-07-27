@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-26T20:34:03.088003+00:00"
-ir_digest = "sha256:a077e9dcbc4e351df848eebfa7f874277391e0593568974af605b7659263e87b"
-source_digest = "sha256:4630b8506f9f5816876dfe5a7dfcda5fd014a3ca93f63283c2d884132731211b"
+generated_at = "2026-07-27T06:34:19.663079+00:00"
+ir_digest = "sha256:d6e3fc85319a552e7cdb3b650d13fbdc7d3982d9956e7563b2dd8a17d8d3492f"
+source_digest = "sha256:6e10750d38dd92b88ec647b6d79ea007fafe5a3f2bfceab94fb19dbb5f5f2b59"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:2169562e9eaac7b4b5d2bb2035402b95652ee6a7819373795ebd56f45d734690"
+digest = "sha256:e7e7a1d3a89f7d3eef9aa8c72bc9d19ef406d100a757e47d3e7c44e63e27191d"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -75,6 +75,10 @@ digest = "sha256:47d8986b9061689d0985c77c0542c274b9cbf5c92b5d8abc955d010af89bdfe
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-stability.py"
 digest = "sha256:98a7b86bf45ece690ac8f11e382a26405ecf2a5249c4e24588cca16ce09c9af5"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
+digest = "sha256:005bf721f757c81955d3a1cbfd3144280aa34ba702dbec911e1e23d3ff5f47af"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
@@ -254,7 +258,7 @@ digest = "sha256:8a07c2fb854f1a90f3f47db1029e3bcc82a69f266973d10daaaa3d6d6b5a848
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py"
-digest = "sha256:3436535f0b44a466ff43263a70a8bae3ae380b8ebbc14a3d497ff59e96def34c"
+digest = "sha256:be59adbe9070c888611272ec539bab31771e683e522debf5d724639a076565eb"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/runner.py"
@@ -593,6 +597,26 @@ assertions = [
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:750b689374e10eb1a68ae54c401e37a0d84e3552e7be98bc81d6658ace817ecb"
+
+[[cases]]
+id = "python-ec-only-authoring"
+capability_id = "project-local-td-and-ec-gates"
+claim_id = "python-ec-only-authoring"
+contract_id = "python-ec-only-authoring"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-only-authoring"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-only-authoring"
+required_for_production = true
+assertions = [
+    "Public EC authoring, checking, review, locking, and verification operate only on the project-local Python EC project, even when legacy spec_model configuration is present.",
+    "artifact: artifact:agentic-workflow/python-ec-only-authoring",
+    "oracle: A hand-authored Python black-box fixture executes the real aw CLI, inspects help and artifacts, independently supplies digest-bound review evidence, and rejects retired fill/gen commands.",
+    "target: rust",
+]
+evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0f51ebd3eb36d907125eeb792d2e5f432ac867a6f44f327351ca7e144a58979a"
 
 [[cases]]
 id = "self-hosting-bounded-admission"
