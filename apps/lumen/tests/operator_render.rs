@@ -10,11 +10,12 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, ReshardPhase, ReshardPolicy, ReshardWorkflowSpec,
-    ServingBootstrapSpec, ServingSpec, ShardMapSpec,
+    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
+    ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{prunes, render};
 use lumen::operator::{Lumen, LumenSpec};
+use serde::Deserialize;
 use serde_json::Value;
 use service_k8s::service::PruneTarget;
 
@@ -35,6 +36,7 @@ fn dev_spec() -> LumenSpec {
     LumenSpec {
         image: "lumen:latest".into(),
         image_pull_policy: None,
+        placement: PlacementSpec::default(),
         shard_count: 1,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,
@@ -65,6 +67,7 @@ fn prod_spec() -> LumenSpec {
     LumenSpec {
         image: "registry.example.com/lumen:1.2.3".into(),
         image_pull_policy: Some("Always".into()),
+        placement: PlacementSpec::default(),
         shard_count: 6,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,
@@ -1138,6 +1141,29 @@ fn raft_ha_renders_serving_statefulset() {
     assert_eq!(vcts[0]["metadata"]["name"], "raft");
 }
 
+/// `crd_yaml()` ships every custom resource as ONE multi-document file, so a
+/// single `kubectl apply -f` installs the whole API. The schema assertions
+/// below are about the `Lumen` CRD specifically, so they must say so: parsing
+/// the file as a single document stopped compiling the moment `LumenFleet`
+/// joined it ("deserializing from YAML containing more than one document is not
+/// supported"), and picking document [0] would silently start asserting against
+/// whichever CRD happens to be serialized first.
+fn crd_document(name: &str) -> serde_yaml::Value {
+    let yaml = lumen::operator::crd_yaml();
+    let mut found = serde_yaml::Deserializer::from_str(&yaml).filter_map(|doc| {
+        let value = serde_yaml::Value::deserialize(doc).expect("each CRD document parses as YAML");
+        (value["metadata"]["name"] == name).then_some(value)
+    });
+    let doc = found
+        .next()
+        .unwrap_or_else(|| panic!("crd_yaml() has no document named `{name}`"));
+    assert!(
+        found.next().is_none(),
+        "crd_yaml() has more than one document named `{name}`"
+    );
+    doc
+}
+
 #[test]
 fn crd_yaml_emits_lumen_definition() {
     let yaml = lumen::operator::crd_yaml();
@@ -1189,10 +1215,111 @@ fn checked_in_crd_yaml_matches_the_renderer() {
     );
 }
 
+/// A stateful search workload wants a dedicated node pool — local SSD, high
+/// memory — and until `spec.placement` existed there was no way to ask for one:
+/// the StatefulSet is operator-rendered, so a `kubectl patch` adding a
+/// `nodeSelector` is reverted on the next reconcile.
+///
+/// The second half is the assertion that matters. Naming a pool must not cost
+/// the pod anti-affinity, which is what keeps two replicas of one shard off the
+/// same host. A spec that exposed the whole `affinity` block instead would let a
+/// deployer replace that constraint while asking only for a pool, rendering a
+/// StatefulSet that still reads as correct and loses both replicas of a shard to
+/// the first node failure.
+#[test]
+fn placement_names_a_node_pool_without_replacing_the_anti_affinity() {
+    let mut spec = prod_spec();
+    spec.replicas_per_shard = 3;
+    spec.voter_count = 3;
+    spec.placement = PlacementSpec {
+        node_selector: BTreeMap::from([(
+            "cloud.google.com/gke-nodepool".to_string(),
+            "lumen-ssd".to_string(),
+        )]),
+        tolerations: vec![Toleration {
+            key: Some("dedicated".into()),
+            operator: Some("Equal".into()),
+            value: Some("lumen".into()),
+            effect: Some("NoSchedule".into()),
+            toleration_seconds: None,
+        }],
+    };
+    let objs = render(&lumen("search", spec));
+    let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+
+    assert_eq!(
+        pod["nodeSelector"]["cloud.google.com/gke-nodepool"],
+        "lumen-ssd"
+    );
+    assert_eq!(pod["tolerations"][0]["key"], "dedicated");
+    assert_eq!(pod["tolerations"][0]["operator"], "Equal");
+    assert_eq!(pod["tolerations"][0]["value"], "lumen");
+    assert_eq!(pod["tolerations"][0]["effect"], "NoSchedule");
+    // Unset fields are omitted, not rendered as explicit `null`, so the
+    // toleration is byte-identical to what a hand-written pod spec carries and
+    // repeated applies produce no diff.
+    assert!(pod["tolerations"][0].get("tolerationSeconds").is_none());
+
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["topologyKey"],
+        "kubernetes.io/hostname",
+        "naming a node pool must not cost the one-replica-per-host constraint"
+    );
+}
+
+/// Placement is additive: a CR that does not ask for a pool renders the pod spec
+/// it rendered before, so every existing instance adopts the new operator
+/// without a rolling restart it did not ask for.
+#[test]
+fn no_placement_leaves_the_pod_spec_as_it_was() {
+    let objs = render(&lumen("search", prod_spec()));
+    let pod = &find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"];
+    assert!(pod.get("nodeSelector").is_none(), "{pod}");
+    assert!(pod.get("tolerations").is_none(), "{pod}");
+}
+
+/// A renderer that accepts `spec.placement` is worth nothing if the CRD the API
+/// server validates against prunes it — the exact failure #2678 found in
+/// `x-kubernetes-validations`. `checked_in_crd_yaml_matches_the_renderer` holds
+/// the file to the renderer; this holds the schema to the field.
+#[test]
+fn the_crd_accepts_placement() {
+    let doc = crd_document("lumens.lumen.dev");
+    let placement = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+        ["properties"]["placement"];
+
+    // `default: {}` is what keeps every CR written before this field valid.
+    assert!(
+        placement["default"].is_mapping(),
+        "placement must default to empty so existing CRs still validate: {placement:?}"
+    );
+    let props = &placement["properties"];
+    assert_eq!(props["nodeSelector"]["type"], "object");
+    assert_eq!(props["nodeSelector"]["additionalProperties"]["type"], "string");
+    assert_eq!(props["tolerations"]["type"], "array");
+    for field in ["key", "operator", "value", "effect", "tolerationSeconds"] {
+        assert!(
+            props["tolerations"]["items"]["properties"]
+                .get(field)
+                .is_some(),
+            "toleration schema must carry `{field}`"
+        );
+    }
+
+    // The whole point of the narrow surface: `affinity` stays operator-owned,
+    // so there is no CR field that can replace the anti-affinity.
+    assert!(
+        doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]
+            .get("affinity")
+            .is_none(),
+        "exposing spec.affinity would let a deployer drop the anti-affinity"
+    );
+}
+
 #[test]
 fn crd_backup_schema_flattens_shared_policy() {
-    let yaml = lumen::operator::crd_yaml();
-    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let doc = crd_document("lumens.lumen.dev");
     let backup_props = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
         ["spec"]["properties"]["serving"]["properties"]["backup"]["properties"];
     for field in [
@@ -1222,8 +1349,7 @@ fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
         "runtime default: recommendationOnly should be true when maxShardBytes is unset"
     );
 
-    let yaml = lumen::operator::crd_yaml();
-    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid CRD yaml");
+    let doc = crd_document("lumens.lumen.dev");
     let versions = doc["spec"]["versions"].as_sequence().expect("versions");
     let v1alpha1 = versions
         .iter()
@@ -1234,7 +1360,7 @@ fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
     assert_eq!(
         recommendation_only["default"],
         serde_yaml::Value::Bool(true),
-        "declared schema default must match the runtime default: {yaml}"
+        "declared schema default must match the runtime default: {recommendation_only:?}"
     );
 }
 

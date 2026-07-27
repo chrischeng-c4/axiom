@@ -41,9 +41,18 @@ pub fn normalize_unsigned_integer_formats(value: &mut Value) {
 /// GA since Kubernetes 1.29) moves the rejection to admission, where the
 /// author sees it.
 ///
-/// `rule` is evaluated with `self` bound to `spec`. Nullable fields need an
-/// explicit `!= null` guard: an omitted field is absent, but a field written
-/// as `null` is *present and null*, so `has(self.x)` alone is true for it.
+/// `rule` is evaluated with `self` bound to `spec`. Test presence with
+/// `has(self.x)` and nothing else — including for `nullable: true` fields.
+/// Kubernetes prunes an explicitly-null field before CEL runs, so `has()`
+/// already reports it absent, and a defensive `self.x != null` does not merely
+/// duplicate that: it FAILS TO COMPILE. Kubernetes types a `nullable: true`
+/// string as plain `string`, so the rule is rejected with "found no matching
+/// overload for '_!=_' applied to '(string, null)'" — and rejected by the API
+/// server at `kubectl apply`, not by any test here, because the unit tests
+/// assert on YAML structure and never compile the expression. That is a CRD
+/// which passes every local gate and cannot be installed on any cluster
+/// (verified against a live API server: with a `has()`-only rule,
+/// `{a: "x", b: null}` is accepted and `{a: "x", b: "y"}` is rejected).
 ///
 /// Returns the number of versions the rule was attached to; a caller that
 /// generated the CRD from a derive macro should assert this is non-zero,

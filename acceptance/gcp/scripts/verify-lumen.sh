@@ -6,6 +6,10 @@ set -euo pipefail
 : "${RUN_ID:?RUN_ID is required}"
 : "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
 : "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
+# The placement leg reads the dedicated data-plane node pool straight off the
+# GKE API, so it needs the cluster coordinates and not just a kube context.
+: "${GKE_CLUSTER_NAME:?GKE_CLUSTER_NAME is required}"
+: "${GKE_ZONE:?GKE_ZONE is required}"
 
 mkdir -p "$EVIDENCE_DIR/kubernetes" "$EVIDENCE_DIR/gcs"
 forward_pid=""
@@ -809,6 +813,461 @@ kubectl -n lumen delete statefulset/lumen-quorum --wait=true --timeout=180s \
 kubectl -n lumen delete pvc -l app.kubernetes.io/instance=lumen-quorum \
   --wait=true --timeout=300s --ignore-not-found
 
+# ---- Placement leg: spec.placement onto a dedicated node pool ----
+#
+# The two halves of `spec.placement` are proven by making each one, on its own,
+# the reason the pod cannot run:
+#
+#   phase 1  nodeSelector only  -> Pending. The label matches ONLY the tainted
+#            data-plane pool, and without a toleration nothing can land there;
+#            no other node carries the label. If the operator dropped
+#            `nodeSelector`, the pod would schedule on acceptance-pool and this
+#            phase would fail.
+#   phase 2  + tolerations      -> Running, on a data-plane-pool node. If the
+#            operator dropped `tolerations`, the pod would stay Pending and
+#            this phase would fail.
+#
+# Neither half can be silently missing and still produce both outcomes, which
+# is what a same-pool run cannot distinguish.
+placement_pool="${DATA_PLANE_POOL_NAME:-data-plane-pool}"
+placement_label_key="${DATA_PLANE_LABEL_KEY:-axiom.dev/pool}"
+placement_label_value="${DATA_PLANE_LABEL_VALUE:-data-plane}"
+placement_taint_key="${DATA_PLANE_TAINT_KEY:-axiom.dev/dedicated}"
+
+capture_placement_diagnostics() {
+  kubectl -n lumen get lumen/lumen-placement -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-placement-cr.yaml" 2>&1 || true
+  kubectl -n lumen describe pod lumen-placement-0 \
+    > "$EVIDENCE_DIR/kubernetes/lumen-placement-pod-describe.txt" 2>&1 || true
+  kubectl get nodes -o json > "$EVIDENCE_DIR/kubernetes/nodes-during-placement.json" 2>&1 || true
+}
+
+# Fail on cluster drift BEFORE applying anything. The persistent cluster is
+# reused and therefore never re-applied, so cluster/main.tf can say one thing
+# while the live cluster says another — exactly how the Secret Manager add-on
+# was lost. Ten seconds here beats a phase-2 timeout ten minutes in.
+gcloud container node-pools describe "$placement_pool" \
+  --cluster="$GKE_CLUSTER_NAME" --zone="$GKE_ZONE" --project="$PROJECT_ID" \
+  --format=json > "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" 2>"$EVIDENCE_DIR/kubernetes/data-plane-node-pool-absent.txt" || {
+  echo "node pool '$placement_pool' does not exist on $GKE_CLUSTER_NAME; spec.placement cannot be proven against a pool boundary." >&2
+  echo "  it is declared in acceptance/gcp/cluster/main.tf — apply it against the persistent cluster's state:" >&2
+  echo "  TF_DATA_DIR=/tmp/axiom-gcp-operator-cluster/.terraform terraform -chdir=acceptance/gcp/cluster apply -state=/tmp/axiom-gcp-operator-cluster/cluster.tfstate ..." >&2
+  exit 1
+}
+jq -e --arg k "$placement_label_key" --arg v "$placement_label_value" \
+  '.config.labels[$k] == $v' \
+  "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" >/dev/null || {
+  echo "node pool '$placement_pool' does not carry label $placement_label_key=$placement_label_value; the phase-1 Pending assertion would pass for the wrong reason" >&2
+  jq '.config.labels' "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" >&2 || true
+  exit 1
+}
+jq -e --arg k "$placement_taint_key" --arg v "$placement_label_value" \
+  '[.config.taints[]? | select(.key == $k and .value == $v and .effect == "NO_SCHEDULE")] | length == 1' \
+  "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" >/dev/null || {
+  echo "node pool '$placement_pool' does not carry the NoSchedule taint $placement_taint_key=$placement_label_value; without it a pod missing its tolerations would still schedule and the leg would false-green" >&2
+  jq '.config.taints' "$EVIDENCE_DIR/kubernetes/data-plane-node-pool.json" >&2 || true
+  exit 1
+}
+
+cat <<EOF | kubectl apply -f - > "$EVIDENCE_DIR/kubernetes/lumen-placement-cr-apply.txt"
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: lumen-placement
+  namespace: lumen
+spec:
+  image: ${main_cr_image}
+  imagePullPolicy: IfNotPresent
+  shardCount: 1
+  replicasPerShard: 1
+  voterCount: 1
+  logFormat: json
+  placement:
+    nodeSelector:
+      ${placement_label_key}: ${placement_label_value}
+  serving:
+    cpu: 250m
+    memory: 512Mi
+    raftStorage: 1Gi
+EOF
+
+# The rendered pod template must carry the selector before the scheduling
+# outcome means anything: a Pending pod with NO nodeSelector would be Pending
+# for an unrelated reason and would read as a pass.
+placement_render_deadline=$((SECONDS + 180))
+until kubectl -n lumen get statefulset/lumen-placement -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-placement-statefulset.json" 2>/dev/null \
+  && jq -e --arg k "$placement_label_key" --arg v "$placement_label_value" \
+    '.spec.template.spec.nodeSelector[$k] == $v' \
+    "$EVIDENCE_DIR/kubernetes/lumen-placement-statefulset.json" >/dev/null 2>&1; do
+  if (( SECONDS >= placement_render_deadline )); then
+    echo "the operator never rendered spec.placement.nodeSelector onto the lumen-placement StatefulSet pod template" >&2
+    jq '.spec.template.spec | {nodeSelector, tolerations}' \
+      "$EVIDENCE_DIR/kubernetes/lumen-placement-statefulset.json" >&2 || true
+    capture_placement_diagnostics
+    exit 1
+  fi
+  sleep 5
+done
+
+# Phase 1 — hold for a stable window. A single instantaneous read of Pending is
+# just "the scheduler has not run yet"; what proves the selector binds is that
+# the pod is STILL unschedulable after the scheduler has had every chance.
+placement_phase1_deadline=$((SECONDS + 90))
+while (( SECONDS < placement_phase1_deadline )); do
+  placement_phase="$(kubectl -n lumen get pod lumen-placement-0 -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [[ -n "$placement_phase" && "$placement_phase" != "Pending" ]]; then
+    echo "lumen-placement-0 reached phase '$placement_phase' with a nodeSelector for the tainted $placement_pool and NO toleration — it must not be schedulable anywhere" >&2
+    kubectl -n lumen get pod lumen-placement-0 -o wide >&2 || true
+    capture_placement_diagnostics
+    exit 1
+  fi
+  sleep 5
+done
+kubectl -n lumen get pod lumen-placement-0 -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-placement-pod-phase1.json" 2>/dev/null || true
+jq -e '[.status.conditions[]? | select(.type == "PodScheduled" and .status == "False" and .reason == "Unschedulable")] | length == 1' \
+  "$EVIDENCE_DIR/kubernetes/lumen-placement-pod-phase1.json" >/dev/null || {
+  echo "lumen-placement-0 is Pending but not for the Unschedulable reason — the nodeSelector may not be what is holding it" >&2
+  jq '.status.conditions' "$EVIDENCE_DIR/kubernetes/lumen-placement-pod-phase1.json" >&2 || true
+  capture_placement_diagnostics
+  exit 1
+}
+
+# Phase 2 — add the toleration. The data-plane pool is scale-to-zero, so this
+# also exercises cluster-autoscaler scale-FROM-zero against a pool whose labels
+# and taints only exist on the pool definition; the wait is sized for node
+# provisioning, not for reconcile.
+kubectl -n lumen patch lumen/lumen-placement --type=merge --patch "$(jq -n \
+  --arg key "$placement_taint_key" --arg value "$placement_label_value" \
+  '{spec:{placement:{tolerations:[{key:$key, operator:"Equal", value:$value, effect:"NoSchedule"}]}}}')" \
+  > "$EVIDENCE_DIR/kubernetes/lumen-placement-toleration-patch.txt"
+
+placement_ready_deadline=$((SECONDS + 720))
+until [[ "$(kubectl -n lumen get statefulset/lumen-placement -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)" == "1" ]]; do
+  if (( SECONDS >= placement_ready_deadline )); then
+    echo "lumen-placement-0 never became ready after the toleration was added — either the operator drops spec.placement.tolerations, or $placement_pool did not scale from zero" >&2
+    capture_placement_diagnostics
+    exit 1
+  fi
+  sleep 10
+done
+
+# It landed — but landing is only meaningful if it landed on the DEDICATED
+# pool. Read the node it actually bound to and confirm the pool identity from
+# the node's own labels rather than from the pod spec that requested them.
+placement_node="$(kubectl -n lumen get pod lumen-placement-0 -o jsonpath='{.spec.nodeName}')"
+printf '%s\n' "$placement_node" > "$EVIDENCE_DIR/kubernetes/lumen-placement-node.txt"
+kubectl get node "$placement_node" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-placement-node.json"
+jq -e --arg k "$placement_label_key" --arg v "$placement_label_value" --arg pool "$placement_pool" \
+  '.metadata.labels[$k] == $v and .metadata.labels["cloud.google.com/gke-nodepool"] == $pool' \
+  "$EVIDENCE_DIR/kubernetes/lumen-placement-node.json" >/dev/null || {
+  echo "lumen-placement-0 is running on '$placement_node', which is not a $placement_pool node" >&2
+  jq '.metadata.labels' "$EVIDENCE_DIR/kubernetes/lumen-placement-node.json" >&2 || true
+  capture_placement_diagnostics
+  exit 1
+}
+# And the negative direction: the control plane, which declares no placement,
+# must NOT be on the dedicated pool. Otherwise "the data plane is isolated" is
+# a claim about one pod rather than about the topology.
+kubectl -n lumen-system get pods -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-operator-pods-during-placement.json"
+jq -e --arg node "$placement_node" \
+  '[.items[] | select(.spec.nodeName == $node)] | length == 0' \
+  "$EVIDENCE_DIR/kubernetes/lumen-operator-pods-during-placement.json" >/dev/null || {
+  echo "an operator pod is running on the dedicated data-plane node '$placement_node'; the taint is not isolating the pool" >&2
+  capture_placement_diagnostics
+  exit 1
+}
+
+kubectl -n lumen delete lumen/lumen-placement --wait=true --timeout=120s
+kubectl -n lumen delete statefulset/lumen-placement --wait=true --timeout=180s \
+  --cascade=foreground --ignore-not-found
+kubectl -n lumen delete pvc -l app.kubernetes.io/instance=lumen-placement \
+  --wait=true --timeout=300s --ignore-not-found
+
+# ---- Fleet leg: one cluster-scoped LumenFleet materializing data planes ----
+#
+# The control-plane model under test: the platform team applies ONE
+# cluster-scoped object in lumen-system that declares every data-plane
+# namespace, and the operator materializes a `Lumen` into each. What this leg
+# proves is everything a unit test cannot: real cross-namespace creation, real
+# server-side-apply field ownership, and the two deletion contracts.
+fleet_ns_a="lumen-fleet-a"
+fleet_ns_b="lumen-fleet-b"
+fleet_name="acceptance"
+
+capture_fleet_diagnostics() {
+  kubectl get lumenfleet/"$fleet_name" -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-fleet-cr.yaml" 2>&1 || true
+  kubectl get lumen -A -o yaml \
+    > "$EVIDENCE_DIR/kubernetes/lumen-fleet-all-lumens.yaml" 2>&1 || true
+  kubectl -n lumen-system logs deployment/lumen-operator --tail=300 \
+    > "$EVIDENCE_DIR/kubernetes/lumen-fleet-operator.log" 2>&1 || true
+}
+
+# Wait until the fleet's status reflects the generation we just applied. Every
+# assertion below reads status, and the loop polls on a 30s interval, so
+# reading it without this wait reads the PREVIOUS pass's answer.
+wait_fleet_observed() {
+  local deadline=$((SECONDS + 180))
+  local generation observed
+  while (( SECONDS < deadline )); do
+    generation="$(kubectl get lumenfleet/"$fleet_name" -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed="$(kubectl get lumenfleet/"$fleet_name" -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    if [[ -n "$generation" && "$observed" == "$generation" ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "the fleet controller never reported observedGeneration == metadata.generation" >&2
+  capture_fleet_diagnostics
+  return 1
+}
+
+fleet_entry_state() {
+  # $1 namespace, $2 name -> the entry's state, or empty
+  kubectl get lumenfleet/"$fleet_name" -o json 2>/dev/null \
+    | jq -r --arg ns "$1" --arg name "$2" \
+      'first(.status.entries[]? | select(.namespace == $ns and .name == $name) | .state) // ""'
+}
+
+kubectl create namespace "$fleet_ns_a" --dry-run=client -o yaml | kubectl apply -f - \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-namespaces.txt"
+kubectl create namespace "$fleet_ns_b" --dry-run=client -o yaml | kubectl apply -f - \
+  >> "$EVIDENCE_DIR/kubernetes/lumen-fleet-namespaces.txt"
+
+# Four entries, chosen so one pass exercises every outcome the design has:
+# inherit-only, override, absent namespace, and a misspelled override.
+cat <<EOF | kubectl apply -f - > "$EVIDENCE_DIR/kubernetes/lumen-fleet-apply.txt"
+apiVersion: lumen.dev/v1alpha1
+kind: LumenFleet
+metadata:
+  name: ${fleet_name}
+spec:
+  prunePolicy: Retain
+  defaults:
+    image: ${main_cr_image}
+    imagePullPolicy: IfNotPresent
+    shardCount: 1
+    replicasPerShard: 1
+    voterCount: 1
+    logFormat: json
+    serving:
+      cpu: 250m
+      memory: 512Mi
+      raftStorage: 1Gi
+  instances:
+    - namespace: ${fleet_ns_a}
+    - namespace: ${fleet_ns_b}
+      name: lumen-b
+      spec:
+        serving:
+          memory: 640Mi
+    - namespace: lumen-fleet-absent
+      name: never
+    - namespace: ${fleet_ns_a}
+      name: bad-override
+      spec:
+        serving:
+          memoryy: 1Gi
+EOF
+wait_fleet_observed
+kubectl get lumenfleet/"$fleet_name" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-initial.json"
+
+jq -e '.status.desiredInstances == 4 and .status.appliedInstances == 2' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-initial.json" >/dev/null || {
+  echo "the fleet did not report 2 of 4 entries converged" >&2
+  jq '.status' "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-initial.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+[[ "$(fleet_entry_state "$fleet_ns_a" "$fleet_name")" == "Created" ]] || {
+  echo "the inherit-only entry did not report Created" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+[[ "$(fleet_entry_state lumen-fleet-absent never)" == "NamespaceMissing" ]] || {
+  echo "an entry naming a nonexistent namespace did not report NamespaceMissing — the fleet may be creating namespaces, which its ClusterRole must never allow" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+[[ "$(fleet_entry_state "$fleet_ns_a" bad-override)" == "Rejected" ]] || {
+  echo "a misspelled override (serving.memoryy) did not report Rejected — a typo that merges silently would leave a tenant on the defaults with no signal" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+# The rejection must NAME the field. "invalid spec" is not a diagnosis anyone
+# can act on, and this is the message a human debugs a fleet from.
+jq -e --arg ns "$fleet_ns_a" \
+  'first(.status.entries[] | select(.namespace == $ns and .name == "bad-override") | .message) | test("serving.memoryy")' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-initial.json" >/dev/null || {
+  echo "the rejection message does not name the offending field serving.memoryy" >&2
+  jq '.status.entries' "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-initial.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+kubectl -n "$fleet_ns_a" get lumen/bad-override -o json >/dev/null 2>&1 && {
+  echo "a rejected entry still materialized a Lumen" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+
+kubectl -n "$fleet_ns_a" get lumen/"$fleet_name" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a.json"
+kubectl -n "$fleet_ns_b" get lumen/lumen-b -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-b.json"
+
+# The override merges rather than replaces: memory is the tenant's, cpu and
+# raftStorage are still the fleet's.
+jq -e '.spec.serving.memory == "640Mi" and .spec.serving.cpu == "250m" and .spec.serving.raftStorage == "1Gi"' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-b.json" >/dev/null || {
+  echo "the per-instance override did not merge over the fleet defaults" >&2
+  jq '.spec.serving' "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-b.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+jq -e '.spec.serving.memory == "512Mi"' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a.json" >/dev/null || {
+  echo "the inherit-only instance did not take the fleet default memory" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+# No ownerReference, by design: an ownerRef would make deleting the fleet
+# cascade into deleting every data plane and its PVCs, which is the exact
+# opposite of prunePolicy: Retain.
+jq -e '(.metadata.ownerReferences // []) | length == 0' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a.json" >/dev/null || {
+  echo "a fleet-materialized Lumen carries an ownerReference; deleting the fleet would cascade-delete data planes" >&2
+  jq '.metadata.ownerReferences' "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+jq -e --arg fleet "$fleet_name" '.metadata.labels["lumen.dev/fleet"] == $fleet' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a.json" >/dev/null || {
+  echo "a fleet-materialized Lumen is missing the lumen.dev/fleet label the fleet tracks it by" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+
+# ---- The SSA field-ownership invariant, read from the API server ----
+# The reshard driver writes spec.shardCount / spec.shardMap /
+# spec.reshardPolicy.workflow at runtime. If the steady-state fleet apply ever
+# OWNED those paths, the next pass that omitted them would prune a completed
+# split back to its seed topology. The design's answer is two field managers:
+# a one-time create under lumen-fleet-seed, and a steady-state apply under
+# lumen-fleet whose apply-set never names those paths. Kubernetes' own
+# managedFields bookkeeping is the direct oracle for that — no behavioural
+# simulation needed, and nothing to destabilize.
+fleet_apply_deadline=$((SECONDS + 120))
+until kubectl -n "$fleet_ns_a" get lumen/"$fleet_name" --show-managed-fields -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" 2>/dev/null \
+  && jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet")] | length == 1' \
+    "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >/dev/null 2>&1; do
+  if (( SECONDS >= fleet_apply_deadline )); then
+    echo "the steady-state 'lumen-fleet' field manager never appeared; the fleet may only ever be creating, never re-applying" >&2
+    jq '[.metadata.managedFields[].manager]' "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >&2 || true
+    capture_fleet_diagnostics
+    exit 1
+  fi
+  sleep 10
+done
+jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet-seed")] | length == 1' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >/dev/null || {
+  echo "the one-time 'lumen-fleet-seed' field manager is absent; the initial topology has no owner and the next apply could prune it" >&2
+  jq '[.metadata.managedFields[].manager]' "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+jq -e '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"] // {} | keys[]]
+       | any(. == "f:shardCount" or . == "f:shardMap" or . == "f:reshardPolicy") | not' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >/dev/null || {
+  echo "the steady-state 'lumen-fleet' apply-set claims a path the reshard driver owns; a later pass would revert a completed split" >&2
+  jq '[.metadata.managedFields[] | select(.manager == "lumen-fleet") | .fieldsV1["f:spec"] | keys]' \
+    "$EVIDENCE_DIR/kubernetes/lumen-fleet-managed-fields.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+
+# A fleet-materialized Lumen is a real instance, not just an object: hold the
+# inherit-only one to Ready so "the fleet deployed it" means it serves.
+fleet_ready_deadline=$((SECONDS + 600))
+until [[ "$(kubectl -n "$fleet_ns_a" get lumen/"$fleet_name" -o jsonpath='{.status.phase}' 2>/dev/null || true)" == "Ready" ]]; do
+  if (( SECONDS >= fleet_ready_deadline )); then
+    echo "the fleet-materialized Lumen in $fleet_ns_a never reached Ready" >&2
+    capture_fleet_diagnostics
+    exit 1
+  fi
+  sleep 10
+done
+
+# ---- Prune contract, both policies ----
+# Removing a line from a list is a plausible edit; deleting a search index with
+# its PVCs is not a plausible consequence of one. Under Retain the instance
+# must survive and be REPORTED as orphaned — silence would be the dangerous
+# outcome, not the safe one.
+kubectl patch lumenfleet/"$fleet_name" --type=json \
+  --patch '[{"op":"remove","path":"/spec/instances/1"}]' \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-retain-patch.txt"
+wait_fleet_observed
+kubectl get lumenfleet/"$fleet_name" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-retain.json"
+[[ "$(fleet_entry_state "$fleet_ns_b" lumen-b)" == "Orphaned" ]] || {
+  echo "an undeclared instance was not reported as Orphaned under prunePolicy: Retain" >&2
+  jq '.status.entries' "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-retain.json" >&2 || true
+  capture_fleet_diagnostics
+  exit 1
+}
+kubectl -n "$fleet_ns_b" get lumen/lumen-b -o json >/dev/null 2>&1 || {
+  echo "prunePolicy: Retain deleted an instance that merely left the fleet's list" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+
+kubectl patch lumenfleet/"$fleet_name" --type=merge \
+  --patch '{"spec":{"prunePolicy":"Delete"}}' \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-delete-policy-patch.txt"
+wait_fleet_observed
+fleet_prune_deadline=$((SECONDS + 180))
+until ! kubectl -n "$fleet_ns_b" get lumen/lumen-b >/dev/null 2>&1; do
+  if (( SECONDS >= fleet_prune_deadline )); then
+    echo "prunePolicy: Delete did not remove the undeclared instance" >&2
+    capture_fleet_diagnostics
+    exit 1
+  fi
+  sleep 10
+done
+kubectl get lumenfleet/"$fleet_name" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-status-pruned.json"
+
+# ---- The deletion contract that the ownerReference decision exists for ----
+# Deleting the fleet declaration must NOT delete the running data planes. This
+# is the single assertion that would have caught an ownerReference sneaking
+# back in, and it is unprovable without a live API server's GC.
+kubectl delete lumenfleet/"$fleet_name" --wait=true --timeout=120s \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-delete.txt"
+sleep 45
+kubectl -n "$fleet_ns_a" get lumen/"$fleet_name" -o json \
+  > "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a-after-fleet-delete.json" || {
+  echo "deleting the LumenFleet took its data plane with it — cross-object garbage collection is exactly what the no-ownerReference design forbids" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+jq -e '.status.phase == "Ready"' \
+  "$EVIDENCE_DIR/kubernetes/lumen-fleet-instance-a-after-fleet-delete.json" >/dev/null || {
+  echo "the surviving data plane is no longer Ready after its fleet was deleted" >&2
+  capture_fleet_diagnostics
+  exit 1
+}
+
+kubectl -n "$fleet_ns_a" delete lumen/"$fleet_name" --wait=true --timeout=120s
+kubectl -n "$fleet_ns_a" delete statefulset/"$fleet_name" --wait=true --timeout=180s \
+  --cascade=foreground --ignore-not-found
+kubectl -n "$fleet_ns_a" delete pvc --all --wait=true --timeout=300s --ignore-not-found
+kubectl delete namespace "$fleet_ns_a" "$fleet_ns_b" --wait=true --timeout=300s --ignore-not-found
+
 # One byte is an acceptance-only pressure threshold. It exercises the existing
 # disk policy without creating a chargeable GiB of test data.
 kubectl -n lumen patch lumen/lumen --type=merge --patch \
@@ -850,5 +1309,7 @@ jq -n \
   --arg authcsi_skip_reason "$authcsi_skip_reason" \
   --arg quorum_leader "$quorum_leader" \
   --arg quorum_follower "$quorum_follower" \
-  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, auth_csi_gke_leg:$authcsi_status, auth_csi_gke_leg_skip_reason:$authcsi_skip_reason, cpu_memory_actuator:"not_claimed", live_replica_membership:"passed", peer_dns_follows_cr_name:{issue:"#2610", cr:"lumen-quorum", leader:$quorum_leader, follower:$quorum_follower, replicated_read:"passed"}}' \
+  --arg placement_pool "$placement_pool" \
+  --arg placement_node "$placement_node" \
+  '{schema:$schema, operator_reconcile_1x1:"passed", pod_restart_data_retention:"passed", admission_cr_exposure:"passed", gcs_backup_before_split:"passed", gcs_object:$object, gcs_object_bytes:$bytes, cold_restore_fresh_pvc:"passed", seed_set_restart_retention:"passed", auto_split_delta:1, auto_split:{from:1,to:2,ready_pods:2,pvcs_at_least:2}, auth_csi_gke_leg:$authcsi_status, auth_csi_gke_leg_skip_reason:$authcsi_skip_reason, cpu_memory_actuator:"not_claimed", live_replica_membership:"passed", peer_dns_follows_cr_name:{issue:"#2610", cr:"lumen-quorum", leader:$quorum_leader, follower:$quorum_follower, replicated_read:"passed"}, dedicated_node_pool_placement:{cr:"lumen-placement", pool:$placement_pool, node:$placement_node, node_selector_alone_unschedulable:"passed", toleration_scheduled_from_zero:"passed", control_plane_excluded:"passed"}, control_plane_fleet:{cr:"LumenFleet/acceptance", desired:4, applied:2, namespace_missing_reported:"passed", misspelled_override_rejected:"passed", override_merged_over_defaults:"passed", no_owner_reference:"passed", driver_owned_paths_unclaimed:"passed", retain_orphans_instance:"passed", delete_prunes_instance:"passed", fleet_delete_leaves_data_plane:"passed"}}' \
   > "$EVIDENCE_DIR/lumen-acceptance.json"

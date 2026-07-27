@@ -44,8 +44,16 @@ line_of() { # line_of <pattern> <file>
   rg -n -F -- "$1" "$2" | head -1 | cut -d: -f1
 }
 
-for script in "$RUN_SCRIPT" "$RENDER_SCRIPT" "$CLEANUP_SCRIPT" "$VERIFY_CLEAN_SCRIPT" \
-              "$CELL_SCRIPT" "$BOOTSTRAP_SCRIPT"; do
+# Every script, by glob, not by name. This loop used to enumerate six of the
+# twelve, which meant the three verify-*.sh scripts -- where the actual per-leg
+# assertions live and where the file keeps growing -- were the only ones a
+# syntax error could reach production in. A new script is covered the day it
+# lands, not the day someone remembers to add it here.
+shopt -s nullglob
+acceptance_scripts=("$ACCEPTANCE_ROOT"/scripts/*.sh)
+shopt -u nullglob
+[[ ${#acceptance_scripts[@]} -ge 6 ]] || fail "found ${#acceptance_scripts[@]} acceptance scripts; the glob is not matching"
+for script in "${acceptance_scripts[@]}"; do
   bash -n "$script" || fail "shell syntax error in ${script##*/}"
 done
 jq empty "$SCHEMA" || fail "evidence schema is not valid JSON"
@@ -126,6 +134,36 @@ present "the GKE Secret Manager add-on is undeclared again (#2457 will skip)" \
   "secret_manager_config" "$ACCEPTANCE_ROOT/cluster/main.tf"
 present "the reuse branch stopped warning about add-on drift" \
   "has no GKE Secret Manager add-on" "$BOOTSTRAP_SCRIPT"
+present "the reuse branch stopped warning about data-plane pool drift" \
+  "node pool; the spec.placement leg will fail" "$BOOTSTRAP_SCRIPT"
+
+# --- every namespace the run can create is swept, and checked (#2462) --------
+# The fleet leg materializes data planes into namespaces of its own and tears
+# them down itself on the happy path. A leg that fails midway does not, and
+# this cluster is persistent -- so a leaked StatefulSet PVC is a Persistent
+# Disk that bills indefinitely with nothing left pointing at it. Cleanup must
+# name those namespaces even though a passing run never needs it to, and the
+# no-leftovers gate must look for them, or the leak is invisible by design.
+for fleet_ns in lumen-fleet-a lumen-fleet-b; do
+  present "cleanup no longer sweeps the $fleet_ns data-plane namespace" \
+    "$fleet_ns" "$CLEANUP_SCRIPT"
+  present "the no-leftovers gate stopped checking $fleet_ns" \
+    "$fleet_ns" "$VERIFY_CLEAN_SCRIPT"
+done
+present "cleanup no longer removes the cluster-scoped LumenFleet CRD" \
+  "lumenfleets.lumen.dev" "$CLEANUP_SCRIPT"
+present "the no-leftovers gate stopped checking the LumenFleet CRD" \
+  "lumenfleets.lumen.dev" "$VERIFY_CLEAN_SCRIPT"
+# Ordering, not just presence: the fleet controller reconciles cluster-wide, so
+# its CRD must go before its target namespaces start terminating. Reversed, a
+# reconcile pass landing between two deletes re-materializes a Lumen into a
+# namespace on its way out and the gate trips on what cleanup just removed.
+fleet_crd_line="$(line_of 'kubectl delete customresourcedefinition lumenfleets.lumen.dev' "$CLEANUP_SCRIPT")"
+ns_delete_line="$(line_of 'kubectl delete namespace "$namespace" --ignore-not-found' "$CLEANUP_SCRIPT")"
+[[ "$fleet_crd_line" =~ ^[0-9]+$ && "$ns_delete_line" =~ ^[0-9]+$ ]] \
+  || fail "could not locate cleanup's fleet-CRD and namespace deletes"
+(( fleet_crd_line < ns_delete_line )) \
+  || fail "the LumenFleet CRD must be deleted before the namespace sweep (crd@$fleet_crd_line, namespaces@$ns_delete_line)"
 
 echo "acceptance-mode oracle: ok"
 # HANDWRITE-END

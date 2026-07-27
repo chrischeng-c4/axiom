@@ -71,6 +71,13 @@ else
   check_empty "Lumen namespace" kubectl get namespace lumen --no-headers
   check_empty "Lumen operator namespace" kubectl get namespace lumen-system --no-headers
   check_empty "Lumen CRD" kubectl get customresourcedefinition lumens.lumen.dev --no-headers
+  # The fleet is cluster-scoped and materializes into namespaces of its own, so
+  # it can leak in two directions this gate would otherwise never look in: a
+  # LumenFleet object surviving on the cluster, and data-plane namespaces whose
+  # PVCs keep billing as Persistent Disks long after the run they belonged to.
+  check_empty "LumenFleet CRD" kubectl get customresourcedefinition lumenfleets.lumen.dev --no-headers
+  check_empty "Lumen fleet namespace a" kubectl get namespace lumen-fleet-a --no-headers
+  check_empty "Lumen fleet namespace b" kubectl get namespace lumen-fleet-b --no-headers
   check_empty "Sift namespace" kubectl get namespace sift --no-headers
   check_empty "Sift operator namespace" kubectl get namespace sift-system --no-headers
   check_empty "Sift CRD" kubectl get customresourcedefinition sifts.sift.axiom.dev --no-headers

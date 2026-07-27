@@ -20,6 +20,16 @@ provider "google" {
   region  = var.region
 }
 
+locals {
+  # The dedicated data-plane pool's identity, in one place: the pool resource
+  # below, the outputs the harness reads, and the placement leg's drift check
+  # all derive from these four strings.
+  data_plane_pool_name   = "data-plane-pool"
+  data_plane_label_key   = "axiom.dev/pool"
+  data_plane_label_value = "data-plane"
+  data_plane_taint_key   = "axiom.dev/dedicated"
+}
+
 resource "google_service_account" "nodes" {
   project      = var.project_id
   account_id   = var.node_service_account_id
@@ -98,6 +108,72 @@ resource "google_container_node_pool" "acceptance" {
   }
 }
 
+# A second, DEDICATED node pool that exists for one reason: `spec.placement`
+# (nodeSelector + tolerations) is only meaningfully proven against a real pool
+# boundary. On a single-pool cluster every pod lands on the same node whether
+# the operator renders the field or silently drops it, so a one-pool run cannot
+# tell a working feature from a broken one.
+#
+# Scale-to-zero (min 0) is what makes it free: the pool holds no node until the
+# placement leg's pod is Pending against it, and the autoscaler removes the node
+# again afterwards. GKE stores the labels and taint on the pool itself, so
+# scale-from-zero simulation sees them without a node ever having existed.
+#
+# The taint is the load-bearing half. Without it, a Lumen that merely matched
+# the label would schedule here even with `tolerations` dropped; with it, only a
+# pod carrying BOTH halves of `spec.placement` can ever run on this node.
+resource "google_container_node_pool" "data_plane" {
+  project            = var.project_id
+  name               = local.data_plane_pool_name
+  location           = var.gke_zone
+  cluster            = google_container_cluster.acceptance.name
+  initial_node_count = 0
+
+  autoscaling {
+    min_node_count = 0
+    max_node_count = 1
+  }
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+  node_config {
+    machine_type    = "e2-standard-2"
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    metadata        = { disable-legacy-endpoints = "true" }
+    labels          = { (local.data_plane_label_key) = local.data_plane_label_value }
+    taint {
+      key    = local.data_plane_taint_key
+      value  = local.data_plane_label_value
+      effect = "NO_SCHEDULE"
+    }
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}
+
 output "cluster_name" {
   value = google_container_cluster.acceptance.name
+}
+
+# The placement leg re-derives these from the live GKE API and fails if they
+# disagree, so this file stays the single source of truth even though the
+# persistent cluster is reused (and therefore never re-applied) between runs.
+output "data_plane_pool_name" {
+  value = local.data_plane_pool_name
+}
+
+output "data_plane_node_selector" {
+  value = { (local.data_plane_label_key) = local.data_plane_label_value }
+}
+
+output "data_plane_toleration" {
+  value = {
+    key      = local.data_plane_taint_key
+    operator = "Equal"
+    value    = local.data_plane_label_value
+    effect   = "NoSchedule"
+  }
 }

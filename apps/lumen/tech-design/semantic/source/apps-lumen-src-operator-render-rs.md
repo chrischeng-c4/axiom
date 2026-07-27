@@ -491,6 +491,18 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         volumes,
         volume_mounts,
         affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        // `spec.placement` names the node pool; the anti-affinity above stays
+        // operator-owned so asking for a pool can never cost the constraint
+        // that keeps two replicas of a shard off one host.
+        node_selector: (!lumen.spec.placement.node_selector.is_empty())
+            .then(|| json!(lumen.spec.placement.node_selector)),
+        tolerations: lumen
+            .spec
+            .placement
+            .tolerations
+            .iter()
+            .map(|t| json!(t))
+            .collect(),
         topology_spread_constraints: vec![
             spread("topology.kubernetes.io/zone"),
             spread("kubernetes.io/hostname"),

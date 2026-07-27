@@ -14,6 +14,7 @@ fn lumen_with_backup() -> Lumen {
     let mut spec = LumenSpec {
         image: "asia-east1-docker.pkg.dev/example/lumen:sha".into(),
         image_pull_policy: Some("Always".into()),
+        placement: Default::default(),
         shard_count: 1,
         shard_map: ShardMapSpec::default(),
         replicas_per_shard: 1,

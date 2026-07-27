@@ -29,6 +29,20 @@ rules:
   - apiGroups: ["lumen.dev"]
     resources: ["lumens", "lumens/status", "lumens/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The cluster-scoped fleet the platform team applies, and the status the
+  # fleet loop writes back to it. No `create`/`delete`: the fleet is authored
+  # by a human, and the operator only ever reads it and reports on it.
+  - apiGroups: ["lumen.dev"]
+    resources: ["lumenfleets", "lumenfleets/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Read-only, so the fleet can refuse an entry whose namespace does not exist
+  # instead of leaving a Lumen that never schedules. Deliberately not `create`:
+  # namespace lifecycle (quotas, labels, Workload Identity bindings) belongs to
+  # whatever provisions the cluster, and granting it here would make one CR
+  # edit a cluster-wide namespace-creation privilege.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
   # Serving workloads.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets"]

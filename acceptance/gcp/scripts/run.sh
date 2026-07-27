@@ -433,7 +433,13 @@ fi
 # app-owned Kubernetes layers before creating the cluster.
 BACKUP_BUCKET="${PROJECT_ID}-axo-${RUN_ID}-backup"
 BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
-GKE_CLUSTER_NAME="axo-${RUN_ID}-gke"
+# The cluster this run actually uses. It was `axo-${RUN_ID}-gke` — a name left
+# over from the disposable-cluster era that has not existed since the run moved
+# to the persistent cluster, so anything reading it (the Sift collector's
+# `clusterName`, and now the placement leg's node-pool drift check) was reading
+# a cluster that is not there. Line 491 already asserts the Terraform output
+# equals PERSISTENT_CLUSTER_NAME, so this is the same value, named once.
+GKE_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME"
 # #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
 # plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
 # same deterministic string from RUN_ID (see environment/secretmanager.tf).

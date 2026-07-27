@@ -2495,6 +2495,7 @@ mod tests {
         LumenSpec {
             image: "lumen:latest".into(),
             image_pull_policy: None,
+            placement: Default::default(),
             shard_count,
             shard_map: ShardMapSpec {
                 version: 0,

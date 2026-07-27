@@ -83,7 +83,22 @@ if [[ -f "$STATE_DIR/kube-context-ready.txt" ]]; then
   if [[ "$acceptance_mode" == "tape" ]]; then
     namespaces=(tape tape-system)
   else
-    namespaces=(lumen lumen-system sift sift-system)
+    # lumen-fleet-a/-b are the data-plane namespaces the LumenFleet leg
+    # materializes into. They are swept HERE, not only at the end of that leg,
+    # because a leg that fails midway leaves StatefulSets and their PVCs behind
+    # -- and this cluster is persistent, so a leaked PVC is a Persistent Disk
+    # that bills forever with nothing left to point at it. Every namespace the
+    # run can create belongs in this list, including the ones a passing run
+    # tears down itself.
+    namespaces=(lumen lumen-system sift sift-system lumen-fleet-a lumen-fleet-b)
+  fi
+  # The fleet controller reconciles cluster-wide, so it must lose its API
+  # before its target namespaces start terminating; otherwise a pass that
+  # lands between two deletes re-materializes a Lumen into a namespace on its
+  # way out and the no-leftovers gate trips on a resource cleanup just removed.
+  if [[ "$acceptance_mode" != "tape" ]]; then
+    kubectl delete customresourcedefinition lumenfleets.lumen.dev \
+      --ignore-not-found --wait=true --timeout=180s >/dev/null 2>&1 || true
   fi
   for namespace in "${namespaces[@]}"; do
     kubectl delete namespace "$namespace" --ignore-not-found --wait=false \

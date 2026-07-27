@@ -45,7 +45,9 @@
             "gcs_backup_before_split",
             "auto_split_delta",
             "cpu_memory_actuator",
-            "live_replica_membership"
+            "live_replica_membership",
+            "dedicated_node_pool_placement",
+            "control_plane_fleet"
           ]
         },
         "sift": {

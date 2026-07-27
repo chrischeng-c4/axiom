@@ -167,6 +167,54 @@ enum K8sCmd {
     Operator(K8sOperatorArgs),
     /// App namespace data-plane declaration: render a Lumen custom resource.
     Instance(K8sInstanceArgs),
+    /// Control-plane fleet declaration: render the one cluster-scoped
+    /// `LumenFleet` that names every data-plane namespace and its settings.
+    /// Use this instead of `instance` when the platform team owns
+    /// configuration centrally and app teams only own their own overrides.
+    Fleet(K8sFleetArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sFleetArgs {
+    #[command(subcommand)]
+    cmd: K8sFleetCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sFleetCmd {
+    /// Render a cluster-scoped `kind: LumenFleet` declaration.
+    Render(K8sFleetRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sFleetRenderArgs {
+    /// Built-in fleet profile.
+    #[arg(long, value_enum, default_value_t = K8sFleetProfile::Template)]
+    profile: K8sFleetProfile,
+    /// LumenFleet name. Also the default name of every `Lumen` it
+    /// materializes, so `kubectl get lumen -A` reads as one fleet spread
+    /// across namespaces.
+    #[arg(long)]
+    name: Option<String>,
+    /// Serving image for `spec.defaults`. Profile-specific default.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout. A directory receives
+    /// `lumenfleet.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum K8sFleetProfile {
+    /// One local/kind data plane in `default`, auth disabled.
+    Dev,
+    /// Two tenant namespaces on a dedicated node pool, auth required.
+    Prod,
+    /// Fill-in-the-blanks skeleton naming every knob a deployer owns:
+    /// node pool, StorageClass, ServiceAccount, per-tenant CPU/memory/disk,
+    /// and per-tenant credential source.
+    Template,
 }
 
 #[derive(clap::Args)]
@@ -1186,6 +1234,17 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 write_or_print(args.out.as_deref(), "lumen.yaml", &yaml, kubectl_apply_next)
             }
         },
+        K8sCmd::Fleet(args) => match args.cmd {
+            K8sFleetCmd::Render(args) => {
+                let yaml = render_fleet_yaml(&args);
+                write_or_print(
+                    args.out.as_deref(),
+                    "lumenfleet.yaml",
+                    &yaml,
+                    kubectl_apply_next,
+                )
+            }
+        },
     }
 }
 
@@ -1901,9 +1960,18 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
     let image = args.image.as_deref().unwrap_or(&default_image);
 
-    let mut yaml = format!(
-        "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    let yaml = format!(
+        "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{}",
+        profile_spec_body(body, image)
     );
+    cli_std::artifact::ensure_trailing_newline(&yaml)
+}
+
+/// The `spec:` body for one profile, at two-space indent. Shared by
+/// `k8s instance render` and `k8s fleet render` so a fleet's `defaults` and a
+/// standalone CR cannot drift into disagreeing about what "prod" means.
+fn profile_spec_body(body: InstanceBody, image: &str) -> String {
+    let mut yaml = format!("  image: {image}\n");
     match body {
         InstanceBody::Dev => {
             // Every profile states its auth posture out loud, even when it
@@ -1922,14 +1990,161 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  tokensSecret: REPLACE_ME__TOKENS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
-    cli_std::artifact::ensure_trailing_newline(&yaml)
+    yaml
 }
 
+#[derive(Clone, Copy)]
 enum InstanceBody {
     Dev,
     Staging,
     Prod,
     Template,
+}
+
+/// `spec.defaults` for `k8s fleet render --profile template`, at four-space
+/// indent.
+///
+/// Names no token source: the credential source is per-tenant here (each app
+/// team's own Secret Manager entry), and a `LumenFleet` whose defaults set
+/// `tokensSecret` while its instances set `tokensSecretProviderClass` merges
+/// into a spec naming both — which the one-token-source rule rejects, so
+/// every entry in the handed-out template would fail to materialize.
+const FLEET_TEMPLATE_DEFAULTS: &str = "\
+    \x20   image: __IMAGE__\n\
+    \x20   imagePullPolicy: IfNotPresent\n\
+    \x20   shardCount: REPLACE_ME__SHARD_COUNT\n\
+    \x20   replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n\
+    \x20   voterCount: REPLACE_ME__VOTER_COUNT\n\
+    \x20   logFormat: json\n\
+    \x20   auth: required\n\
+    \x20   # Workload Identity KSA every data plane runs as.\n\
+    \x20   serviceAccountName: REPLACE_ME__WORKLOAD_IDENTITY_KSA\n\
+    \x20   placement:\n\
+    \x20     # Which node pool every data plane lands on.\n\
+    \x20     nodeSelector:\n\
+    \x20       REPLACE_ME__NODE_POOL_LABEL: REPLACE_ME__NODE_POOL_VALUE\n\
+    \x20     # Uncomment when the pool is tainted to repel other workloads.\n\
+    \x20     # tolerations:\n\
+    \x20     #   - key: REPLACE_ME__TAINT_KEY\n\
+    \x20     #     operator: Equal\n\
+    \x20     #     value: REPLACE_ME__TAINT_VALUE\n\
+    \x20     #     effect: NoSchedule\n\
+    \x20   serving:\n\
+    \x20     cpu: \"1\"\n\
+    \x20     memory: 4Gi\n\
+    \x20     # SSD vs standard disk is the StorageClass; omit to take the\n\
+    \x20     # cluster default.\n\
+    \x20     raftStorageClass: REPLACE_ME__STORAGE_CLASS\n";
+
+/// Render a `LumenFleet` — the single cluster-scoped object the platform team
+/// applies into the control-plane namespace to declare every data plane.
+///
+/// The split the document is built to teach: `defaults` holds what the
+/// platform owns and every tenant shares (image, node pool, StorageClass,
+/// ServiceAccount); each `instances[].spec` holds what one app team owns (its
+/// CPU/memory request — which is what makes replica-shard autoscaling
+/// trigger — its disk size, and its credential source).
+fn render_fleet_yaml(args: &K8sFleetRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_image, body) = match args.profile {
+        K8sFleetProfile::Dev => ("search", "lumen:latest".to_string(), InstanceBody::Dev),
+        K8sFleetProfile::Prod => (
+            "lumen",
+            format!("ghcr.io/chrischeng-c4/lumen:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sFleetProfile::Template => (
+            "REPLACE_ME__FLEET_NAME",
+            "REPLACE_ME__REGISTRY/lumen:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+
+    // `defaults` is a whole LumenSpec. dev/prod reuse the instance profile
+    // bodies verbatim, one level deeper, so a fleet's "prod" and a standalone
+    // "prod" CR cannot come to disagree. `template` gets its own body: every
+    // value there is a REPLACE_ME with no semantics to keep in step, and it
+    // has to name knobs (node pool, StorageClass, ServiceAccount) that only
+    // make sense on the fleet — appending them to the shared body would emit
+    // `serving:` twice and silently drop the first one.
+    let defaults: String = match args.profile {
+        K8sFleetProfile::Template => FLEET_TEMPLATE_DEFAULTS.replace("__IMAGE__", image),
+        _ => profile_spec_body(body, image)
+            .lines()
+            .map(|line| format!("  {line}\n"))
+            .collect(),
+    };
+
+    let mut yaml = format!(
+        "# One object, applied once by the platform team. Every data-plane\n\
+         # namespace this cluster serves is declared below; the operator\n\
+         # materializes one `Lumen` per entry into the namespace named.\n\
+         #\n\
+         # The namespaces must already exist — the fleet never creates them.\n\
+         apiVersion: lumen.dev/v1alpha1\n\
+         kind: LumenFleet\n\
+         metadata:\n  name: {name}\n\
+         spec:\n\
+         \x20 # Platform-owned: what every tenant shares.\n\
+         \x20 defaults:\n{defaults}"
+    );
+
+    match args.profile {
+        K8sFleetProfile::Dev => {
+            yaml.push_str(
+                "  instances:\n\
+                 \x20   - namespace: default\n",
+            );
+        }
+        K8sFleetProfile::Prod => {
+            yaml.push_str(
+                "    placement:\n\
+                 \x20     nodeSelector:\n\
+                 \x20       cloud.google.com/gke-nodepool: lumen\n\
+                 \x20 # App-team-owned: what one tenant sets for itself. Each\n\
+                 \x20 # `spec` is a merge patch over `defaults` above — name only\n\
+                 \x20 # what differs; everything unnamed is inherited.\n\
+                 \x20 instances:\n\
+                 \x20   - namespace: team-a\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         cpu: \"4\"\n\
+                 \x20         memory: 16Gi\n\
+                 \x20         raftStorage: 200Gi\n\
+                 \x20   - namespace: team-b\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         cpu: \"1\"\n\
+                 \x20         memory: 4Gi\n",
+            );
+        }
+        K8sFleetProfile::Template => {
+            yaml.push_str(
+                "  # App-team-owned: what one tenant sets for itself. Each\n\
+                 \x20 # `spec` is a merge patch over `defaults` above — name only\n\
+                 \x20 # what differs; everything unnamed is inherited. A `null`\n\
+                 \x20 # value removes an inherited field.\n\
+                 \x20 instances:\n\
+                 \x20   - namespace: REPLACE_ME__APP_NAMESPACE\n\
+                 \x20     spec:\n\
+                 \x20       serving:\n\
+                 \x20         # Requests, not just limits: replica-shard\n\
+                 \x20         # autoscaling triggers off these.\n\
+                 \x20         cpu: REPLACE_ME__CPU\n\
+                 \x20         memory: REPLACE_ME__MEMORY\n\
+                 \x20         raftStorage: REPLACE_ME__DISK\n\
+                 \x20       # The tenant's token registry, projected from Secret\n\
+                 \x20       # Manager by the CSI driver.\n\
+                 \x20       tokensSecretProviderClass: REPLACE_ME__SECRET_PROVIDER_CLASS\n\
+                 \x20 # Retain (default) leaves an instance running when its entry\n\
+                 \x20 # is removed; Delete removes it and its PVCs.\n\
+                 \x20 prunePolicy: Retain\n",
+            );
+        }
+    }
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 /// Write `body` to `--out` (or stream it to stdout when `out` is `None`).
@@ -3012,6 +3227,84 @@ mod tests {
         QueryNode, SearchRequest, TermQuery,
     };
     use std::collections::BTreeMap;
+
+    /// Every handed-out `LumenFleet` must actually materialize. A rendered
+    /// template is the first thing a deployer applies, so a duplicated
+    /// `serving:` key (last wins, the CPU/memory request silently gone) or a
+    /// `defaults`/`instances` pair that merges into two token sources would
+    /// ship as a cluster that comes up wrong — or not at all — with the
+    /// mistake in our YAML rather than theirs.
+    #[cfg(feature = "operator")]
+    #[test]
+    fn every_rendered_fleet_profile_materializes_its_instances() {
+        use lumen::operator::fleet::{plan, PlanOutcome};
+
+        for profile in [
+            K8sFleetProfile::Dev,
+            K8sFleetProfile::Prod,
+            K8sFleetProfile::Template,
+        ] {
+            let yaml = render_fleet_yaml(&K8sFleetRenderArgs {
+                profile,
+                name: None,
+                image: None,
+                out: None,
+            });
+            // The template is meant to be edited before it applies, so its
+            // required-decision placeholders are filled in here rather than
+            // pretending an unedited skeleton is deployable. Everything else
+            // about it — key structure, the defaults/instances merge, the
+            // token-source pairing — is exactly what ships.
+            let yaml = yaml
+                .replace("REPLACE_ME__SHARD_COUNT", "1")
+                .replace("REPLACE_ME__REPLICAS_PER_SHARD", "1")
+                .replace("REPLACE_ME__VOTER_COUNT", "1");
+            // Parsing is itself the duplicate-key check: serde_yaml rejects a
+            // mapping that names one key twice, which is how a second
+            // `serving:` block silently eating the CPU/memory request gets
+            // caught rather than shipped.
+            let fleet: lumen::operator::LumenFleet = serde_yaml::from_str(&yaml)
+                .unwrap_or_else(|err| panic!("profile does not parse: {err}\n{yaml}"));
+
+            let planned = plan(&fleet);
+            assert!(
+                !planned.is_empty(),
+                "a fleet that declares no data plane is not a usable starting point\n{yaml}"
+            );
+            for instance in &planned {
+                if let PlanOutcome::Rejected(reason) = &instance.outcome {
+                    panic!(
+                        "namespace {} would be rejected: {reason}\n{yaml}",
+                        instance.namespace
+                    );
+                }
+            }
+        }
+    }
+
+    /// The template exists to name the knobs a deployer owns; a knob that
+    /// silently drops out of it is a knob nobody knows to set.
+    #[test]
+    fn the_fleet_template_names_every_deployer_owned_knob() {
+        let yaml = render_fleet_yaml(&K8sFleetRenderArgs {
+            profile: K8sFleetProfile::Template,
+            name: None,
+            image: None,
+            out: None,
+        });
+        for knob in [
+            "nodeSelector",              // which node pool
+            "raftStorageClass",          // SSD vs standard disk
+            "serviceAccountName",        // Workload Identity
+            "tokensSecretProviderClass", // per-tenant Secret Manager entry
+            "cpu:",                      // request — what triggers shard autoscaling
+            "memory:",
+            "raftStorage:", // per-tenant disk size
+            "prunePolicy",
+        ] {
+            assert!(yaml.contains(knob), "template lost `{knob}`\n{yaml}");
+        }
+    }
 
     #[test]
     fn bootstrap_seed_file_restores_snapshot_before_catchup() {

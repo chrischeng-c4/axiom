@@ -200,6 +200,10 @@ pub struct LumenSpec {
     #[serde(default)]
     pub serving: ServingSpec,
 
+    /// Which nodes the serving pods may run on.
+    #[serde(default)]
+    pub placement: PlacementSpec,
+
     /// Operator-owned storage reshard policy. HPA never changes storage
     /// ownership; this policy only prepares/recommends explicit shard topology
     /// changes.
@@ -266,6 +270,74 @@ pub struct AdmissionSpec {
     /// `AdmissionConfig::DEFAULT_MAX_KEYS` (1024).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_keys: Option<u32>,
+}
+
+/// Where the serving pods are allowed to run.
+///
+/// Deliberately narrower than Kubernetes' `affinity`: `nodeSelector` and
+/// `tolerations` together express "which node pool" completely, while the
+/// operator keeps sole ownership of `podAntiAffinity` — the constraint that
+/// keeps two replicas of one shard off the same host. Exposing the whole
+/// `affinity` block would let a deployer replace that constraint while asking
+/// only for a node pool, silently degrading a raft-HA instance into two copies
+/// on one machine; the rendered StatefulSet would still look correct, and the
+/// first node failure would take both replicas of the shard.
+///
+/// A dedicated node pool for a stateful search workload is not an exotic
+/// request — local SSD and high-memory pools are the normal shape on GKE — and
+/// until this existed there was no way to ask for one: the StatefulSet is
+/// operator-rendered, so a manual `kubectl patch` is reverted on the next
+/// reconcile.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct PlacementSpec {
+    /// `spec.template.spec.nodeSelector` for the serving pods, e.g.
+    /// `{ "cloud.google.com/gke-nodepool": "lumen-ssd" }`. Empty means the
+    /// scheduler picks from every node, as before.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_selector: BTreeMap<String, String>,
+
+    /// Taint tolerations for the serving pods, so a dedicated node pool can
+    /// carry a taint that keeps every other workload off it. Note this covers
+    /// the serving StatefulSet only: the optional backup CronJob is a
+    /// short-lived pod that reads over the network and is left schedulable on
+    /// the cluster's general pool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tolerations: Vec<Toleration>,
+}
+
+/// One entry of [`PlacementSpec::tolerations`], mirroring the Kubernetes
+/// `v1.Toleration` fields.
+///
+/// Declared here rather than reused from `k8s-openapi` because the CRD schema
+/// is derived with `schemars`, which `k8s-openapi`'s types do not implement.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct Toleration {
+    /// The taint key this tolerates. Empty with `operator: Exists` tolerates
+    /// every taint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+
+    /// `Exists` or `Equal`. Unset means `Equal` (the Kubernetes default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+
+    /// The taint value to match. Only meaningful with `operator: Equal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+
+    /// `NoSchedule`, `PreferNoSchedule`, or `NoExecute`. Unset tolerates every
+    /// effect of the matching taint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+
+    /// How long the pod stays bound after the node gains a matching taint.
+    /// Only meaningful with `effect: NoExecute`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toleration_seconds: Option<i64>,
 }
 
 /// Versioned virtual-bucket map control-plane metadata.

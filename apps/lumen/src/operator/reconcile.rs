@@ -780,19 +780,22 @@ impl Lumen {
 /// reshard phase driver (#1319 R2, #1381; independently leader-gated — see
 /// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]), and the
 /// HPA topology-transition handoff loop (#1385; independently leader-gated —
-/// see [`spawn_hpa_handoff_loop`]).
+/// see [`spawn_hpa_handoff_loop`]), and the fleet materialization loop
+/// (independently leader-gated — see
+/// [`crate::operator::fleet::spawn_fleet_loop`]).
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {
             spawn_shard_usage_loop(client.clone());
             crate::operator::reshard_driver::spawn_reshard_driver_loop(client.clone());
+            crate::operator::fleet::spawn_fleet_loop(client.clone());
             spawn_hpa_handoff_loop(client);
         }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "reshard live-usage measurement + phase-driver + HPA-handoff loops disabled: could not build a kube client"
+                "reshard live-usage measurement + phase-driver + fleet + HPA-handoff loops disabled: could not build a kube client"
             );
         }
     }
@@ -894,6 +897,7 @@ mod tests {
         let spec = LumenSpec {
             image: "lumen:latest".into(),
             image_pull_policy: None,
+            placement: Default::default(),
             shard_count: 2,
             shard_map: ShardMapSpec::default(),
             replicas_per_shard: 3,
@@ -1480,6 +1484,7 @@ mod tests {
         LumenSpec {
             image: "lumen:latest".into(),
             image_pull_policy: None,
+            placement: Default::default(),
             shard_count,
             shard_map: ShardMapSpec::default(),
             replicas_per_shard,
