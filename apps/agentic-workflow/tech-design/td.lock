@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:29:21.208520+00:00"
-digest = "sha256:d93eb5247507e7de934bb0dad1115192179e67803862da75ab90f9f90e1d0e88"
-source_digest = "sha256:d93eb5247507e7de934bb0dad1115192179e67803862da75ab90f9f90e1d0e88"
-ir_digest = "sha256:e18533f96ac03b98f311f378274d446374d7283a6fecc4ee7aa03e76fbe55e42"
+generated_at = "2026-07-27T13:33:38.248935+00:00"
+digest = "sha256:45c01dd874e710f685bc8273a9cfb2e4958d0487a1b4173e1efa369de7f649c9"
+source_digest = "sha256:45c01dd874e710f685bc8273a9cfb2e4958d0487a1b4173e1efa369de7f649c9"
+ir_digest = "sha256:8ff86375c15a7bb81b6209646913f0c26afe81ca02e7b8b48e3875bff339b24c"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1796,8 +1796,28 @@ path = "src/agentic_workflow/migrated/surface/changes/r4_bulk_drop_deprecated_h2
 digest = "sha256:33eaaf46c30f7e4ccb27c8ea746549600c3ac96a4c600d08471ce0c8bfceb82f"
 
 [[files]]
+path = "src/agentic_workflow/migrated/surface/commands/changes.py"
+digest = "sha256:0869a6960058a874e87faf869aea061b512d0662d880002cc4fed8c571e5df93"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/commands/issues_top.py"
+digest = "sha256:1ccec7b0ac04d2f1a260b966ef74011850ed57235ab8c947cb6fe747a5dedfb5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/commands/list.py"
+digest = "sha256:cf7e4b65997ae38a846f908626c8d2e0ef5a220b68ec1566cb373a6d3938d280"
+
+[[files]]
 path = "src/agentic_workflow/migrated/surface/commands/proposal.py"
 digest = "sha256:f3648ea742903b99656e505290fda7a2406082ad9bdfc74cac538586a60d8ffd"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/commands/tasks.py"
+digest = "sha256:d28410eebd3825475b09a0fc2eed798cb0a6a3d8220db37eb336630f15634672"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/commands/validate_proposal.py"
+digest = "sha256:a32135357011d69c5e37bb440223bc7bdc43547b1aeb310b4fd1bfa3241df0c1"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/generate/project_health_source.py"

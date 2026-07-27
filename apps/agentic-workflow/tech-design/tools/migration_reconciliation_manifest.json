@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:6f032cd4e519288bfcec5c61a9f04023faf002a09f3c06d2bd38e4a365575261",
+  "digest": "sha256:6aa50ef7ec2d4acec401460fbbf4eec08316bc26d6e90d1eea11df4ae1006cc7",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10785,7 +10785,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/changes.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:6e00fbbe71686548f317eb539568d46cbe22c37d9c2931b52b2565e562b18366",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/changes.py"
     },
     {
@@ -10795,7 +10795,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/issues_top.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:377932721fd078294c3bbc248fe6098ec89f4700fc48ca023c54dbff366156d2",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/issues_top.py"
     },
     {
@@ -10805,7 +10805,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/list.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:616a90940a2ca671394b0a030ccaba16c6ee96f54c2b38687f209e04ed215705",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/list.py"
     },
     {
@@ -10825,7 +10825,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/tasks.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:4dbbc0528d2fb54647aac2d43cfbbef0b266761697626032a4e64143bb7257c3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/tasks.py"
     },
     {
@@ -10835,7 +10835,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/commands/validate_proposal.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:9a19258581359bf38d32672cc9a07e8b5a1c2d603f5f88cf0a44359326cf90b6",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/commands/validate_proposal.py"
     },
     {
