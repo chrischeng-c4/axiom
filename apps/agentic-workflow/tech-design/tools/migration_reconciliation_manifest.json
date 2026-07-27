@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:3d21bdcb33974188268ca1c5af8df9f6db4627b5185b469169f4b122a38e6ec9",
+  "digest": "sha256:30ce5c8354671f5076b12ceb4850c5e10bf4811f8b4fbd944e4a27db071cfda6",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -11755,7 +11755,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:6b7a63c411b451d77a5530fd3be7e1eb8eedca6ed4dabe048303be407cf1d80c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_namespaces.py"
     },
     {
@@ -11765,7 +11765,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-recovery-verbs-non-interactive.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:110f42e17b310680ccd56d3db551e8041b7adda3ccd792e0d8764af8198954b7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_recovery_verbs_non_interactive.py"
     },
     {
@@ -11775,7 +11775,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-render-ast-symbols-doc-imports.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:3435b3b06e0890887396ec2cf55b103b65f84fb08fdf0d3910aef5fcd7cb3a07",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_render_ast_symbols_doc_imports.py"
     },
     {
@@ -11785,7 +11785,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-section-type-registry.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:d205726b4cc7a75534bf8a6a8ffa02c2b211c63c6ffb4abbd3bfee00ac3ee816",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_section_type_registry.py"
     },
     {
@@ -11795,7 +11795,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-standardization.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:9bff350b236b2885e3d15336fcbcd609916f65f0c78af6fb6c359a03ebfe90d1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_standardization.py"
     },
     {
@@ -11805,7 +11805,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-check-section-type-conformance.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:da3079b2c68c3c0140254bc5b18055d29b57739c174d1e7b36587ded7a50f79c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_check_section_type_conformance.py"
     },
     {
@@ -11815,7 +11815,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-claim-stub-placement-fix.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:8084589672cd4672872d639b94e6e59508292c3573276be6870b983702cb420d",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_claim_stub_placement_fix.py"
     },
     {
@@ -11825,7 +11825,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-extend-dirty-allow-issue-file.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:5043a9dd20966b32bf2efa2226f2891d10c6417ce4ec49139e49c70131c12474",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_extend_dirty_allow_issue_file.py"
     },
     {
@@ -11835,7 +11835,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-merge-accepts-cb-reviewed.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:6265301654a167692a7d965e16aeeb4f179e1cd4c1a1cb6538e65c9f63eb0b8e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_merge_accepts_cb_reviewed.py"
     },
     {
@@ -11845,7 +11845,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-review-allow-dirty-spec.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:a696e8f057f47974fc6a565eaee98e1e50834b68f527b63f89a8d68fa3370943",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_review_allow_dirty_spec.py"
     },
     {
@@ -11855,7 +11855,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-review-counter-reset.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:5acb82894d8457a2ff630931f91f668f1f9858ec4d22c7d38fac09606995ee77",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_review_counter_reset.py"
     },
     {
@@ -11865,7 +11865,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-review-reviews-block-validation.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:66f5b6f43c69e0651c188c74d5c340441673dfab628fee5d797c6ca49f75b6a1",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_review_reviews_block_validation.py"
     },
     {
@@ -11875,7 +11875,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-revise-payload-merge-and-takeover.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:3668c21b253f083def4ebcda64ed40cc042ad39564679d5a9fc33243a5b6e64e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_revise_payload_merge_and_takeover.py"
     },
     {
@@ -11885,7 +11885,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-td-validate-lifecycle-extension.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:e521b5f620f9e7407b00e8b12562637bb44d239a842b7cc898548ba978e4d366",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_td_validate_lifecycle_extension.py"
     },
     {
@@ -11895,7 +11895,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-ui-complexity-budgets.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:10aac69a44449a0d0ee488b8a4ff914fbb2cda4dc2cbdaad852dd72720a934c7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_ui_complexity_budgets.py"
     },
     {
@@ -11905,7 +11905,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:7c5c889893d841a8edfd2198f13055fc59d356144f07d44f9244215ecc52d172",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_wi_cli_redesign.py"
     },
     {
@@ -11915,7 +11915,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/score-wi-validate-remote-backend.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:ed33f2e51bfcc4844db3e5aef69d4096188b516140486b93512259ca318535e3",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/score_wi_validate_remote_backend.py"
     },
     {
@@ -11925,7 +11925,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/specs/three-role-contract.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:dfe294473782421c84b46a85b412ad34a6b0ea51a5b667c251d459b985540b13",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/three_role_contract.py"
     },
     {
