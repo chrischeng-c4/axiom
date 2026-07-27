@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:41:43.930671+00:00"
-digest = "sha256:0e49b289ef5abfdad38fe0212889a7015aa616b7dc8120c6328b216333da7a50"
-source_digest = "sha256:0e49b289ef5abfdad38fe0212889a7015aa616b7dc8120c6328b216333da7a50"
-ir_digest = "sha256:1386d04cdb730463ed2f41fe4e1e079d7e38fae8c0fd87e8da46bbd6c56a48d3"
+generated_at = "2026-07-27T13:45:07.487804+00:00"
+digest = "sha256:a747a8f966f5598f5013d6d458ae3dbf1f97dbd719fecc50569fd0ff5de990ba"
+source_digest = "sha256:a747a8f966f5598f5013d6d458ae3dbf1f97dbd719fecc50569fd0ff5de990ba"
+ir_digest = "sha256:4954fc770078df9b5b00f7ca14946cc35dd2b5624f4c3f9a57a81e1451b6f5e8"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1972,6 +1972,10 @@ path = "src/agentic_workflow/migrated/surface/interfaces/src/workflow_guard.py"
 digest = "sha256:0fead9e3bf7c4f853fa1b9444d5d67b61f527f74ee9666434278430bb4b98593"
 
 [[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_agent_prompt_contract.py"
+digest = "sha256:5627e02cbdfad23f59b42b962685477fe24b79d072bec433753c5adb0571c6b0"
+
+[[files]]
 path = "src/agentic_workflow/migrated/surface/specs/aw_artifact_preflight_gates.py"
 digest = "sha256:4f1889c42d3f41ccb255f8ffa1117be7477bf0a650aeb940414a14925da9f776"
 
@@ -1980,8 +1984,204 @@ path = "src/agentic_workflow/migrated/surface/specs/aw_artifact_quality_profile.
 digest = "sha256:d622a99e639e7dc2946d2eca6f9cd4da30b6f87b1a91feb99125f61741a91018"
 
 [[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_artifact_skeleton_fill_protocol.py"
+digest = "sha256:45997d3dba2e26ba5056ef206838c95949aa8a17e6e0b0ec31320bd6213e2a92"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_capability_alignment_wi_planning.py"
+digest = "sha256:6fecd5a3b68fe5d046afc50825fcae6fce3a14ddcbe9d6ab494b424735d44701"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_capability_claim_closure_ec_inventory.py"
+digest = "sha256:3686506ce42c1435d0a3ac7e7e94191c70d0b41e73a9d6aaaed4d4c6533fd50b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_cb_fill_crrr.py"
+digest = "sha256:841e11d1947941377419e526de9c8c2cf910041d9d048a23404ce79258179b6c"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_chat_removal.py"
+digest = "sha256:15df152bb64f9df89989631ff23b7e4c51401e135069132cbbcba0d621cfa7a0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_client_boundaries.py"
+digest = "sha256:c2744a4edf87834b3d0a92602fc492f42f5f5e31133e40b37c6fc6ee07d231ce"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_completeness_placeholder_gate.py"
+digest = "sha256:410370d619b59c97996e421bd202c855419f042273ffd50acd87c9825bb85282"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_core_client_model.py"
+digest = "sha256:ae336b67af80b270e7b1949e3fee4a96a723c045119f3bb9820b1eb887cdd66b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_dx_trait_derivation.py"
+digest = "sha256:d50db581b3b58cbbf1bd5ee45cd3df74904a3b2ab89942bbaae3a4a5aad1905d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_ec_agent_review_protocol.py"
+digest = "sha256:1f0c03bb226b7dcd4cebec8aae4bbb5640963e027a43c057c4b88fdffb107b9a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_ec_deferred_review_queue.py"
+digest = "sha256:b7c8281ca98b7640a653995b7025ccf9bf59773b2214015b8247e8b0acb88bc0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_ec_only_semantic_approval.py"
+digest = "sha256:8b2b408d5ea8b8cb773253d35b00038d450a4c6da7c782807eea2a73bf01486b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_ec_zero_test_false_green.py"
+digest = "sha256:090332202eb2e8c0b354c0a05d04d27d41fe5749e7155587a4742144206fcd7b"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_fixture_platform_config.py"
+digest = "sha256:d064393517d4cf831d8d10b5256f5f6df11abf2f855317e8e990601cbab4e5e7"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_goal_condition_loop.py"
+digest = "sha256:49137829df838b12d7efb40a469a53a3833d711cb6c98ecac7dab2ee3a285de5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_goal_unified_loop_verb.py"
+digest = "sha256:06a819db6f7091d4800f8d616e5983b3be5cebd820544ed7428f3471ff32012f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_mainthread_only_execution.py"
+digest = "sha256:5a2f5affebb1956078202f25ba54cece070737d5723c5d8ce41e46adb46a94f5"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_mainthread_phase_2_skill_rewrite_and_agent_delete.py"
+digest = "sha256:2b8e8338ac4400e37a2979b3d08cc578303137ad08e30dd4b5fa32c33dd762b3"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_meta_doc_ownership_matrix.py"
+digest = "sha256:1828c16a4be8850f1581474a3988c02a954274cd5d3b075b3d161f2f28857958"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_meta_doc_producer.py"
+digest = "sha256:c86bda0984d886202209da1f8f9c91e5ea13b2b6725b0da2cbf8ae3fa12ff1fb"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_meta_doc_schema_rules_health_axis.py"
+digest = "sha256:44b163f6cfddde90a9315a22d8dfb25f2ad7000d51355f8d915b063269f39a3a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_quality_primitive_metadata.py"
+digest = "sha256:ecb67164854fb0629068fc182464b38b58501231b65de0784d25e3dd831d48a6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_self_hosting_runner_policy.py"
+digest = "sha256:f77d22e5c7f936b589a38a3feeced57659df2e5902ed5d6de6d800cd66105de1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_source_first_reference_artifacts.py"
+digest = "sha256:93614203584befc85c4357ffe897d629f4312ad1bdd09b0e85ab755898f29a2d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_standardize_audit_first_quality.py"
+digest = "sha256:d911621777fe42afc6ae364fb6acff1d8dfae65e5f3c539a2edda8baa70f277f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_view_removal.py"
+digest = "sha256:5d1c176acf1f12f49cfb213d17743f6a10038bb17eb3536114d395320ff77001"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_wi_create_remove_remote_flag.py"
+digest = "sha256:4a5f7dbd420b58ebaeeadb2537003954c471b2efa97a6fa409169a569d6ac25f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_wi_crrr_removal.py"
+digest = "sha256:9f3124601cb6d103dc9fea74ce925011d77d2983abe99a1a7571736f00728e19"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_wi_draft_valid_by_construction.py"
+digest = "sha256:2acd9745edda7392847aee0f710a229d5780bc9192a08caef5f988b42ab232fd"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_wi_ec_td_root_loop.py"
+digest = "sha256:a5e0ebac68321746cd47cd41077924fbd91a827a654b8cd608e48f993641fa56"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_wi_remove_agent_estimate.py"
+digest = "sha256:10f57a2f287360869465e98ef4cc235c57c83a2b323719b0c80755947ff49fbd"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/aw_workitem_artifact_gate.py"
+digest = "sha256:9a35645369b518ba814c68f1845471e32144316707d41dcd0f1ca4beb0cb791d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/claude_md_codegen_era_file_size_rule.py"
+digest = "sha256:417cd1bf871aa709c517a6e38f28f997dad232e339815fa34d329c045cc67b57"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/codegen_skip_annotation_convention.py"
+digest = "sha256:d8b96fe465d50d4da7802585039367e4f9c5745c828c63efdaf98e5036b519ab"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/finish_phase_c_in_place_unconditional.py"
+digest = "sha256:f9a4dda00bbc76f6ad32e4e521b73bbc7395145c33a6a205a72765b7db4c8828"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/issue_cli_envelope.py"
+digest = "sha256:aeee1b54f8f7c322af233fbc93eed933b9ef6ad61181bd30219cc0959b41572e"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/issue_crrr_state_machine.py"
+digest = "sha256:8818e6933e446e32cc08e89c3195d038ac2b4bbac4897410a2af109e20f2cfda"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/issue_validator_placeholder_rejection.py"
+digest = "sha256:aca4f510ab311346853dd9143208ed4f341da690c9b54757fdf11bb309c9dbf0"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/mermaid_plus_primitive_vocabulary.py"
+digest = "sha256:6192f239a0e624dc0b3f6ca3ad6e0e727f00e7ae228883860bfb600080280bf8"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/project_health_codegen_promotion.py"
+digest = "sha256:3a163cc954c66df130e487665130e2f75a5d194423a897db77cebd946e063f22"
+
+[[files]]
 path = "src/agentic_workflow/migrated/surface/specs/project_health_governance_report.py"
 digest = "sha256:86a61c0827a00187dfe18b2363076352e5451a1a0d58d5745c4281272d602ac2"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/project_health_incremental_index.py"
+digest = "sha256:bb324615a0ed252ed9549b4a93867f14ff9b9e369e905a53d1e999a8be3de48f"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/refactor_remove_legacy_standardize_aliases.py"
+digest = "sha256:c6ababd1f1c83980205a209d745d451d07a741e783fd20a3d518c9455b36e842"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/reference_context_agent.py"
+digest = "sha256:f90becc2986d1e56a501b0c1bcf1b15637be9c71f86542059d4f7ffbd86302da"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/score_cb_fill_change_scope.py"
+digest = "sha256:3bfd40e0992a2a1f84fd5edf288ba7b229185c2c5b78ef75e6fc791e62f44cb9"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/score_cb_fill_workflow.py"
+digest = "sha256:031ed934c290e19897626bced0e2be3aea1cacf4c13ae27282c8863b5ea0e87c"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/score_cb_review_revise_crrr.py"
+digest = "sha256:88a056f757aafdf2fafee9fb4f3a1be0c6906c0822a37b727ff564a6f715e045"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/score_gen_reconstructability.py"
+digest = "sha256:c327071f316688a44e922460615787ef62ee28bc457a36c7246e035a3b9ef964"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/score_mainthread_phase_1_envelope_rewrite.py"
+digest = "sha256:df99a599cabf5fd47011f0ad934af1d70d607ea4771a19d78fec948bf9a03711"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/specs/td_2364.py"
+digest = "sha256:f430529cfa8948d5ab4cb7b463140f852472d442d4b505aff1bd29ad0f13f5c6"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"
