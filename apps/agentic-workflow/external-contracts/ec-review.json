@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:647b4e1ca78ee887531dfab627a3c98810a97ef0b63823ae6ea0f91081347b94",
+  "source_digest": "sha256:7a002e7f4317cc9f75807e775566a7f90f91f54b6bf7ecb2ca43707732796a6a",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T19:04:18.525978+00:00",
-  "summary": "Accepted: the WI #2772 source-independent local-backend oracle directly passes all three assertions. It pins raw cache serialization to lowercase `type: change`, round-trips both cached and independent Change items through filtered list plus cached show, and proves an EC scaffold for the independent target remains live with a chainable structural-check continuation and only external-contract artifacts. The 52-case structural inventory and claim reconciliation are clean.",
+  "reviewed_at": "2026-07-27T19:36:22.672960+00:00",
+  "summary": "Accepted: the final WI #2774 contract has no known-failure exemption and passes its native black-box verifier against the real public `aw ec check` boundary. It pins a baseline digest; introduces non-UTF-8 pyc/native-extension plus build-directory Python, text, and extensionless artifacts; requires the post-artifact digest to remain identical; proves every ignored artifact remains byte-identical; and retains strict missing-source and declared-binary failures. The DeveloperTool capability's required efficiency and stability dimensions remain covered by separate operational cases.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T19:04:30.105902+00:00"
-ir_digest = "sha256:21135f6b0b2cc56e87f9943f3cdad156ed97d5559fd63b75c7bc9bcb165a4e4e"
-source_digest = "sha256:9cad8f9f21e0e848a9f1be407c82c73e7e765090f9815e8cb5ea7b9fec0e835f"
+generated_at = "2026-07-27T19:36:22.840948+00:00"
+ir_digest = "sha256:51f7da21cfe2ee2e16641b1119a14317d81f3fc30cefafe8e7456d737f112a72"
+source_digest = "sha256:367eefc018eea59994597969f6ae9ef7458c6c63b87aab77915b32ec91def985"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:74e1b9073a2923a7f14d12b78f3dbf736084ffa7d8418d1edac20158ee3fba94"
+digest = "sha256:c5da5cf6f1851f4a639792dcf386e047f521550a64d97166c937844c992056e4"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -83,6 +83,10 @@ digest = "sha256:47d8986b9061689d0985c77c0542c274b9cbf5c92b5d8abc955d010af89bdfe
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-stability.py"
 digest = "sha256:98a7b86bf45ece690ac8f11e382a26405ecf2a5249c4e24588cca16ce09c9af5"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
+digest = "sha256:250c923e0e3e33b7ba537d9a997f4ebd188a10542b39db290b1f24d5dcbd197a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
@@ -665,6 +669,26 @@ assertions = [
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:b85c7796d997d3d81b9c78d6c2a717ecbde18342b336249e7f83569966335784"
+
+[[cases]]
+id = "python-ec-cache-safe-discovery"
+capability_id = "project-local-td-and-ec-gates"
+claim_id = "python-ec-cache-safe-discovery"
+contract_id = "python-ec-cache-safe-discovery"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-ec-cache-safe-discovery"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-cache-safe-discovery.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
+required_for_production = true
+assertions = [
+    "Public Python EC discovery ignores undeclared cache/build binaries while still rejecting a missing declared Python source or a binary path declared as the contract.",
+    "artifact: artifact:agentic-workflow/python-ec-cache-safe-discovery",
+    "oracle: An isolated Python-first repository executes the real aw ec check command against non-UTF-8 pyc and native-extension fixtures, then independently mutates only the declared test_path boundary to prove strict missing and source-type findings.",
+    "target: rust",
+]
+evidence_digest = "sha256:56991a4d858719e0969f7cb7c6d6a1366c4364f71e86ff5c7f6870cb95b3a802"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c1dc45ac19e9bf891d7573a6a59e190ebb14e81e33bf8849349f314fb933417b"
 
 [[cases]]
 id = "python-ec-only-authoring"

@@ -16,6 +16,20 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
+id = "python-ec-cache-safe-discovery"
+artifact_id = "artifact:agentic-workflow/python-ec-cache-safe-discovery"
+capability_id = "project-local-td-and-ec-gates"
+use_case_id = "python-ec-cache-safe-discovery"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/python-ec-cache-safe-discovery.py"
+promise = "Public Python EC discovery ignores undeclared cache/build binaries while still rejecting a missing declared Python source or a binary path declared as the contract."
+oracle = "An isolated Python-first repository executes the real aw ec check command against non-UTF-8 pyc and native-extension fixtures, then independently mutates only the declared test_path boundary to prove strict missing and source-type findings."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-ec-cache-safe-discovery"
+evidence_paths = ["evidence/python-ec-cache-safe-discovery.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "work-item-four-type-taxonomy"
 artifact_id = "artifact:agentic-workflow/work-item-four-type-taxonomy"
 capability_id = "work-item-planning"

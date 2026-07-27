@@ -462,6 +462,7 @@ fn collect_python_sources(source_roots: &[PathBuf]) -> Result<BTreeSet<PathBuf>>
     Ok(files)
 }
 
+/// @spec #2774
 fn is_ignored_python_artifact_directory(name: &std::ffi::OsStr) -> bool {
     matches!(
         name.to_str(),
@@ -473,6 +474,9 @@ fn is_ignored_python_artifact_directory(name: &std::ffi::OsStr) -> bool {
                 | ".mypy_cache"
                 | ".ruff_cache"
                 | ".tox"
+                | "build"
+                | "dist"
+                | ".eggs"
         )
     )
 }
@@ -554,5 +558,48 @@ fn resolve_evidence_paths(
         }
     }
     Ok(paths.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_python_sources, digest_files};
+    use std::fs;
+
+    /// @spec #2774
+    #[test]
+    fn python_artifact_source_digest_ignores_cache_and_build_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let source_root = root.join("src");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::write(source_root.join("contract.py"), b"CONTRACT = True\n").unwrap();
+
+        let baseline_sources = collect_python_sources(std::slice::from_ref(&source_root)).unwrap();
+        let baseline_digest = digest_files(&root, &baseline_sources).unwrap();
+
+        let artifacts = [
+            (
+                "__pycache__/contract.cpython-312.pyc",
+                b"\0\xff\xfe".as_slice(),
+            ),
+            ("build/generated.py", b"\0\xff\xfe".as_slice()),
+            ("dist/generated.py", b"\0\xff\xfe".as_slice()),
+            (".eggs/generated.py", b"\0\xff\xfe".as_slice()),
+        ];
+        for (relative, bytes) in artifacts {
+            let path = source_root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+
+        let after_sources = collect_python_sources(std::slice::from_ref(&source_root)).unwrap();
+        let after_digest = digest_files(&root, &after_sources).unwrap();
+
+        assert_eq!(after_sources, baseline_sources);
+        assert_eq!(after_digest, baseline_digest);
+        for (relative, bytes) in artifacts {
+            assert_eq!(fs::read(source_root.join(relative)).unwrap(), bytes);
+        }
+    }
 }
 // HANDWRITE-END
