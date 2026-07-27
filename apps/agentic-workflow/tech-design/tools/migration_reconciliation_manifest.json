@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:686a558e50a904c287cd1d4fd0f5cdd8d0e06b39bf855303c5730834c8ab982d",
+  "digest": "sha256:e12f037f231fd04a720e9fb1184dad2fedf14bc00c99262cb74e4d34ec2575d1",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -10255,7 +10255,7 @@
       "path": "apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md",
       "role": "generated_mirror",
       "sha256": "sha256:657042e3481f684b54cf742c00380e719e77139cf8657bad5f2e9c6783f32769",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/semantic/agentic_workflow_cli.py"
     },
     {
