@@ -145,11 +145,11 @@ requirements:
 ---
 flowchart TD
     ac1[AC1 AC1] --> type_wall_conformance_determinism_three_isolated_release_conformance_runs_with_exact_failing_set_and_failure_count_equality[type_wall_conformance_determinism (three isolated release conformance runs with exact failing-set and failure-count equality)]
-    r2[R2 R2] --> type_wall_conformance_determinism_three_run_determinism_gate[type_wall_conformance_determinism (three-run determinism gate)]
+    ec1[EC1 EC1] --> cargo_test_p_mamba_t1_type_wall_denominator_gate[cargo test -p mamba t1_type_wall_denominator_gate]
+    r1[R1 R1] --> type_wall_conformance_determinism_external_contract_evidence_path_only[type_wall_conformance_determinism (external-contract evidence path only)]
     ac2[AC2 AC2] --> type_wall_conformance_determinism_baseline_subset_containment_plus_failure_count_baseline_failure_count[type_wall_conformance_determinism (baseline subset containment plus failure_count <= baseline failure_count)]
     ec2[EC2 EC2] --> type_wall_conformance_determinism_normalized_denominator_parser_over_release_conformance_output[type_wall_conformance_determinism (normalized denominator parser over release conformance output)]
+    r2[R2 R2] --> type_wall_conformance_determinism_three_run_determinism_gate[type_wall_conformance_determinism (three-run determinism gate)]
     ec3[EC3 EC3] --> type_wall_conformance_determinism_omission_and_outcome_flip_canaries_over_captured_output[type_wall_conformance_determinism (omission and outcome-flip canaries over captured output)]
     ec4[EC4 EC4] --> type_wall_conformance_determinism_baseline_process_state_fail_closed_assertions[type_wall_conformance_determinism (baseline + process-state fail-closed assertions)]
-    r1[R1 R1] --> type_wall_conformance_determinism_external_contract_evidence_path_only[type_wall_conformance_determinism (external-contract evidence path only)]
-    ec1[EC1 EC1] --> cargo_test_p_mamba_t1_type_wall_denominator_gate[cargo test -p mamba t1_type_wall_denominator_gate]
 ```
