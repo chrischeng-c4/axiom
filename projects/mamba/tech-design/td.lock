@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "projects/mamba/tech-design"
-generated_at = "2026-07-27T18:27:39.384644+00:00"
-digest = "sha256:57edebb5916160fc2f4d5f8a003d89c1ed7a1fe5c58db760fa32efcd49202c42"
-source_digest = "sha256:57edebb5916160fc2f4d5f8a003d89c1ed7a1fe5c58db760fa32efcd49202c42"
-ir_digest = "sha256:c5ed4f81eb70b5b5b80f80bd129117e43c182a326fee74822bc68445670f044c"
+generated_at = "2026-07-27T18:31:38.635745+00:00"
+digest = "sha256:9a4fe48c97ac215d3734d1bdb8b713ae41f6d03251f893c8ba831fb086dea691"
+source_digest = "sha256:9a4fe48c97ac215d3734d1bdb8b713ae41f6d03251f893c8ba831fb086dea691"
+ir_digest = "sha256:c9739e718aef0ce2453851b7055ecc786bec6d2a0c39e005d039a5f090fc609a"
 
 [[files]]
 path = "README.md"
@@ -201,6 +201,6 @@ section_count = 0
 
 [[files]]
 path = "validate/conformance-suite-total-failed-count-is-non-deterministic-across.md"
-digest = "sha256:b13394b3d2d03f571f494556cb3febe6ab2604b544fc911233d66e9118803ebc"
-ir_digest = "sha256:790bc0f2b964ec854c2726f9fd248e6211d3a19278cd50009604ebf51eb71894"
+digest = "sha256:c4bf72ff88be1f6f3cac507c3403f9dc58440facec1073cef66c2c0d67fbd18f"
+ir_digest = "sha256:218c79c06c8feb36dbdc1ca859fb6ba00799322caae9e26883796b373522b9f6"
 section_count = 3
