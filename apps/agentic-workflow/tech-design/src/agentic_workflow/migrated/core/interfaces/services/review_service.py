@@ -1,0 +1,19 @@
+"""Canonical Python tech design migrated from `apps/agentic-workflow/tech-design/core/interfaces/services/review_service.md`.
+
+Migrated by batch `semantic-core-interfaces-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-interfaces/core-interfaces-services-review-service"
+__legacy_td_path__ = "apps/agentic-workflow/tech-design/core/interfaces/services/review_service.md"
+__legacy_td_digest__ = "sha256:fa7788bd2a4826f1026f34f5e772a5f1c752d62f87544fc3aedb01c93c11eaab"
+
+
+def render_markdown() -> Annotated[str, "sha256:fa7788bd2a4826f1026f34f5e772a5f1c752d62f87544fc3aedb01c93c11eaab"]:
+    """Render the preserved legacy design byte-for-byte."""
+
+    return "---\nid: sdd-services-review-service\nfill_sections: [overview, schema, changes]\ncapability_refs:\n  - id: td-cb-lifecycle-automation\n    role: primary\n    gap: td-lifecycle-dispatch\n    claim: td-lifecycle-dispatch\n    coverage: full\n    rationale: \"Workflow service interfaces support TD/CB artifact lifecycle authoring, review, and implementation steps.\"\n---\n\n# ReviewInput Type\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nInput type for writing a review in\n`apps/agentic-workflow/src/services/review_service.rs`. One shape:\n\n- `ReviewInput` — 11 fields with **no derives at all**. Pure data\n  carrier consumed by `pub fn write_review(...)`.\n\nCodegen replaces the struct declaration. Companion source templates own module\ndocumentation, imports, artifact normalization, phase-transition matrix,\nreview writing, inline-review mutation, phase updates, and regression tests.\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\ndefinitions:\n  ReviewInput:\n    type: object\n    required: [change_id, file, verdict, summary, checklist, issues, iteration, spec_id, task_id, caller, group_id]\n    description: |\n      Input for writing a review.\n    properties:\n      change_id:\n        type: string\n        description: \"Change identifier.\"\n      file:\n        type: string\n        description: \"File being reviewed.\"\n      verdict:\n        type: string\n        description: \"Review verdict (approved/needs-revision).\"\n      summary:\n        type: string\n        description: \"Review summary.\"\n      checklist:\n        type: array\n        items: { type: object }\n        x-rust-type: \"Vec<Value>\"\n        description: \"Checklist entries.\"\n      issues:\n        type: array\n        items: { type: object }\n        x-rust-type: \"Vec<Value>\"\n        description: \"Identified issues.\"\n      iteration:\n        type: integer\n        x-rust-type: \"u64\"\n        description: \"Review iteration number.\"\n      spec_id:\n        type: string\n        x-rust-type: \"Option<String>\"\n        description: \"Optional spec ID.\"\n      task_id:\n        type: string\n        x-rust-type: \"Option<String>\"\n        description: \"Optional task ID.\"\n      caller:\n        type: string\n        description: \"Caller identifier.\"\n      group_id:\n        type: string\n        x-rust-type: \"Option<String>\"\n        description: \"Group ID for group-aware artifacts.\"\n    x-rust-struct:\n      derive: []\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/services/review_service.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    replaces:\n      - ReviewInput\n    description: |\n      Codegen replaces the struct declaration only.\n```\n\n# Reviews\n\n## Review 1\n<!-- type: doc lang: markdown -->\n\n**Verdict:** approved\n\n- [overview] Single struct with no derives; 11 fields including Vec<Value>, u64, Option<String>.\n- [schema] All in `required:`; foreign types via x-rust-type.\n- [changes] Standard split.\n"
