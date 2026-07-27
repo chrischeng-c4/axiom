@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:fe7de9be07cb25d1c447dd8c12b441bc6d46ec3f22076596bf9420da6d818052",
+  "source_digest": "sha256:d6d40ab68f755147c13bc3a9e8dd7a9ea92301075ea95c9b0abd368aa5ad39bb",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T20:24:02.804109+00:00",
-  "summary": "Accepted: `coordination-authority` proves that untrusted submit events cannot supply or mutate AW-owned authority state. Public AW authority commands durably establish the active dispatch and pending gates; post-open source mutation has no effect; a durable interrupt blocks completion; forged authority/satisfaction and task/dispatch mismatches fail; pending, missing, wrong, partial, and empty-evidence gates fail; and two satisfied/cited gates advance with exact stored evidence. A blocked question remains HITL, empty decision choice/evidence exit nonzero and leave durable decision null, non-human authority cannot decide, and the valid human choice/evidence is durably recorded before AW reports decision advancement. Workflow-root-runner retains its required efficiency and stability cases.",
+  "reviewed_at": "2026-07-27T21:12:20.545425+00:00",
+  "summary": "Accepted: the current bundle preserves the independently accepted stale, unauthorized, structural, durable-state, evidence, and decision contracts while converging `coordination-authority` on `coordination-event-validation`'s public stale-event semantics. Wrong task identity and stale dispatch identity now must exit nonzero with `code = stale_event`; the distinct event that still matches the AW-owned dispatch after that durable dispatch is interrupted remains a structurally valid exit-zero blocked reconciliation. Missing, wrong, or partial current-dispatch gate citations likewise remain blocked rather than misclassified as stale. The two cases therefore agree on transport/rejection behavior without weakening AW-only authority, exact remediation, durable non-mutation, multi-gate evidence, sequence recovery, or human-decision proof.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

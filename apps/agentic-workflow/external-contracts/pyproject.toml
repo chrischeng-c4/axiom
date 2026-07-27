@@ -16,6 +16,20 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
+id = "coordination-event-validation"
+artifact_id = "artifact:agentic-workflow/coordination-event-validation"
+capability_id = "workflow-root-runner"
+use_case_id = "fail-closed-coordination-event-validation"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/coordination-event-validation.py"
+promise = "Stale, unauthorised, and structurally invalid coordination events fail closed without durable mutation and return stable codes plus an executable exact remediation."
+oracle = "The Python external contract drives public AW coordination commands against durable state, accepts sequences 1, 2, and 3 around stale/authority/structural rejection groups, mutates sequence/event/dispatch/sender identities and every structural boundary, proves rejection does not consume sequence or persist events, executes each emitted remediation, and requires the embedded schema to equal the published message.schema.json."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
+evidence_paths = ["evidence/coordination-event-validation.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "coordination-authority"
 artifact_id = "artifact:agentic-workflow/coordination-authority"
 capability_id = "workflow-root-runner"

@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T20:24:02.911223+00:00"
-ir_digest = "sha256:494d741e09bbdbf4ffef1989378f4e37e215c6c9ec52e26c835cf32c0429efe1"
-source_digest = "sha256:ffe720b0b577c13fc23c9644165dd26ad438334b0b3b65ea143f5a2623df4a5e"
+generated_at = "2026-07-27T21:12:25.991848+00:00"
+ir_digest = "sha256:9b8bab80ce3ba32afa759d403fb324550f4c956515a5f9a42fa2d74723e94b02"
+source_digest = "sha256:a6b4bc161ee412a198f0a29a798af1aae44692c1a12d785dba1bb7b6dd3aa94e"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:03f47a343bcdaa3d179729d8b8d831991a9e7d9c6bac658e5830172be92a9036"
+digest = "sha256:e754ceac34275c575a8bc50fc1f17e00fcdfc089b0c18575aba0b36e58f7f54e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -54,11 +54,15 @@ digest = "sha256:88296c626c1262a172e509db9f12033d9a3fdcba00b0f8deb5fa6c2893a550c
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-authority.py"
-digest = "sha256:e0094ea76853a70803934003facfe2a1f0c04cb90273a4c1affb3e17550db5c1"
+digest = "sha256:6a2ae15f243cd49b995314f79cbfe465bff3768d75cb2d959602e4568da645ef"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
 digest = "sha256:912073f6c4353cb91d09566ba7ee8a0d75af03f9c1afa867ce59d48a21fed943"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/coordination-event-validation.py"
+digest = "sha256:5d93c2efee6467e14f7ce65ee908c7036529318003c09bed70383ab2c7bf1ad3"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-efficiency.py"
@@ -551,6 +555,26 @@ assertions = [
 evidence_digest = "sha256:be5e49b6dfb9918318381d5fa1f83ea1a5c93b54e1e9222b0ea8a99ec120c01e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:6c7aabfad4376072262bbe21e4cd495d217cbbf907cf28bebf09ef30ad94e521"
+
+[[cases]]
+id = "coordination-event-validation"
+capability_id = "workflow-root-runner"
+claim_id = "fail-closed-coordination-event-validation"
+contract_id = "coordination-event-validation"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-event-validation"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-event-validation.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-event-validation"
+required_for_production = true
+assertions = [
+    "Stale, unauthorised, and structurally invalid coordination events fail closed without durable mutation and return stable codes plus an executable exact remediation.",
+    "artifact: artifact:agentic-workflow/coordination-event-validation",
+    "oracle: The Python external contract drives public AW coordination commands against durable state, accepts sequences 1, 2, and 3 around stale/authority/structural rejection groups, mutates sequence/event/dispatch/sender identities and every structural boundary, proves rejection does not consume sequence or persist events, executes each emitted remediation, and requires the embedded schema to equal the published message.schema.json.",
+    "target: rust",
+]
+evidence_digest = "sha256:ec4acd5b2cd1bb3b0b9e85095b14a27d927edfd0f0e7d76d2c487f1314985851"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:67ed6533e8086e59c51efdf281a977aa13f6731a8c1b11568f71af9482cc7f5f"
 
 [[cases]]
 id = "existing-project-standardization-operational-efficiency"

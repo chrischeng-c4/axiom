@@ -46,6 +46,56 @@ pub struct ReconciliationOutcome {
     pub requires_hitl: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventRejectionCode {
+    StaleEvent,
+    UnauthorisedEvent,
+    InvalidEvent,
+}
+
+impl EventRejectionCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StaleEvent => "stale_event",
+            Self::UnauthorisedEvent => "unauthorised_event",
+            Self::InvalidEvent => "invalid_event",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventRejection {
+    pub code: EventRejectionCode,
+    pub reason: String,
+    pub remediation: String,
+}
+
+impl EventRejection {
+    pub fn invalid(reason: impl Into<String>) -> Self {
+        Self {
+            code: EventRejectionCode::InvalidEvent,
+            reason: reason.into(),
+            remediation: "aw coordination schema message".to_string(),
+        }
+    }
+
+    fn stale(task_id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            code: EventRejectionCode::StaleEvent,
+            reason: reason.into(),
+            remediation: format!("aw coordination show {task_id}"),
+        }
+    }
+
+    fn unauthorised(task_id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            code: EventRejectionCode::UnauthorisedEvent,
+            reason: reason.into(),
+            remediation: format!("aw coordination show {task_id}"),
+        }
+    }
+}
+
 impl ReconciliationOutcome {
     fn blocked(reason: impl Into<String>) -> Self {
         Self {
@@ -56,6 +106,92 @@ impl ReconciliationOutcome {
             requires_hitl: false,
         }
     }
+}
+
+/// @spec #2588
+fn validate_event_structure(event: &MessageDocument) -> std::result::Result<(), EventRejection> {
+    if [
+        event.event_id.as_str(),
+        event.task_id.as_str(),
+        event.dispatch_id.as_str(),
+        event.sender.as_str(),
+    ]
+    .iter()
+    .any(|value| value.is_empty())
+    {
+        return Err(EventRejection::invalid(
+            "coordination event identities must be non-empty",
+        ));
+    }
+    if event.sequence == 0 {
+        return Err(EventRejection::invalid(
+            "coordination event sequence must be at least one",
+        ));
+    }
+    if event.evidence.iter().any(String::is_empty) {
+        return Err(EventRejection::invalid(
+            "coordination event evidence items must be non-empty",
+        ));
+    }
+    let evidence: BTreeSet<&str> = event.evidence.iter().map(String::as_str).collect();
+    if evidence.len() != event.evidence.len() {
+        return Err(EventRejection::invalid(
+            "coordination event evidence items must be unique",
+        ));
+    }
+    Ok(())
+}
+
+/// @spec #2588
+fn validate_event_freshness_and_authority(
+    state: &CoordinationState,
+    event: &MessageDocument,
+) -> std::result::Result<(), EventRejection> {
+    let task_id = &state.task.task_id;
+    if event.task_id != *task_id {
+        return Err(EventRejection::stale(
+            task_id,
+            "coordination event task identity does not target the AW-owned task",
+        ));
+    }
+    if event.dispatch_id != state.dispatch.dispatch_id {
+        return Err(EventRejection::stale(
+            task_id,
+            "coordination event does not target the active dispatch",
+        ));
+    }
+    if event.sender != state.dispatch.assignee {
+        return Err(EventRejection::unauthorised(
+            task_id,
+            "coordination event sender is not the active assignee",
+        ));
+    }
+    let duplicate_id = state
+        .events
+        .iter()
+        .any(|accepted| accepted.event_id == event.event_id);
+    let last_sequence = state
+        .events
+        .iter()
+        .map(|accepted| accepted.sequence)
+        .max()
+        .unwrap_or_default();
+    if duplicate_id || event.sequence <= last_sequence {
+        return Err(EventRejection::stale(
+            task_id,
+            "coordination event identity or sequence is stale",
+        ));
+    }
+    Ok(())
+}
+
+/// @spec #2588
+pub fn validate_event(
+    state: &CoordinationState,
+    event: &MessageDocument,
+) -> std::result::Result<(), EventRejection> {
+    validate_event_structure(event)?;
+    validate_event_freshness_and_authority(state, event)
 }
 
 /// @spec #2587
@@ -130,60 +266,60 @@ pub fn interrupt_dispatch(state: &mut CoordinationState, reason: &str) -> Result
 pub fn submit_event(
     state: &mut CoordinationState,
     event: MessageDocument,
-) -> ReconciliationOutcome {
-    if event.task_id != state.task.task_id {
-        return ReconciliationOutcome::blocked("task identity does not match AW-owned state");
-    }
-    if state.dispatch.status != DispatchStatus::Active
-        || event.dispatch_id != state.dispatch.dispatch_id
-    {
-        return ReconciliationOutcome::blocked("event does not target the active dispatch");
+) -> std::result::Result<ReconciliationOutcome, EventRejection> {
+    validate_event(state, &event)?;
+    if state.dispatch.status != DispatchStatus::Active {
+        return Ok(ReconciliationOutcome::blocked(
+            "event does not target the active dispatch",
+        ));
     }
     if event.message_type == MessageType::BlockedQuestion {
         state.events.push(event);
-        return ReconciliationOutcome {
+        return Ok(ReconciliationOutcome {
             status: "blocked",
             reason: "human decision is required".to_string(),
             completion_advanced: false,
             decision_advanced: false,
             requires_hitl: true,
-        };
+        });
     }
     if event.message_type != MessageType::Completion {
         state.events.push(event);
-        return ReconciliationOutcome {
+        return Ok(ReconciliationOutcome {
             status: "recorded",
             reason: "coordination event recorded without lifecycle advancement".to_string(),
             completion_advanced: false,
             decision_advanced: false,
             requires_hitl: false,
-        };
+        });
     }
 
     for gate_id in &state.task.required_gates {
         let Some(gate) = state.gates.iter().find(|gate| &gate.gate_id == gate_id) else {
-            return ReconciliationOutcome::blocked(format!("required gate `{gate_id}` is missing"));
+            return Ok(ReconciliationOutcome::blocked(format!(
+                "required gate `{gate_id}` is missing"
+            )));
         };
         if gate.status != GateStatus::Satisfied {
-            return ReconciliationOutcome::blocked(format!(
+            return Ok(ReconciliationOutcome::blocked(format!(
                 "required gate `{gate_id}` is not satisfied"
-            ));
+            )));
         }
         if gate.evidence.is_empty() || !event.evidence.contains(gate_id) {
-            return ReconciliationOutcome::blocked(format!(
+            return Ok(ReconciliationOutcome::blocked(format!(
                 "required gate `{gate_id}` lacks cited evidence"
-            ));
+            )));
         }
     }
     state.events.push(event);
     state.completion_advanced = true;
-    ReconciliationOutcome {
+    Ok(ReconciliationOutcome {
         status: "done",
         reason: "AW advanced completion from active dispatch evidence".to_string(),
         completion_advanced: true,
         decision_advanced: false,
         requires_hitl: false,
-    }
+    })
 }
 
 /// @spec #2587
@@ -334,17 +470,27 @@ mod tests {
             ("gate:lint", GateType::Evidence, CoordinationAuthority::Aw),
         ]);
         satisfy_gate(&mut current, "gate:test", "evidence:test").unwrap();
-        assert!(!submit_event(&mut current, completion(&["gate:test"])).completion_advanced);
+        assert!(
+            !submit_event(&mut current, completion(&["gate:test"]))
+                .unwrap()
+                .completion_advanced
+        );
         satisfy_gate(&mut current, "gate:lint", "evidence:lint").unwrap();
         assert!(
-            submit_event(&mut current, completion(&["gate:test", "gate:lint"])).completion_advanced
+            submit_event(&mut current, completion(&["gate:test", "gate:lint"]))
+                .unwrap()
+                .completion_advanced
         );
 
         let mut interrupted =
             state(&[("gate:test", GateType::Evidence, CoordinationAuthority::Aw)]);
         satisfy_gate(&mut interrupted, "gate:test", "evidence:test").unwrap();
         interrupt_dispatch(&mut interrupted, "worker-lost").unwrap();
-        assert!(!submit_event(&mut interrupted, completion(&["gate:test"])).completion_advanced);
+        assert!(
+            !submit_event(&mut interrupted, completion(&["gate:test"]))
+                .unwrap()
+                .completion_advanced
+        );
     }
 
     /// @spec #2587
@@ -363,5 +509,96 @@ mod tests {
             record_decision(&mut current, "gate:approval", "approved", "human:42").unwrap();
         assert!(outcome.decision_advanced);
         assert_eq!(current.decision.unwrap().choice, "approved");
+    }
+
+    fn heartbeat(event_id: &str, sequence: u64) -> MessageDocument {
+        MessageDocument {
+            schema_version: CoordinationVersion::V1,
+            kind: MessageKind::Message,
+            event_id: event_id.to_string(),
+            task_id: "task:test".to_string(),
+            dispatch_id: "dispatch:test:1".to_string(),
+            sequence,
+            sender: "agent:worker".to_string(),
+            message_type: MessageType::Heartbeat,
+            evidence: vec![],
+            body: Map::new(),
+        }
+    }
+
+    /// @spec #2588
+    #[test]
+    fn coordination_event_validation_rejects_stale_and_unauthorised_without_consuming_sequence() {
+        let mut current = state(&[]);
+        assert_eq!(
+            submit_event(&mut current, heartbeat("event:1", 1))
+                .unwrap()
+                .status,
+            "recorded"
+        );
+
+        let stale_sequence = submit_event(&mut current, heartbeat("event:stale", 1)).unwrap_err();
+        assert_eq!(stale_sequence.code, EventRejectionCode::StaleEvent);
+        assert_eq!(stale_sequence.remediation, "aw coordination show task:test");
+        crate::cli::validate_emitted_aw_command(&stale_sequence.remediation).unwrap();
+
+        let duplicate_id = submit_event(&mut current, heartbeat("event:1", 2)).unwrap_err();
+        assert_eq!(duplicate_id.code, EventRejectionCode::StaleEvent);
+
+        let mut stale_dispatch = heartbeat("event:old-dispatch", 2);
+        stale_dispatch.dispatch_id = "dispatch:test:0".to_string();
+        assert_eq!(
+            submit_event(&mut current, stale_dispatch).unwrap_err().code,
+            EventRejectionCode::StaleEvent
+        );
+
+        let mut intruder = heartbeat("event:intruder", 2);
+        intruder.sender = "agent:intruder".to_string();
+        let unauthorised = submit_event(&mut current, intruder).unwrap_err();
+        assert_eq!(unauthorised.code, EventRejectionCode::UnauthorisedEvent);
+        assert_eq!(current.events.len(), 1);
+
+        assert_eq!(
+            submit_event(&mut current, heartbeat("event:2", 2))
+                .unwrap()
+                .status,
+            "recorded"
+        );
+        assert_eq!(current.events.len(), 2);
+    }
+
+    /// @spec #2588
+    #[test]
+    fn coordination_event_validation_rejects_structural_values_with_schema_remediation() {
+        let current = state(&[]);
+        let mut invalid = vec![];
+
+        let mut empty_event_id = heartbeat("", 1);
+        invalid.push(&mut empty_event_id);
+        let mut empty_task_id = heartbeat("event:task", 1);
+        empty_task_id.task_id.clear();
+        invalid.push(&mut empty_task_id);
+        let mut empty_dispatch_id = heartbeat("event:dispatch", 1);
+        empty_dispatch_id.dispatch_id.clear();
+        invalid.push(&mut empty_dispatch_id);
+        let mut empty_sender = heartbeat("event:sender", 1);
+        empty_sender.sender.clear();
+        invalid.push(&mut empty_sender);
+        let mut zero_sequence = heartbeat("event:zero", 0);
+        invalid.push(&mut zero_sequence);
+        let mut empty_evidence = heartbeat("event:evidence", 1);
+        empty_evidence.evidence = vec!["".to_string()];
+        invalid.push(&mut empty_evidence);
+        let mut duplicate_evidence = heartbeat("event:duplicate-evidence", 1);
+        duplicate_evidence.evidence = vec!["gate:test".to_string(), "gate:test".to_string()];
+        invalid.push(&mut duplicate_evidence);
+
+        for event in invalid {
+            let rejection = validate_event(&current, event).unwrap_err();
+            assert_eq!(rejection.code, EventRejectionCode::InvalidEvent);
+            assert_eq!(rejection.remediation, "aw coordination schema message");
+            crate::cli::validate_emitted_aw_command(&rejection.remediation).unwrap();
+        }
+        assert!(current.events.is_empty());
     }
 }

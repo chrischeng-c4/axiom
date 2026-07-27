@@ -125,7 +125,12 @@ def _open(
 
 
 def _submit(
-    root: Path, name: str, task_id: str, event: dict[str, object]
+    root: Path,
+    name: str,
+    task_id: str,
+    event: dict[str, object],
+    *,
+    expect_success: bool = True,
 ) -> dict[str, object]:
     return final_json(
         run_aw(
@@ -135,6 +140,7 @@ def _submit(
             task_id,
             "--event",
             str(_write(root, f"{name}-event", event)),
+            expect_success=expect_success,
         )
     )
 
@@ -277,11 +283,12 @@ def verify() -> list[str]:
         assert empty_evidence["status"] == "rejected"
         _satisfy(root, "task:matrix", "gate:tests", "evidence:test-run")
 
-        for name, event, reason in (
+        for name, event, reason, expect_success in (
             (
                 "wrong-task",
                 _event("task:other", "completion", ["gate:tests"]),
                 "task identity",
+                False,
             ),
             (
                 "wrong-dispatch",
@@ -292,26 +299,38 @@ def verify() -> list[str]:
                     dispatch_id="dispatch:stale:1",
                 ),
                 "active dispatch",
+                False,
             ),
             (
                 "missing",
                 _event("task:matrix", "completion", []),
                 "required gate",
+                True,
             ),
             (
                 "wrong-gate",
                 _event("task:matrix", "completion", ["gate:other"]),
                 "required gate",
+                True,
             ),
             (
                 "partial",
                 _event("task:matrix", "completion", ["gate:tests"]),
                 "gate:lint",
+                True,
             ),
         ):
-            rejected = _submit(root, name, "task:matrix", event)
+            rejected = _submit(
+                root,
+                name,
+                "task:matrix",
+                event,
+                expect_success=expect_success,
+            )
             assert rejected["completion_advanced"] is False
             assert reason in rejected["reason"]
+            if not expect_success:
+                assert rejected["code"] == "stale_event"
 
         _satisfy(root, "task:matrix", "gate:lint", "evidence:lint-run")
         all_gates = _submit(

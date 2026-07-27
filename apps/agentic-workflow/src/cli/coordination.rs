@@ -5,12 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use serde_json::json;
 
 use crate::coordination::authority::{
     interrupt_dispatch, load_state, open_state, record_decision, satisfy_gate, save_state,
-    submit_event, CoordinationState, ReconciliationOutcome,
+    submit_event, CoordinationState, EventRejection, ReconciliationOutcome,
 };
 use crate::coordination::protocol::{
     DispatchDocument, GateDocument, MessageDocument, TaskDocument,
@@ -65,6 +65,16 @@ enum CoordinationCommand {
     },
     /// Read one AW-owned coordination snapshot.
     Show { task_id: String },
+    /// Print one canonical public coordination JSON Schema.
+    Schema {
+        #[arg(value_enum)]
+        document_kind: CoordinationSchemaKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CoordinationSchemaKind {
+    Message,
 }
 
 pub fn run(args: CoordinationArgs) -> Result<()> {
@@ -93,6 +103,7 @@ pub fn run(args: CoordinationArgs) -> Result<()> {
             evidence,
         } => run_decide(&project_root, &task_id, &gate, &choice, &evidence),
         CoordinationCommand::Show { task_id } => run_show(&project_root, &task_id),
+        CoordinationCommand::Schema { document_kind } => run_schema(document_kind),
     }
 }
 
@@ -122,6 +133,28 @@ fn reject<T>(reason: impl Into<String>) -> Result<T> {
     let reason = reason.into();
     print_rejected(&reason, false);
     anyhow::bail!(reason)
+}
+
+fn reject_event<T>(rejection: EventRejection) -> Result<T> {
+    println!(
+        "{}",
+        json!({
+            "schema_version": "aw.cli.v1",
+            "status": "rejected",
+            "code": rejection.code.as_str(),
+            "authority": "aw",
+            "reason": rejection.reason,
+            "completion_advanced": false,
+            "decision_advanced": false,
+            "next": {
+                "kind": "run_command",
+                "command": rejection.remediation,
+                "reason": "inspect the authoritative coordination contract before retrying"
+            },
+            "terminal": true
+        })
+    );
+    anyhow::bail!("coordination event rejected")
 }
 
 fn run_open(project_root: &Path, task: &Path, dispatch: &Path, gates: &Path) -> Result<()> {
@@ -225,9 +258,12 @@ fn run_submit(project_root: &Path, task_id: &str, event: &Path) -> Result<()> {
     let mut state = load_state(project_root, task_id)?;
     let event: MessageDocument = match read_json(event, "coordination event") {
         Ok(value) => value,
-        Err(error) => return reject(error.to_string()),
+        Err(error) => return reject_event(EventRejection::invalid(error.to_string())),
     };
-    let outcome = submit_event(&mut state, event);
+    let outcome = match submit_event(&mut state, event) {
+        Ok(value) => value,
+        Err(rejection) => return reject_event(rejection),
+    };
     save_state(project_root, &state)?;
     println!("{}", outcome_json(task_id, &outcome));
     Ok(())
@@ -267,6 +303,28 @@ fn run_show(project_root: &Path, task_id: &str) -> Result<()> {
             "decision": state.decision,
             "events": state.events,
             "interrupt_reason": state.interrupt_reason,
+            "terminal": true
+        })
+    );
+    Ok(())
+}
+
+/// @spec #2588
+fn run_schema(document_kind: CoordinationSchemaKind) -> Result<()> {
+    let (name, source) = match document_kind {
+        CoordinationSchemaKind::Message => (
+            "message",
+            include_str!("../../schemas/coordination/message.schema.json"),
+        ),
+    };
+    let schema: serde_json::Value = serde_json::from_str(source)?;
+    println!(
+        "{}",
+        json!({
+            "schema_version": "aw.cli.v1",
+            "status": "ok",
+            "document_kind": name,
+            "schema": schema,
             "terminal": true
         })
     );

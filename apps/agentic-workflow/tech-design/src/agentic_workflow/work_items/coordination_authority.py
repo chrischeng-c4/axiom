@@ -46,6 +46,7 @@ class CoordinationState:
     gates: tuple[GateDocument, ...]
     completion_advanced: bool = False
     decision: DecisionRecord | None = None
+    events: tuple[MessageDocument, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,11 +126,13 @@ def submit(
             "blocked", "event does not target the active dispatch", False, False
         )
     if event.message_type is MessageType.BLOCKED_QUESTION:
-        return state, Reconciliation(
+        return replace(state, events=(*state.events, event)), Reconciliation(
             "blocked", "human decision is required", False, False, True
         )
     if event.message_type is not MessageType.COMPLETION:
-        return state, Reconciliation("recorded", "event recorded", False, False)
+        return replace(state, events=(*state.events, event)), Reconciliation(
+            "recorded", "event recorded", False, False
+        )
 
     gates = {gate.gate_id: gate for gate in state.gates}
     for gate_id in state.task.required_gates:
@@ -142,7 +145,11 @@ def submit(
             return state, Reconciliation(
                 "blocked", f"required gate {gate_id} lacks cited evidence", False, False
             )
-    advanced = replace(state, completion_advanced=True)
+    advanced = replace(
+        state,
+        completion_advanced=True,
+        events=(*state.events, event),
+    )
     return advanced, Reconciliation("done", "completion advanced", True, False)
 
 
