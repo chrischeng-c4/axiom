@@ -2048,6 +2048,10 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
         return closed_wi_envelope(&issue);
     }
 
+    if let Some(envelope) = explicitly_deferred_wi_envelope(&issue) {
+        return envelope;
+    }
+
     if issue.issue_type == IssueType::Spike {
         return blocked_envelope(
             root.clone(),
@@ -2192,6 +2196,38 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             persistence: None,
         }
     }
+}
+
+/// An explicitly deferred tracker item is not executable work. The backlog
+/// root probes this envelope and parks the leaf while continuing other ready
+/// work; a direct WI root exposes the one typed command that resumes it.
+///
+/// @spec #2587
+fn explicitly_deferred_wi_envelope(issue: &Issue) -> Option<WorkflowEnvelope> {
+    let deferred_label = issue.labels.iter().find(|label| {
+        matches!(
+            label.to_ascii_lowercase().as_str(),
+            "deferred" | "status:deferred"
+        )
+    })?;
+    let issue_id = issue_cli_ref(issue);
+    let root = WorkflowNode {
+        kind: issue.issue_type.as_str().to_string(),
+        id: issue_ref(issue),
+    };
+    Some(blocked_envelope(
+        root.clone(),
+        root,
+        format!(
+            "aw wi update {issue_id} --remove-label {} --push",
+            shell_quote_goal_arg(deferred_label)
+        ),
+        format!(
+            "work item `{}` is explicitly deferred by `{deferred_label}`; remove the label only after its external prerequisite is satisfied",
+            issue_ref(issue)
+        ),
+        true,
+    ))
 }
 
 // An open epic can dispatch only after its tracker labels resolve a concrete
@@ -4148,6 +4184,26 @@ mod tests {
             ship_commit: None,
             regen_verified_at: None,
         }
+    }
+
+    #[test]
+    fn explicitly_deferred_change_blocks_direct_execution_and_exposes_resume_command() {
+        let mut issue = open_issue(IssueType::Change, 2504);
+        issue.labels.push("status:deferred".to_string());
+
+        let envelope =
+            explicitly_deferred_wi_envelope(&issue).expect("deferred label must block execution");
+
+        assert_eq!(envelope.action, "blocked");
+        assert!(envelope.requires_hitl);
+        assert!(!envelope.completion.workflow_complete);
+        assert_eq!(
+            envelope.next.command,
+            "aw wi update 2504 --remove-label 'status:deferred' --push"
+        );
+        assert!(envelope.next.reason.contains("external prerequisite"));
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("deferred resume command must remain chain-valid");
     }
 
     fn write_project_rows(root: &Path, rows: &[(&str, &str, &str)]) {
