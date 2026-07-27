@@ -77,7 +77,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: type_wall_conformance_determinism
+    anchor: to_thread_gather_efficiency
   - path: projects/mamba/tests/external_contracts/ec_mamba_t1_type_wall_conformance_determinism.rs
     action: modify
     section: unit-test
