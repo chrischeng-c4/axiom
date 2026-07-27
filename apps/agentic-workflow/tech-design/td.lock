@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:45:07.487804+00:00"
-digest = "sha256:a747a8f966f5598f5013d6d458ae3dbf1f97dbd719fecc50569fd0ff5de990ba"
-source_digest = "sha256:a747a8f966f5598f5013d6d458ae3dbf1f97dbd719fecc50569fd0ff5de990ba"
-ir_digest = "sha256:4954fc770078df9b5b00f7ca14946cc35dd2b5624f4c3f9a57a81e1451b6f5e8"
+generated_at = "2026-07-27T13:48:44.170916+00:00"
+digest = "sha256:c1af9629f958007575fd48a2f0860548014a901b8d2718dac51962b020febfc7"
+source_digest = "sha256:c1af9629f958007575fd48a2f0860548014a901b8d2718dac51962b020febfc7"
+ir_digest = "sha256:0a663ef1cf3e4212e36f131372cb8b9c8981b04698ef5e006986670c54e4af7b"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -2182,6 +2182,86 @@ digest = "sha256:df99a599cabf5fd47011f0ad934af1d70d607ea4771a19d78fec948bf9a0371
 [[files]]
 path = "src/agentic_workflow/migrated/surface/specs/td_2364.py"
 digest = "sha256:f430529cfa8948d5ab4cb7b463140f852472d442d4b505aff1bd29ad0f13f5c6"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/cb_claim_test.py"
+digest = "sha256:14b8f8131814a2c546f4adb5f5ffe0dfbd36aab818b286d43714c7f351075ccc"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/cb_fill_test.py"
+digest = "sha256:f00c3ac278c26a2bfae7993e47fa0c40c5e9c3e0bbe8ef3c42a8612bcfb85475"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/cb_namespace_test.py"
+digest = "sha256:c7a4295ab2378cc8eb556a2c17f6d13b441e33458d4a0c67267dbc9f93855096"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/chain_liveness_test.py"
+digest = "sha256:8104e47bae298e5e385aa93eb577665288f20cc4b5b87c8016544eab7cc1e66d"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/fixture_loop_test.py"
+digest = "sha256:8a7bff751935f0ff574839f2b27d631f66e36575c9ff0f1864b2aafd89153a35"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/goal_backlog_test.py"
+digest = "sha256:d44ab690ef891ce4c0c955cfb29753d53a1946dcf5bd33479124d3f89427ea77"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/in_place_lifecycle_test.py"
+digest = "sha256:9b6abd57766627b02812b6f56097facf59692f288c677741a6c08a86218d7d15"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/inplace_mode_test.py"
+digest = "sha256:e3ea3a8a05f4a0d2b4ea2663bd0426f1ffc5b83b1714a790898ae2b1fd86a988"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/legacy_cli_removal_test.py"
+digest = "sha256:8d2e4ef7cb9cc8232a863a11a3c3d2d31b3fc8401e825633e0cb8b9ac5ab6564"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/merge_target_branch.py"
+digest = "sha256:453205b9717fd22e3928f376101d64f33838dc6faba8b2ed0900aabefe29ad30"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/phase_migration_test.py"
+digest = "sha256:e23c27a3896bfc84024de8ce004a5ad1dcdd682b03992753beeff41242eb0ef7"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/recovery_flow_test.py"
+digest = "sha256:62759c29e98489dd67e7094f095dd970d06a5da23bddb39024d70432fb0fc5fe"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/root_doc_allowlist_test.py"
+digest = "sha256:9b46894c842e3a0a2f503ac1dfac16f7586a826773838a33d929e6232e32c798"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/root_doc_mirror_test.py"
+digest = "sha256:d26fa4d2ad1547b09e11b05ffc88a7412dd9cec3367b880425b9a16d98d6d920"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/root_trait_coverage_test.py"
+digest = "sha256:e4c4f70f758e7c1a3e46ec51d7102b519ed4b714616629722d0e80b0ba78b401"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/standardize_test.py"
+digest = "sha256:8245addc225a3ac87a732e6098a5258315900b5dc69503d607f13b855dc00b76"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/td_check_test.py"
+digest = "sha256:a3c4ebed916a2fb45608b64353ad5d17ae9452daff81ed4fbea5bf4da67947b1"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/td_claim_test.py"
+digest = "sha256:16d3a02d03a5adc42c46891552919840cc1e5d84fc6a776c1fc102b8a533254a"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/td_no_merge_test.py"
+digest = "sha256:d40cd76d18d011952f1e20c4dc9d0018abb130a582c3d6edc447fb60bd660b35"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/validate/tests/wi_close_remote_test.py"
+digest = "sha256:7472b67a2d8b142b7926eed788922188787e1c98e1215fc6869e390550da0711"
 
 [[files]]
 path = "src/agentic_workflow/work_items/dependency_reference_extraction.py"

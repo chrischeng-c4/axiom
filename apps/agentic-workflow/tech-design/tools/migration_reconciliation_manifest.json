@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:b17816813330e51197f313d915a8064c4e69a8bd3be76bd01e9ed581a59321db",
+  "digest": "sha256:58d624a9758f78dece1c8c96a760db9198405aab65cafead212c17330f0d7b95",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
@@ -11935,7 +11935,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/cb_claim_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:a618b7cf4848527ace2afa68ffb1e14ea8feb141aa1b348dcbbbb8d7c4b34b2b",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/cb_claim_test.py"
     },
     {
@@ -11945,7 +11945,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/cb_fill_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:55c3ec2800a5649aaea0a546d26573bcc4cb759c327f8a65b344c6d2101b40e7",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/cb_fill_test.py"
     },
     {
@@ -11955,7 +11955,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/cb_namespace_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:8ebdf8f17bfe480b54ece68e66ee8d6847a8cade005bdb6a16b27cbf4fa28681",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/cb_namespace_test.py"
     },
     {
@@ -11965,7 +11965,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/chain_liveness_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:653a7ec8bafbe0e092dbaa45c8d4b36be9b85abadbf5bfc3bcc9178da314a7a6",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/chain_liveness_test.py"
     },
     {
@@ -11975,7 +11975,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/fixture_loop_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:1e437c0e23a81dbc65db7672618830a6a3dfa660317d2c5e993e32acb43bba4a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/fixture_loop_test.py"
     },
     {
@@ -11985,7 +11985,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/goal_backlog_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:7fe8e6fff393ae03fd5d5e97d1aadb7055f6af0522d54510c75a8fa65e87f343",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/goal_backlog_test.py"
     },
     {
@@ -11995,7 +11995,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/in_place_lifecycle_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:dda61491802a46158b5cd44d7950df34f3a7ed6dd304dfdda1d4362c5913a6a4",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/in_place_lifecycle_test.py"
     },
     {
@@ -12005,7 +12005,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/inplace_mode_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:14faf9f6b1475bce062622ca057f84c4727eac4ba23fc6d542de5fee25750683",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/inplace_mode_test.py"
     },
     {
@@ -12015,7 +12015,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/legacy_cli_removal_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:3bc8449dabffec7e42f9cd43cd20c7b70adf1ef1324e477b14963ce405f7a31c",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/legacy_cli_removal_test.py"
     },
     {
@@ -12025,7 +12025,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/merge_target_branch.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:735b789c5151a1d677a4d3f071772215a78fa0526b8ff962a2e0c7918fc2ca6a",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/merge_target_branch.py"
     },
     {
@@ -12035,7 +12035,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/phase_migration_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:61deeec7436a78dc8f85ad7373e6680a10fba36ee3509b61521c9c5170b63318",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/phase_migration_test.py"
     },
     {
@@ -12045,7 +12045,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/recovery_flow_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:edb5bc66462a596ead5536bc9a5ba442d0a067421e8d1a97583ee278d3f99782",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/recovery_flow_test.py"
     },
     {
@@ -12055,7 +12055,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/root_doc_allowlist_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:d67f229049704663ab13c58075b31c7cb8f6d79748980324b7856492e8dbc048",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/root_doc_allowlist_test.py"
     },
     {
@@ -12065,7 +12065,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/root_doc_mirror_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:76ca2a7646b46c18769a1de538e9138c18f942e0ec52a2c24494a4ff13b0f26f",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/root_doc_mirror_test.py"
     },
     {
@@ -12075,7 +12075,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/root_trait_coverage_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:8332a4e1dd9a638c495d36d4d002c9d4ef5aba17d7c1e089871d60b694dcca35",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/root_trait_coverage_test.py"
     },
     {
@@ -12085,7 +12085,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/standardize_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:ee1b341211661924ffa0242c7d3993f0db0e7c5c5294dedfe4154adfafc6b704",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/standardize_test.py"
     },
     {
@@ -12095,7 +12095,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/td_check_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:6371a4488065afe485df0755cf16d9754adc4ad84bc4f84fd48d4aeb5f6981e0",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/td_check_test.py"
     },
     {
@@ -12105,7 +12105,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/td_claim_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:485c45639e3deb8e47ca549d6bf4f44e3f4fe05125c76c966bcfa1b607082238",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/td_claim_test.py"
     },
     {
@@ -12115,7 +12115,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:fbc5d58c7f0266823a47ecf469fd757d03b6bc1d3add161a0886c0ee45e34322",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/td_no_merge_test.py"
     },
     {
@@ -12125,7 +12125,7 @@
       "path": "apps/agentic-workflow/tech-design/surface/validate/tests/wi_close_remote_test.md",
       "role": "legacy_markdown_td",
       "sha256": "sha256:5b92c3d174004672013b677c4539b5ce9a5a07f0ee39551da99922df0c1c0c8e",
-      "status": "pending",
+      "status": "completed",
       "target_path": "apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/validate/tests/wi_close_remote_test.py"
     },
     {
