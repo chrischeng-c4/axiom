@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T13:33:38.248935+00:00"
-digest = "sha256:45c01dd874e710f685bc8273a9cfb2e4958d0487a1b4173e1efa369de7f649c9"
-source_digest = "sha256:45c01dd874e710f685bc8273a9cfb2e4958d0487a1b4173e1efa369de7f649c9"
-ir_digest = "sha256:8ff86375c15a7bb81b6209646913f0c26afe81ca02e7b8b48e3875bff339b24c"
+generated_at = "2026-07-27T13:38:26.276037+00:00"
+digest = "sha256:e2bd9559461cda79a96d50c400ce65730ae84d78fa602f49445b3056442de52c"
+source_digest = "sha256:e2bd9559461cda79a96d50c400ce65730ae84d78fa602f49445b3056442de52c"
+ir_digest = "sha256:7f331e80feda192169cddf206429c52ddec669f9a8a3782c76098d0a64f01417"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -1820,8 +1820,16 @@ path = "src/agentic_workflow/migrated/surface/commands/validate_proposal.py"
 digest = "sha256:a32135357011d69c5e37bb440223bc7bdc43547b1aeb310b4fd1bfa3241df0c1"
 
 [[files]]
+path = "src/agentic_workflow/migrated/surface/generate/build.py"
+digest = "sha256:a94f557867eef0d62137d0ea04503edfa443a7000586e8ad2b9ca3247f5a2171"
+
+[[files]]
 path = "src/agentic_workflow/migrated/surface/generate/project_health_source.py"
 digest = "sha256:4f44c343e3d7dbf12c94a488a724cd83643c1e517af83a9d1038f9cd37ea6baf"
+
+[[files]]
+path = "src/agentic_workflow/migrated/surface/generate/project_health_test_source.py"
+digest = "sha256:ed8219350e755c70049eae6d13cea9404ad69105b74dd3e9a62c10587005a342"
 
 [[files]]
 path = "src/agentic_workflow/migrated/surface/interfaces/src/artifact_producer.py"
