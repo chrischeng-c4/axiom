@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T19:36:22.840948+00:00"
-ir_digest = "sha256:51f7da21cfe2ee2e16641b1119a14317d81f3fc30cefafe8e7456d737f112a72"
-source_digest = "sha256:367eefc018eea59994597969f6ae9ef7458c6c63b87aab77915b32ec91def985"
+generated_at = "2026-07-27T20:00:04.693834+00:00"
+ir_digest = "sha256:e1f356c45031fae5b45a313da31504386ac4e5adf22861fba37a0ab902bc3ea2"
+source_digest = "sha256:ff3f7f6a8cba5979948382a565aea2290103b61e5507dbcb6851e065b933d9ff"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:c5da5cf6f1851f4a639792dcf386e047f521550a64d97166c937844c992056e4"
+digest = "sha256:18f5e3850edd02b24f2a2f18e23bac919d720fbe3d9d0e845551e88a25e0b532"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -51,6 +51,10 @@ digest = "sha256:1d3a96efdd5afd69c7c222fe51319959dcdba184faa8aee8de34e05ab7b6594
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/capability-scoped-dependency-verification.py"
 digest = "sha256:88296c626c1262a172e509db9f12033d9a3fdcba00b0f8deb5fa6c2893a550c8"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
+digest = "sha256:912073f6c4353cb91d09566ba7ee8a0d75af03f9c1afa867ce59d48a21fed943"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/existing-project-standardization-operational-efficiency.py"
@@ -503,6 +507,26 @@ assertions = [
 evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:ae13dae3d99b28e7cceba6c17b8e6fccfa37caaf543d85273206ae45f412a15e"
+
+[[cases]]
+id = "coordination-contract-schema"
+capability_id = "workflow-root-runner"
+claim_id = "versioned-client-independent-coordination-contract"
+contract_id = "coordination-contract-schema"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:coordination-contract-schema"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
+required_for_production = true
+assertions = [
+    "Task, dispatch, message, and gate documents share one versioned, client-independent JSON contract that round-trips valid fixtures and rejects unknown versions, missing identity or linkage, untyped fields, invalid enums, and structural drift.",
+    "artifact: artifact:agentic-workflow/coordination-contract-schema",
+    "oracle: The Python external contract reads only the four published JSON Schema artifacts, evaluates representative fixtures through an independent schema interpreter, pins each schema's complete required-property set, and mutates every required field, typed field, enum, and const.",
+    "target: rust",
+]
+evidence_digest = "sha256:be5e49b6dfb9918318381d5fa1f83ea1a5c93b54e1e9222b0ea8a99ec120c01e"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6c7aabfad4376072262bbe21e4cd495d217cbbf907cf28bebf09ef30ad94e521"
 
 [[cases]]
 id = "existing-project-standardization-operational-efficiency"

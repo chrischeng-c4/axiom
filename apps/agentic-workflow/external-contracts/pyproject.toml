@@ -16,6 +16,20 @@ author = "agent:codex:/root"
 efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
+id = "coordination-contract-schema"
+artifact_id = "artifact:agentic-workflow/coordination-contract-schema"
+capability_id = "workflow-root-runner"
+use_case_id = "versioned-client-independent-coordination-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/coordination-contract-schema.py"
+promise = "Task, dispatch, message, and gate documents share one versioned, client-independent JSON contract that round-trips valid fixtures and rejects unknown versions, missing identity or linkage, untyped fields, invalid enums, and structural drift."
+oracle = "The Python external contract reads only the four published JSON Schema artifacts, evaluates representative fixtures through an independent schema interpreter, pins each schema's complete required-property set, and mutates every required field, typed field, enum, and const."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case coordination-contract-schema"
+evidence_paths = ["evidence/coordination-contract-schema.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "python-ec-cache-safe-discovery"
 artifact_id = "artifact:agentic-workflow/python-ec-cache-safe-discovery"
 capability_id = "project-local-td-and-ec-gates"

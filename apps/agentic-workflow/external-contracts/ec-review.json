@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:7a002e7f4317cc9f75807e775566a7f90f91f54b6bf7ecb2ca43707732796a6a",
+  "source_digest": "sha256:58065651d677e27d2956cf81053404ed74df212bab384403a0705e3f03803097",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T19:36:22.672960+00:00",
-  "summary": "Accepted: the final WI #2774 contract has no known-failure exemption and passes its native black-box verifier against the real public `aw ec check` boundary. It pins a baseline digest; introduces non-UTF-8 pyc/native-extension plus build-directory Python, text, and extensionless artifacts; requires the post-artifact digest to remain identical; proves every ignored artifact remains byte-identical; and retains strict missing-source and declared-binary failures. The DeveloperTool capability's required efficiency and stability dimensions remain covered by separate operational cases.",
+  "reviewed_at": "2026-07-27T19:59:54.260902+00:00",
+  "summary": "Accepted: `coordination-contract-schema` truthfully binds the workflow-root runner's root-scoped work-progression contract and independently evaluates four client-neutral JSON Schema artifacts. It pins each document's exact required/property set and closed-object boundary, round-trips representative fixtures, and exhaustively rejects every missing required field, every top-level field type mutation, every declared const/enum mutation, and unknown properties. It also pins the complete heartbeat/completion/escalation/blocked-question message vocabulary. Missing target schemas currently fail red, so an empty implementation cannot pass; the workflow-root-runner DeveloperTool capability retains separate efficiency and stability coverage.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/pyproject.toml"
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/coordination-contract-schema.py"
 }

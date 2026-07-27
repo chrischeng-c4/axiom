@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axiom.dev/schemas/aw/coordination/task.schema.json",
+  "title": "AW Coordination Task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "task_id",
+    "workflow_root",
+    "dependencies",
+    "required_gates"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "aw.coordination.v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "task"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dependencies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_gates": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
