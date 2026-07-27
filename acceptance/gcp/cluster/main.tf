@@ -89,9 +89,30 @@ resource "google_container_node_pool" "acceptance" {
   cluster    = google_container_cluster.acceptance.name
   node_count = 1
 
+  # 3, not 2, and the third node is arithmetic rather than slack.
+  #
+  # `dedicated_node_affinity` (libs/service-k8s/src/render.rs) renders REQUIRED
+  # hostname anti-affinity, so a 2-voter Lumen needs two nodes holding no other
+  # member of the same instance. The quorum leg (#2610) runs while the main
+  # `lumen` instance is still up, and on e2-standard-2 (1930m allocatable) the
+  # node carrying it has no room left: ~518m of DaemonSets, plus the
+  # control-plane singletons the scheduler piles onto one node -- kube-dns is
+  # 270m and BOTH replicas can land together -- plus lumen-0 at 500m, reaches
+  # ~1850m. A 250m replica does not fit in the remaining 80m.
+  #
+  # At max 2 that made the leg a coin flip on kube-dns placement: run
+  # 0727140653 got the replicas split and both quorum pods scheduled; run
+  # 0727145600 got them stacked, so quorum-1 had nowhere to go and the
+  # autoscaler annotated it `cluster_autoscaler_unhelpable_until: Inf` -- pool
+  # already at max, no node it could add would help. The leg then failed as
+  # "timed out waiting for Ready", which reads exactly like a product
+  # regression and is not one.
+  #
+  # The third node exists only while the quorum leg needs it (~10 min of a
+  # ~45-min run, ~$0.01 of e2-standard-2) and the autoscaler removes it again.
   autoscaling {
     min_node_count = 1
-    max_node_count = 2
+    max_node_count = 3
   }
   management {
     auto_repair  = true

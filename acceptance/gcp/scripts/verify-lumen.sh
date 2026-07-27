@@ -305,6 +305,29 @@ capture_quorum_diagnostics() {
     kubectl -n lumen logs "pod/$pod" --all-containers --tail=200 --prefix \
       >> "$EVIDENCE_DIR/kubernetes/lumen-quorum-pods.log" 2>&1 || true
   done
+  # `kubectl describe` drops the Events section once GKE has aged the events
+  # out, which is exactly the information a Pending pod's failure turns on.
+  kubectl -n lumen get events --sort-by=.lastTimestamp \
+    > "$EVIDENCE_DIR/kubernetes/lumen-quorum-events.txt" 2>&1 || true
+  # Separate "could not be placed" from "placed and unhealthy". Both surface as
+  # readyReplicas != 2, and only the second is a Lumen defect: a Pending pod
+  # under this leg's REQUIRED hostname anti-affinity means the cluster ran out
+  # of distinct nodes, and `cluster_autoscaler_unhelpable_until: Inf` is the
+  # autoscaler saying no node it is allowed to add would help -- the pool is at
+  # its ceiling. Naming that here stops the next reader from bisecting Lumen
+  # for a node-pool ceiling (cluster/main.tf, acceptance-pool max_node_count).
+  kubectl -n lumen get pods -l app.kubernetes.io/instance=lumen-quorum -o json 2>/dev/null \
+    | jq -r '.items[]
+        | select(any(.status.conditions[]?; .type == "PodScheduled" and .status != "True"))
+        | "UNSCHEDULABLE \(.metadata.name): "
+          + ((.status.conditions[] | select(.type == "PodScheduled") | .message) // "no message")
+          + " | autoscaler-unhelpable-until="
+          + (.metadata.annotations["cloud.google.com/cluster_autoscaler_unhelpable_until"] // "n/a")' \
+      2>/dev/null | while read -r line; do
+    echo "$line" >&2
+    echo "  ^ node-pool capacity shortfall, not a Lumen failure: this leg's replicas carry" >&2
+    echo "    required hostname anti-affinity, so each one needs a node of its own." >&2
+  done
 }
 
 wait_ready_quorum_cr() {

@@ -37,6 +37,24 @@ if cluster_json="$(gcloud container clusters describe "$PERSISTENT_CLUSTER_NAME"
     echo "    -var=project_id=$PROJECT_ID -var=region=$REGION -var=gke_zone=$GKE_ZONE \\" >&2
     echo "    -var=cluster_name=$PERSISTENT_CLUSTER_NAME -var=node_service_account_id=$NODE_SERVICE_ACCOUNT_ID" >&2
   fi
+  # Third drift check, and the one the other two would have missed: a node pool
+  # can be present, correctly named, and still too small. cluster/main.tf raises
+  # acceptance-pool to max 3 because required hostname anti-affinity gives the
+  # 2-voter quorum leg (#2610) nowhere to put its second replica once the main
+  # `lumen` instance has saturated a node -- but reuse never re-applies
+  # terraform, so a cluster bootstrapped before that change keeps max 2 forever.
+  # At max 2 the leg is a coin flip on how the scheduler happened to spread
+  # kube-dns, and it fails as "timed out waiting for Ready" twenty minutes in,
+  # indistinguishable from a product regression. Name it here for nothing.
+  acceptance_pool="${ACCEPTANCE_POOL_NAME:-acceptance-pool}"
+  acceptance_pool_max="$(jq -r --arg p "$acceptance_pool" \
+    'first(.nodePools[]? | select(.name == $p) | .autoscaling.maxNodeCount) // 0' <<<"$cluster_json")"
+  if (( acceptance_pool_max < 3 )); then
+    echo "WARNING: $PERSISTENT_CLUSTER_NAME '$acceptance_pool' allows max $acceptance_pool_max nodes; the #2610 quorum leg needs 3." >&2
+    echo "  raise it in place (no recreation, no restart, ~1 min):" >&2
+    echo "  gcloud container clusters update $PERSISTENT_CLUSTER_NAME --project=$PROJECT_ID --zone=$GKE_ZONE \\" >&2
+    echo "    --node-pool=$acceptance_pool --enable-autoscaling --min-nodes=1 --max-nodes=3" >&2
+  fi
   printf '%s\n' "$PERSISTENT_CLUSTER_NAME"
   exit 0
 fi
