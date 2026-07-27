@@ -1547,836 +1547,836 @@
       "path": ".agents/agents/agentic-workflow-planner.md",
       "role": "documentation_reference",
       "sha256": "sha256:e8371c4fbe85ace28284f590c6f409df056c348f31eca17c994c2131bb1086ad",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/agents/aw-dev.md",
       "role": "documentation_reference",
       "sha256": "sha256:45250d84c4409fd3a36026d08acad1ba5e1345e447906f587e2ade5a2ff685f8",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/agents/aw-ec-reviewer.md",
       "role": "documentation_reference",
       "sha256": "sha256:e0661ed57c6dd11a71a3808e091e46ac92956d66123c4d4bf7c62e48ce5da75d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/agents/aw-ec-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:1235fc98a6893b415abe402a321d0021911e8529c6a5a8d965a8714d3d10d841",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/agents/aw-hw-filler.md",
       "role": "documentation_reference",
       "sha256": "sha256:1204cee66a0a12a75fc366cbcea4a9dad907df220ba66e06c375eb7f91ea4f64",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/agents/aw-td-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:f38c1a582a16b0515cf97b451269c53f043da17db58b39b9d67027ba1cfdf9a8",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/skills/aw-change-review/SKILL.md",
       "role": "documentation_reference",
       "sha256": "sha256:90458f3d931c911d8046dc0e71ddca80ed2822a7c330e731f84343ca06fa3d4d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".agents/skills/aw-guard/SKILL.md",
       "role": "documentation_reference",
       "sha256": "sha256:aa34fc5d0f5e588d41bd378da1b1fef7fd6a5e9ac0cbf37771e2657dfd8e9616",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/agentic-workflow-planner.md",
       "role": "documentation_reference",
       "sha256": "sha256:34787eb29b3fcaad69195f8de033a4bdfe231880cc6e4b40e625ec5e06478060",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/aw-dev.md",
       "role": "documentation_reference",
       "sha256": "sha256:4512a0f3efdf09f266d26c9d4c3e6b3a9db8d9b8a0a8baff3ac581000de5c984",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/aw-ec-reviewer.md",
       "role": "documentation_reference",
       "sha256": "sha256:a28f467e0c91c26565b5e5b04f860b89d37855fbd8d40a5c985a1cdf9e6c9c44",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/aw-ec-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:357132a89f346a15f43d909a524a50bf7c92753722350a116f53ac4fbc6cec01",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/aw-hw-filler.md",
       "role": "documentation_reference",
       "sha256": "sha256:a77b19f47dd161309a69f62e4da6a9b999c5278ad497dc4377795b76f778ef5a",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".claude/agents/aw-td-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:3c482b0ca1005592f9fe9a5a961a5cdbe44b1d9f9bfbf1fe355b4a82a35162cf",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/agentic-workflow-planner.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:17fdbfae558864cd6ee9add8030dde7b68eae89fe2d14dd3d3cc53b756450b2b",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/aw-dev.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:1fd98f3d92f95b52ea657cd58f31fd31332c6c285916fcbe6a9be1fcc7a62ff1",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/aw-ec-reviewer.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:ce0138940a3c0e09ab7588e56b3074970bb24d01b438dd123c0ebd154d4f15b8",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/aw-ec-writer.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:cfb8c659933337d9bcf739aa857af4b9c8590eb495ac2abbd67ce1db98057465",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/aw-hw-filler.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:89f635c39a8a0cb5a1efe8cee052cbc12526251308d5b9dab57b0540eff3630d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": ".codex/agents/aw-td-writer.toml",
       "role": "configuration_or_guidance",
       "sha256": "sha256:3a42ca3eec29b26a91f4d715f1674f29df8990c2093a994d6cd9805f29892a85",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "AGENTS.md",
       "role": "documentation_reference",
       "sha256": "sha256:b35727fa1661140f02e87de9aa43b26b931729f9c56eb84686e5a3d56c5b3339",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "CONTRIBUTING.md",
       "role": "documentation_reference",
       "sha256": "sha256:86b4775ac82fdf485828c8503913ee7f1b96d6141fe63a6bd7d16eaf8b32f1e9",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/CAPABILITIES.md",
       "role": "documentation_reference",
       "sha256": "sha256:08387e307dde08da3fea5e12755cfdfe0e6f490b4cd4c2da40b976a3f185c061",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/README.md",
       "role": "documentation_reference",
       "sha256": "sha256:3fc317f91dda869b8b55afd7f30af27a1fc0bf9ceb76ad6daf7c12e9249d60b4",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/aw.toml",
       "role": "lock_input",
       "sha256": "sha256:344d74fdc5bd4c4c35fa792de7332d808fd73541dcedd5b19ab36924bf361c1a",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/ec.lock",
       "role": "lock_input",
       "sha256": "sha256:83e878b8ac08affff2f3e3d7067fe709fd305bf8906f0f3381656dee573be3f9",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/pyproject.toml",
       "role": "lock_input",
       "sha256": "sha256:afdcaaf0ffd4fe09282cb4c776b9c392af4982fca90b69ac92a51a027a52dec5",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/claim_reconciliation.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:a38aa5f3efc1f7c61c0dcde4a4e41a719081ae20ec3493a3f9d41f9974632b26",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/inventory_parity.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:e192401a66fe40c404afb9b2629ee4682edda034360369847eccbb02525b8538",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/__init__.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:5168eb2ad120f2e3f074bf58853868842be8d1ebe484a4c050cf56f54ec43b71",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/capability_manual.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:f1733cce97643dae397b42bd011b23e5b4b28f0a40ea65492c5af5f0276aa3fc",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/core_model.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f4",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:2835608a97f6f4b6f6abe6fc81ba35b8cf6e93873824a506543c4fe39d442ca9",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:74dca45f06d9bf53e0f76aa0c01ee1079d9d9ebd5569ea3acf1b9d726c908d94",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/project_local_gates.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:c6e7f788d57cd0135892c7b64298242882b0d90756b0196e5ef6bc34cb1f55df",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/prompt_artifacts.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:86b4aff2e016e82895e4a7115c99f656c3e1f823d518148e9ea42183814da033",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/self_hosting_admission.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:d543a8477b45bee3c6e3c3256925f36f4de0ea56b1b6af5e06c2c837d8a287a0",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/td_lifecycle.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:2c4c51457a1ec10851502733ea5ccf358561bec642d288052eec45d4082836aa",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/td_source_target.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:9693ee2e5e6e163a225aac83e12463b519c353db331ca94e77623ad7eb8d2670",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/td_terminal.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:18b7d77ce6fef3eda2aee7cd6b15221597df5818702bdcda2083c24f0dee50f8",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/work_item_planning.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:54f259073f797e6e6af882c88e27be352af5151ee374adc5307b0befb3058e53",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_clusters/workflow_runner.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:8a07c2fb854f1a90f3f47db1029e3bcc82a69f266973d10daaaa3d6d6b5a8486",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:be59adbe9070c888611272ec539bab31771e683e522debf5d724639a076565eb",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/migration_reconciliation_manifest.json",
       "role": "configuration_or_guidance",
       "sha256": "sha256:58a588ee85c1ea7b82474ce87c14301ee5f7bee8c13b4c395f4ae90b4053a942",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/runner.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:3dc90509a8c8fd1472e80871b5ad17c133e126932d381eb239a7734d55ad824e",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py",
       "role": "configuration_or_guidance",
       "sha256": "sha256:67267ea85bb6750b7bbf966fd845ce2a5c83ff47b4a70fa5d40f81d1ea94be98",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/branch_switch.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:d14cccbb59275c86446f85e7ac52f9e42866e8627a4cc4adb8d699ed3537ba3e",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/agent_prompt.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:86a41b55bcd720959e433012db3187d38d1ddbfb89453614402ee10ef3e72e08",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/artifact_producer.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:6f53fd386d390c2b12f6fba10a3be90a6a60103e188ba4bd610ab9b49a8ce2d2",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/capability.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:b37292db67be0a32d8178a909223e189a9e380238420e8c6e49703c2c8ab4bd7",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/capability_type.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:2693c9de9b780ddb3cd9e66c4e2caf244cabb88d55d944e772f79a29c465b410",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/cb.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:621d6e26bce1424ec6f84c478c20e786d303b836358c807319ac304fc06654e7",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/cb_fill.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:94478a77ebdc3074f85d39d5a01e9e3ede054906d454339970e24677b05ae1eb",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/chain.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:fab60998d2ead9de551828d0c2c83750330ae2b874ca562ace788943eaefbe33",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/commands.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:a1bf5eb4396ca6ccc49d4a239167ddfdd9e97c3c58f0f22fa0c185ff1084bbf7",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/doc_mirror.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:7001fe0c84b024505413d07dd50325a0e7f70b0f966532c9e28e3c9ecca5c296",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/ec.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:04595a16a0a3cc730eab5ebd8c1daa60b3466921be69b6de2d76f93bfcf3ca95",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/fillback.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:78344fdbf1399db22807079cfd0bcb29c822db233e8740e6dcb2daacd689d3c9",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/guard.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:e5da42d073af532e54736ed5a5ba3309fbf09879332f4ae36fcef77c335606ed",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/guard_sanction.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:d3dc15f88c0514d39ee99a2510b844dced16d0a36356c0bbb4c175ceba13b966",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/init.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:da66c473d3d95d4f967da2a78fcffed8a1ec9b92e443778aeacb4f47903bc3e2",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/issues.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:bf73c219e43575f418253f2d6316b332c82a73d92d006b2f1936045ef2eaa02a",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/llm.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:86500c959530de070305c2bc2ea997a2ae81be05c788d0301edfe01ebee0b1f2",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/loop_state.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:d79bbbcc942c59bed28c7e35dc4ed36cb10f298adff94b9e8beddefc5a9e3120",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/merge_target.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:4f4b39823c1a8ace7f551ee4e4ee94a2d847f02d710b07fc0fea9cc7aca64b86",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/mod.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:d7a422354a1dfd020cf62a4194038afa20bf42a0f1d4e88bc1389d6902265a3f",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/project.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:949cc382934b946e5d25ef8c30b818e6648df705eff6cb1cd76b228f7e8e3b26",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/remote_push.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:a11fbae4c34234955c6a12df11b14bdfb4c2b0b80511e7ca46124921338d8597",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/run.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:a585aaf1e558428681a13e08191504f050176d14d1cdc589a6df979a6a58f504",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/standardize.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:a9d45db79e3c6d9fcc9a38257ae5fae99b8f0f58c3a5cefc6e7ea72660d4dc51",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:6613eefbd535f53a42858b8a2f3c697a1ac50c275647f49efa1f76a738e431b4",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td_check_section_type.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:bca40e0b9209962b648fb5d6c7cc00d734c62ba930f98534593f5244141b0556",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td_lock.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:10963f3175d9255854cb641b5eae168970b5dfbc2d92ab533aca34b1816541f5",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/td_migrate.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:3318061cd38087016f38eb3a3ed496cf6a6c99a38bb924b7de7141bbaf331333",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/cli/workflow_guard.rs",
       "role": "legacy_cli_entry_point",
       "sha256": "sha256:59d66dea106b9bd7c8c319d9096f1e5fe1c82957faa4837a8fa8c7cd6528a32b",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/fillback/code.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:e82eb137826700c37796cc4a1e14e0acaf249ce463762178343f3fb867976437",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/generate/apply.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:3f2c81db2db9e58996b5560e4fc42cd0508b52d3bf9434c964611b1d7cb69079",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/generate/diagrams/mermaid_plus/migrate.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:4a97409a3b242ffce718db43584ab37ab5608b781a11ba68d06fd5f483b7a272",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/generate/diagrams/mermaid_plus/schema.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:6c82983d9da457435c354b01e888420e915809a9a7ea0615286bf444420171a7",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/generate/handwrite_scaffold.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:6c2253069e4ec13d257d07bd8498fcc8860bc2f6f6284adad527cf9d24bb3732",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/issues/types.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:2e570d40e5e4c65f1019c74d02a9289087b3c2e18e3096cba17f5e8ef560fc4d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/models/project.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:a866622753fdd778b4de8edd1b71542e3e6d9e77dd048e60e18a7d1aa331162e",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/runtime/envelope.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:bc0c57cc362c8b3706274944c1c3da5c95e310965698e53e60fe0a2ad58e6015",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/runtime/score_process.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:7ded088a7034a5387981c323b001637dcf6b4dcb9e84ebb5d58679b72c3be8f7",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/mod.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:b152a72f7e2f245ede357c3aef136078ffdea55dceb7bcb037bba5f96cbc919f",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/project_registry.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:5e8aab018b4df90e15098724a9e237f1eb52f5e13a6a970c225254bb8fc19d10",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_artifact_code_check.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:5ba07f5e58c06ab57483d0df91de7c6b7276df245e11c831d39dcc9647ed3bb5",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_artifact_readiness.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:95de6a16deee398bab77c25d5bc0d1d24c71f27ed1d1cde124ccaf81512094bd",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:71407ecd4f88e026f948bf9deb3632c672bdf62ecd981c20433c8175218c9c9b",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_mutation.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:8ebbcee990543f381423607daf303acfb2ecbfe29d84f51d7d0829ed87f0d56e",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_mutation_evidence.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:3d510e39d72b749fea0f98f776fc54a3f8ae89802411e9950430e0e574a5f4ad",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_mutation_health.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:b8aa9d5649ebbb2e48f086e35580138850724484a4588844d2e800de966ff8a9",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_mutation_runner.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:4799df4e54fb59aa6111f64912557d05d8b706165e7883fd29501d2e7ee53944",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_openapi_target.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:8eaaaf5edbf20951fd3865d2d8eac7dfdf82e234a026472a73e89cefa052588c",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_rust_target.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:41bfbd3841bf05484a2466017d9fe229a8c88eba048893ab38a1448e8da5e71e",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_target.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:d46e898696f7b9a2b286861d69541f7379d7e392892492e387ea72fd9915dedc",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/services/python_td_typescript_target.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:f87c15adbd17f085c7b66b8eb524d85eba566526837806334667c6adb3de858a",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/td_ast/anti_patterns.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:b1ed14376375476c9090d79b74717969b4115c4ce0ad423e4a617d25b7b99646",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/tools/common_change_spec.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:7fe839e410bed344a1217890fbdfba8b6e908ac87c73197f8ad3d2ffdf57ad98",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/mod.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:358555512efb8d86ce8f207554045a927a8ea414982a57aaa7b3ea7148406907",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/router.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:43be7f438d44044a1eded0c43fab4c8ee1e8d26a57607d624c618083aa3780fa",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/rule.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:02749439c5a2a7d973b1d88abe3d42cda39166f269404d7f56513e90b6bbe974",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/rules/r3b_nullable_required.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:fc228c788740c1205871dbea1ae2290ad96ba25319d0562abbaab42b0f2b6502",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/rules/r7a_missing_section_annotation.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:e7bd2ce8fbe87b05a815138f4f3a2f33df1786d2e5c4038d51d28d12cbd6f640",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/rules/r7g_dangling_capability_ref.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:8659b39627798048d9bd1babd2c286942d21ebbfe9e5af73ba83f5349273c6f8",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/validate/runner.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:d683fe7f0ed924cad0a971cc5ef64889d1d0fb7ad078fcc64d45b5cbb5e47ca3",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/src/workflow/scope.rs",
       "role": "runtime_consumer",
       "sha256": "sha256:f4850cf1ba879f28f29d91765d5e8c3b5ab2c652fc8114da355377ce60e5536d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/tech-design/pyproject.toml",
       "role": "lock_input",
       "sha256": "sha256:a3f02fadde42ce46eee0ddf0e4b61756038e8106333aed8499eec67fb56319cb",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/tech-design/td.lock",
       "role": "lock_input",
-      "sha256": "sha256:140daf72b59cd891aeeb6d1e83c6afd3da23fc2644c19f941cbdab7768ab2bf5",
-      "status": "pending"
+      "sha256": "sha256:bb2d9f118841fb85bd70ceabfe42dc99092276f8d75fe3335b8cc1a5f5fa662b",
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/aw.toml",
       "role": "lock_input",
       "sha256": "sha256:92522f9e9713b6fa592fbebc06105b8eeba2e562981cf7be07fe03109df47836",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/aw-dev.md",
       "role": "documentation_reference",
       "sha256": "sha256:550d22de0631e901488d6a5c8eb55f362500d68310b5cee172605757c6f6ff07",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/aw-ec-reviewer.md",
       "role": "documentation_reference",
       "sha256": "sha256:a4919a62b29d7b9a9beca181ef95c54a75ab822e2725eec3a830573344a85d4b",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/aw-ec-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:486185f58e5051541fb96d24a8e1b6c2c0d560f61a5995b8f47561a569c4b22b",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/aw-hw-filler.md",
       "role": "documentation_reference",
       "sha256": "sha256:bab727f9fb3864867ada406c9d5286fcc7507814da08d8246176f0d86ec7cb55",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/aw-td-writer.md",
       "role": "documentation_reference",
       "sha256": "sha256:3c482b0ca1005592f9fe9a5a961a5cdbe44b1d9f9bfbf1fe355b4a82a35162cf",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/agents/project-planner.md",
       "role": "documentation_reference",
       "sha256": "sha256:b4bfe1a8dd3f443de4613c22357b9b899bd9397a4fbad228be2a3332d38ef863",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/settings.json",
       "role": "agent_guidance",
       "sha256": "sha256:46fd36628babfcfabaea8588daa1968121c30de8151b1f09f05659e8c14a6883",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/skills/aw-change-review/SKILL.md",
       "role": "documentation_reference",
       "sha256": "sha256:90458f3d931c911d8046dc0e71ddca80ed2822a7c330e731f84343ca06fa3d4d",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "disposition": "migrate",
       "path": "apps/agentic-workflow/templates/cli/mainthread/skills/aw-guard/SKILL.md",
       "role": "documentation_reference",
       "sha256": "sha256:6be56aeb4d49d99cff42970180912edbb435c945025c3b758528b09c9aa747e4",
-      "status": "pending"
+      "status": "completed"
     }
   ],
-  "digest": "sha256:dbcacf33e4586a364d7932d8158902c82fc73183ec10cad626e53fea748150cf",
+  "digest": "sha256:48227c84612fdd8e6c9c9a1641d7328451b1438557b5c83e66009db06c554352",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",
