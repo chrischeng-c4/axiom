@@ -10,7 +10,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/core/README.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch evidence-core-readme-md-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch evidence-core-readme-md-01",
       "depends_on": [
         "2711",
         "2712",
@@ -25,7 +25,7 @@
         "apps/agentic-workflow/tech-design/core/config/platform_sync_config_preamble_source.md",
         "apps/agentic-workflow/tech-design/core/config/platform_sync_config_runtime_source.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-config-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-config-01",
       "depends_on": [
         "2711",
         "2712",
@@ -88,7 +88,7 @@
         "apps/agentic-workflow/tech-design/core/generate/diagrams/state_plus/schema.md",
         "apps/agentic-workflow/tech-design/core/generate/diagrams/state_plus/validator.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-generate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-generate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -151,7 +151,7 @@
         "apps/agentic-workflow/tech-design/core/generate/generators/deploy_runtime.md",
         "apps/agentic-workflow/tech-design/core/generate/generators/doc_source.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-generate-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-generate-02",
       "depends_on": [
         "2711",
         "2712",
@@ -215,7 +215,7 @@
         "apps/agentic-workflow/tech-design/core/generate/specs/mod.md",
         "apps/agentic-workflow/tech-design/core/generate/specs/openapi.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-generate-03",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-generate-03",
       "depends_on": [
         "2711",
         "2712",
@@ -236,7 +236,7 @@
         "apps/agentic-workflow/tech-design/core/generate/validator/mod.md",
         "apps/agentic-workflow/tech-design/core/generate/validator/spec_ir_validator.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-generate-04",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-generate-04",
       "depends_on": [
         "2711",
         "2712",
@@ -300,7 +300,7 @@
         "apps/agentic-workflow/tech-design/core/interfaces/models/source_reference.md",
         "apps/agentic-workflow/tech-design/core/interfaces/models/spec_rules.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-interfaces-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-interfaces-01",
       "depends_on": [
         "2711",
         "2712",
@@ -363,7 +363,7 @@
         "apps/agentic-workflow/tech-design/core/interfaces/spec_alignment/annotations.md",
         "apps/agentic-workflow/tech-design/core/interfaces/spec_alignment/check.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-interfaces-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-interfaces-02",
       "depends_on": [
         "2711",
         "2712",
@@ -411,7 +411,7 @@
         "apps/agentic-workflow/tech-design/core/interfaces/workflow/task_graph.md",
         "apps/agentic-workflow/tech-design/core/interfaces/workflow/test_gate.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-interfaces-03",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-interfaces-03",
       "depends_on": [
         "2711",
         "2712",
@@ -442,7 +442,7 @@
         "apps/agentic-workflow/tech-design/core/logic/runtime/session.md",
         "apps/agentic-workflow/tech-design/core/logic/spec_store.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-logic-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-logic-01",
       "depends_on": [
         "2711",
         "2712",
@@ -505,7 +505,7 @@
         "apps/agentic-workflow/tech-design/core/tools/create_pre_clarifications/artifact.md",
         "apps/agentic-workflow/tech-design/core/tools/create_pre_clarifications/definition.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-tools-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-tools-01",
       "depends_on": [
         "2711",
         "2712",
@@ -568,7 +568,7 @@
         "apps/agentic-workflow/tech-design/core/tools/review_change_spec/workflow.md",
         "apps/agentic-workflow/tech-design/core/tools/review_helpers.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-tools-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-tools-02",
       "depends_on": [
         "2711",
         "2712",
@@ -627,7 +627,7 @@
         "apps/agentic-workflow/tech-design/core/tools/workflow_common/validation-and-paths.md",
         "apps/agentic-workflow/tech-design/core/tools/workflow_validate/definition.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-tools-03",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-tools-03",
       "depends_on": [
         "2711",
         "2712",
@@ -672,7 +672,7 @@
         "apps/agentic-workflow/tech-design/core/validate/validator/schema.md",
         "apps/agentic-workflow/tech-design/core/validate/validator/semantic.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-core-validate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-core-validate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -686,7 +686,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-semantic-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-semantic-01",
       "depends_on": [
         "2711",
         "2712",
@@ -700,7 +700,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/surface/commands/proposal.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-surface-commands-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-surface-commands-01",
       "depends_on": [
         "2711",
         "2712",
@@ -714,7 +714,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/surface/generate/project-health-source.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-surface-generate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-surface-generate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -758,7 +758,7 @@
         "apps/agentic-workflow/tech-design/surface/interfaces/src/validate_spec_structure.md",
         "apps/agentic-workflow/tech-design/surface/interfaces/src/workflow_guard.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-surface-interfaces-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-surface-interfaces-01",
       "depends_on": [
         "2711",
         "2712",
@@ -774,7 +774,7 @@
         "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md",
         "apps/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch projection-surface-specs-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch projection-surface-specs-01",
       "depends_on": [
         "2711",
         "2712",
@@ -790,7 +790,7 @@
         "apps/agentic-workflow/tech-design/config/aw-review-shared-service-kit-adoption-rules-profile-negative-ass.md",
         "apps/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-config-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-config-01",
       "depends_on": [
         "2711",
         "2712",
@@ -806,7 +806,7 @@
         "apps/agentic-workflow/tech-design/core/config/platform.md",
         "apps/agentic-workflow/tech-design/core/config/platform_sync.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-config-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-config-01",
       "depends_on": [
         "2711",
         "2712",
@@ -869,7 +869,7 @@
         "apps/agentic-workflow/tech-design/core/generate/generators/flowchart_types.md",
         "apps/agentic-workflow/tech-design/core/generate/generators/frontend_types.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-generate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-generate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -923,7 +923,7 @@
         "apps/agentic-workflow/tech-design/core/generate/ux-pattern-library.md",
         "apps/agentic-workflow/tech-design/core/generate/validate/validate-audit-split.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-generate-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-generate-02",
       "depends_on": [
         "2711",
         "2712",
@@ -969,7 +969,7 @@
         "apps/agentic-workflow/tech-design/core/interfaces/ui/progress_types.md",
         "apps/agentic-workflow/tech-design/core/interfaces/ui/tables_types.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-interfaces-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-interfaces-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1032,7 +1032,7 @@
         "apps/agentic-workflow/tech-design/core/logic/refactoring-api.md",
         "apps/agentic-workflow/tech-design/core/logic/reference-context.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-logic-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-logic-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1059,7 +1059,7 @@
         "apps/agentic-workflow/tech-design/core/logic/tech-stack-inference.md",
         "apps/agentic-workflow/tech-design/core/logic/usage-examples.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-logic-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-logic-02",
       "depends_on": [
         "2711",
         "2712",
@@ -1078,7 +1078,7 @@
         "apps/agentic-workflow/tech-design/core/skills/revise-artifact.md",
         "apps/agentic-workflow/tech-design/core/skills/run-change.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-skills-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-skills-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1103,7 +1103,7 @@
         "apps/agentic-workflow/tech-design/core/specs/workbench-ui-primitive-design.md",
         "apps/agentic-workflow/tech-design/core/specs/workbench-ui-system.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-specs-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-specs-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1150,7 +1150,7 @@
         "apps/agentic-workflow/tech-design/core/tools/workflow_common.md",
         "apps/agentic-workflow/tech-design/core/tools/workflow_validate.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-tools-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-tools-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1190,7 +1190,7 @@
         "apps/agentic-workflow/tech-design/core/validate/validate_all_snapshot.md",
         "apps/agentic-workflow/tech-design/core/validate/validator/challenge_types.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-core-validate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-core-validate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1231,7 +1231,7 @@
         "apps/agentic-workflow/tech-design/logic/td-default-section-queue-preservation.md",
         "apps/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-logic-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-logic-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1282,7 +1282,7 @@
         "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md",
         "apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-semantic-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-semantic-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1308,7 +1308,7 @@
         "apps/agentic-workflow/tech-design/specs/3910.md",
         "apps/agentic-workflow/tech-design/specs/4124.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-specs-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-specs-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1322,7 +1322,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/surface/bugs/td-merge-and-issues-merge-hard-code-target-branch.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-bugs-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-bugs-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1336,7 +1336,7 @@
       "artifact_paths": [
         "apps/agentic-workflow/tech-design/surface/changes/r4-bulk-drop-deprecated-h2.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-changes-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-changes-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1354,7 +1354,7 @@
         "apps/agentic-workflow/tech-design/surface/commands/tasks.md",
         "apps/agentic-workflow/tech-design/surface/commands/validate_proposal.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-commands-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-commands-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1369,7 +1369,7 @@
         "apps/agentic-workflow/tech-design/surface/generate/build.md",
         "apps/agentic-workflow/tech-design/surface/generate/project-health-test-source.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-generate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-generate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1386,7 +1386,7 @@
         "apps/agentic-workflow/tech-design/surface/interfaces/src/cb_revise.md",
         "apps/agentic-workflow/tech-design/surface/interfaces/src/project.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-interfaces-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-interfaces-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1449,7 +1449,7 @@
         "apps/agentic-workflow/tech-design/surface/specs/score-gen-reconstructability.md",
         "apps/agentic-workflow/tech-design/surface/specs/score-mainthread-phase-1-envelope-rewrite.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-specs-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-specs-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1480,7 +1480,7 @@
         "apps/agentic-workflow/tech-design/surface/specs/score-wi-validate-remote-backend.md",
         "apps/agentic-workflow/tech-design/surface/specs/three-role-contract.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-specs-02",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-specs-02",
       "depends_on": [
         "2711",
         "2712",
@@ -1514,7 +1514,7 @@
         "apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md",
         "apps/agentic-workflow/tech-design/surface/validate/tests/wi_close_remote_test.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-surface-validate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-surface-validate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -1531,7 +1531,7 @@
         "apps/agentic-workflow/tech-design/validate/review-skill-doc-trait-projection-with-drift-tests.md",
         "apps/agentic-workflow/tech-design/validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md"
       ],
-      "checker": "python3 apps/agentic-workflow/tech-design/src/migration_reconciliation.py verify --batch semantic-validate-01",
+      "checker": "python3 apps/agentic-workflow/tech-design/tools/migration_reconciliation.py verify --batch semantic-validate-01",
       "depends_on": [
         "2711",
         "2712",
@@ -2376,7 +2376,7 @@
       "status": "pending"
     }
   ],
-  "digest": "sha256:ca3eed9a2866cf49f543c8db629c73ff1a55b9d08253c5b205baf739c31df47b",
+  "digest": "sha256:8f63c8e3be421a85516b20f8fa4874565fb0c1e542f3f04f0bb1ee6da5d9b80a",
   "markdown_td": [
     {
       "batch_id": "semantic-config-01",

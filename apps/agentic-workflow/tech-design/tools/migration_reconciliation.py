@@ -283,7 +283,7 @@ def _build_batches(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "artifact_paths": [item["path"] for item in chunk],
                     "depends_on": dependencies,
                     "checker": (
-                        "python3 apps/agentic-workflow/tech-design/src/"
+                        "python3 apps/agentic-workflow/tech-design/tools/"
                         f"migration_reconciliation.py verify --batch {identifier}"
                     ),
                 }
@@ -569,7 +569,7 @@ def _batch_plan(manifest: dict[str, Any]) -> dict[str, Any]:
         if not 1 <= len(paths) <= MAX_BATCH_ARTIFACTS:
             failures.append(f"{batch['id']}: batch size is out of bounds")
         expected_checker = (
-            "python3 apps/agentic-workflow/tech-design/src/"
+            "python3 apps/agentic-workflow/tech-design/tools/"
             f"migration_reconciliation.py verify --batch {batch['id']}"
         )
         if batch.get("checker") != expected_checker:
