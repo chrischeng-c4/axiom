@@ -56,7 +56,7 @@ Neighbors (cross-referenced, not restated): resolver assigns `SymbolId` (`../nam
 - `expect` compares `std::mem::discriminant` only (`parser/mod.rs:117`) — token payloads (e.g. `Int(v)`) are not matched; fine for keywords, a trap if a check needs the value.
 - Fail-fast single error — the user sees at most one syntax diagnostic per compile; there is no error recovery.
 - ASTs built by non-`parse` entrypoints (exec/compile) must call `mangle_private_names` explicitly or dunder mangling silently won't run (`parser/mod.rs:372`).
-- Any statement-list loop that tests EOF/DEDENT before `pending_stmts` can truncate synthesized statements at a boundary. Treat source-token exhaustion and pending-statement exhaustion as separate conditions (tracked: #2798).
+- Any statement-list loop that tests EOF/DEDENT before `pending_stmts` can truncate synthesized statements at a boundary. Treat source-token exhaustion and pending-statement exhaustion as separate conditions; single-line suites additionally drain each source statement's queue before testing for a semicolon, because simple-statement parsers may already have consumed their newline (regression proof: #2798).
 
 ## Extension points
 
