@@ -61,7 +61,6 @@ flowchart TD
     N -- "graded evidence missing or red" --> O["FAIL: unanchored baseline provenance, missing graded perf trial,\nhost drift, or unexplained CPU or RSS regression blocks completion"]
     N -- "graded evidence green" --> M
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
