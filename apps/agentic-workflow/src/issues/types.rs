@@ -1210,6 +1210,24 @@ mod tests {
         assert_eq!(IssueType::Bug.workflow_role(), "change");
     }
 
+    // @spec #2772
+    #[test]
+    fn issue_type_change_yaml_and_json_round_trip_is_canonical() {
+        let yaml: IssueType = serde_yaml::from_str("change\n").unwrap();
+        let json: IssueType = serde_json::from_str("\"change\"").unwrap();
+
+        assert_eq!(yaml, IssueType::Change);
+        assert_eq!(json, IssueType::Change);
+        assert_eq!(serde_yaml::to_string(&yaml).unwrap(), "change\n");
+        assert_eq!(serde_json::to_string(&json).unwrap(), "\"change\"");
+
+        for legacy in ["bug", "enhancement", "feature", "refactor", "test"] {
+            let decoded: IssueType = serde_yaml::from_str(legacy).unwrap();
+            assert_eq!(decoded, IssueType::Change, "legacy alias {legacy}");
+            assert_eq!(serde_yaml::to_string(&decoded).unwrap(), "change\n");
+        }
+    }
+
     #[test]
     fn issue_type_legacy_aliases_serialize_as_canonical_change() {
         for legacy in ["bug", "enhancement", "feature", "refactor", "test"] {

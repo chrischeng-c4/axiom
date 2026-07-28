@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:3dafa7d001f054072639935d7128d9d9840eb04f6869f9898ed718b9537a3e57",
+  "source_digest": "sha256:8b7e962a6263f0c4037af3e0fc766206c5f280b21576aa4790931a1a1bede155",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-27T09:23:22.596443+00:00",
-  "summary": "Accepted. The WI #2716 TD artifact-producer EC now independently pins the current `aw.python-td-authoring.v1` contract: one real WI-bound Python module at the declared `tech-design/src` path, exact artifact and work-item identities, one `AW_TD_FILL` marker, exact full apply command and invoke arguments, zero TD Markdown, and zero runtime `/payloads/td` JSON. The dependent retired `aw td merge` case consumes the same current snapshot and proves the removed verb fails through the real CLI. Both cases and all structural, inventory, claim, migration-cluster, and retired-tree guards are clean.",
+  "reviewed_at": "2026-07-28T06:27:39.081808+00:00",
+  "summary": "Accepted for the exact reviewed digest: all 58 configured cases pass structural inventory checks, and the revised two-cell project-health EC exercises healthy, explicit failed-evidence, missing-evidence, internal-artifact, behavior-only drift, and artifact-only drift outcomes through the public aw health command with an independent Python oracle. The healthy branch pins one executed and one passed case, the failed branch pins exit_code=17 rejection to fixture-health, the alignment branches pin both directional set differences, and authored oracle tests reject zero-case false greens.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,5 +15,6 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": []
+  "findings": [],
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
 }

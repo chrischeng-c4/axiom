@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import re
+import runpy
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "migration_reconciliation.py"
@@ -158,6 +163,139 @@ class MigrationReconciliationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "disposition is not terminal"):
             migration._batch(self.manifest, pending_batch["id"])
+
+    def test_materialize_migrate_moves_markdown_into_canonical_python(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_rel = (
+                "apps/agentic-workflow/tech-design/config/example.md"
+            )
+            target_rel = (
+                "apps/agentic-workflow/tech-design/src/"
+                "agentic_workflow/migrated/config/example.py"
+            )
+            source = root / source_rel
+            source.parent.mkdir(parents=True)
+            markdown = "# Example\n\nReviewed behavior.\n"
+            source.write_text(markdown, encoding="utf-8")
+            digest = "sha256:" + hashlib.sha256(markdown.encode()).hexdigest()
+            entry = {
+                "batch_id": "semantic-config-test",
+                "disposition": "migrate",
+                "family": "config",
+                "path": source_rel,
+                "role": "legacy_markdown_td",
+                "sha256": digest,
+                "status": "pending",
+                "target_path": target_rel,
+            }
+            manifest = {
+                "schema": "aw.python-td-migration-reconciliation.v1",
+                "batches": [
+                    {
+                        "id": "semantic-config-test",
+                        "artifact_paths": [source_rel],
+                        "family": "semantic:config",
+                    }
+                ],
+                "markdown_td": [entry],
+            }
+            manifest["digest"] = migration._manifest_digest(manifest)
+            manifest_path = root / "manifest.json"
+
+            with (
+                mock.patch.object(migration, "REPOSITORY_ROOT", root),
+                mock.patch.object(migration, "MANIFEST_PATH", manifest_path),
+            ):
+                result = migration._materialize_batch(
+                    manifest,
+                    "semantic-config-test",
+                )
+                loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    migration._batch(loaded, "semantic-config-test")["status"],
+                    "ready",
+                )
+
+            target = root / target_rel
+            namespace = runpy.run_path(str(target))
+            self.assertEqual(result["artifact_count"], 1)
+            self.assertFalse(source.exists())
+            self.assertEqual(namespace["render_markdown"](), markdown)
+            self.assertEqual(namespace["__legacy_td_path__"], source_rel)
+            self.assertEqual(namespace["__legacy_td_digest__"], digest)
+
+    def test_materialize_preflights_complete_batch_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entries = []
+            paths = []
+            for name in ("first", "second"):
+                source_rel = (
+                    f"apps/agentic-workflow/tech-design/config/{name}.md"
+                )
+                target_rel = (
+                    "apps/agentic-workflow/tech-design/src/"
+                    f"agentic_workflow/migrated/config/{name}.py"
+                )
+                source = root / source_rel
+                source.parent.mkdir(parents=True, exist_ok=True)
+                markdown = f"# {name}\n"
+                source.write_text(markdown, encoding="utf-8")
+                entries.append(
+                    {
+                        "batch_id": "semantic-config-test",
+                        "disposition": "migrate",
+                        "family": "config",
+                        "path": source_rel,
+                        "role": "legacy_markdown_td",
+                        "sha256": (
+                            "sha256:"
+                            + hashlib.sha256(markdown.encode()).hexdigest()
+                        ),
+                        "status": "pending",
+                        "target_path": target_rel,
+                    }
+                )
+                paths.append(source_rel)
+            collision = root / entries[1]["target_path"]
+            collision.parent.mkdir(parents=True)
+            collision.write_text("unowned collision\n", encoding="utf-8")
+            manifest = {
+                "schema": "aw.python-td-migration-reconciliation.v1",
+                "batches": [
+                    {
+                        "id": "semantic-config-test",
+                        "artifact_paths": paths,
+                        "family": "semantic:config",
+                    }
+                ],
+                "markdown_td": entries,
+            }
+            manifest["digest"] = migration._manifest_digest(manifest)
+
+            with (
+                mock.patch.object(migration, "REPOSITORY_ROOT", root),
+                mock.patch.object(
+                    migration,
+                    "MANIFEST_PATH",
+                    root / "manifest.json",
+                ),
+                self.assertRaisesRegex(RuntimeError, "target collision"),
+            ):
+                migration._materialize_batch(
+                    manifest,
+                    "semantic-config-test",
+                )
+
+            self.assertTrue(all((root / path).is_file() for path in paths))
+            self.assertFalse(
+                (root / entries[0]["target_path"]).exists()
+            )
+            self.assertEqual(
+                collision.read_text(encoding="utf-8"),
+                "unowned collision\n",
+            )
 
 
 if __name__ == "__main__":

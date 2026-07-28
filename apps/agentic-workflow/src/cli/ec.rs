@@ -2176,14 +2176,25 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
         return emit_python_ec_scaffold_required(&project_root, &ctx, &args);
     }
     let summary = check_ec_context(&ctx)?;
+    let authored_unit_tests = if ctx.artifact_model
+        == crate::models::project::ProjectArtifactModel::PythonV1
+    {
+        Some(crate::services::python_artifact_unit_tests::run_authored_unit_tests(&ctx.ec_root)?)
+    } else {
+        None
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
         if summary.clean {
             if summary.configured {
                 println!(
-                    "ec check {}: clean ({} case(s))",
-                    summary.project, summary.case_count
+                    "ec check {}: clean ({} case(s), {} authored unit-test file(s))",
+                    summary.project,
+                    summary.case_count,
+                    authored_unit_tests
+                        .as_ref()
+                        .map_or(0, |report| report.file_count)
                 );
             } else {
                 println!(
@@ -2509,7 +2520,16 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     validate_ec_review_payload(&ctx, &manifest, &record)?;
     record.reviewed_at = chrono::Utc::now().to_rfc3339();
     write_ec_review_record(&review_path, &record)?;
-    remove_ec_review_payload(&payload_path);
+    // An operator may resubmit the durable record itself after an interrupted
+    // lifecycle (`--evidence-file external-contracts/ec-review.json`). The
+    // accepted record and payload then resolve to the same file; consuming
+    // that "payload" would delete the evidence required by the next EC gate.
+    // @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
+    let payload_is_durable_record =
+        fs::canonicalize(&payload_path).ok() == fs::canonicalize(&review_path).ok();
+    if !payload_is_durable_record {
+        remove_ec_review_payload(&payload_path);
+    }
 
     match record.decision {
         EcReviewDecision::Accepted => emit_ec_review_summary_for_wi(
@@ -8584,6 +8604,34 @@ e2e_tests:
             committed.summary,
             "Manually populated semantic review: all required dimensions covered, no findings."
         );
+    }
+
+    #[test]
+    fn ec_review_does_not_consume_durable_record_used_as_evidence_file() {
+        let (tmp, mut ctx) = write_demo_repo();
+        write_clean_required_ec_case(&tmp, &ctx);
+        write_python_ec_fixture(&mut ctx, "test -f aw.toml");
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let review_path = ec_review_path(&ctx);
+        let record = fully_populated_accepted_record(&ctx, &manifest);
+        write_ec_review_record(&review_path, &record).unwrap();
+
+        let guard = CwdGuard::enter(tmp.path());
+        run_review(
+            &ctx.project,
+            EcReviewArgs {
+                evidence_file: Some(review_path.clone()),
+                json: true,
+                wi: None,
+            },
+        )
+        .expect("the durable accepted record is valid explicit evidence");
+        drop(guard);
+
+        let committed: EcReviewRecord =
+            serde_json::from_str(&fs::read_to_string(&review_path).unwrap()).unwrap();
+        assert_eq!(committed.decision, EcReviewDecision::Accepted);
+        assert_eq!(committed.reviewed_by, "human-reviewer");
     }
 
     // #2262 regression: the helper owns only the default workspace payload,

@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "agent-derive"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "agent",
  "async-trait",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "agentic-workflow"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "agent",
  "anyhow",
@@ -168,7 +168,7 @@ version = "0.1.0"
 
 [[package]]
 name = "agentkit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "agent",
  "cclab-mamba-registry",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "arraykit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "rayon",
  "serde",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "arraykit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "arraykit",
  "cclab-mamba-registry",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "axiom-client-transport-policy-example"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "lumen",
@@ -1661,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "beam"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "build-stamp"
-version = "0.4.11"
+version = "0.4.12"
 
 [[package]]
 name = "built"
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-cli-registry"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "clap",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-compass"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-core"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "bson",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-ctx-inf-db"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "cclab-wal",
@@ -2254,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-frame"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "arraykit",
  "rayon",
@@ -2266,7 +2266,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -2294,7 +2294,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid-render-webgpu"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "bytemuck",
  "fontdb",
@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid-wasm"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-grid",
  "cclab-grid-render-webgpu",
@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-learn"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "arraykit",
  "rayon",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-log"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-log-mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-log",
  "cclab-mamba-registry",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-mamba-registry"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "indexmap 2.14.0",
  "linkme",
@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-mcp-mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-pg"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "async-trait",
  "cclab-core",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-pg-cli"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-qc-mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-runtime-mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "axum 0.8.9",
  "cclab-mamba-registry",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-schema"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "bson",
  "dotenvy",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-schema-mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-schema",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-server"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "agentic-workflow",
  "anyhow",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-surface"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "serde",
  "serde_json",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-text"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "rayon",
  "serde",
@@ -2525,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-tqdm"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "indicatif",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-ui-runtime"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-surface",
  "serde_json",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-util"
-version = "0.4.11"
+version = "0.4.12"
 
 [[package]]
 name = "cclab-wal"
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "claim-token"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -3093,7 +3093,7 @@ checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
 
 [[package]]
 name = "courier"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -3514,7 +3514,7 @@ dependencies = [
 
 [[package]]
 name = "cryptokit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3539,7 +3539,7 @@ dependencies = [
 
 [[package]]
 name = "cryptokit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "cryptokit",
@@ -3806,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "defer"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -6408,7 +6408,7 @@ dependencies = [
 
 [[package]]
 name = "jet-conformance-cli"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -6421,7 +6421,7 @@ dependencies = [
 
 [[package]]
 name = "jet-manifest-cli"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -6433,7 +6433,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-corpus"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "clap",
  "hex",
@@ -6448,7 +6448,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-gate"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "chrono",
  "clap",
@@ -6462,7 +6462,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-oracle"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6484,7 +6484,7 @@ dependencies = [
 
 [[package]]
 name = "jet-wasm"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-grid-render-webgpu",
  "cclab-grid-wasm",
@@ -6779,7 +6779,7 @@ dependencies = [
 
 [[package]]
 name = "keep"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -7301,7 +7301,7 @@ dependencies = [
 
 [[package]]
 name = "loom"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -7552,7 +7552,7 @@ dependencies = [
 
 [[package]]
 name = "mamba"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "agentkit-binding",
  "anyhow",
@@ -7632,14 +7632,14 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-di"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "mambalibs-di-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -7648,7 +7648,7 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-http"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7675,7 +7675,7 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-http-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-schema-mamba",
@@ -7772,7 +7772,7 @@ dependencies = [
 
 [[package]]
 name = "mediakit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "image",
  "serde",
@@ -7782,7 +7782,7 @@ dependencies = [
 
 [[package]]
 name = "mediakit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -8083,7 +8083,7 @@ dependencies = [
 
 [[package]]
 name = "mongokit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8103,7 +8103,7 @@ dependencies = [
 
 [[package]]
 name = "mongokit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -9383,7 +9383,7 @@ dependencies = [
 
 [[package]]
 name = "pgkit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-pg",
@@ -9397,7 +9397,7 @@ dependencies = [
 
 [[package]]
 name = "pgpool"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -9685,7 +9685,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plotkit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "serde",
  "tempfile",
@@ -9694,7 +9694,7 @@ dependencies = [
 
 [[package]]
 name = "plotkit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -9929,7 +9929,7 @@ dependencies = [
 
 [[package]]
 name = "preview"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "clap",
@@ -10302,7 +10302,7 @@ dependencies = [
 
 [[package]]
 name = "queuekit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -10524,7 +10524,7 @@ dependencies = [
 
 [[package]]
 name = "raft-core"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "serde",
  "serde_json",
@@ -10947,7 +10947,7 @@ dependencies = [
 
 [[package]]
 name = "relay"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -11725,7 +11725,7 @@ dependencies = [
 
 [[package]]
 name = "scikit"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "arraykit",
  "cclab-frame",
@@ -11737,7 +11737,7 @@ dependencies = [
 
 [[package]]
 name = "scikit-binding"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -12182,7 +12182,7 @@ dependencies = [
 
 [[package]]
 name = "service-executor"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "futures",
  "tokio",

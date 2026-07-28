@@ -122,6 +122,9 @@ pub struct TdAuditRecordArgs {
 pub struct AstArgs {
     /// Path to the Python TD project root (relative or absolute).
     pub path: String,
+    /// Include the deterministic typed mutation descriptor inventory.
+    #[arg(long)]
+    pub mutations: bool,
     /// Pretty-print the JSON output (default: compact).
     #[arg(long)]
     pub pretty: bool,
@@ -395,9 +398,7 @@ pub(crate) fn td_activate_inplace_if_present(
     project_root: &std::path::Path,
     slug: &str,
 ) -> Result<()> {
-    crate::branch_switch::ensure_branch_clean(project_root)
-        .map_err(|e| anyhow::anyhow!("in-place td verb requires a clean tree: {e}"))?;
-    let current = crate::branch_switch::current_branch(project_root)?;
+    let current = ensure_inplace_td_lifecycle_ready(project_root)?;
     activate_td_branch_if_present(project_root, slug, &current)
 }
 
@@ -3624,12 +3625,15 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
             configured_project,
         )?;
         let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
+        let unit_tests =
+            crate::services::python_artifact_unit_tests::run_authored_unit_tests(&candidate)?;
         if args.json {
             println!("{}", serde_json::to_string(&ir)?);
         } else {
             println!(
-                "Python TD check passed: {} module(s), semantic digest {}",
+                "Python TD check passed: {} module(s), {} authored unit-test file(s), semantic digest {}",
                 ir.modules.len(),
+                unit_tests.file_count,
                 ir.semantic_digest
             );
         }
@@ -3778,10 +3782,22 @@ fn run_ast(args: AstArgs, configured_project: Option<&str>) -> Result<()> {
         let project_root = crate::find_project_root()?;
         let root = canonical_python_td_root(&project_root, &path, configured_project)?;
         let ir = crate::services::python_td::compile_python_td_project(&root)?;
-        let json = if args.pretty {
-            serde_json::to_string_pretty(&ir)
+        let output = if args.mutations {
+            let mutations =
+                crate::services::python_td_mutation::enumerate_python_td_mutation_descriptors(&ir)?;
+            serde_json::json!({
+                "ir": ir,
+                "mutation_schema":
+                    crate::services::python_td_mutation::PYTHON_TD_MUTATION_SCHEMA,
+                "mutations": mutations,
+            })
         } else {
-            serde_json::to_string(&ir)
+            serde_json::to_value(&ir).context("failed to serialise Python TD IR")?
+        };
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&output)
+        } else {
+            serde_json::to_string(&output)
         }
         .context("failed to serialise Python TD IR")?;
         println!("{}", json);
@@ -6362,6 +6378,157 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("staged-user-change.rs"), "{error}");
+    }
+
+    // @spec #2776
+    #[test]
+    fn td_create_dirty_persistent_branch_preserves_unrelated_work() {
+        if !git_available() {
+            return;
+        }
+
+        let persistent = tempfile::tempdir().unwrap();
+        init_git_repo(persistent.path());
+        std::fs::write(persistent.path().join("tracked.txt"), "baseline\n").unwrap();
+        std::fs::write(persistent.path().join("deleted.txt"), "keep in history\n").unwrap();
+        git_stdout(persistent.path(), &["add", "tracked.txt", "deleted.txt"]);
+        git_stdout(persistent.path(), &["commit", "-m", "fixture baseline"]);
+        git_stdout(persistent.path(), &["checkout", "-qb", "project-demo"]);
+
+        std::fs::write(persistent.path().join("tracked.txt"), "user edit\n").unwrap();
+        std::fs::remove_file(persistent.path().join("deleted.txt")).unwrap();
+        std::fs::write(persistent.path().join("untracked.txt"), "user scratch\n").unwrap();
+        let before = git_stdout(persistent.path(), &["status", "--porcelain"]);
+
+        let branch =
+            activate_td_workspace_for_lifecycle(persistent.path(), "2776-fixture").unwrap();
+
+        assert_eq!(branch, "project-demo");
+        assert_eq!(
+            git_stdout(persistent.path(), &["branch", "--show-current"]),
+            "project-demo"
+        );
+        assert_eq!(
+            git_stdout(persistent.path(), &["status", "--porcelain"]),
+            before
+        );
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("tracked.txt")).unwrap(),
+            "user edit\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("untracked.txt")).unwrap(),
+            "user scratch\n"
+        );
+
+        let main = tempfile::tempdir().unwrap();
+        init_git_repo(main.path());
+        std::fs::write(main.path().join("tracked.txt"), "baseline\n").unwrap();
+        git_stdout(main.path(), &["add", "tracked.txt"]);
+        git_stdout(main.path(), &["commit", "-m", "fixture baseline"]);
+        std::fs::write(main.path().join("tracked.txt"), "dirty main\n").unwrap();
+        std::fs::write(main.path().join("untracked.txt"), "dirty main scratch\n").unwrap();
+        let main_before = git_stdout(main.path(), &["status", "--porcelain"]);
+
+        let error = activate_td_workspace_for_lifecycle(main.path(), "2776-main")
+            .expect_err("dirty main must fail before branch activation");
+
+        assert!(error.to_string().contains("requires a clean tree"));
+        assert_eq!(
+            git_stdout(main.path(), &["branch", "--show-current"]),
+            "main"
+        );
+        assert_eq!(
+            git_stdout(main.path(), &["status", "--porcelain"]),
+            main_before
+        );
+        assert!(!crate::branch_switch::branch_exists_local(main.path(), "td-2776-main").unwrap());
+    }
+
+    // @spec #2779
+    #[test]
+    fn td_activate_inplace_if_present_branch_cleanliness_policy() {
+        if !git_available() {
+            return;
+        }
+
+        let persistent = tempfile::tempdir().unwrap();
+        init_git_repo(persistent.path());
+        std::fs::write(persistent.path().join("tracked.txt"), "baseline\n").unwrap();
+        std::fs::write(persistent.path().join("deleted.txt"), "history\n").unwrap();
+        git_stdout(persistent.path(), &["add", "tracked.txt", "deleted.txt"]);
+        git_stdout(persistent.path(), &["commit", "-m", "fixture baseline"]);
+        git_stdout(persistent.path(), &["checkout", "-qb", "project-demo"]);
+        std::fs::write(persistent.path().join("tracked.txt"), "user edit\n").unwrap();
+        std::fs::remove_file(persistent.path().join("deleted.txt")).unwrap();
+        std::fs::write(persistent.path().join("unrelated.txt"), "user work\n").unwrap();
+        let before = git_stdout(persistent.path(), &["status", "--porcelain"]);
+
+        td_activate_inplace_if_present(persistent.path(), "2779-fixture").unwrap();
+
+        assert_eq!(
+            git_stdout(persistent.path(), &["branch", "--show-current"]),
+            "project-demo"
+        );
+        assert_eq!(
+            git_stdout(persistent.path(), &["status", "--porcelain"]),
+            before
+        );
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("tracked.txt")).unwrap(),
+            "user edit\n"
+        );
+        assert!(!persistent.path().join("deleted.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(persistent.path().join("unrelated.txt")).unwrap(),
+            "user work\n"
+        );
+
+        std::fs::write(persistent.path().join("staged.txt"), "staged user work\n").unwrap();
+        git_stdout(persistent.path(), &["add", "staged.txt"]);
+        let staged_before = git_stdout(persistent.path(), &["status", "--porcelain"]);
+        let error = td_activate_inplace_if_present(persistent.path(), "2779-fixture")
+            .expect_err("pre-existing staged paths must remain outside lifecycle commits");
+        assert!(error.to_string().contains("pre-existing staged paths"));
+        assert_eq!(
+            git_stdout(persistent.path(), &["status", "--porcelain"]),
+            staged_before
+        );
+
+        let dirty_main = tempfile::tempdir().unwrap();
+        init_git_repo(dirty_main.path());
+        git_stdout(dirty_main.path(), &["branch", "td-2779-existing"]);
+        std::fs::write(dirty_main.path().join("unrelated.txt"), "dirty main\n").unwrap();
+        let dirty_before = git_stdout(dirty_main.path(), &["status", "--porcelain"]);
+
+        let error = td_activate_inplace_if_present(dirty_main.path(), "2779-existing")
+            .expect_err("dirty main must fail before switching to an existing TD branch");
+
+        assert!(error.to_string().contains("requires a clean tree"));
+        assert_eq!(
+            git_stdout(dirty_main.path(), &["branch", "--show-current"]),
+            "main"
+        );
+        assert_eq!(
+            git_stdout(dirty_main.path(), &["status", "--porcelain"]),
+            dirty_before
+        );
+
+        let missing = tempfile::tempdir().unwrap();
+        init_git_repo(missing.path());
+        let error = td_activate_inplace_if_present(missing.path(), "2779-missing")
+            .expect_err("clean main without a TD branch must retain remediation");
+        assert!(error.to_string().contains("workspace not found"));
+        assert!(error.to_string().contains("aw td create 2779-missing"));
+
+        let existing = tempfile::tempdir().unwrap();
+        init_git_repo(existing.path());
+        git_stdout(existing.path(), &["branch", "td-2779-existing"]);
+        td_activate_inplace_if_present(existing.path(), "2779-existing").unwrap();
+        assert_eq!(
+            git_stdout(existing.path(), &["branch", "--show-current"]),
+            "td-2779-existing"
+        );
     }
 
     #[test]

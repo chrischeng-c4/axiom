@@ -6,7 +6,10 @@ USE_CASE_ID = "self-hosting-root-runner-policy"
 DIMENSION = "behavior"
 LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case self-hosting-capability-admission"
-ASSERTIONS = ('capability dispatches the exact EC structural worker', 'backlog fail-closes on the missing reviewed graph with exact planning remediation')
+ASSERTIONS = (
+    "scoped capability admission completes without unrelated project lifecycle gates",
+    "backlog fail-closes on the missing reviewed graph with exact planning remediation",
+)
 
 
 def verify() -> list[str]:

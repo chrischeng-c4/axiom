@@ -7542,6 +7542,7 @@ fn claim_issue_create_args(title: &str, project_name: String) -> crate::cli::iss
         projects: vec![project_name],
         priority: None,
         agent: None,
+        epic: None,
         remote: false,
         // `false`, not the CLI default `true`: with `json: true`,
         // `run_create`'s validation-failure and remote-backend-create-failure

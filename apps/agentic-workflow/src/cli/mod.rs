@@ -16,6 +16,7 @@ pub(crate) mod chain;
 pub mod check_alignment;
 pub mod commands;
 pub mod conf;
+pub mod coordination;
 pub mod doc_mirror;
 pub mod drift;
 pub mod ec;

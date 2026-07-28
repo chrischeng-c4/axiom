@@ -9,12 +9,7 @@ use super::{
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::Path,
-    process::Command,
-};
+use std::{collections::BTreeSet, fs, path::Path, process::Command};
 
 use crate::models::project::ProjectArtifactModel;
 
@@ -78,8 +73,9 @@ pub fn verify_python_target_build(
 /// Verify the Python-v1 terminal graph without mutating the project.  Legacy
 /// projects return `None` and retain the established Markdown code-check
 /// lifecycle.  Python projects must prove: clean TD and EC locks, explicit
-/// DDD artifact identities, dimension/target applicability, a fresh emitted
-/// Python target, and its target-native unit inventory.
+/// DDD artifact identities, configured target applicability, a fresh emitted
+/// Python target, and its target-native unit inventory. EC semantic review and
+/// the two-cell health contract own behavioral completeness.
 pub fn verify_python_artifact_code_check(
     project_root: &Path,
     project: &str,
@@ -206,7 +202,6 @@ fn validate_identity_edges(
         findings.push("Python TD declares no explicit artifact identities under src/*".to_string());
     }
 
-    let mut dimensions = BTreeMap::<String, BTreeSet<String>>::new();
     for case in &inventory.cases {
         if !artifacts.contains(&case.artifact_id) {
             findings.push(format!(
@@ -218,29 +213,6 @@ fn validate_identity_edges(
             findings.push(format!(
                 "Python EC case `{}` targets `{}`, which has no configured project workspace",
                 case.id, case.target
-            ));
-        }
-        dimensions
-            .entry(case.artifact_id.clone())
-            .or_default()
-            .insert(case.dimension.clone());
-    }
-
-    let rust_targeted = workspace_targets.contains("rust");
-    for artifact in &artifacts {
-        let declared = dimensions.get(artifact).cloned().unwrap_or_default();
-        for dimension in ["behavior", "security", "stability"] {
-            if !declared.contains(dimension) {
-                findings.push(format!(
-                    "artifact `{artifact}` is missing required `{dimension}` EC coverage"
-                ));
-            }
-        }
-        if (inventory.efficiency_policy == "required" || rust_targeted)
-            && !declared.contains("efficiency")
-        {
-            findings.push(format!(
-                "artifact `{artifact}` is missing required `efficiency` EC coverage"
             ));
         }
     }
@@ -490,7 +462,7 @@ evidence_paths = ["evidence/efficiency.json"]
     }
 
     #[test]
-    fn python_artifact_code_check_rejects_missing_required_dimension_and_target() {
+    fn python_artifact_code_check_rejects_unknown_target_without_inventing_dimensions() {
         let root = tempfile::tempdir().unwrap();
         write_graph_fixture(root.path());
         let inventory = root
@@ -514,7 +486,7 @@ evidence_paths = ["evidence/efficiency.json"]
             .iter()
             .any(|finding| finding
                 .contains("targets `rust`, which has no configured project workspace")));
-        assert!(report
+        assert!(!report
             .findings
             .iter()
             .any(|finding| finding.contains("missing required `security` EC coverage")));

@@ -5,6 +5,7 @@ use clap::Subcommand;
 
 use crate::cli::capability;
 use crate::cli::conf;
+use crate::cli::coordination;
 use crate::cli::drift;
 use crate::cli::ec;
 use crate::cli::generator;
@@ -45,6 +46,9 @@ pub enum Commands {
     /// bounded work outside the WI lifecycle
     /// (`set`/`check`/`show`/`list`/`clear`).
     Goal(goal::GoalArgs),
+
+    /// AW-owned durable task, dispatch, gate, event, and decision reconciliation.
+    Coordination(coordination::CoordinationArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
@@ -110,6 +114,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Goal(args) => {
             goal::run(args).await?;
+        }
+        Commands::Coordination(args) => {
+            coordination::run(args)?;
         }
         Commands::Conf(args) => {
             conf::run(args)?;

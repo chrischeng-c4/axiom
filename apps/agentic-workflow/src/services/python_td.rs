@@ -216,6 +216,14 @@ pub struct PythonTdModule {
     /// `__aw_artifact_id__ = "artifact:<context>/<name>"`. The source path
     /// remains projection metadata and never replaces this identity.
     pub artifact_id: Option<String>,
+    /// True only when the module explicitly declares
+    /// `__aw_public_contract__ = True`. Public artifacts must have a matching
+    /// EC identity; internal implementation artifacts remain TD-only.
+    pub public_contract: bool,
+    /// Executable public behavior identities derived from top-level Python
+    /// functions. Python uses snake_case while EC use_case_id uses kebab-case.
+    /// Internal modules always project an empty list.
+    pub public_behaviors: Vec<String>,
     pub path: String,
     pub role: PythonTdRole,
     pub imports: Vec<String>,
@@ -302,6 +310,7 @@ pub fn compile_python_td_project(project_root: &Path) -> Result<PythonTdIr> {
         .map(|path| compile_module(&root, &path))
         .collect::<Result<Vec<_>>>()?;
     modules.sort_by(|left, right| left.id.cmp(&right.id));
+    validate_unique_artifact_ids(&modules)?;
     validate_local_imports(&modules)?;
     // Spans are diagnostic provenance, not semantic input. Preserve them in
     // the emitted IR while excluding them from the digest so whitespace-only
@@ -331,6 +340,35 @@ pub fn compile_python_td_project(project_root: &Path) -> Result<PythonTdIr> {
         modules,
         semantic_digest,
     })
+}
+
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/health/python_td_global_artifact_identity.py
+fn validate_unique_artifact_ids(modules: &[PythonTdModule]) -> Result<()> {
+    let mut paths_by_id = BTreeMap::<&str, Vec<&str>>::new();
+    for module in modules {
+        if let Some(artifact_id) = module.artifact_id.as_deref() {
+            paths_by_id
+                .entry(artifact_id)
+                .or_default()
+                .push(module.path.as_str());
+        }
+    }
+    let mut collisions = paths_by_id
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .map(|(artifact_id, mut paths)| {
+            paths.sort_unstable();
+            format!("`{artifact_id}`: {}", paths.join(", "))
+        })
+        .collect::<Vec<_>>();
+    collisions.sort();
+    if !collisions.is_empty() {
+        bail!(
+            "Python TD diagnostic [duplicate-project-artifact-id]: every __aw_artifact_id__ must be globally unique; conflicts: {}",
+            collisions.join("; ")
+        );
+    }
+    Ok(())
 }
 
 fn collect_python_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -377,9 +415,16 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
         .to_string_lossy()
         .replace('\\', "/");
     let artifact_id = explicit_artifact_id(&source, path)?;
+    let public_contract = explicit_public_contract(&source, path)?;
+    if public_contract && artifact_id.is_none() {
+        bail!(
+            "Python TD diagnostic [public-contract-without-artifact-id] {}: __aw_public_contract__ = True requires one explicit __aw_artifact_id__",
+            path.display()
+        );
+    }
     let id = artifact_id
         .clone()
-        .unwrap_or_else(|| format!("module:{}", rel.trim_end_matches(".py").replace('/', ".")));
+        .unwrap_or_else(|| module_id_for_path(&rel));
     let mut imports = Vec::new();
     let mut declarations = Vec::new();
     let mut cursor = tree.root_node().walk();
@@ -427,10 +472,40 @@ fn compile_module(root: &Path, path: &Path) -> Result<PythonTdModule> {
     imports.sort();
     imports.dedup();
     declarations.sort_by(|left, right| left.id.cmp(&right.id));
+    let public_behaviors = if public_contract {
+        let behaviors = declarations
+            .iter()
+            .filter(|declaration| {
+                declaration.kind == PythonTdDeclarationKind::Function
+                    && !declaration.name.starts_with('_')
+            })
+            .map(|declaration| declaration.name.replace('_', "-"))
+            .collect::<Vec<_>>();
+        if behaviors.is_empty() {
+            bail!(
+                "Python TD diagnostic [public-contract-without-behavior] {}: __aw_public_contract__ = True requires at least one public top-level function",
+                path.display()
+            );
+        }
+        if behaviors.iter().any(|behavior| {
+            let parts = behavior.split('/').collect::<Vec<_>>();
+            parts.len() != 1 || !identity_slug(&parts[0])
+        }) {
+            bail!(
+                "Python TD diagnostic [invalid-public-behavior] {}: public top-level function names must normalize to lowercase kebab-case EC use_case_id values",
+                path.display()
+            );
+        }
+        behaviors
+    } else {
+        Vec::new()
+    };
     let codegen = compile_codegen_contract(root, path, &declarations)?;
     Ok(PythonTdModule {
         id,
         artifact_id,
+        public_contract,
+        public_behaviors,
         path: rel.clone(),
         role: role_for_path(&rel),
         imports,
@@ -665,6 +740,32 @@ fn explicit_artifact_id(source: &str, path: &Path) -> Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
+fn explicit_public_contract(source: &str, path: &Path) -> Result<bool> {
+    let values = source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("__aw_public_contract__"))
+        .filter_map(|tail| tail.trim_start().strip_prefix('='))
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok(false);
+    }
+    if values.len() != 1 {
+        bail!(
+            "Python TD diagnostic [duplicate-public-contract] {}: declare __aw_public_contract__ at most once per module",
+            path.display()
+        );
+    }
+    match values[0] {
+        "True" => Ok(true),
+        "False" => Ok(false),
+        _ => bail!(
+            "Python TD diagnostic [invalid-public-contract] {}: __aw_public_contract__ must be the literal True or False",
+            path.display()
+        ),
+    }
+}
+
 fn identity_slug(value: &&str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
@@ -791,7 +892,7 @@ fn validate_local_imports(modules: &[PythonTdModule]) -> Result<()> {
         .collect::<BTreeSet<_>>();
     let known_modules = modules
         .iter()
-        .map(|module| module.id.as_str())
+        .map(|module| module_id_for_path(&module.path))
         .collect::<BTreeSet<_>>();
     for module in modules {
         for import in &module.imports {
@@ -809,9 +910,7 @@ fn validate_local_imports(modules: &[PythonTdModule]) -> Result<()> {
             }
             let candidate = format!("module:src.{path}");
             let package_init = format!("{candidate}.__init__");
-            if !known_modules.contains(candidate.as_str())
-                && !known_modules.contains(package_init.as_str())
-            {
+            if !known_modules.contains(&candidate) && !known_modules.contains(&package_init) {
                 bail!(
                     "Python TD diagnostic [unresolved-local-import] {}:1:1: `{path}` is not a project module; add the module or correct the import",
                     module.path
@@ -820,6 +919,10 @@ fn validate_local_imports(modules: &[PythonTdModule]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn module_id_for_path(path: &str) -> String {
+    format!("module:{}", path.trim_end_matches(".py").replace('/', "."))
 }
 fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
@@ -856,4 +959,112 @@ fn diagnostic<T>(path: &Path, node: Node<'_>, code: &str, remediation: &str) -> 
         point.row + 1,
         point.column + 1
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_project_artifact_id_reports_every_conflicting_path() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("z_projection.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n\ndef projection() -> str:\n    return \"z\"\n",
+        )
+        .unwrap();
+        fs::write(
+            src.join("a_design.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n\ndef design() -> str:\n    return \"a\"\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("duplicate global artifact identity must fail")
+            .to_string();
+
+        assert!(error.contains("[duplicate-project-artifact-id]"), "{error}");
+        assert!(error.contains("artifact:health/contract"), "{error}");
+        let a = error.find("src/a_design.py").expect("first path");
+        let z = error.find("src/z_projection.py").expect("second path");
+        assert!(a < z, "diagnostic paths must be sorted: {error}");
+    }
+
+    #[test]
+    fn public_contract_requires_explicit_artifact_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("contract.py"),
+            "__aw_public_contract__ = True\n\ndef contract() -> str:\n    return \"public\"\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("public contract without identity must fail")
+            .to_string();
+        assert!(
+            error.contains("[public-contract-without-artifact-id]"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn public_contract_marker_is_projected_into_ir() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("contract.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n__aw_public_contract__ = True\n\ndef contract() -> str:\n    return \"public\"\n",
+        )
+        .unwrap();
+
+        let ir = compile_python_td_project(root.path()).unwrap();
+        assert!(ir.modules[0].public_contract);
+        assert_eq!(ir.modules[0].public_behaviors, vec!["contract"]);
+    }
+
+    #[test]
+    fn public_contract_requires_an_executable_behavior() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src = temp.path().join("src");
+        fs::create_dir_all(&src).expect("src");
+        fs::write(
+            src.join("contract.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n__aw_public_contract__ = True\n",
+        )
+        .expect("write");
+
+        let error = compile_python_td_project(temp.path()).expect_err("must fail");
+        assert!(error
+            .to_string()
+            .contains("[public-contract-without-behavior]"));
+    }
+
+    #[test]
+    fn test_module_can_import_a_module_with_explicit_artifact_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src/demo");
+        let tests = root.path().join("tests/unit");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&tests).unwrap();
+        fs::write(src.join("__init__.py"), "").unwrap();
+        fs::write(
+            src.join("contract.py"),
+            "__aw_artifact_id__ = \"artifact:demo/contract\"\n\ndef contract() -> bool:\n    return True\n",
+        )
+        .unwrap();
+        fs::write(
+            tests.join("test_contract.py"),
+            "from demo.contract import contract\n\ndef test_contract() -> None:\n    assert contract()\n",
+        )
+        .unwrap();
+
+        compile_python_td_project(root.path())
+            .expect("module path remains importable even when identity is artifact-based");
+    }
 }

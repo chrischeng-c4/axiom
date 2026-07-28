@@ -15,7 +15,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/src/issues/types.rs` generated from AST during Score force-regeneration standardization.
+Public API manifest for `apps/agentic-workflow/src/issues/types.rs` generated from AST during Score force-regeneration standardization. Canonical `change` values round-trip through YAML and JSON while legacy delivery aliases remain decode-only compatibility inputs and re-serialize as `change` (#2772).
 
 ### Symbols
 
@@ -64,5 +64,5 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:issue-types-error-slug-and-tests>"
-    description: "Source template owns issue error helpers, slug helpers, and tests."
+    description: "Source template owns issue error helpers, slug helpers, and tests, including canonical Change YAML/JSON round-trip and legacy alias compatibility coverage for #2772."
 ```

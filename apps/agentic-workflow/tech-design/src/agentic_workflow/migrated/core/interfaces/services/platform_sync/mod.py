@@ -1,0 +1,19 @@
+"""Canonical Python tech design migrated from `apps/agentic-workflow/tech-design/core/interfaces/services/platform_sync/mod.md`.
+
+Migrated by batch `semantic-core-interfaces-01`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-interfaces/core-interfaces-services-platform-sync-mod"
+__legacy_td_path__ = "apps/agentic-workflow/tech-design/core/interfaces/services/platform_sync/mod.md"
+__legacy_td_digest__ = "sha256:6c9109adf00e22b2ad9de4913df56d1944c0a876ac6b794f7d0bfc26a10b6dc4"
+
+
+def render_markdown() -> Annotated[str, "sha256:6c9109adf00e22b2ad9de4913df56d1944c0a876ac6b794f7d0bfc26a10b6dc4"]:
+    """Render the preserved legacy design byte-for-byte."""
+
+    return "---\nid: sdd-services-platform-sync-mod\nfill_sections: [overview, schema, changes]\ncapability_refs:\n  - id: aw-core-client-model-workitem-first-artifact-lifecycle\n    role: primary\n    gap: agent-first-cli-product-model\n    claim: agent-first-cli-product-model\n    coverage: full\n    rationale: \"Service interfaces expose project, issue, and platform behavior to the single AW CLI.\"\n---\n\n# Platform Sync Service Type\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nService struct for the platform-sync orchestrator in\n`apps/agentic-workflow/src/services/platform_sync/mod.rs`. One shape:\n\n- `PlatformSyncService` — single private `project_root: PathBuf`\n  field with no derives. The struct is a thin handle holding the\n  workspace root; all behaviour lives on the hand-written\n  `impl PlatformSyncService` block (`new`, `load_config`, `sync`).\n\nCodegen replaces the struct declaration. Companion source templates own the\nmodule documentation, submodule declarations, re-exports, imports, constructor,\nconfig loading, provider dispatch, and frontmatter writeback.\n\nThis spec exercises:\n\n1. **No-derive struct emission** — `x-rust-struct.derive: []` emits\n   `pub struct PlatformSyncService { ... }` with no `#[derive(...)]`\n   attribute.\n2. **`x-rust-visibility: private`** on the only field — keeps\n   `project_root: PathBuf` private (no `pub`) on a public struct,\n   matching the source.\n3. **`x-rust-type: \"PathBuf\"`** in `required:` — uses the bare type\n   without Option auto-wrapping.\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\ndefinitions:\n  PlatformSyncService:\n    type: object\n    required: [project_root]\n    description: |\n      Platform sync service handle. Holds the project root path used\n      to resolve `.aw/config.toml` and change directories. All\n      behaviour is on the hand-written impl block.\n    properties:\n      project_root:\n        type: string\n        x-rust-type: \"PathBuf\"\n        x-rust-visibility: private\n        description: \"Absolute path to the project root.\"\n    x-rust-struct:\n      derive: []\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/services/platform_sync/mod.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    replaces:\n      - PlatformSyncService\n    description: |\n      Codegen replaces the struct declaration only.\n```\n\n# Reviews\n\n## Review 1\n<!-- type: doc lang: markdown -->\n**Verdict:** approved\n\n- [overview] Correctly identifies the single struct, its private field, and lack of derives. Hand-written boundary (impl block + module-level items) is clearly stated.\n- [schema] Definition is well-formed: `x-rust-struct.derive: []` for no-derive emission, `project_root` listed in `required:` with `x-rust-type: \"PathBuf\"` to skip Option auto-wrap, and `x-rust-visibility: private` to keep the field non-`pub`. Matches source semantics exactly.\n- [changes] Two entries split codegen vs hand-written cleanly. `replaces` lists the single struct name; hand-written entry covers all module-level items and the impl block.\n"

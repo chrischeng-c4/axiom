@@ -10,11 +10,11 @@
 
 use crate::issues::{
     apply_planning_transaction, build_planning_transaction_manifest, build_project_plan_for_stage,
-    build_work_item_graph, looks_too_large_for_atomic_wi, make_backend,
-    planning_transaction_checkpoint_path, planning_transaction_source_digest,
-    remote_read_cache_backend, resolve_default_backend, Issue, IssueBackend, IssueErrorCode,
-    IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend, PlanningStage,
-    PlanningTransactionManifest, ProjectPlan, ShipStatus, WorkItemGraph,
+    build_work_item_graph, epic_owner_label, explicit_parent_references,
+    looks_too_large_for_atomic_wi, make_backend, planning_transaction_checkpoint_path,
+    planning_transaction_source_digest, remote_read_cache_backend, resolve_default_backend, Issue,
+    IssueBackend, IssueErrorCode, IssueFilter, IssuePatch, IssueState, IssueType, LocalBackend,
+    PlanningStage, PlanningTransactionManifest, ProjectPlan, ShipStatus, WorkItemGraph,
 };
 use crate::parser::frontmatter::parse_document;
 use crate::services::issue_parser::{validate_structured_issue, ValidationError};
@@ -299,7 +299,8 @@ pub struct CreateArgs {
     pub projects: Vec<String>,
 
     /// Priority level. Closed enum: p0 | p1 | p2 | p3.
-    /// Emits a `priority::<value>` scoped label.
+    /// Emits a canonical `priority:<value>` scoped label.
+    // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/typed_priority_label.py
     #[arg(long = "priority")]
     pub priority: Option<PriorityFilter>,
 
@@ -308,6 +309,12 @@ pub struct CreateArgs {
     /// Unknown name → error envelope.
     #[arg(long = "agent")]
     pub agent: Option<String>,
+
+    /// Owning epic id or slug. Valid only for `--type change`; emits the
+    /// canonical `epic:<id>` ownership label.
+    // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/epic_owner_authoring.py
+    #[arg(long = "epic", value_name = "ID")]
+    pub epic: Option<String>,
 
     /// Deprecated compatibility no-op. Backend selection is configured in
     /// `aw.toml`; local-only authoring lives under `aw wi draft`.
@@ -336,7 +343,7 @@ pub enum PriorityFilter {
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 impl PriorityFilter {
-    /// Returns the label suffix for `priority::<suffix>`.
+    /// Returns the value appended after the single `priority:` separator.
     pub fn as_label_suffix(&self) -> &'static str {
         match self {
             PriorityFilter::P0 => "p0",
@@ -372,6 +379,11 @@ pub struct UpdateArgs {
     /// Read replacement body from a file path, or `-` for stdin.
     #[arg(long)]
     pub body_file: Option<String>,
+
+    /// Set the owning epic through the canonical `epic:<id>` label.
+    // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/epic_owner_authoring.py
+    #[arg(long = "epic", value_name = "ID")]
+    pub epic: Option<String>,
 
     /// Also push to remote backend via `gh issue edit`.
     #[arg(long)]
@@ -2513,6 +2525,7 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
             Err(e) => emit_create_envelope_error(title, &e.to_envelope_message()),
         },
     };
+    let (kind, repo, host) = resolve_backend(args.repo.clone(), &project_root)?;
 
     let type_label = format!("type:{}", issue_type.as_str());
     let priority_label_owned: Option<String> = args
@@ -2526,7 +2539,7 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         agent_label_owned.as_deref(),
     );
 
-    let issue = Issue {
+    let mut issue = Issue {
         issue_type,
         title: title.clone(),
         state: IssueState::Draft,
@@ -2565,6 +2578,33 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         regen_verified_at: None,
     };
 
+    if let Some(owner) = args.epic.as_deref() {
+        if !issue_type.is_change() {
+            anyhow::bail!(
+                "--epic is valid only with --type change; type:{} cannot declare an owning epic",
+                issue_type.as_str()
+            );
+        }
+        let owner_backend = make_backend(&kind, &project_root, repo.clone(), host.clone())
+            .context("Failed to resolve --epic target backend")?;
+        let project_label = project_labels
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("--epic requires the change project to resolve"))?;
+        let canonical =
+            validate_typed_epic_target(owner_backend.as_ref(), owner, project_label).await?;
+        let normalized = canonical.trim_start_matches("epic:");
+        let body_owners = body_parent_references(&issue);
+        if let Some(conflict) = body_owners
+            .iter()
+            .find(|value| value.as_str() != normalized)
+        {
+            anyhow::bail!(
+                "--epic `{normalized}` conflicts with body parent declaration `{conflict}`"
+            );
+        }
+        issue.labels.push(canonical);
+    }
+
     let validation_errors = validate_publishable_issue_body(&issue);
     if !validation_errors.is_empty() {
         if args.json {
@@ -2585,7 +2625,6 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         );
     }
 
-    let (kind, repo, host) = resolve_backend(args.repo.clone(), &project_root)?;
     let _deprecated_remote_noop = args.remote;
 
     if create_uses_remote_backend(&kind) {
@@ -2680,6 +2719,23 @@ fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool
         "all",
         true,
     )?;
+    let ownership = if created.issue_type.is_change() {
+        match explicit_parent_references(created).first() {
+            Some(owner) => serde_json::json!({
+                "status": "owned",
+                "epic": owner,
+            }),
+            None => serde_json::json!({
+                "status": "unowned",
+                "remediation_command_template": format!(
+                    "aw wi update {} --epic <epic-id> --push",
+                    created.slug
+                ),
+            }),
+        }
+    } else {
+        serde_json::Value::Null
+    };
     let envelope = IssueEnvelope::Dispatch {
         agent: None,
         slug: &created.slug,
@@ -2691,6 +2747,7 @@ fn emit_wi_fill_dispatch(project_root: &Path, created: &Issue, emit_output: bool
                 "sections": ["all"],
                 "payload_path": payload,
                 "payload_initialized": payload_initialized,
+                "ownership": ownership,
             }),
         },
     };
@@ -3419,11 +3476,12 @@ fn build_update_patch(
     body: Option<String>,
     current: Option<&Issue>,
 ) -> Result<IssuePatch> {
-    let add_labels = args
+    let mut add_labels = args
         .add_labels
         .iter()
         .map(|label| canonicalize_type_label_for_write(label))
         .collect::<Result<Vec<_>>>()?;
+    let mut owner_remove_labels = Vec::new();
     if let Some(current) = current {
         let current_type_label = format!("type:{}", current.issue_type.as_str());
         if add_labels
@@ -3440,12 +3498,50 @@ fn build_update_patch(
                 current.issue_type.as_str()
             );
         }
+        if let Some(owner) = args.epic.as_deref() {
+            if !current.issue_type.is_change() {
+                anyhow::bail!(
+                    "--epic is valid only for type:change; `{}` is type:{}",
+                    current.slug,
+                    current.issue_type.as_str()
+                );
+            }
+            let canonical = epic_owner_label(owner);
+            let normalized = canonical.trim_start_matches("epic:");
+            let conflicts = body_parent_references(current)
+                .into_iter()
+                .filter(|value| value != normalized)
+                .collect::<Vec<_>>();
+            if !conflicts.is_empty() {
+                anyhow::bail!(
+                    "--epic `{normalized}` conflicts with existing parent declaration(s): {}",
+                    conflicts.join(", ")
+                );
+            }
+            owner_remove_labels.extend(
+                current
+                    .labels
+                    .iter()
+                    .filter(|label| {
+                        label.starts_with("epic:")
+                            || label.starts_with("parent-epic:")
+                            || label.starts_with("parent:")
+                    })
+                    .cloned(),
+            );
+            add_labels.push(canonical);
+        }
     }
     let mut patch = IssuePatch {
         title: args.title.clone(),
         state: args.state.map(Into::into),
         add_labels,
-        remove_labels: args.remove_labels.clone(),
+        remove_labels: args
+            .remove_labels
+            .iter()
+            .cloned()
+            .chain(owner_remove_labels)
+            .collect(),
         body,
         ..Default::default()
     };
@@ -3465,6 +3561,39 @@ fn build_update_patch(
     }
 
     Ok(patch)
+}
+
+// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/epic_owner_authoring.py
+fn body_parent_references(issue: &Issue) -> Vec<String> {
+    let mut body_only = issue.clone();
+    body_only.labels.retain(|label| {
+        !label.starts_with("epic:")
+            && !label.starts_with("parent-epic:")
+            && !label.starts_with("parent:")
+    });
+    explicit_parent_references(&body_only)
+}
+
+// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/epic_owner_authoring.py
+async fn validate_typed_epic_target(
+    backend: &dyn IssueBackend,
+    owner: &str,
+    project_label: &str,
+) -> Result<String> {
+    let target = backend
+        .get(owner)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("--epic target `{owner}` does not resolve"))?;
+    if target.issue_type != IssueType::Epic {
+        anyhow::bail!(
+            "--epic target `{owner}` is type:{}, not type:epic",
+            target.issue_type.as_str()
+        );
+    }
+    if !target.labels.iter().any(|label| label == project_label) {
+        anyhow::bail!("--epic target `{owner}` is not in the change project `{project_label}`");
+    }
+    Ok(epic_owner_label(owner))
 }
 
 fn canonicalize_type_label_for_write(label: &str) -> Result<String> {
@@ -3495,6 +3624,35 @@ async fn run_update(args: UpdateArgs) -> Result<()> {
     // issue platform and refresh the read-through cache.
     let local = make_backend("local", &project_root, None, None)?;
     let local_current = local.get(&args.id).await?;
+    if let (Some(owner), Some(current)) = (args.epic.as_deref(), local_current.as_ref()) {
+        let remote_validation_backend = if args.push {
+            let (kind, repo, host) = resolve_backend(args.repo.clone(), &project_root)?;
+            if kind == "local" {
+                None
+            } else {
+                Some(
+                    make_backend(&kind, &project_root, repo, host)
+                        .context("Failed to create --epic validation backend")?,
+                )
+            }
+        } else {
+            None
+        };
+        let validation_backend = remote_validation_backend
+            .as_deref()
+            .unwrap_or(local.as_ref());
+        let project_label = current
+            .labels
+            .iter()
+            .find(|label| is_tracker_routing_label(label))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--epic requires `{}` to have one project label",
+                    current.slug
+                )
+            })?;
+        validate_typed_epic_target(validation_backend, owner, project_label).await?;
+    }
     let patch = build_update_patch(&args, body.clone(), local_current.as_ref())?;
     let mut updated_from_remote = false;
     let updated = match local.update(&args.id, &patch).await {
@@ -3506,6 +3664,21 @@ async fn run_update(args: UpdateArgs) -> Result<()> {
                     let remote = make_backend(&kind, &project_root, repo.clone(), host.clone())
                         .context("Failed to create remote backend")?;
                     let remote_current = remote.get(&args.id).await?;
+                    if let (Some(owner), Some(current)) =
+                        (args.epic.as_deref(), remote_current.as_ref())
+                    {
+                        let project_label = current
+                            .labels
+                            .iter()
+                            .find(|label| is_tracker_routing_label(label))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "--epic requires `{}` to have one project label",
+                                    current.slug
+                                )
+                            })?;
+                        validate_typed_epic_target(remote.as_ref(), owner, project_label).await?;
+                    }
                     let remote_patch =
                         build_update_patch(&args, body.clone(), remote_current.as_ref())?;
                     let updated = match remote.update(&args.id, &remote_patch).await {
@@ -5798,6 +5971,7 @@ async fn publish_capability_plan_candidates(
             projects: vec![project.to_string()],
             priority: Some(PriorityFilter::P1),
             agent: None,
+            epic: None,
             remote: false,
             json: false,
             repo: None,
@@ -8999,6 +9173,7 @@ label = "app:jet"
             add_labels: vec![],
             remove_labels: vec![],
             body_file: None,
+            epic: None,
             push: false,
             json: false,
             repo: None,
@@ -9022,6 +9197,51 @@ label = "app:jet"
             .any(|label| label.starts_with("phase:")));
         assert!(!updated.labels.iter().any(|label| label == "score:locked"));
         assert!(updated.labels.iter().any(|label| label == "ship:rejected"));
+    }
+
+    #[test]
+    fn update_epic_replaces_typed_owner_without_treating_it_as_body_conflict() {
+        let mut issue = test_issue_with_phase(None);
+        issue.labels.push("epic:100".to_string());
+        let args = UpdateArgs {
+            id: issue.slug.clone(),
+            title: None,
+            state: None,
+            add_labels: vec![],
+            remove_labels: vec![],
+            body_file: None,
+            epic: Some("200".to_string()),
+            push: false,
+            json: false,
+            repo: None,
+        };
+
+        let patch = build_update_patch(&args, None, Some(&issue)).unwrap();
+        assert!(patch.add_labels.iter().any(|label| label == "epic:200"));
+        assert!(patch.remove_labels.iter().any(|label| label == "epic:100"));
+    }
+
+    #[test]
+    fn update_epic_rejects_conflicting_body_parent() {
+        let mut issue = test_issue_with_phase(None);
+        issue.body.push_str("\nParent: #100\n");
+        let args = UpdateArgs {
+            id: issue.slug.clone(),
+            title: None,
+            state: None,
+            add_labels: vec![],
+            remove_labels: vec![],
+            body_file: None,
+            epic: Some("200".to_string()),
+            push: false,
+            json: false,
+            repo: None,
+        };
+
+        let error = build_update_patch(&args, None, Some(&issue)).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("conflicts with existing parent declaration"));
     }
 
     #[test]
@@ -11232,6 +11452,23 @@ labels:\n\
         assert!(
             !help.contains("--remote"),
             "create help should not expose deprecated --remote flag:\n{}",
+            help
+        );
+    }
+
+    #[test]
+    fn wi_create_priority_help_uses_canonical_single_colon_label() {
+        let mut command = create_args_test_command();
+        let help = command.render_long_help().to_string();
+
+        assert!(
+            help.contains("priority:<value>"),
+            "create help should document the canonical priority label:\n{}",
+            help
+        );
+        assert!(
+            !help.contains("priority::<value>"),
+            "create help must not document the malformed double-colon label:\n{}",
             help
         );
     }

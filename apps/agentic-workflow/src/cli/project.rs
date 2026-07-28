@@ -141,6 +141,15 @@ pub enum ProjectHealthSection {
 pub struct ProjectHealthReport {
     pub project: String,
     pub status: ProjectHealthStatus,
+    /// Observation-level assessment. This is deliberately separate from
+    /// `production_status`: advisory failures degrade the observation
+    /// without turning an otherwise-ready project into a production blocker.
+    pub assessment: ProjectHealthAssessment,
+    /// Uniform policy/evaluation projection for every health axis.
+    pub axis_assessments: BTreeMap<String, ProjectHealthAxisAssessment>,
+    /// The complete semantic-health contract. Operational axes remain
+    /// diagnostics; only these two cells decide the semantic assessment.
+    pub semantic_health: crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth,
     pub capability_ready: bool,
     pub managed_ready: bool,
     pub semantic_ready: bool,
@@ -331,6 +340,43 @@ pub enum ProjectHealthStatus {
     Blocked,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/health/project_health_total_observation.py
+pub enum ProjectHealthAssessment {
+    Healthy,
+    Degraded,
+    Blocked,
+    Indeterminate,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectHealthAxisRequirement {
+    Required,
+    Advisory,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectHealthAxisEvaluation {
+    Passed,
+    Failed,
+    Unavailable,
+    NotEvaluated,
+    NotConfigured,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectHealthAxisAssessment {
+    pub requirement: ProjectHealthAxisRequirement,
+    pub evaluation: ProjectHealthAxisEvaluation,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectTestGateReport {
@@ -373,6 +419,25 @@ pub enum ProjectTestCommandStatus {
     Passed,
     Failed,
     TimedOut,
+}
+
+fn axis_assessment<I, T>(
+    requirement: ProjectHealthAxisRequirement,
+    evaluation: ProjectHealthAxisEvaluation,
+    findings: I,
+) -> ProjectHealthAxisAssessment
+where
+    I: IntoIterator<Item = T>,
+    T: ToString,
+{
+    ProjectHealthAxisAssessment {
+        requirement,
+        evaluation,
+        findings: findings
+            .into_iter()
+            .map(|finding| finding.to_string())
+            .collect(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -639,6 +704,29 @@ fn build_health_report_with_options_internal(
     verify_ec: bool,
     emit_progress: bool,
 ) -> Result<ProjectHealthReport> {
+    build_health_report_with_options_and_plan(
+        project,
+        verify_traceability,
+        verify_cb,
+        verify_cold,
+        verify_tests,
+        verify_ec,
+        emit_progress,
+        HealthPostEvaluationPlan::all(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_health_report_with_options_and_plan(
+    project: &str,
+    verify_traceability: bool,
+    verify_cb: bool,
+    verify_cold: bool,
+    verify_tests: bool,
+    verify_ec: bool,
+    emit_progress: bool,
+    post: HealthPostEvaluationPlan,
+) -> Result<ProjectHealthReport> {
     let project_root = crate::find_project_root()?;
     let project = resolve_health_project_name(&project_root, project)?;
     let caps_ec_only = project_health_caps_ec_only(&project);
@@ -666,13 +754,58 @@ fn build_health_report_with_options_internal(
         None,
         &progress,
     )
-    .and_then(|mut report| {
-        apply_ec_to_report(&mut report, verify_ec)?;
-        apply_python_artifact_readiness_to_report(&mut report)?;
-        apply_claim_closure_to_report(&mut report)?;
-        apply_mutation_adequacy_to_report(&mut report)?;
+    .map(|mut report| {
+        if post.ec {
+            if let Err(error) = apply_ec_to_report(&mut report, verify_ec) {
+                report.record_axis_unavailable(
+                    "ec",
+                    if caps_ec_only {
+                        ProjectHealthAxisRequirement::Advisory
+                    } else {
+                        ProjectHealthAxisRequirement::Required
+                    },
+                    error,
+                );
+            }
+        }
+        if post.python_artifact {
+            if let Err(error) = apply_python_artifact_readiness_to_report(&mut report) {
+                report.record_axis_unavailable(
+                    "python_artifact",
+                    ProjectHealthAxisRequirement::Required,
+                    error,
+                );
+            }
+        }
+        if post.semantic {
+            if let Err(error) = apply_ec_td_semantic_health_to_report(&mut report) {
+                report.semantic_health =
+                    crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::unavailable(
+                        format!("EC/TD semantic-health evaluator unavailable: {error}"),
+                    );
+            }
+        }
+        if post.claims {
+            if let Err(error) = apply_claim_closure_to_report(&mut report) {
+                report.record_axis_unavailable(
+                    "claims",
+                    ProjectHealthAxisRequirement::Required,
+                    error,
+                );
+            }
+        }
+        if post.mutation {
+            if let Err(error) = apply_mutation_adequacy_to_report(&mut report) {
+                report.record_axis_unavailable(
+                    "mutation",
+                    mutation_axis_requirement(&project_root, &report.project),
+                    error,
+                );
+            }
+        }
+        report.refresh_observation_assessment();
         Ok(report)
-    })
+    })?
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -1336,6 +1469,14 @@ impl ProjectHealthReport {
         Self {
             project: project.to_string(),
             status,
+            assessment: if production_ready {
+                ProjectHealthAssessment::Healthy
+            } else {
+                ProjectHealthAssessment::Blocked
+            },
+            axis_assessments: BTreeMap::new(),
+            semantic_health:
+                crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::not_evaluated(),
             capability_ready,
             managed_ready,
             semantic_ready,
@@ -1474,6 +1615,229 @@ impl ProjectHealthReport {
                 safe_lever_count: 0,
             },
         }
+    }
+
+    fn record_axis_unavailable(
+        &mut self,
+        axis: &str,
+        requirement: ProjectHealthAxisRequirement,
+        error: impl ToString,
+    ) {
+        let finding = format!("{axis} evaluator unavailable: {}", error.to_string());
+        self.axis_assessments.insert(
+            axis.to_string(),
+            ProjectHealthAxisAssessment {
+                requirement,
+                evaluation: ProjectHealthAxisEvaluation::Unavailable,
+                findings: vec![finding.clone()],
+            },
+        );
+        match requirement {
+            ProjectHealthAxisRequirement::Required => {
+                self.production_ready = false;
+                self.production_status = ProductionStatus::NotEvaluated;
+                self.blockers.push(finding);
+            }
+            ProjectHealthAxisRequirement::Advisory => {
+                self.optional_quality_warnings.push(finding);
+            }
+            ProjectHealthAxisRequirement::NotApplicable => {}
+        }
+        self.blockers.sort();
+        self.blockers.dedup();
+        self.optional_quality_warnings.sort();
+        self.optional_quality_warnings.dedup();
+        self.refresh_observation_assessment();
+    }
+
+    fn refresh_observation_assessment(&mut self) {
+        let unavailable = self
+            .axis_assessments
+            .iter()
+            .filter(|(_, assessment)| {
+                assessment.evaluation == ProjectHealthAxisEvaluation::Unavailable
+            })
+            .map(|(axis, assessment)| (axis.clone(), assessment.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let self_hosted = project_health_caps_ec_only(&self.project);
+        let standard_requirement = if self_hosted {
+            ProjectHealthAxisRequirement::Advisory
+        } else {
+            ProjectHealthAxisRequirement::Required
+        };
+        let mut axes = BTreeMap::new();
+        axes.insert(
+            "capability".to_string(),
+            axis_assessment(
+                ProjectHealthAxisRequirement::Required,
+                if self.capability.evaluated
+                    && self.capability.root_runner_ready
+                    && self.capability.blocker_count == 0
+                {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                &self.capability.blockers,
+            ),
+        );
+        let ec_requirement = if self_hosted && self.ec.command_count == 0 {
+            ProjectHealthAxisRequirement::Advisory
+        } else {
+            ProjectHealthAxisRequirement::Required
+        };
+        let ec_evaluation = match self.ec.status {
+            ProjectEcGateStatus::Passed => ProjectHealthAxisEvaluation::Passed,
+            ProjectEcGateStatus::Failed | ProjectEcGateStatus::CheckFailed => {
+                ProjectHealthAxisEvaluation::Failed
+            }
+            ProjectEcGateStatus::NotConfigured => ProjectHealthAxisEvaluation::NotConfigured,
+            ProjectEcGateStatus::NotEvaluated | ProjectEcGateStatus::NotVerified => {
+                ProjectHealthAxisEvaluation::NotEvaluated
+            }
+        };
+        axes.insert(
+            "ec".to_string(),
+            axis_assessment(ec_requirement, ec_evaluation, &self.ec.findings),
+        );
+        let mutation_requirement = if self.mutation_adequacy.required_for_production {
+            ProjectHealthAxisRequirement::Required
+        } else {
+            ProjectHealthAxisRequirement::Advisory
+        };
+        let mutation_evaluation = if !self.mutation_adequacy.enabled {
+            ProjectHealthAxisEvaluation::NotConfigured
+        } else if self.mutation_adequacy.ready {
+            ProjectHealthAxisEvaluation::Passed
+        } else {
+            ProjectHealthAxisEvaluation::Failed
+        };
+        axes.insert(
+            "mutation".to_string(),
+            axis_assessment(
+                mutation_requirement,
+                mutation_evaluation,
+                &self.mutation_adequacy.findings,
+            ),
+        );
+        axes.insert(
+            "tests".to_string(),
+            axis_assessment(
+                standard_requirement,
+                match self.test_gates.status {
+                    ProjectTestGateStatus::Passed => ProjectHealthAxisEvaluation::Passed,
+                    ProjectTestGateStatus::Failed => ProjectHealthAxisEvaluation::Failed,
+                    ProjectTestGateStatus::NotConfigured => {
+                        ProjectHealthAxisEvaluation::NotConfigured
+                    }
+                    ProjectTestGateStatus::NotEvaluated => {
+                        ProjectHealthAxisEvaluation::NotEvaluated
+                    }
+                },
+                self.test_gates.note.iter().cloned().collect::<Vec<_>>(),
+            ),
+        );
+        axes.insert(
+            "td".to_string(),
+            axis_assessment(
+                standard_requirement,
+                if self.managed_ready
+                    && self.semantic_ready
+                    && self.traceability_ready
+                    && self.td_lock.clean
+                {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                self.td_lock
+                    .clean
+                    .then(Vec::new)
+                    .unwrap_or_else(|| vec![self.td_lock.message.clone()]),
+            ),
+        );
+        axes.insert(
+            "cb".to_string(),
+            axis_assessment(
+                standard_requirement,
+                if !self.cb_verify_evaluated {
+                    ProjectHealthAxisEvaluation::NotEvaluated
+                } else if self.cb_verify_clean {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                self.cb_verify_note.iter().cloned().collect::<Vec<_>>(),
+            ),
+        );
+        axes.insert(
+            "cold".to_string(),
+            axis_assessment(
+                if self.cold_rebuild_workspace_count == 0 {
+                    ProjectHealthAxisRequirement::NotApplicable
+                } else {
+                    standard_requirement
+                },
+                if self.cold_rebuild_workspace_count == 0 {
+                    ProjectHealthAxisEvaluation::NotApplicable
+                } else if !self.cold_rebuild_evaluated {
+                    ProjectHealthAxisEvaluation::NotEvaluated
+                } else if self.cold_rebuild_clean {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                &self.cold_rebuild_failures,
+            ),
+        );
+        axes.insert(
+            "traceability".to_string(),
+            axis_assessment(
+                standard_requirement,
+                if !self.traceability_evaluated {
+                    ProjectHealthAxisEvaluation::NotEvaluated
+                } else if self.traceability_ready {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                self.traceability_note.iter().cloned().collect::<Vec<_>>(),
+            ),
+        );
+        axes.insert(
+            "claims".to_string(),
+            axis_assessment(
+                ProjectHealthAxisRequirement::Required,
+                if !self.claim_closure.evaluated {
+                    ProjectHealthAxisEvaluation::NotEvaluated
+                } else if self.claim_closure.blocker_count == 0 {
+                    ProjectHealthAxisEvaluation::Passed
+                } else {
+                    ProjectHealthAxisEvaluation::Failed
+                },
+                &self.claim_closure.blockers,
+            ),
+        );
+        axes.extend(unavailable);
+        self.axis_assessments = axes;
+
+        use crate::services::python_ec_td_semantic_health::SemanticCellEvaluation;
+        let cells = [
+            self.semantic_health.ec_accepts_td.evaluation,
+            self.semantic_health.ec_td_alignment.evaluation,
+        ];
+        self.assessment = if cells.contains(&SemanticCellEvaluation::Failed) {
+            ProjectHealthAssessment::Blocked
+        } else if cells.iter().any(|evaluation| {
+            matches!(
+                evaluation,
+                SemanticCellEvaluation::Unavailable | SemanticCellEvaluation::NotEvaluated
+            )
+        }) {
+            ProjectHealthAssessment::Indeterminate
+        } else {
+            ProjectHealthAssessment::Healthy
+        };
     }
 
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#logic
@@ -1685,6 +2049,21 @@ impl ProjectTestGateReport {
                 stdout_tail: String::new(),
                 stderr_tail: String::new(),
             }],
+        }
+    }
+
+    pub fn scoped_capability(project: &str, capability_id: &str) -> Self {
+        Self {
+            evaluated: true,
+            status: ProjectTestGateStatus::Passed,
+            note: Some(format!(
+                "workspace test gates are excluded from scoped capability verification for `{project}` capability `{capability_id}`"
+            )),
+            command_count: 0,
+            passed_count: 0,
+            failed_count: 0,
+            skipped_count: 0,
+            commands: Vec::new(),
         }
     }
 
@@ -2021,6 +2400,8 @@ pub fn project_health_compact_summary(report: &ProjectHealthReport) -> serde_jso
             "status": project_health_loop_status(report),
             "action": "health",
             "project": &report.project,
+            "assessment": report.assessment,
+            "semantic_health": &report.semantic_health,
             "completion": project_health_compact_completion(report),
             "next": project_health_next(report),
             "readiness": project_health_compact_readiness(report),
@@ -2097,6 +2478,7 @@ pub fn project_health_section_summary(
         ProjectHealthSection::Ec => project_ec_gate_summary(&report.ec),
         ProjectHealthSection::Mutation => unreachable!(),
         ProjectHealthSection::Spec => serde_json::json!({
+            "semantic_health": &report.semantic_health,
             "python_spec": &report.python_artifact,
             "mutation": &report.mutation_adequacy,
             "production_ready": report.production_ready,
@@ -2191,13 +2573,19 @@ pub fn project_health_section_summary(
             "human_decision_required_count": report.human_decision_required_count,
         }),
     };
+    let section_failed = focused_section_failed(report, section);
     serde_json::json!({
         "schema_version": "aw.cli.v1",
         "event": "result",
-        "status": project_health_loop_status(report),
+        "status": if section_failed { "blocked" } else { "done" },
         "action": "health",
         "project": &report.project,
         "section": section,
+        "assessment": if section_failed {
+            ProjectHealthAssessment::Blocked
+        } else {
+            ProjectHealthAssessment::Healthy
+        },
         "next": project_health_next(report),
         "data": payload,
     })
@@ -2207,12 +2595,17 @@ pub fn mutation_health_summary(
     project: &str,
     adequacy: &crate::services::python_td_mutation_health::PythonTdMutationAdequacy,
 ) -> serde_json::Value {
-    let blocked = adequacy.required_for_production && !adequacy.ready;
+    let blocked = adequacy.enabled && !adequacy.ready;
+    let requirement = if adequacy.required_for_production {
+        ProjectHealthAxisRequirement::Required
+    } else {
+        ProjectHealthAxisRequirement::Advisory
+    };
     let next = if blocked {
         serde_json::json!({
             "kind": "run_command",
             "command": adequacy.next_command,
-            "reason": "production-required mutation adequacy is not green",
+            "reason": "the requested mutation adequacy observation is not green",
         })
     } else {
         serde_json::json!({
@@ -2231,13 +2624,28 @@ pub fn mutation_health_summary(
         "action": "health",
         "project": project,
         "section": "mutation",
+        "assessment": if blocked {
+            ProjectHealthAssessment::Blocked
+        } else {
+            ProjectHealthAssessment::Healthy
+        },
         "completion": {
             "workflow_complete": !blocked,
             "requires_hitl": false,
             "missing": if blocked { adequacy.findings.clone() } else { Vec::<String>::new() },
         },
         "next": next,
-        "data": adequacy,
+        "data": {
+            "requirement": requirement,
+            "evaluation": if !adequacy.enabled {
+                ProjectHealthAxisEvaluation::NotConfigured
+            } else if adequacy.ready {
+                ProjectHealthAxisEvaluation::Passed
+            } else {
+                ProjectHealthAxisEvaluation::Failed
+            },
+            "detail": adequacy,
+        },
     })
 }
 
@@ -2263,6 +2671,8 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
             "status": project_health_loop_status(report),
             "action": "health",
             "project": &report.project,
+            "assessment": report.assessment,
+            "semantic_health": &report.semantic_health,
             "completion": project_health_completion(report),
             "next": project_health_next(report),
             "readiness": project_health_readiness_summary(report),
@@ -2356,6 +2766,7 @@ fn project_health_compact_completion(report: &ProjectHealthReport) -> serde_json
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_compact_readiness(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
+        "assessment": report.assessment,
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
         "takeover_ready": report.takeover_ready,
@@ -2392,17 +2803,42 @@ fn apply_meta_to_report(report: &mut ProjectHealthReport) {
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
-        "meta": project_meta_health(&report.project),
-        "capability": project_health_capability_axis(report),
-        "ec": project_health_ec_axis(report),
-        "ec_gen": project_health_ec_gen_axis(report),
-        "mutation": &report.mutation_adequacy,
-        "td": project_health_td_axis(report),
-        "td_gen": project_health_td_gen_axis(report),
-        "drift_marker": project_health_drift_marker_axis(report),
-        "takeover_audit": project_health_takeover_audit_axis(report),
-        "intake_queue": &report.intake_queue,
+        "meta": health_axis_with_assessment(report, "meta", serde_json::json!(project_meta_health(&report.project))),
+        "capability": health_axis_with_assessment(report, "capability", project_health_capability_axis(report)),
+        "ec": health_axis_with_assessment(report, "ec", project_health_ec_axis(report)),
+        "ec_gen": health_axis_with_assessment(report, "ec", project_health_ec_gen_axis(report)),
+        "mutation": health_axis_with_assessment(report, "mutation", serde_json::json!(&report.mutation_adequacy)),
+        "td": health_axis_with_assessment(report, "td", project_health_td_axis(report)),
+        "td_gen": health_axis_with_assessment(report, "td", project_health_td_gen_axis(report)),
+        "drift_marker": health_axis_with_assessment(report, "td", project_health_drift_marker_axis(report)),
+        "takeover_audit": health_axis_with_assessment(report, "takeover_audit", project_health_takeover_audit_axis(report)),
+        "intake_queue": health_axis_with_assessment(report, "intake_queue", serde_json::json!(&report.intake_queue)),
     })
+}
+
+fn health_axis_with_assessment(
+    report: &ProjectHealthReport,
+    axis: &str,
+    mut detail: serde_json::Value,
+) -> serde_json::Value {
+    let Some(assessment) = report.axis_assessments.get(axis) else {
+        return detail;
+    };
+    if let serde_json::Value::Object(object) = &mut detail {
+        object.insert(
+            "requirement".to_string(),
+            serde_json::json!(assessment.requirement),
+        );
+        object.insert(
+            "evaluation".to_string(),
+            serde_json::json!(assessment.evaluation),
+        );
+        object.insert(
+            "assessment_findings".to_string(),
+            serde_json::json!(assessment.findings),
+        );
+    }
+    detail
 }
 
 /// Issue #1278 (epic #1270 R7): compact view of the existing-project
@@ -3231,6 +3667,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
+        "assessment": report.assessment,
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
         "takeover_ready": report.takeover_ready,
@@ -3359,41 +3796,82 @@ fn spike_health_expiry(issue: &Issue) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
-    if args.section == Some(ProjectHealthSection::Mutation) {
-        let project_root = crate::find_project_root()?;
-        let row = crate::services::project_registry::resolve_project_config_row(
-            &project_root,
-            &args.project,
-        )?;
-        let adequacy =
-            crate::services::python_td_mutation_health::evaluate(&project_root, &row.name)?;
-        let payload_path = write_mutation_health_payload(&row.name, &adequacy)?;
-        let summary =
-            with_payload_path(mutation_health_summary(&row.name, &adequacy), &payload_path);
-        if args.human || args.pretty || args.json {
-            println!("{}", serde_json::to_string_pretty(&summary)?);
-        } else {
-            println!("{}", serde_json::to_string(&summary)?);
+    let (project_root, project) = match resolve_health_request(&args.project) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            print_health_json(
+                &health_resolution_error_summary(&args.project, args.section, &error),
+                &args,
+            )?;
+            std::process::exit(2);
         }
-        if adequacy.required_for_production && !adequacy.ready {
+    };
+    if args.section == Some(ProjectHealthSection::Mutation) {
+        let requirement = mutation_axis_requirement(&project_root, &project);
+        let adequacy =
+            match crate::services::python_td_mutation_health::evaluate(&project_root, &project) {
+                Ok(adequacy) => adequacy,
+                Err(error) => {
+                    let payload =
+                        unavailable_health_payload(&project, "mutation", requirement, &error);
+                    let payload_path = write_health_value_payload(&project, "mutation", &payload)?;
+                    let summary = with_payload_path(payload, &payload_path);
+                    print_health_json(&summary, &args)?;
+                    std::process::exit(1);
+                }
+            };
+        let payload_path = write_mutation_health_payload(&project, &adequacy)?;
+        let summary =
+            with_payload_path(mutation_health_summary(&project, &adequacy), &payload_path);
+        print_health_json(&summary, &args)?;
+        if adequacy.enabled && !adequacy.ready {
             std::process::exit(1);
         }
         return Ok(());
     }
     let verification = effective_health_verification_flags(&args);
-    let mut report = build_health_report_with_options_internal(
-        &args.project,
+    let mut report = match build_health_report_with_options_and_plan(
+        &project,
         verification.traceability,
         verification.cb,
         verification.cold,
         verification.tests,
         verification.ec,
         args.verbose,
-    )?;
-    apply_td_lock_to_report(&mut report)?;
-    apply_workflow_locks_to_report(&mut report).await?;
+        HealthPostEvaluationPlan::for_section(args.section),
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            let axis = args
+                .section
+                .map(health_section_axis_name)
+                .unwrap_or("aggregate");
+            let payload = unavailable_health_payload(
+                &project,
+                axis,
+                ProjectHealthAxisRequirement::Required,
+                &error,
+            );
+            let payload_path = write_health_value_payload(&project, axis, &payload)?;
+            let summary = with_payload_path(payload, &payload_path);
+            print_health_json(&summary, &args)?;
+            std::process::exit(1);
+        }
+    };
+    let supporting_requirement = if project_health_caps_ec_only(&report.project) {
+        ProjectHealthAxisRequirement::Advisory
+    } else {
+        ProjectHealthAxisRequirement::Required
+    };
+    if let Err(error) = apply_td_lock_to_report(&mut report) {
+        report.record_axis_unavailable("td", supporting_requirement, error);
+    }
+    if let Err(error) = apply_workflow_locks_to_report(&mut report).await {
+        report.record_axis_unavailable("workflow", supporting_requirement, error);
+    }
     apply_intake_queue_to_report(&mut report).await;
     apply_meta_to_report(&mut report);
+    report.refresh_observation_assessment();
     let payload_path = write_health_payload(&report)?;
     if args.human {
         match args.section {
@@ -3428,14 +3906,18 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     }
     let focused_meta_blocked = args.section == Some(ProjectHealthSection::Meta)
         && !project_meta_health(&report.project).clean;
-    let focused_mutation_blocked = args.section == Some(ProjectHealthSection::Mutation)
-        && report.mutation_adequacy.required_for_production
-        && !report.mutation_adequacy.ready;
-    let aggregate_blocked = !matches!(
-        args.section,
-        Some(ProjectHealthSection::Meta | ProjectHealthSection::Mutation)
-    ) && report.status == ProjectHealthStatus::Blocked;
-    if focused_meta_blocked || focused_mutation_blocked || aggregate_blocked {
+    let focused_blocked = args.section.is_some()
+        && !matches!(
+            args.section,
+            Some(ProjectHealthSection::Meta | ProjectHealthSection::Mutation)
+        )
+        && focused_section_failed(&report, args.section.expect("checked above"));
+    let aggregate_blocked = args.section.is_none()
+        && matches!(
+            report.assessment,
+            ProjectHealthAssessment::Blocked | ProjectHealthAssessment::Indeterminate
+        );
+    if focused_meta_blocked || focused_blocked || aggregate_blocked {
         std::process::exit(1);
     }
     Ok(())
@@ -3449,6 +3931,76 @@ struct HealthVerificationFlags {
     cold: bool,
     tests: bool,
     ec: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/health/project_health_total_observation.py
+struct HealthPostEvaluationPlan {
+    ec: bool,
+    python_artifact: bool,
+    semantic: bool,
+    claims: bool,
+    mutation: bool,
+}
+
+impl HealthPostEvaluationPlan {
+    fn all() -> Self {
+        Self {
+            ec: true,
+            python_artifact: true,
+            semantic: true,
+            claims: true,
+            mutation: true,
+        }
+    }
+
+    fn for_section(section: Option<ProjectHealthSection>) -> Self {
+        match section {
+            None
+            | Some(
+                ProjectHealthSection::Full
+                | ProjectHealthSection::Metrics
+                | ProjectHealthSection::Gates
+                | ProjectHealthSection::Spec
+                | ProjectHealthSection::Blockers,
+            ) => Self::all(),
+            Some(ProjectHealthSection::Ec) => Self {
+                ec: true,
+                python_artifact: true,
+                semantic: true,
+                claims: false,
+                mutation: false,
+            },
+            Some(ProjectHealthSection::Claims) => Self {
+                ec: true,
+                python_artifact: false,
+                semantic: true,
+                claims: true,
+                mutation: false,
+            },
+            Some(
+                ProjectHealthSection::Capability
+                | ProjectHealthSection::Meta
+                | ProjectHealthSection::Tests
+                | ProjectHealthSection::Mutation
+                | ProjectHealthSection::Cb
+                | ProjectHealthSection::Cold
+                | ProjectHealthSection::Traceability
+                | ProjectHealthSection::Regenerable
+                | ProjectHealthSection::Api
+                | ProjectHealthSection::Stack
+                | ProjectHealthSection::TdLock
+                | ProjectHealthSection::DriftMarker
+                | ProjectHealthSection::TakeoverAudit,
+            ) => Self {
+                ec: false,
+                python_artifact: false,
+                semantic: true,
+                claims: false,
+                mutation: false,
+            },
+        }
+    }
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -3584,6 +4136,161 @@ fn write_mutation_health_payload(
     fs::write(&path, serde_json::to_vec_pretty(adequacy)?)
         .with_context(|| format!("write mutation health payload {}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+fn write_health_value_payload(
+    project: &str,
+    name: &str,
+    payload: &serde_json::Value,
+) -> Result<String> {
+    let dir = std::env::temp_dir()
+        .join("aw")
+        .join(sanitize_tmp_path_segment(project))
+        .join("health");
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("create health payload dir {}", dir.display()))?;
+    let path = dir.join(format!("{}.json", sanitize_tmp_path_segment(name)));
+    fs::write(&path, serde_json::to_vec_pretty(payload)?)
+        .with_context(|| format!("write health payload {}", path.display()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn resolve_health_request(requested: &str) -> Result<(PathBuf, String)> {
+    let project_root = crate::find_project_root()?;
+    let row =
+        crate::services::project_registry::resolve_project_config_row(&project_root, requested)?;
+    Ok((project_root, row.name))
+}
+
+fn print_health_json(value: &serde_json::Value, args: &ProjectHealthArgs) -> Result<()> {
+    if args.human || args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{}", serde_json::to_string(value)?);
+    }
+    Ok(())
+}
+
+fn health_resolution_error_summary(
+    requested: &str,
+    section: Option<ProjectHealthSection>,
+    error: &anyhow::Error,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "result",
+        "status": "blocked",
+        "action": "health",
+        "project": requested,
+        "section": section,
+        "completion": {
+            "workflow_complete": false,
+            "requires_hitl": false,
+            "missing": [format!("health request could not be resolved: {error}")],
+        },
+        "next": {
+            "kind": "error",
+            "reason": format!("health request could not be resolved: {error}"),
+        },
+    })
+}
+
+fn unavailable_health_payload(
+    project: &str,
+    axis: &str,
+    requirement: ProjectHealthAxisRequirement,
+    error: &anyhow::Error,
+) -> serde_json::Value {
+    let finding = format!("{axis} evaluator unavailable: {error}");
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "result",
+        "status": "blocked",
+        "action": "health",
+        "project": project,
+        "section": axis,
+        "assessment": ProjectHealthAssessment::Indeterminate,
+        "completion": {
+            "workflow_complete": false,
+            "requires_hitl": false,
+            "missing": [&finding],
+        },
+        "readiness": {
+            "production_ready": false,
+            "production_status": ProductionStatus::NotEvaluated,
+        },
+        "axes": {
+            (axis): {
+                "requirement": requirement,
+                "evaluation": ProjectHealthAxisEvaluation::Unavailable,
+                "findings": [&finding],
+            },
+        },
+        "next": {
+            "kind": "blocked",
+            "reason": &finding,
+            "command": format!("aw issue search \"health evaluator {axis} unavailable\""),
+        },
+    })
+}
+
+fn mutation_axis_requirement(
+    project_root: &std::path::Path,
+    project: &str,
+) -> ProjectHealthAxisRequirement {
+    use crate::services::python_td_mutation_health::MutationAdequacyPolicy;
+
+    match crate::services::project_registry::resolve_project_config_row(project_root, project)
+        .ok()
+        .and_then(|row| row.mutation_adequacy)
+    {
+        Some(MutationAdequacyPolicy::Required) => ProjectHealthAxisRequirement::Required,
+        Some(MutationAdequacyPolicy::Advisory) | None => ProjectHealthAxisRequirement::Advisory,
+    }
+}
+
+fn health_section_axis_name(section: ProjectHealthSection) -> &'static str {
+    match section {
+        ProjectHealthSection::Full => "aggregate",
+        ProjectHealthSection::Metrics => "aggregate",
+        ProjectHealthSection::Capability => "capability",
+        ProjectHealthSection::Meta => "meta",
+        ProjectHealthSection::Gates => "aggregate",
+        ProjectHealthSection::Tests => "tests",
+        ProjectHealthSection::Ec => "ec",
+        ProjectHealthSection::Mutation => "mutation",
+        ProjectHealthSection::Spec => "aggregate",
+        ProjectHealthSection::Cb => "cb",
+        ProjectHealthSection::Cold => "cold",
+        ProjectHealthSection::Traceability => "traceability",
+        ProjectHealthSection::Regenerable => "td",
+        ProjectHealthSection::Api => "cb",
+        ProjectHealthSection::Stack => "traceability",
+        ProjectHealthSection::TdLock => "td",
+        ProjectHealthSection::Claims => "claims",
+        ProjectHealthSection::Blockers => "aggregate",
+        ProjectHealthSection::DriftMarker => "td",
+        ProjectHealthSection::TakeoverAudit => "takeover_audit",
+    }
+}
+
+fn focused_section_failed(report: &ProjectHealthReport, section: ProjectHealthSection) -> bool {
+    let axis = health_section_axis_name(section);
+    if axis == "aggregate" {
+        return matches!(
+            report.assessment,
+            ProjectHealthAssessment::Blocked | ProjectHealthAssessment::Indeterminate
+        );
+    }
+    if section == ProjectHealthSection::TdLock {
+        return !report.td_lock.clean;
+    }
+    report.axis_assessments.get(axis).is_some_and(|assessment| {
+        matches!(
+            assessment.evaluation,
+            ProjectHealthAxisEvaluation::Failed | ProjectHealthAxisEvaluation::Unavailable
+        )
+    })
 }
 
 /// Serialize the complete health report stored at a result envelope's
@@ -3893,6 +4600,14 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
     let readiness =
         crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
     apply_python_artifact_readiness_projection(report, readiness);
+    Ok(())
+}
+
+fn apply_ec_td_semantic_health_to_report(report: &mut ProjectHealthReport) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    report.semantic_health =
+        crate::services::python_ec_td_semantic_health::evaluate(&project_root, &report.project)?;
+    report.refresh_observation_assessment();
     Ok(())
 }
 
@@ -4682,6 +5397,11 @@ fn print_health_section(report: &ProjectHealthReport, section: ProjectHealthSect
 fn print_health_report(report: &ProjectHealthReport) {
     println!("project health: {} ({:?})", report.project, report.status);
     println!(
+        "semantic_health: ec_accepts_td={:?}, ec_td_alignment={:?}",
+        report.semantic_health.ec_accepts_td.evaluation,
+        report.semantic_health.ec_td_alignment.evaluation
+    );
+    println!(
         "production_ready: {}",
         if report.production_ready { "yes" } else { "no" }
     );
@@ -5140,6 +5860,119 @@ mod tests {
             ready: true,
             ..Default::default()
         }
+    }
+
+    fn mark_semantic_health_passed(report: &mut ProjectHealthReport) {
+        use crate::services::python_ec_td_semantic_health::{
+            EcAcceptsTdCell, EcTdAlignmentCell, PythonEcTdSemanticHealth, SemanticCellEvaluation,
+        };
+        report.semantic_health = PythonEcTdSemanticHealth {
+            ec_accepts_td: EcAcceptsTdCell {
+                evaluation: SemanticCellEvaluation::Passed,
+                case_count: 1,
+                passed_count: 1,
+                failed_cases: Vec::new(),
+                missing_evidence_cases: Vec::new(),
+                findings: Vec::new(),
+            },
+            ec_td_alignment: EcTdAlignmentCell {
+                evaluation: SemanticCellEvaluation::Passed,
+                missing_in_td: Vec::new(),
+                missing_in_ec: Vec::new(),
+            },
+        };
+    }
+
+    #[test]
+    fn operational_advisory_failure_does_not_create_a_semantic_cell() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        mark_semantic_health_passed(&mut report);
+        report.mutation_adequacy.enabled = true;
+        report.mutation_adequacy.ready = false;
+        report.mutation_adequacy.status =
+            crate::services::python_td_mutation_health::MutationAdequacyStatus::Invalid;
+        report
+            .mutation_adequacy
+            .findings
+            .push("invalid mutation inventory".to_string());
+
+        report.refresh_observation_assessment();
+
+        assert_eq!(report.assessment, ProjectHealthAssessment::Healthy);
+        assert!(report.production_ready);
+        assert_eq!(
+            report.axis_assessments["mutation"].evaluation,
+            ProjectHealthAxisEvaluation::Failed
+        );
+    }
+
+    #[test]
+    fn operational_evaluator_unavailability_does_not_redefine_semantic_health() {
+        let mut report = ready_project_health_report("demo");
+        mark_semantic_health_passed(&mut report);
+
+        report.record_axis_unavailable(
+            "claims",
+            ProjectHealthAxisRequirement::Required,
+            "fixture transport error",
+        );
+
+        assert_eq!(report.assessment, ProjectHealthAssessment::Healthy);
+        assert_eq!(report.production_status, ProductionStatus::NotEvaluated);
+        assert_eq!(
+            report.axis_assessments["claims"].evaluation,
+            ProjectHealthAxisEvaluation::Unavailable
+        );
+    }
+
+    #[test]
+    fn semantic_alignment_failure_blocks_the_assessment() {
+        use crate::services::python_ec_td_semantic_health::SemanticCellEvaluation;
+        let mut report = ready_project_health_report("demo");
+        mark_semantic_health_passed(&mut report);
+        report.semantic_health.ec_td_alignment.evaluation = SemanticCellEvaluation::Failed;
+        report
+            .semantic_health
+            .ec_td_alignment
+            .missing_in_ec
+            .push("artifact:demo/td-only".to_string());
+
+        report.refresh_observation_assessment();
+
+        assert_eq!(report.assessment, ProjectHealthAssessment::Blocked);
+    }
+
+    #[test]
+    fn focused_capability_plan_excludes_unrelated_post_evaluators() {
+        let plan = HealthPostEvaluationPlan::for_section(Some(ProjectHealthSection::Capability));
+
+        assert_eq!(
+            plan,
+            HealthPostEvaluationPlan {
+                ec: false,
+                python_artifact: false,
+                semantic: true,
+                claims: false,
+                mutation: false,
+            }
+        );
+    }
+
+    #[test]
+    fn focused_mutation_failure_is_a_failed_requested_observation() {
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.mutation_adequacy.enabled = true;
+        report.mutation_adequacy.ready = false;
+        report.refresh_observation_assessment();
+
+        assert!(focused_section_failed(
+            &report,
+            ProjectHealthSection::Mutation
+        ));
+        let summary = mutation_health_summary(&report.project, &report.mutation_adequacy);
+        assert_eq!(summary["status"], "blocked");
+        assert_eq!(summary["data"]["requirement"], "advisory");
+        assert_eq!(summary["data"]["evaluation"], "failed");
     }
 
     #[test]

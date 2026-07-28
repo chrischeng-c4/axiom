@@ -124,15 +124,23 @@ Self-hosting admission contract.
 
 ### Workflow root runner
 
-Capability ID: workflow-root-runner
-Status: implemented
-Summary: Drive Python-first lifecycle roots.
+ID: workflow-root-runner
+Type: AgentFirst
+Root WI: self-hosted-fixture
+Status: verified
+Required Verification: smoke
+Surfaces:
+- CLI: `aw goal` - drive Python-first lifecycle roots.
+EC Dimensions:
+- behavior: `aw goal capability` - dispatch the next lifecycle worker.
+Promise:
+Drive Python-first lifecycle roots through an executable continuation.
+Gate Inventory:
+- `true`
 
-#### Work Roots
-
-| Type | ID | Status | Verification |
-|------|----|--------|--------------|
-| change | self-hosted-fixture | implemented | `true` |
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Self-hosted fixture | change | self-hosted-fixture | implemented | verified | smoke | `true` |
 """,
         encoding="utf-8",
     )
@@ -265,19 +273,20 @@ def verify(case_id: str) -> list[str]:
     if case_id == "self-hosting-capability-admission":
         capability = snapshot["capability"]
         assert capability["status"] == "continue"
-        assert capability["action"] == "dispatch"
+        assert capability["action"] == "done"
         assert capability["root"] == {
             "kind": "capability",
             "id": "workflow-root-runner",
         }
-        assert capability["prompt_contract"]["state"] == "ec.authoring"
+        assert capability["completion"]["root_complete"] is True
+        assert capability["completion"]["workflow_complete"] is False
         assert (
             capability["next"]["command"]
-            == "aw ec check --project agentic-workflow"
+            == "aw goal capability --project agentic-workflow --non-interactive --max-ticks 1"
         )
         assert (
             capability["next"]["reason"]
-            == "Python artifact inventory or digest-bound evidence is not ready"
+            == "capability is production ready; inspect project root for rollup"
         )
         backlog = snapshot["backlog"]
         assert backlog["status"] == "blocked"
@@ -295,7 +304,7 @@ def verify(case_id: str) -> list[str]:
         )
         assert "project-plan.json cannot be read" in backlog["next"]["reason"]
         return [
-            "capability dispatches the exact EC structural worker",
+            "scoped capability admission completes without unrelated project lifecycle gates",
             "backlog fail-closes on the missing reviewed graph with exact planning remediation",
         ]
     if case_id == "self-hosting-goal-root-parity":

@@ -618,6 +618,49 @@ mod tests {
         }
     }
 
+    // @spec #2772
+    #[tokio::test]
+    async fn issue_cache_change_does_not_poison_unrelated_lookup() {
+        let tmp = TempDir::new().unwrap();
+        let backend = LocalBackend::at(tmp.path().to_path_buf());
+        let open = backend.issues_dir().join("open");
+        std::fs::create_dir_all(&open).unwrap();
+
+        for (id, title) in [(2693, "Cached change"), (1942, "Lifecycle target")] {
+            std::fs::write(
+                open.join(format!("{id}.md")),
+                format!(
+                    "---\ntype: change\ntitle: {title}\nstate: open\ngithub_id: {id}\nlabels:\n  - type:change\n---\n\ncanonical change body\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let target = backend.get("1942").await.unwrap().unwrap();
+        assert_eq!(target.issue_type, IssueType::Change);
+        assert_eq!(target.title, "Lifecycle target");
+
+        let changes = backend
+            .list(&IssueFilter {
+                issue_type: Some(IssueType::Change),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(changes.len(), 2);
+        assert!(changes
+            .iter()
+            .all(|issue| issue.issue_type == IssueType::Change));
+
+        let mut emitted = make_issue("canonical-emitted", Some(2772));
+        emitted.issue_type = IssueType::Change;
+        emitted.labels = vec!["type:change".into()];
+        backend.write(&emitted).await.unwrap();
+        let raw = std::fs::read_to_string(open.join("canonical-emitted.md")).unwrap();
+        assert!(raw.contains("\ntype: change\n"));
+        assert!(!raw.contains("type: enhancement"));
+    }
+
     #[tokio::test]
     async fn get_by_numeric_id() {
         let tmp = TempDir::new().unwrap();

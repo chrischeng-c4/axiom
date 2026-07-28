@@ -17,6 +17,7 @@ pub mod cli;
 pub mod context;
 pub mod context_builder;
 pub mod context_map;
+pub mod coordination;
 pub mod defaults;
 pub mod fillback;
 pub mod generate;

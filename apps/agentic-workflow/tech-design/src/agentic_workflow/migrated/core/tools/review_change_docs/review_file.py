@@ -1,0 +1,19 @@
+"""Canonical Python producer for `apps/agentic-workflow/tech-design/core/tools/review_change_docs/review-file.md`.
+
+Migrated by batch `projection-core-tools-02`.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+
+__aw_artifact_id__ = "artifact:core-tools/core-tools-review-change-docs-review-file"
+__legacy_projection_path__ = "apps/agentic-workflow/tech-design/core/tools/review_change_docs/review-file.md"
+__legacy_projection_digest__ = "sha256:0ab6741551d8703c9bad5ed4076d9e93cb534cb07ec55306b7307077840c2cb7"
+
+
+def render_markdown() -> Annotated[str, "sha256:0ab6741551d8703c9bad5ed4076d9e93cb534cb07ec55306b7307077840c2cb7"]:
+    """Render the preserved generated projection byte-for-byte."""
+
+    return "---\nid: sdd-tools-review-change-docs-review-file\nfill_sections: [overview, source, changes]\ncapability_refs:\n  - id: td-cb-lifecycle-automation\n    role: primary\n    gap: td-lifecycle-dispatch\n    claim: td-lifecycle-dispatch\n    coverage: full\n    rationale: \"Tool TDs implement TD/CB lifecycle artifact authoring, review, revision, merge, and validation commands.\"\n---\n\n# sdd tools review change docs review file\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nPublic API manifest for `apps/agentic-workflow/src/tools/review_change_docs.rs` generated from AST during Score force-regeneration standardization.\n\n### Symbols\n\n| Name | Target | Kind | Visibility | Line | Signature |\n|------|--------|------|------------|------|-----------|\n| `artifact_definition` | apps/agentic-workflow/src/tools/review_change_docs.rs | function | pub | 44 | artifact_definition() -> ToolDefinition |\n| `execute_artifact` | apps/agentic-workflow/src/tools/review_change_docs.rs | function | pub | 150 | execute_artifact(args: &Value, project_root: &Path) -> Result<String> |\n| `execute_workflow` | apps/agentic-workflow/src/tools/review_change_docs.rs | function | pub | 97 | execute_workflow(args: &Value, project_root: &Path) -> Result<String> |\n| `workflow_definition` | apps/agentic-workflow/src/tools/review_change_docs.rs | function | pub | 19 | workflow_definition() -> ToolDefinition |\n## Source\n<!-- type: source lang: rust -->\n\n````rust\n/// Build review file content.\nfn build_review_file(verdict: &str, review_notes: &str, cli_results: &[Value]) -> String {\n    let mut md = String::new();\n    md.push_str(\"# Docs Review\\n\\n\");\n    md.push_str(&format!(\"verdict: {}\\n\\n\", verdict));\n    md.push_str(\"## Review Notes\\n\\n\");\n    md.push_str(review_notes);\n    md.push_str(\"\\n\\n\");\n\n    if !cli_results.is_empty() {\n        md.push_str(\"## CLI Verification Results\\n\\n\");\n        md.push_str(\"| Command | Expected | Actual | Pass |\\n\");\n        md.push_str(\"|---------|----------|--------|------|\\n\");\n        for result in cli_results {\n            let cmd = result.get(\"command\").and_then(|v| v.as_str()).unwrap_or(\"\");\n            let expected = result\n                .get(\"expected\")\n                .and_then(|v| v.as_str())\n                .unwrap_or(\"\");\n            let actual = result.get(\"actual\").and_then(|v| v.as_str()).unwrap_or(\"\");\n            let pass = result\n                .get(\"pass\")\n                .and_then(|v| v.as_bool())\n                .unwrap_or(false);\n            let icon = if pass { \"PASS\" } else { \"FAIL\" };\n            md.push_str(&format!(\n                \"| `{}` | {} | {} | {} |\\n\",\n                cmd, expected, actual, icon\n            ));\n        }\n        md.push('\\n');\n    }\n\n    md\n}\n````\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: apps/agentic-workflow/src/tools/review_change_docs.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n    replaces:\n      - \"build_review_file\"\n    description: \"Markdown review file renderer for docs review output.\"\n```\n"

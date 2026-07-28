@@ -244,11 +244,15 @@ pub struct CapabilityMigrateArgs {
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
 #[derive(Debug, Args, Clone)]
 pub struct CapabilityCheckArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
+    /// Verify only this capability and its transitive dependency closure.
+    #[arg(long = "capability")]
+    pub capability_id: Option<String>,
     /// Run capability verification commands and configured project test gates.
     #[arg(long)]
     pub verify: bool,
@@ -1510,13 +1514,27 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
                 args.skip_issue_inventory,
                 false,
             );
-            let mut report = build_capability_report(
-                &project,
-                args.cap_path.as_deref(),
-                args.verify,
-                include_issue_inventory,
-            )
-            .await?;
+            let mut report = match args.capability_id.as_deref() {
+                Some(capability_id) => {
+                    build_capability_report_for_capability(
+                        &project,
+                        args.cap_path.as_deref(),
+                        args.verify,
+                        include_issue_inventory,
+                        capability_id,
+                    )
+                    .await?
+                }
+                None => {
+                    build_capability_report(
+                        &project,
+                        args.cap_path.as_deref(),
+                        args.verify,
+                        include_issue_inventory,
+                    )
+                    .await?
+                }
+            };
             let check_failed = normalize_capability_check_report(
                 &mut report,
                 args.verify,
@@ -5901,23 +5919,25 @@ async fn build_capability_report_inner(
     production_capability_scope: Option<&str>,
 ) -> Result<CapabilityReport> {
     let project_root = crate::find_project_root()?;
-    if verify {
-        if super::project::project_health_caps_ec_only(project) {
-            eprintln!(
-                "aw capability verify: running capability and EC gates for `{project}`; workspace test_cmd is advisory for self-health"
-            );
-        } else {
-            eprintln!(
-                "aw capability verify: running configured project test gates for `{project}`"
-            );
-        }
-    }
-    let test_gates = project_test_gate_report(project, &project_root, verify)?;
+    let full_project_test_gates = if production_capability_scope.is_none() {
+        Some(capability_test_gates(project, &project_root, verify, None)?)
+    } else {
+        None
+    };
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;
     if cap_path_override.is_none() {
         if let Some(readme_path) =
             readme_capability_migration_source(&project_root, project, &cap_path)?
         {
+            let test_gates = match &full_project_test_gates {
+                Some(test_gates) => test_gates.clone(),
+                None => capability_test_gates(
+                    project,
+                    &project_root,
+                    verify,
+                    production_capability_scope,
+                )?,
+            };
             return Ok(capability_map_readme_resident_report(
                 project,
                 cap_path,
@@ -5929,6 +5949,15 @@ async fn build_capability_report_inner(
     let cap_body = match std::fs::read_to_string(&cap_path) {
         Ok(body) => body,
         Err(err) => {
+            let test_gates = match &full_project_test_gates {
+                Some(test_gates) => test_gates.clone(),
+                None => capability_test_gates(
+                    project,
+                    &project_root,
+                    verify,
+                    production_capability_scope,
+                )?,
+            };
             return Ok(capability_map_read_failure_report(
                 project,
                 cap_path,
@@ -5939,10 +5968,20 @@ async fn build_capability_report_inner(
     };
     let document = parse_capability_document_repairing_previous_migration(&cap_body, &cap_path)
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
+    let verification_scope = production_capability_scope
+        .map(|capability_id| capability_scope_ids(&document, capability_id))
+        .transpose()?;
+    let test_gates = match full_project_test_gates {
+        Some(test_gates) => test_gates,
+        None => capability_test_gates(project, &project_root, verify, production_capability_scope)?,
+    };
     let mut blockers = document.findings.clone();
     let mut warnings = Vec::new();
-    let python_artifact =
-        crate::services::python_artifact_readiness::evaluate(&project_root, project)?;
+    let python_artifact = if production_capability_scope.is_some() {
+        None
+    } else {
+        crate::services::python_artifact_readiness::evaluate(&project_root, project)?
+    };
     if let Some(readiness) = &python_artifact {
         blockers.extend(readiness.blockers.iter().cloned());
     }
@@ -5982,7 +6021,12 @@ async fn build_capability_report_inner(
     }
 
     let td_refs = if !document.capabilities.is_empty() {
-        match collect_td_capability_refs(&project_root, project, &document) {
+        match collect_td_capability_refs_for_scope(
+            &project_root,
+            project,
+            &document,
+            verification_scope.as_ref(),
+        ) {
             Ok(refs) => refs,
             Err(err) => {
                 blockers.push(format!("td capability scan unavailable: {err}"));
@@ -5995,7 +6039,11 @@ async fn build_capability_report_inner(
 
     let mut report_items = Vec::new();
     let mut verification_cache = VerificationCommandCache::default();
-    for capability in &document.capabilities {
+    for capability in document.capabilities.iter().filter(|capability| {
+        verification_scope
+            .as_ref()
+            .is_none_or(|scope| scope.contains(&capability.id))
+    }) {
         let refs = td_refs
             .iter()
             .filter(|td| td.capability_id == capability.id)
@@ -6383,7 +6431,17 @@ fn capability_production_readiness(
     let production_gates_evaluated =
         verify && !matches!(test_gates.status, ProjectTestGateStatus::NotEvaluated);
 
-    let regenerability_gap_count = if verify {
+    let regenerability_gap_count = if production_capability_scope.is_some() {
+        if !verify {
+            global_blockers.push(
+                test_gates
+                    .note
+                    .clone()
+                    .unwrap_or_else(|| "production gates not evaluated".to_string()),
+            );
+        }
+        0
+    } else if verify {
         let verified_by_id = items
             .iter()
             .map(|item| (item.id.clone(), item.verified))
@@ -6440,6 +6498,84 @@ fn capability_production_readiness(
             regenerability_gap_count,
         ),
     })
+}
+
+/// Resolve executable verification before any capability or workspace gate is
+/// launched, so a scoped goal cannot cause unrelated side effects.
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
+fn capability_test_gates(
+    project: &str,
+    project_root: &Path,
+    verify: bool,
+    capability_scope: Option<&str>,
+) -> Result<ProjectTestGateReport> {
+    if let Some(capability_id) = capability_scope {
+        return Ok(if verify {
+            ProjectTestGateReport::scoped_capability(project, capability_id)
+        } else {
+            ProjectTestGateReport::not_evaluated(project)
+        });
+    }
+    if verify {
+        if super::project::project_health_caps_ec_only(project) {
+            eprintln!(
+                "aw capability verify: running capability and EC gates for `{project}`; workspace test_cmd is advisory for self-health"
+            );
+        } else {
+            eprintln!(
+                "aw capability verify: running configured project test gates for `{project}`"
+            );
+        }
+    }
+    project_test_gate_report(project, project_root, verify)
+}
+
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
+fn capability_scope_ids(
+    document: &CapabilityDocument,
+    capability_id: &str,
+) -> Result<BTreeSet<String>> {
+    let capabilities = document
+        .capabilities
+        .iter()
+        .map(|capability| (capability.id.as_str(), capability))
+        .collect::<BTreeMap<_, _>>();
+    if !capabilities.contains_key(capability_id) {
+        anyhow::bail!("capability `{capability_id}` is not declared");
+    }
+
+    fn visit(
+        id: &str,
+        capabilities: &BTreeMap<&str, &CapabilitySection>,
+        visiting: &mut Vec<String>,
+        scope: &mut BTreeSet<String>,
+    ) -> Result<()> {
+        if let Some(position) = visiting.iter().position(|visited| visited == id) {
+            let mut cycle = visiting[position..].to_vec();
+            cycle.push(id.to_string());
+            anyhow::bail!(
+                "capability dependency cycle detected: {}",
+                cycle.join(" -> ")
+            );
+        }
+        if scope.contains(id) {
+            return Ok(());
+        }
+        let capability = capabilities
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("dependency `{id}` is not declared"))?;
+        visiting.push(id.to_string());
+        scope.insert(id.to_string());
+        for dependency in &capability.dependencies {
+            visit(dependency, capabilities, visiting, scope)?;
+        }
+        visiting.pop();
+        Ok(())
+    }
+
+    let mut scope = BTreeSet::new();
+    visit(capability_id, &capabilities, &mut Vec::new(), &mut scope)?;
+    Ok(scope)
 }
 
 fn apply_production_readiness_to_items(
@@ -11619,6 +11755,16 @@ pub fn collect_td_capability_refs(
     project: &str,
     document: &CapabilityDocument,
 ) -> Result<Vec<TdCapabilityEvidence>> {
+    collect_td_capability_refs_for_scope(project_root, project, document, None)
+}
+
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
+fn collect_td_capability_refs_for_scope(
+    project_root: &Path,
+    project: &str,
+    document: &CapabilityDocument,
+    capability_scope: Option<&BTreeSet<String>>,
+) -> Result<Vec<TdCapabilityEvidence>> {
     let td_root = resolve_td_path(project_root, project)?;
     if !td_root.exists() {
         return Ok(Vec::new());
@@ -11636,6 +11782,20 @@ pub fn collect_td_capability_refs(
         }
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read TD {}", path.display()))?;
+        if let Some(scope) = capability_scope {
+            let Some((frontmatter, _)) = split_frontmatter(&content) else {
+                continue;
+            };
+            let parsed: TdFrontmatter = serde_yaml::from_str(frontmatter)
+                .with_context(|| format!("invalid TD frontmatter in {}", path.display()))?;
+            if !parsed
+                .capability_refs
+                .iter()
+                .any(|reference| scope.contains(&reference.id))
+            {
+                continue;
+            }
+        }
         match validate_td_capability_refs_for_content(&content, document) {
             Ok((spec_id, file_refs, file_findings)) => {
                 findings.extend(file_findings.into_iter().map(|finding| {
@@ -11645,8 +11805,11 @@ pub fn collect_td_capability_refs(
                         finding
                     )
                 }));
-                refs.extend(file_refs.into_iter().map(|td_ref| {
-                    TdCapabilityEvidence {
+                refs.extend(file_refs.into_iter().filter_map(|td_ref| {
+                    if capability_scope.is_some_and(|scope| !scope.contains(&td_ref.id)) {
+                        return None;
+                    }
+                    Some(TdCapabilityEvidence {
                         spec_path: path
                             .strip_prefix(project_root)
                             .unwrap_or(path)
@@ -11660,7 +11823,7 @@ pub fn collect_td_capability_refs(
                         claim: td_ref.claim,
                         coverage: td_ref.coverage,
                         rationale: td_ref.rationale,
-                    }
+                    })
                 }));
             }
             Err(err) => findings.push(format!(
@@ -18021,6 +18184,180 @@ evidence:
             std::fs::read_to_string(tmp.path().join("runs.txt")).unwrap(),
             "run"
         );
+    }
+
+    #[tokio::test]
+    async fn capability_goal_scope_executes_only_dependency_closure_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let leaf_marker = tmp.path().join("leaf-ran");
+        let middle_marker = tmp.path().join("middle-ran");
+        let root_marker = tmp.path().join("root-ran");
+        let unrelated_marker = tmp.path().join("unrelated-ran");
+        let cap_path = tmp.path().join("CAPABILITIES.md");
+        let body = format!(
+            r#"# Demo
+
+## Capability: Leaf
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: leaf
+status: verified
+promise: "Leaf verifies."
+current_state: "Ready."
+evidence:
+  verification:
+    - id: leaf-gate
+      command: "touch {}"
+      proves: "leaf ran"
+```
+
+## Capability: Middle
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: middle
+status: verified
+promise: "Middle verifies."
+current_state: "Ready."
+dependencies: [leaf]
+evidence:
+  verification:
+    - id: middle-gate
+      command: "touch {}"
+      proves: "middle ran"
+```
+
+## Capability: Root
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: root
+status: verified
+promise: "Root verifies."
+current_state: "Ready."
+dependencies: [middle]
+evidence:
+  verification:
+    - id: root-gate
+      command: "touch {}"
+      proves: "root ran"
+```
+
+## Capability: Unrelated
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: unrelated
+status: verified
+promise: "Unrelated must not run."
+current_state: "Ready."
+evidence:
+  verification:
+    - id: unrelated-gate
+      command: "touch {}"
+      proves: "unrelated ran"
+```
+"#,
+            leaf_marker.display(),
+            middle_marker.display(),
+            root_marker.display(),
+            unrelated_marker.display(),
+        );
+        std::fs::write(&cap_path, body).unwrap();
+
+        let report = build_capability_report_for_capability(
+            "agentic-workflow",
+            Some(&cap_path),
+            true,
+            false,
+            "root",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            report
+                .capabilities
+                .iter()
+                .map(|capability| capability.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["leaf", "middle", "root"])
+        );
+        assert!(leaf_marker.is_file());
+        assert!(middle_marker.is_file());
+        assert!(root_marker.is_file());
+        assert!(!unrelated_marker.exists());
+        assert_eq!(report.test_gates.command_count, 0);
+        assert_eq!(report.test_gates.status, ProjectTestGateStatus::Passed);
+        assert!(report
+            .test_gates
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("workspace test gates are excluded")));
+    }
+
+    #[test]
+    fn capability_goal_scope_fails_closed_before_gate_execution() {
+        let document = cap_doc(
+            r#"# Demo
+
+## Capability: Root
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: root
+status: verified
+promise: "Root verifies."
+current_state: "Ready."
+dependencies: [missing]
+```
+"#,
+        );
+
+        let error = capability_scope_ids(&document, "root").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("dependency `missing` is not declared"));
+
+        let error = capability_scope_ids(&document, "unknown").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("capability `unknown` is not declared"));
+    }
+
+    #[test]
+    fn capability_goal_scope_full_project_still_executes_workspace_test_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("workspace-ran");
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            format!(
+                r#"version = "0.3.60"
+interface = "cli"
+
+[[projects]]
+name = "demo"
+path = "."
+label = "app:demo"
+
+[[projects.workspaces]]
+name = "demo"
+paths = ["**"]
+target = "python"
+test_cmd = "touch {}"
+"#,
+                marker.display()
+            ),
+        )
+        .unwrap();
+
+        let report = capability_test_gates("demo", tmp.path(), true, None).unwrap();
+
+        assert!(marker.is_file());
+        assert_eq!(report.command_count, 1);
+        assert_eq!(report.passed_count, 1);
+        assert_eq!(report.status, ProjectTestGateStatus::Passed);
     }
 
     #[test]

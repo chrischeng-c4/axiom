@@ -533,6 +533,19 @@ pub(crate) fn python_target_gen_command(
     wi: &str,
 ) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    if is_self_hosting_project(&row.name) {
+        // AW cannot require its greenfield whole-project native emitter to
+        // overwrite the existing AW crate in order to repair that emitter.
+        // Self-hosting policy makes CB/cold/regenerability advisory and keeps
+        // configured EC claim verification hard. A bounded direct repair is
+        // therefore verified by the CB-stage EC gate after the TD-stage gate
+        // proves the reference contract.
+        // @spec apps/agentic-workflow/tech-design/src/agentic_workflow/migrated/surface/specs/aw_self_hosting_runner_policy.py
+        return Ok(format!(
+            "aw ec verify --project {} --required-only --stage cb --wi {wi}",
+            row.name
+        ));
+    }
     let output_dir = project_root
         .join(&row.path)
         .canonicalize()
@@ -1862,6 +1875,7 @@ fn preflight_evidence_label(kind: PreFlightEvidenceKind) -> &'static str {
     }
 }
 
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
 async fn capability_envelope(
     project: &str,
     capability_id: &str,
@@ -1871,13 +1885,14 @@ async fn capability_envelope(
         kind: "capability".to_string(),
         id: capability_id.to_string(),
     };
+    let capability_command =
+        format!("aw capability check --project {project} --verify --capability {capability_id}");
     progress.emit(
         25,
         "capability",
         "evaluating scoped capability readiness",
-        Some(format!("aw capability check --project {project} --verify").as_str()),
+        Some(capability_command.as_str()),
     );
-    let capability_command = format!("aw capability check --project {project} --verify");
     let report_result = await_with_progress(
         progress,
         25,
@@ -2033,6 +2048,10 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
         return closed_wi_envelope(&issue);
     }
 
+    if let Some(envelope) = explicitly_deferred_wi_envelope(&issue) {
+        return envelope;
+    }
+
     if issue.issue_type == IssueType::Spike {
         return blocked_envelope(
             root.clone(),
@@ -2177,6 +2196,38 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             persistence: None,
         }
     }
+}
+
+/// An explicitly deferred tracker item is not executable work. The backlog
+/// root probes this envelope and parks the leaf while continuing other ready
+/// work; a direct WI root exposes the one typed command that resumes it.
+///
+/// @spec #2587
+fn explicitly_deferred_wi_envelope(issue: &Issue) -> Option<WorkflowEnvelope> {
+    let deferred_label = issue.labels.iter().find(|label| {
+        matches!(
+            label.to_ascii_lowercase().as_str(),
+            "deferred" | "status:deferred"
+        )
+    })?;
+    let issue_id = issue_cli_ref(issue);
+    let root = WorkflowNode {
+        kind: issue.issue_type.as_str().to_string(),
+        id: issue_ref(issue),
+    };
+    Some(blocked_envelope(
+        root.clone(),
+        root,
+        format!(
+            "aw wi update {issue_id} --remove-label {} --push",
+            shell_quote_goal_arg(deferred_label)
+        ),
+        format!(
+            "work item `{}` is explicitly deferred by `{deferred_label}`; remove the label only after its external prerequisite is satisfied",
+            issue_ref(issue)
+        ),
+        true,
+    ))
 }
 
 // An open epic can dispatch only after its tracker labels resolve a concrete
@@ -3325,6 +3376,7 @@ fn project_production_blocked_envelope(
     }
 }
 
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/work_items/scoped_capability_verification.py
 fn capability_production_blocked_envelope(
     project: &str,
     capability_id: &str,
@@ -3335,7 +3387,8 @@ fn capability_production_blocked_envelope(
     capability_blockers.extend(global_blockers);
     capability_blockers.sort();
     capability_blockers.dedup();
-    let command = format!("aw capability check --project {project} --verify");
+    let command =
+        format!("aw capability check --project {project} --verify --capability {capability_id}");
     let reason = if capability_blockers.is_empty() {
         format!("capability `{capability_id}` is not production ready")
     } else {
@@ -3942,6 +3995,14 @@ mod tests {
             } else {
                 crate::cli::project::ProjectHealthStatus::Blocked
             },
+            assessment: if production_ready {
+                crate::cli::project::ProjectHealthAssessment::Healthy
+            } else {
+                crate::cli::project::ProjectHealthAssessment::Blocked
+            },
+            axis_assessments: std::collections::BTreeMap::new(),
+            semantic_health:
+                crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::not_evaluated(),
             capability_ready: true,
             managed_ready: true,
             semantic_ready: true,
@@ -4133,6 +4194,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn explicitly_deferred_change_blocks_direct_execution_and_exposes_resume_command() {
+        let mut issue = open_issue(IssueType::Change, 2504);
+        issue.labels.push("status:deferred".to_string());
+
+        let envelope =
+            explicitly_deferred_wi_envelope(&issue).expect("deferred label must block execution");
+
+        assert_eq!(envelope.action, "blocked");
+        assert!(envelope.requires_hitl);
+        assert!(!envelope.completion.workflow_complete);
+        assert_eq!(
+            envelope.next.command,
+            "aw wi update 2504 --remove-label 'status:deferred' --push"
+        );
+        assert!(envelope.next.reason.contains("external prerequisite"));
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("deferred resume command must remain chain-valid");
+    }
+
     fn write_project_rows(root: &Path, rows: &[(&str, &str, &str)]) {
         let mut body = String::new();
         for (name, path, label) in rows {
@@ -4189,6 +4270,48 @@ target = "{target}"
                 expected
             );
         }
+    }
+
+    #[test]
+    fn self_hosting_target_generation_routes_bounded_repair_to_cb_stage_ec() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(
+            root.path()
+                .join("apps/agentic-workflow/tech-design/src/agentic_workflow"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+artifact_model = "python-v1"
+
+[[projects.workspaces]]
+paths = ["apps/agentic-workflow/**"]
+target = "rust"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            python_target_gen_command(root.path(), "agentic-workflow", "rust", "2688").unwrap(),
+            "aw ec verify --project agentic-workflow --required-only --stage cb --wi 2688"
+        );
+        let step = python_artifact_lifecycle_step(
+            root.path(),
+            "agentic-workflow",
+            "2688",
+            Some("ec_td_green"),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(step.phase, PythonArtifactPhase::CbGenerate);
+        assert_eq!(
+            step.command,
+            "aw ec verify --project agentic-workflow --required-only --stage cb --wi 2688"
+        );
     }
 
     #[test]
@@ -4751,6 +4874,24 @@ workspaces = []
             agent_command("aw capability check --project jet --json --verify"),
             "aw capability check --project jet --verify"
         );
+    }
+
+    #[test]
+    fn capability_goal_scope_blocker_preserves_scope_in_next_and_invoke() {
+        let envelope = capability_production_blocked_envelope(
+            "jet",
+            "request-routing",
+            WorkflowNode {
+                kind: "capability".to_string(),
+                id: "request-routing".to_string(),
+            },
+            vec!["catalog/claim verification is not complete".to_string()],
+            Vec::new(),
+        );
+
+        let expected = "aw capability check --project jet --verify --capability request-routing";
+        assert_eq!(envelope.next.command, expected);
+        assert_eq!(envelope.invoke.command, expected);
     }
 
     #[test]

@@ -62,6 +62,7 @@ explicitly asks for Claude-specific behavior.
 | `aw ec` | Python EC lifecycle: scaffold/check source, independently review, then verify |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
+| `aw coordination` | Persist and reconcile AW-owned task, dispatch, gate, event, and decision state |
 <!-- aw:cli-table:workflow:end -->
 
 The lifecycle is linear: `aw wi` → `aw ec` → `aw td` → `aw cb`. Drive one

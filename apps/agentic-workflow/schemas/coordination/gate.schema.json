@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axiom.dev/schemas/aw/coordination/gate.schema.json",
+  "title": "AW Coordination Gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "gate_id",
+    "task_id",
+    "gate_type",
+    "status",
+    "authority",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "aw.coordination.v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "gate"
+    },
+    "gate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate_type": {
+      "type": "string",
+      "enum": [
+        "evidence",
+        "decision"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "satisfied",
+        "blocked"
+      ]
+    },
+    "authority": {
+      "type": "string",
+      "enum": [
+        "aw",
+        "human"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
