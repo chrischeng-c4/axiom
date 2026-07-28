@@ -43,6 +43,31 @@ both barriers unchanged. Verification therefore needs paired witnesses:
 an inconsistent `A(X, Y)` / `B(Y, X)` / `C(A, B)` hierarchy that is caught at
 the `C` statement, and a valid diamond whose MRO and class body remain live.
 
+### Slot layout and attribute-admission boundary
+
+Slot metadata has two meanings and they must not be collapsed:
+
+- declared-own slots are the exact names written on the class and back the
+  observable `cls.__slots__` value;
+- effective slots merge inherited layouts in MRO order and decide which
+  instance attributes storage may admit.
+
+An instance whose class declares `__slots__` without `__dict__` rejects a
+write outside the effective slot set with deterministic `AttributeError`.
+Declared slots remain writable, inherited slots remain writable on a derived
+instance, and including `__dict__` in the declared-own slots deliberately
+restores dynamic attributes. An empty slot tuple suppresses every dynamic
+instance attribute. These are one admission policy, not independent special
+cases.
+
+The class-registration order above is part of this boundary: effective slots
+cannot be computed before runtime bases finalize the MRO. Enforcement belongs
+at the instance attribute-write seam after data-descriptor dispatch and before
+the direct instance-field insert; global serialization or a class-name-only
+special case is forbidden. Verification needs all four controls—rejected
+undeclared write, accepted declared write, inherited-slot write, and explicit
+`__dict__` dynamic write—plus the exact exception class/message anchor.
+
 Step 4's `__init_subclass__` dispatch (`dispatch_type_new_creation_hooks`,
 mod.rs:1631) carries the same closure-handle hazard as `__init__` (Instance
 construction, below): the hook's dispatch address MUST come from
@@ -52,8 +77,10 @@ the raw extractor's int fallback is never in `CALLABLE_REGISTRY`, so
 `is_registered` reads false and the whole hook silently no-ops — no error,
 no dispatch.
 
-Known gap: `cls.__slots__` reports the merged effective layout instead of the
-declared tuple (layout itself is correct) — tracked: #1523.
+Historical gap #1523 collapsed declared and effective slots. The current
+`OWN_SLOTS_REGISTRY` / `SLOTS_REGISTRY` split is the required boundary; a
+regression that reports merged inherited slots as `cls.__slots__` is a
+metadata defect even if instance admission still works.
 
 ## Instance construction
 
