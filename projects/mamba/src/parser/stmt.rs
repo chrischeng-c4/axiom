@@ -1091,6 +1091,9 @@ impl<'a> Parser<'a> {
         {
             let stmt = self.parse_stmt()?;
             let mut stmts = vec![stmt];
+            while !self.pending_stmts.is_empty() {
+                stmts.push(self.parse_stmt()?);
+            }
             // Handle semicolons in single-line suite
             while self.peek_kind() == Some(TokenKind::Semicolon) {
                 self.advance();
@@ -1104,6 +1107,9 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 stmts.push(self.parse_stmt()?);
+                while !self.pending_stmts.is_empty() {
+                    stmts.push(self.parse_stmt()?);
+                }
             }
             return Ok(stmts);
         }

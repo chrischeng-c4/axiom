@@ -203,6 +203,8 @@ fn test_parser_unicode_fuzzing() {
 /// Test 100-target chained assignment: a = b = c = ... = 42
 #[test]
 fn test_parser_chained_assignments_stress() {
+    use crate::parser::ast::{Expr, Stmt};
+
     let mut targets = Vec::new();
     for i in 0..100 {
         targets.push(format!("var_{i}"));
@@ -210,7 +212,55 @@ fn test_parser_chained_assignments_stress() {
     let src = format!("{} = 42\n", targets.join(" = "));
     let res = std::panic::catch_unwind(|| parser::parse(&src, FileId(0)));
     assert!(res.is_ok(), "parser panicked on 100-target assignment");
-    if let Ok(Ok(module)) = res {
-        assert_eq!(module.stmts.len(), 100, "expected 100 desugared Stmt::Assign");
+    let module = res
+        .unwrap()
+        .expect("100-target chained assignment should parse successfully");
+    assert_eq!(
+        module.stmts.len(),
+        101,
+        "expected 101 desugared Stmt::Assign"
+    );
+
+    // Stmt 0: __chained_<offset>__ = 42 (temp owns original RHS once)
+    let tmp_name = match &module.stmts[0].node {
+        Stmt::Assign { target, value } => {
+            let name = match &target.node {
+                Expr::Ident(n) => n.clone(),
+                _ => panic!("expected Ident target for temp assign"),
+            };
+            assert!(
+                name.starts_with("__chained_"),
+                "expected temp name starting with __chained_"
+            );
+            assert!(
+                matches!(&value.node, Expr::IntLit(42)),
+                "temp should own original RHS IntLit(42)"
+            );
+            name
+        }
+        other => panic!("expected Stmt::Assign for temp at stmt 0, got {other:?}"),
+    };
+
+    // Stmts 1..=100: var_0..var_99 = __chained__ in source order
+    for i in 0..100 {
+        let expected_var = format!("var_{i}");
+        match &module.stmts[i + 1].node {
+            Stmt::Assign { target, value } => {
+                assert!(
+                    matches!(&target.node, Expr::Ident(n) if n == &expected_var),
+                    "expected target {expected_var} at stmt {}, got {:?}",
+                    i + 1,
+                    target.node
+                );
+                assert!(
+                    matches!(&value.node, Expr::Ident(n) if n == &tmp_name),
+                    "target {expected_var} should reference temp {tmp_name}"
+                );
+            }
+            other => panic!(
+                "expected Stmt::Assign for target '{expected_var}' at stmt {}, got {other:?}",
+                i + 1
+            ),
+        }
     }
 }
