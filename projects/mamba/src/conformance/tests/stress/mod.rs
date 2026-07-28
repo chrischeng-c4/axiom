@@ -120,16 +120,32 @@ pub fn jit_try(src: &str) -> Result<String, String> {
                 let prev = begin_capture();
                 let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry_addr) };
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| main_fn()));
+                let pending_exc = if crate::runtime::exception::has_current_exception() {
+                    let exc_type =
+                        crate::runtime::exception::current_exception_type().unwrap_or_default();
+                    let exc_msg =
+                        crate::runtime::exception::current_exception_message().unwrap_or_default();
+                    Some((exc_type, exc_msg))
+                } else {
+                    None
+                };
                 cleanup_all_runtime_state();
                 let captured = end_capture(prev);
-                let _ = tx.send((res, captured));
+                let _ = tx.send((res, pending_exc, captured));
             });
 
             let result = match rx.recv_timeout(Duration::from_secs(STRESS_TIMEOUT_SECS)) {
-                Ok((Ok(_), captured)) => Ok(captured),
-                Ok((Err(_), captured)) => Err(format!("execution panicked; captured output: {captured}")),
+                Ok((Ok(_), Some((exc_type, exc_msg)), captured)) => {
+                    Err(format!("{exc_type}: {exc_msg}; captured output: {captured}"))
+                }
+                Ok((Ok(_), None, captured)) => Ok(captured),
+                Ok((Err(_), _, captured)) => {
+                    Err(format!("execution panicked; captured output: {captured}"))
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => Err("execution timed out".to_string()),
-                Err(mpsc::RecvTimeoutError::Disconnected) => Err("execution thread disconnected".to_string()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Err("execution thread disconnected".to_string())
+                }
             };
 
             let _ = handle.join();

@@ -6247,6 +6247,7 @@ impl<'a> HirToMir<'a> {
             ],
             ty: self.tcx.none(),
         });
+        self.emit_exception_propagate();
         if let Some(pos) = self
             .pending_class_docs
             .iter()
@@ -6460,6 +6461,7 @@ impl<'a> HirToMir<'a> {
                 args: vec![cls_vreg, bases_list],
                 ty: self.tcx.none(),
             });
+            self.emit_exception_propagate();
         }
 
         let mut i = 0;
@@ -6480,6 +6482,7 @@ impl<'a> HirToMir<'a> {
                 args: vec![cls_vreg, bases_list],
                 ty: self.tcx.none(),
             });
+            self.emit_exception_propagate();
         }
     }
 
@@ -14807,6 +14810,8 @@ mod tests {
         let tcx = TypeContext::new();
         let child_sym = SymbolId(9_991);
         let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
         lowerer.pending_runtime_class_bases.push((
             "Child".to_string(),
             child_sym,
@@ -14822,8 +14827,14 @@ mod tests {
         lowerer.emit_runtime_class_bases_for(Some(child_sym));
         lowerer.emit_class_slots_for(Some(child_sym));
 
-        let update_index = lowerer
-            .current_stmts
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let update_index = all_stmts
             .iter()
             .position(|stmt| {
                 matches!(
@@ -14832,8 +14843,14 @@ mod tests {
                 )
             })
             .expect("runtime base expression must update the class MRO");
-        let slots_index = lowerer
-            .current_stmts
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("runtime base update must emit exception propagation check");
+        let slots_index = all_stmts
             .iter()
             .position(|stmt| {
                 matches!(
@@ -14844,8 +14861,109 @@ mod tests {
             .expect("declared slots must be registered");
 
         assert!(
-            update_index < slots_index,
-            "slot registration must observe the runtime-resolved parent MRO"
+            update_index < has_exc_index,
+            "exception propagation check must follow update_bases"
+        );
+        assert!(
+            has_exc_index < slots_index,
+            "slot registration must be emitted on success continuation after update_bases barrier"
+        );
+    }
+
+    #[test]
+    fn test_class_registration_emits_exception_propagate() {
+        let tcx = TypeContext::new();
+        let class_sym = SymbolId(9_992);
+        let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
+        let reg = PendingClassRegistration {
+            runtime_key: "InconsistentClass".to_string(),
+            display_name: "InconsistentClass".to_string(),
+            class_sym,
+            bind_sym: class_sym,
+            all_base_names: vec!["Base1".to_string(), "Base2".to_string()],
+            namedtuple_base: None,
+            methods: Vec::new(),
+            match_args: Vec::new(),
+            metaclass: None,
+            slots: None,
+            class_cell_required: false,
+            class_kwargs: Vec::new(),
+        };
+        lowerer.emit_class_registration(&reg);
+
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let define_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_class_define_multi_named"
+            ))
+            .expect("class registration must emit mb_class_define_multi_named");
+
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("class registration must emit exception propagation check");
+
+        assert!(
+            has_exc_index > define_index,
+            "exception propagation check must follow mb_class_define_multi_named"
+        );
+    }
+
+    #[test]
+    fn test_runtime_class_bases_emits_exception_propagate() {
+        let tcx = TypeContext::new();
+        let child_sym = SymbolId(9_993);
+        let mut lowerer = HirToMir::new(&tcx);
+        let entry = lowerer.fresh_block();
+        lowerer.start_block(entry);
+        lowerer.pending_runtime_class_bases.push((
+            "Child".to_string(),
+            child_sym,
+            vec![HirExpr::StrLit("Base".to_string(), tcx.any())],
+            Vec::new(),
+        ));
+
+        lowerer.emit_runtime_class_bases_for(Some(child_sym));
+
+        let all_stmts: Vec<&MirInst> = lowerer
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .chain(lowerer.current_stmts.iter())
+            .collect();
+
+        let update_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_class_update_bases"
+            ))
+            .expect("runtime base update must emit mb_class_update_bases");
+
+        let has_exc_index = all_stmts
+            .iter()
+            .position(|stmt| matches!(
+                stmt,
+                MirInst::CallExtern { name, .. } if name == "mb_has_exception"
+            ))
+            .expect("runtime base update must emit exception propagation check");
+
+        assert!(
+            has_exc_index > update_index,
+            "exception propagation check must follow mb_class_update_bases"
         );
     }
 

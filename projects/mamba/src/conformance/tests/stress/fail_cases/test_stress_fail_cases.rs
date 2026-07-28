@@ -45,13 +45,76 @@ fn test_jit_runtime_errors_handled_safely() {
 #[test]
 fn test_inconsistent_mro_rejected() {
     let src = r#"
-class A: pass
-class B(A): pass
+class X: pass
+class Y: pass
+class A(X, Y): pass
+class B(Y, X): pass
 class C(A, B): pass
 "#;
     let res = jit_try(src);
-    // Inconsistent MRO should be rejected by type checker or runtime
     assert!(res.is_err(), "expected inconsistent MRO to be rejected");
+    let err = res.unwrap_err();
+    assert!(err.contains("TypeError"), "expected TypeError, got: {err}");
+    assert!(
+        err.contains("Cannot create a consistent method resolution order (MRO)"),
+        "expected MRO message anchor, got: {err}"
+    );
+}
+
+/// Test that a caught inconsistent class statement does not run its body or bind the rejected name.
+#[test]
+fn test_inconsistent_mro_caught_exception_and_no_side_effects() {
+    let src = r#"
+class X: pass
+class Y: pass
+class A(X, Y): pass
+class B(Y, X): pass
+
+body_ran = False
+caught = False
+
+try:
+    class C(A, B):
+        body_ran = True
+except TypeError as e:
+    caught = "Cannot create a consistent method resolution order (MRO)" in str(e)
+
+bound = "C" in globals() or "C" in locals()
+print(f"caught={caught}, body_ran={body_ran}, bound={bound}")
+"#;
+    let res = jit_try(src);
+    assert!(res.is_ok(), "expected try/except to catch TypeError, got: {res:?}");
+    let output = res.unwrap();
+    assert_eq!(output.trim(), "caught=True, body_ran=False, bound=False");
+}
+
+/// Test that valid diamond and consistent multiple inheritance execute with expected MRO/body behavior.
+#[test]
+fn test_valid_diamond_and_consistent_multiple_inheritance() {
+    let src = r#"
+class Base:
+    def label(self):
+        return "Base"
+
+class Left(Base):
+    def label(self):
+        return "Left -> " + super().label()
+
+class Right(Base):
+    def label(self):
+        return "Right -> " + super().label()
+
+class Child(Left, Right):
+    def label(self):
+        return "Child -> " + super().label()
+
+c = Child()
+print(c.label())
+"#;
+    let res = jit_try(src);
+    assert!(res.is_ok(), "expected valid diamond MRO to execute, got: {res:?}");
+    let output = res.unwrap();
+    assert_eq!(output.trim(), "Child -> Left -> Right -> Base");
 }
 
 /// Test undeclared __slots__ attribute assignment failure.
