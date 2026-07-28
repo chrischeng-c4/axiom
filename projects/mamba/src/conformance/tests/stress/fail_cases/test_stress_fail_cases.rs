@@ -41,6 +41,52 @@ fn test_jit_runtime_errors_handled_safely() {
     assert!(res_key.is_err(), "expected error for missing key in dict");
 }
 
+fn assert_jit_zero_division_case(code: &str, expected_msg: &str) {
+    let res = jit_try(code);
+    assert!(res.is_err(), "expected error for: {code:?}");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("ZeroDivisionError"),
+        "expected ZeroDivisionError for {code:?}, got: {err}"
+    );
+    assert!(
+        err.contains(expected_msg),
+        "expected msg anchor {expected_msg:?} for {code:?}, got: {err}"
+    );
+
+    let control_res = jit_try("print(42)\n");
+    assert!(
+        control_res.is_ok(),
+        "expected clean control execution after zero-division failure, got: {control_res:?}"
+    );
+    let output = control_res.unwrap();
+    assert_eq!(output.trim(), "42");
+}
+
+/// Verify JIT integer true division by zero returns ZeroDivisionError and leaves process usable.
+#[test]
+fn test_jit_zero_division_int_true_div() {
+    assert_jit_zero_division_case("x = 1 / 0\n", "division by zero");
+}
+
+/// Verify JIT float true division by zero returns ZeroDivisionError and leaves process usable.
+#[test]
+fn test_jit_zero_division_float_true_div() {
+    assert_jit_zero_division_case("x = 1.0 / 0.0\n", "float division by zero");
+}
+
+/// Verify JIT integer floor division by zero returns ZeroDivisionError and leaves process usable.
+#[test]
+fn test_jit_zero_division_int_floor_div() {
+    assert_jit_zero_division_case("x = 1 // 0\n", "integer division or modulo by zero");
+}
+
+/// Verify JIT float floor division by zero returns ZeroDivisionError and leaves process usable.
+#[test]
+fn test_jit_zero_division_float_floor_div() {
+    assert_jit_zero_division_case("x = 1.0 // 0.0\n", "float floor division by zero");
+}
+
 /// Test inconsistent MRO inheritance edge case.
 #[test]
 fn test_inconsistent_mro_rejected() {

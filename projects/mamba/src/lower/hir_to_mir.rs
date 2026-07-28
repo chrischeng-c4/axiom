@@ -9315,8 +9315,14 @@ impl<'a> HirToMir<'a> {
                         | (crate::types::Ty::Float, crate::types::Ty::Bool)
                 );
                 let is_true_div = matches!(op, HirBinOp::Div)
-                    && matches!(lt, crate::types::Ty::Int)
-                    && matches!(rt, crate::types::Ty::Int);
+                    && matches!(
+                        lt,
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    )
+                    && matches!(
+                        rt,
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    );
                 let needs_runtime = !matches!(
                     lt,
                     crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
@@ -13865,6 +13871,32 @@ mod tests {
                 op: MirBinOp::FloorDiv,
                 ..
             }
+        )));
+    }
+
+    #[test]
+    fn test_lower_binop_div_float_float_routes_to_mb_div() {
+        let tcx = TypeContext::new();
+        let float_ty = tcx.float();
+        let hir = make_top_level_hir(vec![HirStmt::Expr {
+            expr: HirExpr::BinOp {
+                op: HirBinOp::Div,
+                lhs: Box::new(HirExpr::FloatLit(1.0, float_ty)),
+                rhs: Box::new(HirExpr::FloatLit(0.0, float_ty)),
+                ty: float_ty,
+            },
+            span: Span::dummy(),
+        }]);
+        let mir = lower_hir_to_mir(&hir, &tcx);
+        assert_eq!(mir.bodies.len(), 1);
+        let all_stmts: Vec<_> = mir.bodies[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+        assert!(all_stmts.iter().any(|s| matches!(
+            s,
+            MirInst::CallExtern { name, .. } if name == "mb_div"
         )));
     }
 
