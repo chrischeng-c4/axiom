@@ -58,6 +58,23 @@ fn setup_git_rerun_directives() {
         return;
     };
 
+    let commondir_file = git_dir.join("commondir");
+    let common_dir = if commondir_file.exists() {
+        if let Ok(cd_content) = std::fs::read_to_string(&commondir_file) {
+            let cd_str = cd_content.lines().next().unwrap_or("").trim();
+            let cd_path = PathBuf::from(cd_str);
+            if cd_path.is_relative() {
+                git_dir.join(cd_path)
+            } else {
+                cd_path
+            }
+        } else {
+            git_dir.clone()
+        }
+    } else {
+        git_dir.clone()
+    };
+
     let head_file = git_dir.join("HEAD");
     if head_file.exists() {
         println!("cargo:rerun-if-changed={}", head_file.display());
@@ -65,30 +82,8 @@ fn setup_git_rerun_directives() {
             let head_line = head_content.lines().next().unwrap_or("").trim();
             if let Some(ref_path_str) = head_line.strip_prefix("ref:") {
                 let ref_path_str = ref_path_str.trim();
-                let ref_in_git_dir = git_dir.join(ref_path_str);
-                println!("cargo:rerun-if-changed={}", ref_in_git_dir.display());
-
-                let commondir_file = git_dir.join("commondir");
-                let common_dir = if commondir_file.exists() {
-                    if let Ok(cd_content) = std::fs::read_to_string(&commondir_file) {
-                        let cd_str = cd_content.lines().next().unwrap_or("").trim();
-                        let cd_path = PathBuf::from(cd_str);
-                        if cd_path.is_relative() {
-                            git_dir.join(cd_path)
-                        } else {
-                            cd_path
-                        }
-                    } else {
-                        git_dir.clone()
-                    }
-                } else {
-                    git_dir.clone()
-                };
-
-                let ref_in_common = common_dir.join(ref_path_str);
-                if ref_in_common != ref_in_git_dir {
-                    println!("cargo:rerun-if-changed={}", ref_in_common.display());
-                }
+                let canonical_ref_path = common_dir.join(ref_path_str);
+                println!("cargo:rerun-if-changed={}", canonical_ref_path.display());
 
                 let packed_refs = common_dir.join("packed-refs");
                 if packed_refs.exists() {
