@@ -26,6 +26,7 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 | `jit.rs:41 CACHED_ISA` / `:61 CACHED_RT_SYMBOLS` / `:75 warm_jit_caches` | Process-global, immutable, forced in the `test-batch` zygote parent pre-fork (`main.rs:800-812`) for COW inheritance. |
 | ABI: every VReg is I64 (`jit.rs:298 mamba_to_cl_type`) | NaN-boxed MbValue; floats bitcast I64↔F64; raw int/bool tracked out-of-band in `VarAlloc.raw_ints`/`native_bools` (`cranelift/mod.rs:603`). |
 | `cranelift/mod.rs:14 EMIT_REFCOUNT_CALLS = true` | Release/retain emission; entry body (`__main__`) emits NO releases (#1663 UAF, `jit.rs:488`); loop-carried VRegs pre-seeded with None so release-before-overwrite fires per iteration (#1013/#2111, `jit.rs:502`). |
+| JIT execution boundary | After invoking an entry pointer, capture any uncaught pending exception type/message **before** `cleanup_all_runtime_state`; cleanup is unconditional, and success is reported only when neither panic nor pending Python exception exists. Production `execute_jit_entry` and test helpers such as stress `jit_try` must preserve this ordering. |
 
 ## Control flow
 
@@ -39,6 +40,22 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 8. Backend: `CraneliftJitBackend::codegen` (`jit.rs:2969`) — Phase 1 declare externs, Phase 2 forward-declare internals, Phase 3 `compile_function` per body, `finalize_definitions`, register variadic/kwargs/boxed-return ptrs + perf map (`MAMBA_PERF_MAP=1`, #2094), return entry ptr.
 9. `execute_jit_entry` (`driver/mod.rs:244`): transmute → call → drain pending exception/uncaught traceback → `cleanup_all_runtime_state`.
 
+### Uncaught runtime-error observation
+
+Arithmetic/runtime helpers signal Python failures by setting thread-local
+pending exception state and returning a sentinel. Lowering propagates that
+state through MIR control flow; the outer JIT caller is the final ownership
+boundary. It MUST snapshot the pending exception before cleanup erases
+thread-local state, then perform cleanup regardless of success, panic, or
+Python exception.
+
+Division-by-zero is the canonical witness: integer/float `/` and `//` must
+surface deterministic `ZeroDivisionError` anchors, never a successful empty
+result or a host crash. A subsequent clean JIT execution must still succeed,
+proving the error path did not poison shared runtime state. Test-only JIT
+helpers are part of this observation contract; they may not treat a normal
+native return as success while a Python exception remains pending.
+
 ## Known hazards
 
 - **JIT without JIT_LOCK**: any new threaded harness that compiles+runs without the lock — intermittent SIGBUS on aarch64, looks like a bisect-resistant flake.
@@ -51,6 +68,7 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 - **Recursion fast path** (`jit.rs:2688`): inline increment commits ONLY on the fast path; slow path defers wholly to `mb_recursion_enter` (no double count, byte-identical raise). Changing either side desyncs depth or the error message.
 - **`--emit` on `check`**: only `Ast` is honored (`driver/mod.rs:139`); use `build --emit hir|mir` for later stages.
 - **Entry = last body** (`jit.rs:3043`): reordering `MirModule.bodies` silently changes the program entry.
+- **Cleanup before exception snapshot**: erases an uncaught Python runtime error and turns division-by-zero or class-construction failure into false success. Snapshot error facts first, clean unconditionally second, classify the result last.
 - **Last-expression capture** (`hir_to_mir.rs:3465`): only a trailing *Call* expr becomes `__main__`'s return; typed-prim results route through `mb_unbox_*_if_boxed` (`:3529`) — new terminal shapes must follow it.
 - **settrace exception under-emission**: event fires once at the raising frame, not per unwound frame — the open fix is `tracing-and-frames.md` §Exception events fire in every unwinding frame (this dir); its seams are `emit_try_exception_guard` (`hir_to_mir.rs:12425`) and the epilogue unwind checks.
 - **`sym_to_vreg` stale-raw-for-Any read** (`hir_to_mir.rs:1573`, tracked: #1794): the VReg cache holds no raw/boxed tag, so an Any-typed read of a module-scope symbol last cached raw (e.g. an accumulator widened after its first assignment) can hand a raw bit pattern to a callsite expecting boxed — `box_operand` treats Any as already-boxed and skips it, so NaN-box decoding misreads the raw int as a float. Full mechanism and the `global_synced_syms` fix: `value-representation.md`.
