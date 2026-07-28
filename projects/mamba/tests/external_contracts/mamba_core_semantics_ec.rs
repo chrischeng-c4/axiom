@@ -870,39 +870,19 @@ fn type_wall_conformance_determinism() {
         "Baseline capture_timestamp offset must be UTC"
     );
 
-    // Environment fingerprint & drift check before runs (Round 4 Tail Fix 4 & 5)
-    let rustc_ver = get_rustc_version();
-    let cargo_ver = get_cargo_version();
-    let git_head = get_git_head_revision();
-
-    assert_eq!(
-        git_head, baseline.source_revision,
-        "Git HEAD revision mismatch: expected {:?}, got {:?}",
-        baseline.source_revision, git_head
-    );
-    assert_eq!(
-        baseline.rustup_toolchain, rustc_ver,
-        "Baseline rustup_toolchain mismatch: expected {:?}, got {:?}",
-        rustc_ver, baseline.rustup_toolchain
-    );
-    assert_eq!(
-        baseline.cargo_version, cargo_ver,
-        "Baseline cargo_version mismatch: expected {:?}, got {:?}",
-        cargo_ver, baseline.cargo_version
-    );
-
-    let env_fp_before = compute_type_wall_env_fingerprint(
+    // Verify historical baseline internal consistency
+    let historical_env_fp = compute_type_wall_env_fingerprint(
         &manifest_digest,
         &baseline.source_revision,
-        &rustc_ver,
-        &cargo_ver,
+        &baseline.rustup_toolchain,
+        &baseline.cargo_version,
         &baseline.command,
         "8",
     );
     assert_eq!(
-        baseline.environment_fingerprint, env_fp_before,
+        baseline.environment_fingerprint, historical_env_fp,
         "Baseline environment_fingerprint mismatch: expected {}, got {}",
-        env_fp_before, baseline.environment_fingerprint
+        historical_env_fp, baseline.environment_fingerprint
     );
 
     // 2.5 Execute full and filtered --list subprocess preflights
@@ -960,6 +940,31 @@ fn type_wall_conformance_determinism() {
         "Filtered target list set mismatch with denominator.txt set"
     );
 
+    // Live exact toolchain assertions & per-run current environment fingerprint & revision tracking immediately before runs
+    let rustc_ver = get_rustc_version();
+    let cargo_ver = get_cargo_version();
+    assert_eq!(
+        rustc_ver, baseline.rustup_toolchain,
+        "Live rustc version mismatch with baseline rustup_toolchain: expected {}, got {}",
+        baseline.rustup_toolchain, rustc_ver
+    );
+    assert_eq!(
+        cargo_ver, baseline.cargo_version,
+        "Live cargo version mismatch with baseline cargo_version: expected {}, got {}",
+        baseline.cargo_version, cargo_ver
+    );
+
+    let git_head_before = get_git_head_revision();
+
+    let per_run_env_fp_before = compute_type_wall_env_fingerprint(
+        &manifest_digest,
+        &git_head_before,
+        &rustc_ver,
+        &cargo_ver,
+        &baseline.command,
+        "8",
+    );
+
     // 3. Execute 3 fresh isolated release conformance runs with per-run timeout >= 1200s & run-local capture
     let mut run_failing_sets: Vec<BTreeSet<String>> = Vec::new();
     let mut run_failing_counts: Vec<usize> = Vec::new();
@@ -989,31 +994,66 @@ fn type_wall_conformance_determinism() {
 
         assert_eq!(val_count, 7407);
 
+        // Freshly re-observe and compare full current-run tuple after execution
+        let (fresh_denom_rows, fresh_manifest_digest) =
+            verify_type_wall_manifest_and_denominator(&manifest_path, &denom_path);
+        let fresh_git_head = get_git_head_revision();
+        let fresh_rustc_ver = get_rustc_version();
+        let fresh_cargo_ver = get_cargo_version();
+        let fresh_command = &baseline.command;
+        let fresh_threads = "8";
+
+        assert_eq!(
+            fresh_denom_rows,
+            denom_rows,
+            "Denominator set drift after run {}",
+            run_idx + 1
+        );
+        assert_eq!(
+            fresh_manifest_digest,
+            manifest_digest,
+            "Manifest/denominator digest drift after run {}",
+            run_idx + 1
+        );
+        assert_eq!(
+            fresh_git_head,
+            git_head_before,
+            "Git HEAD revision drift after run {}",
+            run_idx + 1
+        );
+        assert_eq!(
+            fresh_rustc_ver,
+            rustc_ver,
+            "rustc version drift after run {}",
+            run_idx + 1
+        );
+        assert_eq!(
+            fresh_cargo_ver,
+            cargo_ver,
+            "cargo version drift after run {}",
+            run_idx + 1
+        );
+
+        let fresh_env_fp = compute_type_wall_env_fingerprint(
+            &fresh_manifest_digest,
+            &fresh_git_head,
+            &fresh_rustc_ver,
+            &fresh_cargo_ver,
+            fresh_command,
+            fresh_threads,
+        );
+        assert_eq!(
+            fresh_env_fp,
+            per_run_env_fp_before,
+            "Environment fingerprint drift after run {}",
+            run_idx + 1
+        );
+
         run_failing_counts.push(val_failing.len());
         run_failing_sets.push(failing_set);
         last_captured_outcomes.push(denom_outcomes);
         last_full_summaries.push(summary_str);
     }
-
-    // Environment fingerprint drift check after runs
-    let git_head_after = get_git_head_revision();
-    assert_eq!(
-        git_head_after, baseline.source_revision,
-        "Git HEAD revision drift"
-    );
-
-    let env_fp_after = compute_type_wall_env_fingerprint(
-        &manifest_digest,
-        &baseline.source_revision,
-        &rustc_ver,
-        &cargo_ver,
-        &baseline.command,
-        "8",
-    );
-    assert_eq!(
-        env_fp_before, env_fp_after,
-        "Environment fingerprint drift detected across test execution"
-    );
 
     // 4. Assert exact equality of failing sets and counts across all 3 runs
     assert_eq!(
