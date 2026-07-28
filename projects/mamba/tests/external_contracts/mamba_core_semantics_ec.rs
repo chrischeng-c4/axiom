@@ -2080,14 +2080,19 @@ struct ObservedRowRecord {
     sut_ev: ExecutedCommandEvidence,
 }
 
-fn run_command_with_evidence(cmd_str: &str, timeout: Duration) -> ExecutedCommandEvidence {
+fn run_command_with_evidence(
+    cmd_str: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+) -> ExecutedCommandEvidence {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(cmd_str)
+        .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|e| panic!("spawn sh -c '{cmd_str}': {e}"));
+        .unwrap_or_else(|e| panic!("spawn sh -c '{cmd_str}' (cwd={}): {e}", cwd.display()));
 
     let pid = child.id() as libc::pid_t;
 
@@ -4778,6 +4783,26 @@ case = []
         classify_and_reconcile_row(&unknown_route_row, &ev_same_stdout, &ev_same_stdout).is_err(),
         "Canary 49 (unknown route cannot relax) FAILED"
     );
+
+    // 50. Execution cwd canary proving a repo-root-relative command succeeds only under the supplied repo_root cwd
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let rel_cmd = "test -f projects/mamba/tests/external_contracts/mamba_core_semantics_ec.rs";
+    let root_ev = run_command_with_evidence(rel_cmd, repo_root, Duration::from_secs(5));
+    assert_eq!(
+        root_ev.exit_code,
+        Some(0),
+        "Canary 50 (repo-root-relative command under repo_root) FAILED"
+    );
+    let pkg_ev = run_command_with_evidence(rel_cmd, &manifest_dir, Duration::from_secs(5));
+    assert_ne!(
+        pkg_ev.exit_code,
+        Some(0),
+        "Canary 50 (repo-root-relative command under package dir must fail) FAILED"
+    );
 }
 
 #[test]
@@ -5171,8 +5196,10 @@ fn oracle_hierarchy_and_result_identity() {
             &row.oracle_version.replace("Python ", ""),
         );
 
-        let oracle_ev = run_command_with_evidence(&row.oracle_command, Duration::from_secs(30));
-        let sut_ev = run_command_with_evidence(&row.sut_command, Duration::from_secs(30));
+        let oracle_ev =
+            run_command_with_evidence(&row.oracle_command, repo_root, Duration::from_secs(30));
+        let sut_ev =
+            run_command_with_evidence(&row.sut_command, repo_root, Duration::from_secs(30));
 
         let derived_cls =
             classify_and_reconcile_row(&row, &oracle_ev, &sut_ev).unwrap_or_else(|e| panic!("{e}"));
