@@ -81,3 +81,7 @@ fn aw_ec_parse_cargo_running_test_count(line: &str) -> Option<usize> {
     number.trim().parse().ok()
 }
 // CODEGEN-END
+// SPEC-MANAGED: projects/mamba/tech-design/validate/conformance-suite-total-failed-count-is-non-deterministic-across.md#unit-test
+// CODEGEN-BEGIN
+
+// CODEGEN-END
