@@ -112,3 +112,98 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: mamba-force-typed-contract-completion-verification
+requirements:
+  AC1:
+    id: AC1
+    text: "All seven implicit-Any ingress families compile-reject from the public Mamba surface with stable binding identity, inference-path classification, source span, and diagnostic class; no inference-failure path silently synthesizes Any."
+    kind: functional
+    risk: high
+    verify: mamba_t1_force_typed_contract_completion (cargo test -p mamba --release --test mamba_core_semantics_ec -- force_typed_contract_completion --exact)
+  AC2:
+    id: AC2
+    text: "The seven explicit-Any counterparts compile only because the authored Any annotation is present and still preserve the pinned CPython 3.12 runtime behavior."
+    kind: functional
+    risk: high
+    verify: mamba_t1_force_typed_contract_completion (cargo test -p mamba --release --test mamba_core_semantics_ec -- force_typed_contract_completion --exact)
+  AC3:
+    id: AC3
+    text: "The rollup inventory, both seven-row matrices, the 23-row legacy denominator reconciliation, pair_id or paired_template_sha256 metadata, and every evidence lock reconcile fail-closed with exact once-only accounting across compile, behavior, concurrency, and performance channels."
+    kind: regression
+    risk: high
+    verify: mamba_t1_force_typed_contract_completion (cargo test -p mamba --release --test mamba_core_semantics_ec -- force_typed_contract_completion --exact)
+  AC4:
+    id: AC4
+    text: "Thread-safety evidence proves the fix does not introduce a GIL or global serialization point: the parallel-progress probe shows multicore overlap and the barrier soak remains deadlock-free."
+    kind: regression
+    risk: high
+    verify: force_typed_contract_completion_parallel_compile_progress.py plus barrier_rounds_complete_without_deadlock.py
+  AC5:
+    id: AC5
+    text: "When changed-path classification marks the work performance-applicable, the named perf pin is graded against anchored baseline provenance; otherwise the verifier records a machine-verifiable non-applicable outcome from the same baseline_sha to current_sha diff."
+    kind: performance
+    risk: medium
+    verify: run_pin::force_typed_contract_completion_2011.toml (MAMBA_REQUIRE_CPYTHON_PERF_BASELINE=1 cargo test -p mamba --release --test perf_pin -- run_pin::force_typed_contract_completion_2011.toml)
+  AC6:
+    id: AC6
+    text: "Focused EC verification, the authoritative strict-type inventory schema gate, and the owning dynamic-ingress driver regressions stay green from one clean committed revision."
+    kind: regression
+    risk: high
+    verify: strict_type_accounting_gate_704 plus strict_type_dynamic_ingress plus aw td code-check
+  R1:
+    id: R1
+    text: "Lowering and signature capture preserve the distinction between an omitted annotation and an authored Any annotation so only explicit Any opens the dynamic ingress path."
+    kind: functional
+    risk: high
+    verify: strict_type_dynamic_ingress (cargo test -p mamba strict_type_dynamic_ingress)
+  R2:
+    id: R2
+    text: "The checker emits stable compile-time rejection evidence for local_binding, global_binding, class_attribute, parameter, return, comprehension, and expression_join implicit-Any ingress families, and each family pairs byte-for-byte with its explicit-Any twin except for the authored Any token."
+    kind: functional
+    risk: high
+    verify: mamba_t1_force_typed_contract_completion (cargo test -p mamba --release --test mamba_core_semantics_ec -- force_typed_contract_completion --exact)
+  R3:
+    id: R3
+    text: "The strict-type accounting tool and schema gate authoritatively emit the two seven-row matrices, the reconciled rollup inventory, and the required evidence locks without allowing cases.jsonl to invent its own denominator or hide stale rows."
+    kind: regression
+    risk: high
+    verify: strict_type_accounting_gate_704 (cargo test -p mamba strict_type_accounting_gate_704)
+  R4:
+    id: R4
+    text: "The no-global-serialization oracle proves one-worker versus four-worker parallel compile progress across the seven paired ingress families from the public path, and barrier stability cannot substitute for this proof."
+    kind: regression
+    risk: medium
+    verify: python3.12 projects/mamba/tests/cpython/concurrency/primitives/threading/force_typed_contract_completion_parallel_compile_progress.py
+  R5:
+    id: R5
+    text: "The barrier stability probe preserves its exact authored worker, round, timeout, and no-alive-thread thresholds across repeated execution, proving the fix does not trade type-wall correctness for deadlock risk."
+    kind: regression
+    risk: medium
+    verify: python3.12 projects/mamba/tests/harness/cpython/tools/stress_suites.py concurrency --repeat 3 --timeout 20 --json
+  R6:
+    id: R6
+    text: "The perf witness remains provenance-bound: baseline row identity, baseline_row_sha256, host fingerprint, CPython executable identity, and selected-trial CPU or RSS grading all agree before the WI can close."
+    kind: performance
+    risk: medium
+    verify: run_pin::force_typed_contract_completion_2011.toml (MAMBA_REQUIRE_CPYTHON_PERF_BASELINE=1 cargo test -p mamba --release --test perf_pin -- run_pin::force_typed_contract_completion_2011.toml)
+---
+flowchart TD
+    ac1[AC1 AC1] --> mamba_t1_force_typed_contract_completion_cargo_test_p_mamba_release_test_mamba_core_semantics_ec_force_typed_contract_completion_exact[mamba_t1_force_typed_contract_completion (cargo test -p mamba --release --test mamba_core_semantics_ec -- force_typed_contract_completion --exact)]
+    ac2[AC2 AC2] --> mamba_t1_force_typed_contract_completion_cargo_test_p_mamba_release_test_mamba_core_semantics_ec_force_typed_contract_completion_exact
+    r2[R2 R2] --> mamba_t1_force_typed_contract_completion_cargo_test_p_mamba_release_test_mamba_core_semantics_ec_force_typed_contract_completion_exact
+    ac3[AC3 AC3] --> mamba_t1_force_typed_contract_completion_cargo_test_p_mamba_release_test_mamba_core_semantics_ec_force_typed_contract_completion_exact
+    r1[R1 R1] --> strict_type_dynamic_ingress_cargo_test_p_mamba_strict_type_dynamic_ingress[strict_type_dynamic_ingress (cargo test -p mamba strict_type_dynamic_ingress)]
+    r3[R3 R3] --> strict_type_accounting_gate_704_cargo_test_p_mamba_strict_type_accounting_gate_704[strict_type_accounting_gate_704 (cargo test -p mamba strict_type_accounting_gate_704)]
+    ac4[AC4 AC4] --> force_typed_contract_completion_parallel_compile_progress_py_plus_barrier_rounds_complete_without_deadlock_py[force_typed_contract_completion_parallel_compile_progress.py plus barrier_rounds_complete_without_deadlock.py]
+    r4[R4 R4] --> python3_12_projects_mamba_tests_cpython_concurrency_primitives_threading_force_typed_contract_completion_parallel_compile_progress_py[python3.12 projects/mamba/tests/cpython/concurrency/primitives/threading/force_typed_contract_completion_parallel_compile_progress.py]
+    ac5[AC5 AC5] --> run_pin_force_typed_contract_completion_2011_toml_mamba_require_cpython_perf_baseline_1_cargo_test_p_mamba_release_test_perf_pin_run_pin_force_typed_contract_completion_2011_toml[run_pin::force_typed_contract_completion_2011.toml (MAMBA_REQUIRE_CPYTHON_PERF_BASELINE=1 cargo test -p mamba --release --test perf_pin -- run_pin::force_typed_contract_completion_2011.toml)]
+    r6[R6 R6] --> run_pin_force_typed_contract_completion_2011_toml_mamba_require_cpython_perf_baseline_1_cargo_test_p_mamba_release_test_perf_pin_run_pin_force_typed_contract_completion_2011_toml
+    r5[R5 R5] --> python3_12_projects_mamba_tests_harness_cpython_tools_stress_suites_py_concurrency_repeat_3_timeout_20_json[python3.12 projects/mamba/tests/harness/cpython/tools/stress_suites.py concurrency --repeat 3 --timeout 20 --json]
+    ac6[AC6 AC6] --> strict_type_accounting_gate_704_plus_strict_type_dynamic_ingress_plus_aw_td_code_check[strict_type_accounting_gate_704 plus strict_type_dynamic_ingress plus aw td code-check]
+```
