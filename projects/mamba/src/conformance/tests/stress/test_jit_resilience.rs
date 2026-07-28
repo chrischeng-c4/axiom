@@ -68,7 +68,25 @@ def loop_stress():
 
 loop_stress()
 "#;
-    jit_assert_output(src, "775000");
+    jit_assert_output(src, "975000");
+}
+
+/// Test JIT minimized range-loop witness exposing mid-loop checkpoint, final loop var, and final acc.
+#[test]
+fn test_jit_minimized_range_loop_witness() {
+    let src = r#"
+def minimized_loop():
+    acc = 0
+    checkpoint = -1
+    for i in range(5):
+        acc = (acc + i) % 7
+        if i == 2:
+            checkpoint = acc
+    print(checkpoint, i, acc)
+
+minimized_loop()
+"#;
+    jit_assert_output(src, "3 4 3");
 }
 
 /// Test JIT 4-level nested loops.
