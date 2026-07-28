@@ -122,6 +122,9 @@ pub struct TdAuditRecordArgs {
 pub struct AstArgs {
     /// Path to the Python TD project root (relative or absolute).
     pub path: String,
+    /// Include the deterministic typed mutation descriptor inventory.
+    #[arg(long)]
+    pub mutations: bool,
     /// Pretty-print the JSON output (default: compact).
     #[arg(long)]
     pub pretty: bool,
@@ -3776,10 +3779,22 @@ fn run_ast(args: AstArgs, configured_project: Option<&str>) -> Result<()> {
         let project_root = crate::find_project_root()?;
         let root = canonical_python_td_root(&project_root, &path, configured_project)?;
         let ir = crate::services::python_td::compile_python_td_project(&root)?;
-        let json = if args.pretty {
-            serde_json::to_string_pretty(&ir)
+        let output = if args.mutations {
+            let mutations =
+                crate::services::python_td_mutation::enumerate_python_td_mutation_descriptors(&ir)?;
+            serde_json::json!({
+                "ir": ir,
+                "mutation_schema":
+                    crate::services::python_td_mutation::PYTHON_TD_MUTATION_SCHEMA,
+                "mutations": mutations,
+            })
         } else {
-            serde_json::to_string(&ir)
+            serde_json::to_value(&ir).context("failed to serialise Python TD IR")?
+        };
+        let json = if args.pretty {
+            serde_json::to_string_pretty(&output)
+        } else {
+            serde_json::to_string(&output)
         }
         .context("failed to serialise Python TD IR")?;
         println!("{}", json);

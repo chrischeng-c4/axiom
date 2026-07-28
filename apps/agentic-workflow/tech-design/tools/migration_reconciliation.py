@@ -256,6 +256,15 @@ def _projection_artifact_id(entry: dict[str, Any]) -> str:
         _python_identifier(part).replace("_", "-")
         for part in relative.with_suffix("").parts
     )
+    # `_target_paths` appends a digest suffix only when two distinct legacy
+    # paths normalize to the same Python module name. Preserve the semantic
+    # legacy TD identity and give colliding generated mirrors a stable,
+    # role-explicit identity so a replay cannot recreate a project-wide
+    # artifact-id collision.
+    target_stem = Path(entry.get("target_path") or "").stem
+    collision = re.search(r"_([0-9a-f]{8})$", target_stem)
+    if entry.get("role") == "generated_mirror" and collision is not None:
+        name = f"{name}-generated-projection-{collision.group(1)}"
     return f"artifact:{family}/{name}"
 
 

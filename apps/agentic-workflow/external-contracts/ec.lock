@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-27T21:12:25.991848+00:00"
-ir_digest = "sha256:9b8bab80ce3ba32afa759d403fb324550f4c956515a5f9a42fa2d74723e94b02"
-source_digest = "sha256:a6b4bc161ee412a198f0a29a798af1aae44692c1a12d785dba1bb7b6dd3aa94e"
+generated_at = "2026-07-28T04:09:33.636931+00:00"
+ir_digest = "sha256:ce0bdb88e75ddaf562ed9152a9980adacfee9bd0beb300f8d1504f95bb5b86f6"
+source_digest = "sha256:7d2b8286f61471c33a4cc4256af31a6b5aec5c941f0a5d8968f9739758b0bfec"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:e754ceac34275c575a8bc50fc1f17e00fcdfc089b0c18575aba0b36e58f7f54e"
+digest = "sha256:79fcc49e581b6ca3faf21b5de767e03b3cabc33074ad8cd18ac0dc942ea021cc"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -89,6 +89,10 @@ path = "apps/agentic-workflow/external-contracts/src/cases/manual-evidence-artif
 digest = "sha256:9e38b77fe1b00ecf871f41533ac9858ac89326b2f7a9c9dd88f824cb7dc42df0"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
+digest = "sha256:2eaad3b82b31d5b8151b7387c9a1ef2a08428a138ca5db1caefdfcd766ffe657"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
 digest = "sha256:47d8986b9061689d0985c77c0542c274b9cbf5c92b5d8abc955d010af89bdfe9"
 
@@ -103,6 +107,10 @@ digest = "sha256:250c923e0e3e33b7ba537d9a997f4ebd188a10542b39db290b1f24d5dcbd197
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
 digest = "sha256:005bf721f757c81955d3a1cbfd3144280aa34ba702dbec911e1e23d3ff5f47af"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
+digest = "sha256:d8efadb404f5efa5606f183e1f2f7959afdc8f3232b28dc2fdc239b1b046dea3"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/self-hosting-bounded-admission.py"
@@ -130,7 +138,7 @@ digest = "sha256:8144ebb46d860c48aa17ec7c9bcfbf2bedb96807a844da2bf53f07a720048a3
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audit-first-contract-test.py"
-digest = "sha256:7899e3863c2e5eb6734cefc521c0b8ca9eb671c1f6ee14c7763f9f2b317479c7"
+digest = "sha256:4cefc708f1518081be04626cf2aa5881bd83ef3ca85f72af35c59c6dce7749d0"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/td-artifact-producer-cli-fixture.py"
@@ -262,7 +270,7 @@ digest = "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py"
-digest = "sha256:2835608a97f6f4b6f6abe6fc81ba35b8cf6e93873824a506543c4fe39d442ca9"
+digest = "sha256:8dba81fef39a9f5122f86798572061d4f521ef998d24e450c214edffe9f2454a"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py"
@@ -310,7 +318,7 @@ digest = "sha256:3dc90509a8c8fd1472e80871b5ad17c133e126932d381eb239a7734d55ad824
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
-digest = "sha256:67267ea85bb6750b7bbf966fd845ce2a5c83ff47b4a70fa5d40f81d1ea94be98"
+digest = "sha256:749ccbc6a7eecc86ff8a3163b3b04dfb20aad54814832ca96df24a3ed15774d4"
 
 [[cases]]
 id = "authoritative-fixture-blocks-on-regenerability-gap"
@@ -701,6 +709,26 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:d2d26a3c13f0ca9a602758d09e5bc1a51b5f3045f781f7137cd5c9904c000e68"
 
 [[cases]]
+id = "project-health-total-observation"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "health-total-observation-and-readiness-gate"
+contract_id = "project-health-total-observation"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:project-health-total-observation"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
+required_for_production = true
+assertions = [
+    "Every resolvable health request emits a structured envelope and matching payload, focused sections isolate unrelated evaluators, and focused failed or unavailable axes retain fail-closed exit codes while not-applicable remains successful.",
+    "artifact: artifact:agentic-workflow/project-health-total-observation",
+    "oracle: Isolated Python-first projects make the mutation evidence directory unreadable to inject evaluator unavailability, switch advisory to required policy, remove the poison to produce ordinary failure, and use locked self-hosting fixtures to prove aggregate required-unavailable is exactly indeterminate without a readiness claim, advisory-unavailable remains degraded and ready, and required-failed is blocked and nonzero. Every aggregate assessment, readiness state, production status, and mutation-axis result is compared with its durable payload; focused capability must leave the poisoned mutation axis not configured, proving the evaluator was not called.",
+    "target: rust",
+]
+evidence_digest = "sha256:3c196e1843aa421b70a9a1649934fc8984a670cbbe3426ea379eb47f3133a40f"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:155f0c1fbb67a1679c20e94b68987515218315690c8f6d56c4d4e7dfd078518b"
+
+[[cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
 capability_id = "project-local-td-and-ec-gates"
 claim_id = "project-local-td-and-ec-gates-operational-efficiency"
@@ -781,6 +809,26 @@ assertions = [
 evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:0f51ebd3eb36d907125eeb792d2e5f432ac867a6f44f327351ca7e144a58979a"
+
+[[cases]]
+id = "python-td-global-artifact-identity"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "python-td-global-artifact-identity"
+contract_id = "python-td-global-artifact-identity"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-td-global-artifact-identity"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-global-artifact-identity"
+required_for_production = true
+assertions = [
+    "Python TD module and explicit artifact identities are globally unique, the reviewed corpus remains complete, and role-distinct migrated projections cannot collapse into duplicate mutation identities.",
+    "artifact: artifact:agentic-workflow/python-td-global-artifact-identity",
+    "oracle: The Python EC compiles the complete public TD AST, pins the 1002-module and 995-explicit-artifact inventories plus the exact seven modules without explicit artifact IDs, requires exact role-distinct identities for both normalized logic-emitter paths, proves two reverse-created duplicate-ID groups emit one complete exact cross-group and within-group sorted diagnostic twice, and verifies the public typed mutation inventory against an exact 8756-descriptor count, sorted-ID digest, uniqueness, and both logic emitters.",
+    "target: rust",
+]
+evidence_digest = "sha256:3a84cf30abb2d42459fe5ce7a61cf0a7766947d49546e46db5ca6d66de699b44"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0dc1358643cd9778274ca8d6705f86c9301f3ecc44da9706165bc2eab63fe305"
 
 [[cases]]
 id = "self-hosting-bounded-admission"
@@ -915,14 +963,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/standardize-audi
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
 required_for_production = true
 assertions = [
-    "audit_required is true without a preservation baseline; audit_required is false when a baseline exists; route and command surfaces are included in the fixture baseline",
+    "Focused takeover-audit health succeeds as a not-applicable observation without a preservation baseline, then succeeds as a recorded observation after aw td audit-record captures the preservation contract.",
     "artifact: artifact:agentic-workflow/standardize-audit-first-contract-test",
-    "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
+    "oracle: An isolated project runs the public focused health command before and after the public audit-record producer, requiring exact successful/healthy states, a false-to-true recorded transition, and the captured route and command surface.",
     "target: rust",
 ]
-evidence_digest = "sha256:97bf4a969ef5b5c37341ce6be6bf84b38102f1c1eaf99faaf9000e3a050e52a9"
+evidence_digest = "sha256:5894754d276ffa1cbc00b4f5e0315f0f4034ad0c0beb6ef8aeea7c9cb5b6ef5a"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:54e27bf40baa6ac24fa3e88a1bd531ecfc8982a4e4fb9ef9a1d1e88bf0b45a36"
+digest = "sha256:16df3200ed8240bd9766619e11a852187aa512d72e0d4a73e850e525d326bd0e"
 
 [[cases]]
 id = "td-artifact-producer-cli-fixture"

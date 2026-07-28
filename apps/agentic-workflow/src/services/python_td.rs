@@ -302,6 +302,7 @@ pub fn compile_python_td_project(project_root: &Path) -> Result<PythonTdIr> {
         .map(|path| compile_module(&root, &path))
         .collect::<Result<Vec<_>>>()?;
     modules.sort_by(|left, right| left.id.cmp(&right.id));
+    validate_unique_artifact_ids(&modules)?;
     validate_local_imports(&modules)?;
     // Spans are diagnostic provenance, not semantic input. Preserve them in
     // the emitted IR while excluding them from the digest so whitespace-only
@@ -331,6 +332,35 @@ pub fn compile_python_td_project(project_root: &Path) -> Result<PythonTdIr> {
         modules,
         semantic_digest,
     })
+}
+
+/// @spec apps/agentic-workflow/tech-design/src/agentic_workflow/health/python_td_global_artifact_identity.py
+fn validate_unique_artifact_ids(modules: &[PythonTdModule]) -> Result<()> {
+    let mut paths_by_id = BTreeMap::<&str, Vec<&str>>::new();
+    for module in modules {
+        if let Some(artifact_id) = module.artifact_id.as_deref() {
+            paths_by_id
+                .entry(artifact_id)
+                .or_default()
+                .push(module.path.as_str());
+        }
+    }
+    let mut collisions = paths_by_id
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .map(|(artifact_id, mut paths)| {
+            paths.sort_unstable();
+            format!("`{artifact_id}`: {}", paths.join(", "))
+        })
+        .collect::<Vec<_>>();
+    collisions.sort();
+    if !collisions.is_empty() {
+        bail!(
+            "Python TD diagnostic [duplicate-project-artifact-id]: every __aw_artifact_id__ must be globally unique; conflicts: {}",
+            collisions.join("; ")
+        );
+    }
+    Ok(())
 }
 
 fn collect_python_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -856,4 +886,36 @@ fn diagnostic<T>(path: &Path, node: Node<'_>, code: &str, remediation: &str) -> 
         point.row + 1,
         point.column + 1
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_project_artifact_id_reports_every_conflicting_path() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("z_projection.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n\ndef projection() -> str:\n    return \"z\"\n",
+        )
+        .unwrap();
+        fs::write(
+            src.join("a_design.py"),
+            "__aw_artifact_id__ = \"artifact:health/contract\"\n\ndef design() -> str:\n    return \"a\"\n",
+        )
+        .unwrap();
+
+        let error = compile_python_td_project(root.path())
+            .expect_err("duplicate global artifact identity must fail")
+            .to_string();
+
+        assert!(error.contains("[duplicate-project-artifact-id]"), "{error}");
+        assert!(error.contains("artifact:health/contract"), "{error}");
+        let a = error.find("src/a_design.py").expect("first path");
+        let z = error.find("src/z_projection.py").expect("second path");
+        assert!(a < z, "diagnostic paths must be sorted: {error}");
+    }
 }

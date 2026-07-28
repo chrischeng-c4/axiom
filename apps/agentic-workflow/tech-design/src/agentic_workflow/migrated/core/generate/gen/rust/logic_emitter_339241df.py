@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Annotated
 
 
-__aw_artifact_id__ = "artifact:core-generate/core-generate-gen-rust-logic-emitter"
+__aw_artifact_id__ = "artifact:core-generate/core-generate-gen-rust-logic-emitter-generated-projection-339241df"
 __legacy_projection_path__ = "apps/agentic-workflow/tech-design/core/generate/gen/rust/logic_emitter.md"
 __legacy_projection_digest__ = "sha256:c784779b37b562f60f45055c211306ac9830e1346a8ef2a94cf84a019ade47c9"
 

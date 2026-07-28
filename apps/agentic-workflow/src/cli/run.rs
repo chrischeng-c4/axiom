@@ -3995,6 +3995,12 @@ mod tests {
             } else {
                 crate::cli::project::ProjectHealthStatus::Blocked
             },
+            assessment: if production_ready {
+                crate::cli::project::ProjectHealthAssessment::Healthy
+            } else {
+                crate::cli::project::ProjectHealthAssessment::Blocked
+            },
+            axis_assessments: std::collections::BTreeMap::new(),
             capability_ready: true,
             managed_ready: true,
             semantic_ready: true,

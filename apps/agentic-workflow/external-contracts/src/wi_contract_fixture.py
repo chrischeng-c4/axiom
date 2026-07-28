@@ -81,7 +81,7 @@ target = "rust"
 def run_aw(
     root: Path,
     *args: str,
-    expect_success: bool = True,
+    expect_success: bool | None = True,
     env_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     _ensure_aw_binary()
@@ -98,12 +98,12 @@ def run_aw(
         capture_output=True,
         check=False,
     )
-    if expect_success and completed.returncode != 0:
+    if expect_success is True and completed.returncode != 0:
         raise AssertionError(
             f"aw {' '.join(args)} failed:\n"
             f"stdout={completed.stdout}\nstderr={completed.stderr}"
         )
-    if not expect_success and completed.returncode == 0:
+    if expect_success is False and completed.returncode == 0:
         raise AssertionError(f"aw {' '.join(args)} unexpectedly succeeded")
     return completed
 

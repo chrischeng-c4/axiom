@@ -20,6 +20,7 @@ CASE_IDS = {
     "existing-project-standardization-managed-and-semantic-production-gates",
     "existing-project-standardization-traceability-closure-gate",
     "external-fixture-reports-advisory-gap",
+    "project-health-total-observation",
     "standardize-audit-first-contract-test",
     "td-gen-source-source-snapshot-projection-real-cli",
 }
@@ -116,6 +117,190 @@ The public fixture function returns successfully.
     )
 
 
+def _write_total_observation_fixture(
+    root: Path,
+    *,
+    mutation_policy: str,
+    poison_evidence_directory: bool,
+) -> Path:
+    _write_fixture(root, authoritative=False)
+    project = root / "projects/fixture"
+    (project / "CAPABILITIES.md").write_text(
+        """\
+# Fixture Capabilities
+
+## Brief
+
+Fixture health observation contract.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Fixture health | - | implemented | verified | smoke | ready | Total health observation fixture |
+
+### Fixture health
+
+ID: fixture-health
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw health` - observe the fixture project
+EC Dimensions:
+- behavior: `python3 projects/fixture/external-contracts/src/runner.py --case fixture-health` - health remains observable
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+The fixture health request remains externally observable.
+Gate Inventory:
+- `python3 projects/fixture/external-contracts/src/runner.py --case fixture-health`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Fixture health contract | epic | fixture-epic | implemented | verified | smoke | `python3 projects/fixture/external-contracts/src/runner.py --case fixture-health` |
+""",
+        encoding="utf-8",
+    )
+    (project / "tech-design/fixture.md").unlink()
+    (project / "tech-design/src").mkdir(parents=True)
+    (project / "tech-design/pyproject.toml").write_text(
+        """\
+[project]
+name = "fixture-tech-design"
+version = "0.1.0"
+requires-python = ">=3.11"
+""",
+        encoding="utf-8",
+    )
+    (project / "tech-design/src/fixture_health.py").write_text(
+        """\
+__aw_artifact_id__ = "artifact:fixture/health"
+
+
+def fixture_health() -> bool:
+    return True
+""",
+        encoding="utf-8",
+    )
+
+    (project / "external-contracts/src/cases").mkdir(parents=True)
+    (project / "external-contracts/evidence").mkdir()
+    (project / "external-contracts/src/runner.py").write_text(
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    (project / "external-contracts/src/cases/fixture-health.py").write_text(
+        """\
+CASE_ID = "fixture-health"
+
+
+def verify() -> list[str]:
+    return ["fixture health"]
+""",
+        encoding="utf-8",
+    )
+    (project / "external-contracts/pyproject.toml").write_text(
+        """\
+[project]
+name = "fixture-external-contracts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.aw.python-artifact]
+protocol = "aw.python-artifact.v1"
+entrypoint = "src/runner.py"
+source_roots = ["src"]
+dependency_files = ["pyproject.toml"]
+evidence_dir = "evidence"
+
+[tool.aw.python-ec]
+protocol = "aw.python-ec.v1"
+author = "agent:fixture-author"
+efficiency_policy = "optional"
+
+[[tool.aw.python-ec.cases]]
+id = "fixture-health"
+artifact_id = "artifact:fixture/fixture-health"
+capability_id = "fixture-health"
+use_case_id = "fixture-health-contract"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/fixture-health.py"
+promise = "The fixture health contract remains observable."
+oracle = "The fixture returns one explicit assertion."
+target = "rust"
+command = "python3 projects/fixture/external-contracts/src/runner.py --case fixture-health"
+evidence_paths = ["evidence/fixture-health.json"]
+""",
+        encoding="utf-8",
+    )
+    (project / "aw.toml").write_text(
+        f"""\
+[project]
+name = "fixture"
+mutation_adequacy = "{mutation_policy}"
+mutation_evidence_dir = "projects/fixture/evidence/mutation-adequacy"
+mutation_source_path = "projects/fixture/src"
+""",
+        encoding="utf-8",
+    )
+    evidence_path = project / "evidence/mutation-adequacy"
+    evidence_path.parent.mkdir(parents=True)
+    (project / "external-contracts/evidence/fixture-health.json").write_text(
+        '{"status":"passed"}\n',
+        encoding="utf-8",
+    )
+    if poison_evidence_directory:
+        evidence_path.mkdir()
+        evidence_path.chmod(0)
+    return evidence_path
+
+
+def _enable_self_hosting_policy(root: Path) -> None:
+    root_config = root / "aw.toml"
+    root_config.write_text(
+        root_config.read_text(encoding="utf-8").replace(
+            'name = "fixture"',
+            'name = "agentic-workflow"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    project_config = root / "projects/fixture/aw.toml"
+    project_config.write_text(
+        project_config.read_text(encoding="utf-8").replace(
+            'name = "fixture"',
+            'name = "agentic-workflow"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _assert_aggregate_outcome_correspondence(
+    result: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    assert result["readiness"]["assessment"] == result["assessment"]
+    assert payload["assessment"] == result["assessment"]
+    assert (
+        payload["production_ready"]
+        == result["readiness"]["production_ready"]
+    )
+    assert (
+        payload["production_status"]
+        == result["readiness"]["production_status"]
+    )
+    assert payload["axis_assessments"]["mutation"]["requirement"] == (
+        result["axes"]["mutation"]["requirement"]
+    )
+    assert payload["axis_assessments"]["mutation"]["evaluation"] == (
+        result["axes"]["mutation"]["evaluation"]
+    )
+
+
 def _health_snapshot(*, authoritative: bool) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="aw-python-ec-health-") as raw_root:
         root = Path(raw_root)
@@ -146,6 +331,283 @@ def _health_snapshot(*, authoritative: bool) -> dict[str, Any]:
 
 
 def _verify_health(case_id: str) -> list[str]:
+    if case_id == "project-health-total-observation":
+        with tempfile.TemporaryDirectory(
+            prefix="aw-python-ec-health-total-"
+        ) as raw_root:
+            root = Path(raw_root)
+            evidence_path = _write_total_observation_fixture(
+                root,
+                mutation_policy="advisory",
+                poison_evidence_directory=True,
+            )
+
+            capability = run_aw(
+                root,
+                "health",
+                "--project",
+                "fixture",
+                "capability",
+                expect_success=None,
+            )
+            capability_result = final_json(capability)
+            capability_payload = json.loads(
+                Path(capability_result["payload_path"]).read_text(encoding="utf-8")
+            )
+            assert capability_result["schema_version"] == "aw.cli.v1"
+            assert capability_result["section"] == "capability"
+            assert evidence_path.is_dir()
+            assert (
+                capability_payload["axis_assessments"]["mutation"]["evaluation"]
+                == "not_configured"
+            )
+
+            advisory_unavailable = run_aw(
+                root,
+                "health",
+                "--project",
+                "fixture",
+                "mutation",
+                expect_success=False,
+            )
+            advisory_result = final_json(advisory_unavailable)
+            advisory_payload = json.loads(
+                Path(advisory_result["payload_path"]).read_text(encoding="utf-8")
+            )
+            advisory_axis = advisory_result["axes"]["mutation"]
+            assert advisory_result["section"] == "mutation"
+            assert advisory_result["assessment"] == "indeterminate"
+            assert advisory_axis["requirement"] == "advisory"
+            assert advisory_axis["evaluation"] == "unavailable"
+            assert advisory_payload["axes"]["mutation"] == advisory_axis
+
+            (root / "projects/fixture/aw.toml").write_text(
+                """\
+[project]
+name = "fixture"
+mutation_adequacy = "required"
+mutation_evidence_dir = "projects/fixture/evidence/mutation-adequacy"
+mutation_source_path = "projects/fixture/src"
+""",
+                encoding="utf-8",
+            )
+            required_unavailable = run_aw(
+                root,
+                "health",
+                "--project",
+                "fixture",
+                "mutation",
+                expect_success=False,
+            )
+            required_result = final_json(required_unavailable)
+            required_payload = json.loads(
+                Path(required_result["payload_path"]).read_text(encoding="utf-8")
+            )
+            assert (
+                required_result["axes"]["mutation"]["requirement"] == "required"
+            )
+            assert (
+                required_result["axes"]["mutation"]["evaluation"] == "unavailable"
+            )
+            assert (
+                required_payload["axes"]["mutation"]
+                == required_result["axes"]["mutation"]
+            )
+
+            evidence_path.chmod(0o700)
+            evidence_path.rmdir()
+            (root / "projects/fixture/aw.toml").write_text(
+                """\
+[project]
+name = "fixture"
+mutation_adequacy = "advisory"
+mutation_evidence_dir = "projects/fixture/evidence/mutation-adequacy"
+mutation_source_path = "projects/fixture/src"
+""",
+                encoding="utf-8",
+            )
+            advisory_failed = run_aw(
+                root,
+                "health",
+                "--project",
+                "fixture",
+                "mutation",
+                expect_success=False,
+            )
+            failed_result = final_json(advisory_failed)
+            failed_payload = json.loads(
+                Path(failed_result["payload_path"]).read_text(encoding="utf-8")
+            )
+            assert failed_result["data"]["requirement"] == "advisory"
+            assert failed_result["data"]["evaluation"] == "failed"
+            assert failed_payload["policy"] == failed_result["data"]["detail"]["policy"]
+            assert failed_payload["status"] == failed_result["data"]["detail"]["status"]
+            assert (
+                failed_payload["required_for_production"]
+                == failed_result["data"]["detail"]["required_for_production"]
+            )
+
+            not_applicable = run_aw(
+                root,
+                "health",
+                "--project",
+                "fixture",
+                "takeover-audit",
+            )
+            not_applicable_result = final_json(not_applicable)
+            not_applicable_payload = json.loads(
+                Path(not_applicable_result["payload_path"]).read_text(encoding="utf-8")
+            )
+            assert not_applicable_result["status"] == "done"
+            assert not_applicable_result["assessment"] == "healthy"
+            assert not_applicable_result["data"]["recorded"] is False
+            assert not_applicable_payload["takeover_audit"] == {
+                key: value
+                for key, value in not_applicable_result["data"].items()
+                if key != "next_command"
+            }
+
+        with tempfile.TemporaryDirectory(
+            prefix="aw-python-ec-health-aggregate-required-unavailable-"
+        ) as raw_root:
+            root = Path(raw_root)
+            evidence_path = _write_total_observation_fixture(
+                root,
+                mutation_policy="required",
+                poison_evidence_directory=True,
+            )
+            _enable_self_hosting_policy(root)
+            run_aw(root, "ec", "lock", "--project", "agentic-workflow")
+            required_unavailable_aggregate = run_aw(
+                root,
+                "health",
+                "--project",
+                "agentic-workflow",
+                expect_success=False,
+            )
+            required_unavailable_result = final_json(
+                required_unavailable_aggregate
+            )
+            required_unavailable_payload = json.loads(
+                Path(required_unavailable_result["payload_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert required_unavailable_result["status"] == "continue"
+            assert required_unavailable_result["assessment"] == "indeterminate"
+            assert (
+                required_unavailable_result["readiness"]["production_ready"]
+                is False
+            )
+            assert (
+                required_unavailable_result["readiness"]["production_status"]
+                == "not_evaluated"
+            )
+            assert (
+                required_unavailable_result["axes"]["mutation"]["requirement"]
+                == "required"
+            )
+            assert (
+                required_unavailable_result["axes"]["mutation"]["evaluation"]
+                == "unavailable"
+            )
+            _assert_aggregate_outcome_correspondence(
+                required_unavailable_result,
+                required_unavailable_payload,
+            )
+            evidence_path.chmod(0o700)
+
+        with tempfile.TemporaryDirectory(
+            prefix="aw-python-ec-health-aggregate-advisory-"
+        ) as raw_root:
+            root = Path(raw_root)
+            evidence_path = _write_total_observation_fixture(
+                root,
+                mutation_policy="advisory",
+                poison_evidence_directory=True,
+            )
+            _enable_self_hosting_policy(root)
+            run_aw(root, "ec", "lock", "--project", "agentic-workflow")
+            advisory_aggregate = run_aw(
+                root,
+                "health",
+                "--project",
+                "agentic-workflow",
+            )
+            advisory_aggregate_result = final_json(advisory_aggregate)
+            advisory_aggregate_payload = json.loads(
+                Path(advisory_aggregate_result["payload_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert advisory_aggregate_result["assessment"] == "degraded"
+            assert advisory_aggregate_result["readiness"]["production_ready"] is True
+            assert (
+                advisory_aggregate_result["readiness"]["production_status"] == "ready"
+            )
+            assert (
+                advisory_aggregate_result["axes"]["mutation"]["requirement"]
+                == "advisory"
+            )
+            assert (
+                advisory_aggregate_result["axes"]["mutation"]["evaluation"]
+                == "unavailable"
+            )
+            _assert_aggregate_outcome_correspondence(
+                advisory_aggregate_result,
+                advisory_aggregate_payload,
+            )
+            evidence_path.chmod(0o700)
+
+        with tempfile.TemporaryDirectory(
+            prefix="aw-python-ec-health-aggregate-required-"
+        ) as raw_root:
+            root = Path(raw_root)
+            _write_total_observation_fixture(
+                root,
+                mutation_policy="required",
+                poison_evidence_directory=False,
+            )
+            _enable_self_hosting_policy(root)
+            run_aw(root, "ec", "lock", "--project", "agentic-workflow")
+            required_failed_aggregate = run_aw(
+                root,
+                "health",
+                "--project",
+                "agentic-workflow",
+                expect_success=False,
+            )
+            required_failed_result = final_json(required_failed_aggregate)
+            required_failed_payload = json.loads(
+                Path(required_failed_result["payload_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert required_failed_result["assessment"] == "blocked"
+            assert required_failed_result["readiness"]["production_ready"] is False
+            assert (
+                required_failed_result["readiness"]["production_status"] == "blocked"
+            )
+            assert (
+                required_failed_result["axes"]["mutation"]["requirement"]
+                == "required"
+            )
+            assert (
+                required_failed_result["axes"]["mutation"]["evaluation"] == "failed"
+            )
+            _assert_aggregate_outcome_correspondence(
+                required_failed_result,
+                required_failed_payload,
+            )
+        return [
+            "focused capability leaves a deliberately poisoned mutation evaluator not evaluated",
+            "focused advisory and required evaluator unavailability fail with matching durable payloads",
+            "aggregate required unavailability is exactly indeterminate with no readiness claim",
+            "aggregate advisory unavailability exits successfully with degraded but ready status",
+            "aggregate required failure exits nonzero with blocked readiness",
+            "focused advisory failure exits nonzero while not-applicable exits zero",
+        ]
+
     if case_id == "existing-project-standardization-brownfield-takeover-surface":
         help_output = run_aw(
             Path.cwd(),
@@ -176,10 +638,17 @@ def _verify_health(case_id: str) -> list[str]:
                     "--project",
                     "fixture",
                     "takeover-audit",
-                    expect_success=False,
                 )
             )
-            run_aw(root, "td", "audit-record", "--project", "fixture")
+            audit_record = json.loads(
+                run_aw(
+                    root,
+                    "td",
+                    "audit-record",
+                    "--project",
+                    "fixture",
+                ).stdout
+            )
             after = final_json(
                 run_aw(
                     root,
@@ -187,12 +656,64 @@ def _verify_health(case_id: str) -> list[str]:
                     "--project",
                     "fixture",
                     "takeover-audit",
-                    expect_success=False,
                 )
             )
+            assert before["status"] == "done"
+            assert before["assessment"] == "healthy"
             assert before["data"]["recorded"] is False
+            assert audit_record["project"] == "fixture"
+            assert audit_record["scope"] is None
+            surfaces = {
+                surface["kind"]: {
+                    "name": surface["name"],
+                    "preserve": surface["preserve"],
+                }
+                for surface in audit_record["surfaces"]
+            }
+            assert surfaces["route"] == {
+                "name": "routes",
+                "preserve": (
+                    "preserve externally visible navigation and endpoint paths "
+                    "before quality changes"
+                ),
+            }
+            assert surfaces["command"] == {
+                "name": "commands",
+                "preserve": (
+                    "preserve CLI command names, arguments, and output contracts "
+                    "before quality changes"
+                ),
+            }
+            assert after["status"] == "done"
+            assert after["assessment"] == "healthy"
             assert after["data"]["recorded"] is True
+            durable_audit = json.loads(
+                Path(after["data"]["audit_path"]).read_text(encoding="utf-8")
+            )
+            assert durable_audit == audit_record
+            assert after["data"]["surfaces_to_preserve"] == [
+                "fixture:routes",
+                "fixture:commands",
+                "fixture:public-contracts",
+                "fixture:docs",
+                "fixture:generated-source",
+            ]
+            assert after["data"]["quality_debt_count"] == len(
+                audit_record["quality_debt"]
+            )
+            assert after["data"]["safe_lever_count"] == len(
+                audit_record["safe_levers"]
+            )
+            after_payload = json.loads(
+                Path(after["payload_path"]).read_text(encoding="utf-8")
+            )
+            assert after_payload["takeover_audit"] == {
+                key: value
+                for key, value in after["data"].items()
+                if key != "next_command"
+            }
         return [
+            "takeover audit health treats a missing baseline as successful not-applicable observation",
             "takeover audit health distinguishes missing and recorded preservation baselines",
             "aw td audit-record captures the fixture route and command surface",
         ]

@@ -156,7 +156,26 @@ fn evaluate_paths(
         }
     };
 
-    let mutants = enumerate_python_td_mutants(&ir)?;
+    let mutants = match enumerate_python_td_mutants(&ir) {
+        Ok(mutants) => mutants,
+        Err(error) => {
+            return Ok(result(
+                project_root,
+                project,
+                policy,
+                evidence_dir,
+                source_path,
+                MutationAdequacyStatus::Invalid,
+                0,
+                0,
+                0,
+                0,
+                vec![format!(
+                    "current Python TD mutation inventory is invalid: {error}"
+                )],
+            ))
+        }
+    };
     let mut expected = BTreeMap::new();
     for mutant in mutants {
         let targets: &[PythonTdNativeTarget] = match mutant.descriptor.scope {

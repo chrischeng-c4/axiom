@@ -70,7 +70,9 @@ pub struct PythonTdMutant {
     pub ir: PythonTdIr,
 }
 
-pub fn enumerate_python_td_mutants(ir: &PythonTdIr) -> Result<Vec<PythonTdMutant>> {
+pub fn enumerate_python_td_mutation_descriptors(
+    ir: &PythonTdIr,
+) -> Result<Vec<PythonTdMutationDescriptor>> {
     let mut descriptors = Vec::new();
     for scope in SUPPORTED_SCOPES {
         for module in &ir.modules {
@@ -111,8 +113,11 @@ pub fn enumerate_python_td_mutants(ir: &PythonTdIr) -> Result<Vec<PythonTdMutant
     if unique_ids.len() != descriptors.len() {
         bail!("Python TD mutation enumeration produced duplicate mutant ids");
     }
+    Ok(descriptors)
+}
 
-    descriptors
+pub fn enumerate_python_td_mutants(ir: &PythonTdIr) -> Result<Vec<PythonTdMutant>> {
+    enumerate_python_td_mutation_descriptors(ir)?
         .into_iter()
         .map(|descriptor| apply_python_td_mutation(ir, descriptor))
         .collect()

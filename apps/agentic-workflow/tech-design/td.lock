@@ -2,10 +2,18 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-27T20:46:48.037652+00:00"
-digest = "sha256:dcd16ca120207523f14767709e442135d2fc53211220c50883f9892b21b696fb"
-source_digest = "sha256:dcd16ca120207523f14767709e442135d2fc53211220c50883f9892b21b696fb"
-ir_digest = "sha256:fb783ab7fcad443d6b7dd4292c0eaef6c753c774c0e520bfe7facdcd7b554278"
+generated_at = "2026-07-28T04:16:49.223741+00:00"
+digest = "sha256:01fb4c16051732d4b348dd96d3aaf273004c7e2fef066dd303a17add598cf73b"
+source_digest = "sha256:01fb4c16051732d4b348dd96d3aaf273004c7e2fef066dd303a17add598cf73b"
+ir_digest = "sha256:7f125a557f8d6048542832f2994e098c6930d652d41a90223276bd1cebbba2b5"
+
+[[files]]
+path = "src/agentic_workflow/health/project_health_total_observation.py"
+digest = "sha256:2fb2dabff3e4dfa515cb4b6192266e77d3f2954e3507e95e06d404ceacee1a4c"
+
+[[files]]
+path = "src/agentic_workflow/health/python_td_global_artifact_identity.py"
+digest = "sha256:79b2972166031a3c82511aa8bef37984184f255515f08cb4ef458b8955ba3d04"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -453,7 +461,7 @@ digest = "sha256:e92dc18f1ca8cfa9f638af17ec30fd5663978573f7ca7d1428d57ba0c6ad6e3
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/generate/gen/rust/logic_emitter_339241df.py"
-digest = "sha256:e969aa8ff53dee99c79fdc277ddb47ef56d6861f094a9ed98afd40726992f964"
+digest = "sha256:12a4f624ba34f274e411050896dee63ca8233e382dfe4fac0e1362a7ff3c1c08"
 
 [[files]]
 path = "src/agentic_workflow/migrated/core/generate/gen/rust/logic_emitter_d49cdd8e.py"

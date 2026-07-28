@@ -4,9 +4,13 @@ CASE_ID = "standardize-audit-first-contract-test"
 CAPABILITY_ID = "existing-project-standardization"
 USE_CASE_ID = "standardize-audit-first-contract-test"
 DIMENSION = "behavior"
-LEGACY_TEST_PATH = "apps/agentic-workflow/tests/behavior_standardize_audit_first_contract_test.rs"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case standardize-audit-first-contract-test"
-ASSERTIONS = ('audit_required is true without a preservation baseline', 'audit_required is false when a baseline exists', 'route and command surfaces are included in the fixture baseline')
+ASSERTIONS = (
+    "a missing preservation baseline is a successful not-applicable health observation",
+    "recording a baseline produces a successful recorded health observation",
+    "the durable audit contains exact typed route and command preservation surfaces",
+    "health surface and debt counts correspond to the durable audit",
+)
 
 
 def verify() -> list[str]:
