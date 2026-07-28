@@ -1798,6 +1798,7 @@ mod tests {
     /// (no real `MbObject` allocation is ever byte-unaligned) and release
     /// through it.
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "misaligned MbObject pointer")]
     fn test_uaf_detector_trips_on_misaligned_pointer() {
         // #2585 E2: the detector is disarmed by default (regression-anchor
