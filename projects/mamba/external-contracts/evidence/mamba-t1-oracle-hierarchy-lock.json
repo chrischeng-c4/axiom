@@ -1,17 +1,17 @@
 {
-  "capture_timestamp": "2026-07-28T07:54:27Z",
+  "capture_timestamp": "2026-07-28T08:42:53Z",
   "cpython312_executable": "/Users/chrischeng/.pyenv/versions/3.12.11/bin/python3.12",
   "cpython312_version": "Python 3.12",
   "cpython313t_executable": "/Users/chrischeng/.local/bin/python3.13t",
   "cpython313t_version": "Python 3.13",
   "evidence_path": "projects/mamba/external-contracts/evidence/mamba-t1-oracle-hierarchy-lock.json",
-  "generated_at": "2026-07-28T07:54:27Z",
+  "generated_at": "2026-07-28T08:42:53Z",
   "inventory_path": "projects/mamba/tests/governance/gates/t1_oracle_hierarchy_inventory/cases.jsonl",
-  "inventory_sha256": "8deda9c53c1913b37fe2f4520c9cfd43b4ead47dd515b49bb454e41ff6feae95",
-  "mamba_binary_sha256": "8075cd442b7fbf6a90e23e90c29a462fda7573485efc2d4d685552cc8d1ee658",
-  "mamba_git_sha": "ccde8825614f2f698ecc518f3b50d9d51a525c44",
+  "inventory_sha256": "cb01df9787633006f9b8c290be817aeb4c5a8b14a97d860bb6ccf90701874d37",
+  "mamba_binary_sha256": "0ad513ec184a34ac79f86d7b447a95e20c62047c1bea6a0bc68c0b2398d53cfd",
+  "mamba_git_sha": "549d035cf3e365a68f6293f28b8186357a782250",
   "manifest_path": "projects/mamba/tests/governance/gates/t1_oracle_hierarchy_inventory/manifest.toml",
-  "manifest_sha256": "a6b1af99aca23c007cee118b87649af8e2debb51fa114f7a3282e00aa967eef9",
+  "manifest_sha256": "6fd2679787f67d2903bc31a8743c242a3db7ad84d36bb233afce7c5e02115ef8",
   "migration_inputs": [
     "projects/mamba/tests/harness/cpython/config/type_divergences.txt",
     "projects/mamba/tests/harness/cpython/config/behavior_gaps.txt",
@@ -131411,7 +131411,7 @@
   ],
   "row_count": 8,
   "schema_version": 1,
-  "source_revision": "ccde8825614f2f698ecc518f3b50d9d51a525c44",
+  "source_revision": "549d035cf3e365a68f6293f28b8186357a782250",
   "source_set_records": [
     {
       "identity_count": 14395,
