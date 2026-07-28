@@ -129,7 +129,10 @@ bound = "C" in globals() or "C" in locals()
 print(f"caught={caught}, body_ran={body_ran}, bound={bound}")
 "#;
     let res = jit_try(src);
-    assert!(res.is_ok(), "expected try/except to catch TypeError, got: {res:?}");
+    assert!(
+        res.is_ok(),
+        "expected try/except to catch TypeError, got: {res:?}"
+    );
     let output = res.unwrap();
     assert_eq!(output.trim(), "caught=True, body_ran=False, bound=False");
 }
@@ -158,7 +161,10 @@ c = Child()
 print(c.label())
 "#;
     let res = jit_try(src);
-    assert!(res.is_ok(), "expected valid diamond MRO to execute, got: {res:?}");
+    assert!(
+        res.is_ok(),
+        "expected valid diamond MRO to execute, got: {res:?}"
+    );
     let output = res.unwrap();
     assert_eq!(output.trim(), "Child -> Left -> Right -> Base");
 }
@@ -175,5 +181,61 @@ r.allowed = 1
 r.disallowed = 2
 "#;
     let res = jit_try(src);
-    assert!(res.is_err(), "expected undeclared __slots__ attribute assignment to fail");
+    assert!(
+        res.is_err(),
+        "expected undeclared __slots__ attribute assignment to fail"
+    );
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("AttributeError"),
+        "expected AttributeError, got: {err}"
+    );
+    assert!(
+        err.contains("Restricted"),
+        "expected class anchor 'Restricted', got: {err}"
+    );
+    assert!(
+        err.contains("disallowed"),
+        "expected attribute anchor 'disallowed', got: {err}"
+    );
+}
+
+/// Test positive controls for declared-own slots, inherited slots, and explicit __dict__ slots.
+#[test]
+fn test_slots_positive_controls() {
+    let src = r#"
+class Base:
+    __slots__ = ('base_slot',)
+
+class Derived(Base):
+    __slots__ = ('derived_slot',)
+
+class DictAllowed:
+    __slots__ = ('__dict__', 'declared')
+
+b = Base()
+b.base_slot = 10
+
+d = Derived()
+d.base_slot = 20
+d.derived_slot = 30
+
+da = DictAllowed()
+da.declared = 40
+da.dynamic = 50
+
+print(f"base_slot={b.base_slot}")
+print(f"inherited={d.base_slot}, derived={d.derived_slot}")
+print(f"declared={da.declared}, dynamic={da.dynamic}")
+"#;
+    let res = jit_try(src);
+    assert!(
+        res.is_ok(),
+        "expected positive slot controls to execute cleanly, got: {res:?}"
+    );
+    let output = res.unwrap();
+    assert_eq!(
+        output.trim(),
+        "base_slot=10\ninherited=20, derived=30\ndeclared=40, dynamic=50"
+    );
 }
