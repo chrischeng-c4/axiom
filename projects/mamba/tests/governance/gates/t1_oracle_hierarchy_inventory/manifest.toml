@@ -1,6 +1,6 @@
 schema_version = 1
 inventory_path = "projects/mamba/tests/governance/gates/t1_oracle_hierarchy_inventory/cases.jsonl"
-inventory_sha256 = "cb01df9787633006f9b8c290be817aeb4c5a8b14a97d860bb6ccf90701874d37"
+inventory_sha256 = "0b805efb75fd7c45fc3fa1b57471bffee3ee830fd527b691e4fdb9c47a286180"
 row_count = 8
 required_dimensions = ["behavior", "stability", "efficiency"]
 required_channels = ["compile", "behavior", "concurrency", "performance"]
@@ -17,9 +17,9 @@ cpython312_version = "Python 3.12"
 cpython313t_executable = "/Users/chrischeng/.local/bin/python3.13t"
 cpython313t_version = "Python 3.13"
 platform = "aarch64-apple-darwin"
-mamba_git_sha = "549d035cf3e365a68f6293f28b8186357a782250"
-mamba_binary_sha256 = "0ad513ec184a34ac79f86d7b447a95e20c62047c1bea6a0bc68c0b2398d53cfd"
-generated_at = "2026-07-28T08:42:53Z"
+mamba_git_sha = "d1803bd49e2c6b0e278df49285e72598e1408bec"
+mamba_binary_sha256 = "1e458d9eb5d1045e00fec9c73d3c0c57a50f715c405e529ed27d8fcd653299cc"
+generated_at = "2026-07-28T18:19:11Z"
 
 [[source_set_records]]
 name = "ordinary_parity_corpus"
