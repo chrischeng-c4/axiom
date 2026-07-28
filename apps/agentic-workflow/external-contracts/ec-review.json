@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:8b7e962a6263f0c4037af3e0fc766206c5f280b21576aa4790931a1a1bede155",
+  "source_digest": "sha256:971cf115fd3b7f6ab635b52fad83239eba55491a609fa4630becca5514f423cf",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-28T06:27:39.081808+00:00",
-  "summary": "Accepted for the exact reviewed digest: all 58 configured cases pass structural inventory checks, and the revised two-cell project-health EC exercises healthy, explicit failed-evidence, missing-evidence, internal-artifact, behavior-only drift, and artifact-only drift outcomes through the public aw health command with an independent Python oracle. The healthy branch pins one executed and one passed case, the failed branch pins exit_code=17 rejection to fixture-health, the alignment branches pin both directional set differences, and authored oracle tests reject zero-case false greens.",
+  "reviewed_by": "agent:codex-cli:019fa9cc-02ff-7152-9810-99c935697807",
+  "reviewed_at": "2026-07-28T17:42:05.093899+00:00",
+  "summary": "Independent Codex review accepted the Python TD claim-linkage contract. Both prior P1 cases fail closed, including missing pyproject.toml and a missing TD root.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,6 +15,5 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": [],
-  "target_path": "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
+  "findings": []
 }

@@ -268,6 +268,20 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/capability-scoped-dependency-verification.json"]
 
 [[tool.aw.python-ec.cases]]
+id = "python-td-claim-linkage"
+artifact_id = "artifact:capability-control-plane/public-contract"
+capability_id = "capability-control-plane"
+use_case_id = "python-td-claim-linkage"
+dimension = "behavior"
+applicability = "td"
+test_path = "src/cases/python-td-claim-linkage.py"
+promise = "a matching Python TD artifact and public behavior becomes primary capability claim evidence without an empty WI-planning detour"
+oracle = "The hand-authored Python EC executes the real compiled aw binary against an isolated Python TD/EC project and independently inspects its capability report."
+target = "rust"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-claim-linkage"
+evidence_paths = ["evidence/python-td-claim-linkage.json"]
+
+[[tool.aw.python-ec.cases]]
 id = "external-fixture-reports-advisory-gap"
 artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"

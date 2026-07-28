@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-28T06:32:52.053959+00:00"
-ir_digest = "sha256:e1793c04411c1e6d2fade03e0b7285ac7fa4f4d28c2fed8c9781e9ce9631aa92"
-source_digest = "sha256:6626cb95da78a2f5087f72c9c7516b8d8c332e69c24b3af993ad8e5b4c2613ef"
+generated_at = "2026-07-28T17:42:10.908837+00:00"
+ir_digest = "sha256:262cbc489292ca7bcdeea54c01c96c1b0c97fd16e06b6953d2894c80409635dd"
+source_digest = "sha256:d83e2c86e5f825694ccaac6e98b78d64195772771a1fb350181161eb6361ca55"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:f9cd505cc6b2646274bbab8127ea4b89cecc26d178e8886b054201ed2cc6726c"
+digest = "sha256:9dc7dcbe7d3c3ea02ed49d8557b2212d726bc442aea8eef09c057b2ea46697ec"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -107,6 +107,10 @@ digest = "sha256:250c923e0e3e33b7ba537d9a997f4ebd188a10542b39db290b1f24d5dcbd197
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-ec-only-authoring.py"
 digest = "sha256:005bf721f757c81955d3a1cbfd3144280aa34ba702dbec911e1e23d3ff5f47af"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
+digest = "sha256:dce59bdbb3f575d86e8f1b6245b3eddf349ac728165292c42b864f85203a204c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/python-td-global-artifact-identity.py"
@@ -821,6 +825,26 @@ assertions = [
 evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:0af97541b69e939e2b4e4cd701b3ae12b498ea4e03ee913061adcad2fad51880"
+
+[[cases]]
+id = "python-td-claim-linkage"
+capability_id = "capability-control-plane"
+claim_id = "python-td-claim-linkage"
+contract_id = "python-td-claim-linkage"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/external-contracts/pyproject.toml#case:python-td-claim-linkage"
+test_path = "apps/agentic-workflow/external-contracts/src/cases/python-td-claim-linkage.py"
+command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case python-td-claim-linkage"
+required_for_production = true
+assertions = [
+    "a matching Python TD artifact and public behavior becomes primary capability claim evidence without an empty WI-planning detour",
+    "artifact: artifact:capability-control-plane/public-contract",
+    "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated Python TD/EC project and independently inspects its capability report.",
+    "target: rust",
+]
+evidence_digest = "sha256:fa3b8f24bf94b2dd699d4c61a2af457211504a828b4fa2dc90b4c562be0c81a2"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:56c7ab5edb267e6f9f97f7a25c09963ab6532b43aef92dbdc6116283755c7bf9"
 
 [[cases]]
 id = "python-td-global-artifact-identity"

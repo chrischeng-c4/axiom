@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-28T06:32:51.908026+00:00"
-digest = "sha256:3352484bab8d5687d7d2f68b05bb05f1245878bd3faaab747b5a8b0fd8a05b9e"
-source_digest = "sha256:3352484bab8d5687d7d2f68b05bb05f1245878bd3faaab747b5a8b0fd8a05b9e"
-ir_digest = "sha256:3bd7393b76f26c300731a6217a6dd133210d0fe856ad58c644224baa074540a3"
+generated_at = "2026-07-28T17:42:15.928954+00:00"
+digest = "sha256:d8faa8b571799cdc110d6a9131f3340094e0249b64ceb9723e2594575a0676f7"
+source_digest = "sha256:d8faa8b571799cdc110d6a9131f3340094e0249b64ceb9723e2594575a0676f7"
+ir_digest = "sha256:736555d43686e456c16cd24be63d045e7e32e49165e2d31cb77532024fcc3358"
 
 [[files]]
 path = "src/agentic_workflow/health/project_health_total_observation.py"
@@ -3941,7 +3941,7 @@ digest = "sha256:c39a00b8bb29e027fa70fc21b41948213947080a18e2e4ed48351461287293b
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/capability_control_plane.py"
-digest = "sha256:76ab987e56702200e5f584ff331ad34b966c6d55bbcb3022a1f11debe2118f93"
+digest = "sha256:8e5ce817f14e94eb807329944649d5f6b57f5d239281a501bb3402e0401efecf"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/existing_project_standardization.py"
