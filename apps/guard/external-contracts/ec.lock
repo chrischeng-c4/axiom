@@ -1,0 +1,441 @@
+version = 1
+project = "guard"
+ir_kind = "ec"
+ec_path = "apps/guard/external-contracts"
+inventory_path = "apps/guard/external-contracts/pyproject.toml"
+generated_at = "2026-07-28T16:12:05.904647+00:00"
+ir_digest = "sha256:08c9fd397e29853b73a0e40fcfe6cd9dd0c85ad92d3bc777fed00fa70046edc3"
+source_digest = "sha256:35d34fb15c364f4f9f2ada7d8c38fb5099b6eea69f09472ad639ae60ce09f672"
+tool_contracts = []
+
+[[sources]]
+path = "apps/guard/external-contracts/pyproject.toml"
+digest = "sha256:56673c575c9d3190ea1563fa86bb731d45be9eec739a2bcf4f602effe2f15c0f"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/adapter_stub.py"
+digest = "sha256:5842ce98b8f3c3cc6f7f15bc6f177e1e6a480ea31e03629f00c8dca2b66d80ed"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-aw-health-security-metric.py"
+digest = "sha256:f2c67f707590cdc8513d93a99723ffb8aeef6449bc098fc2829aa4256689d272"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-baseline-static-policy.py"
+digest = "sha256:b5ca01fff4ff650d3c4a7e36973d73d7097372a9113e5910d1f78be85a29f963"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-cli-module-registration.py"
+digest = "sha256:148b78bdb65aece1371e08be4f4b4c14606af10f0ece508e5121e58404a3ef16"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-compass-backed-diagnostic-scan.py"
+digest = "sha256:b2d439004a7387e006fc996c37a11acdbb022c41bdf2ab1255f929c05748b9f9"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-dynamic-adapter-routing.py"
+digest = "sha256:9a99928fd139683e0bc2ffc22f1a15d981112f2e4729d9e071888a85dc5259b6"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-ec-security-evidence-command.py"
+digest = "sha256:68fbc31e8cb63e9a0d9b3c54ee08b0712d7cd0899aefe05f7c4cdf2f21e17f24"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-meter-dos-resource-evidence-bridge.py"
+digest = "sha256:304542153fdcfd7ccc6eff8f470cdcf93db9d7367636ffe64f07e0c0ecc1fddd"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-rig-exploit-journey-bridge.py"
+digest = "sha256:9f0080afbdf560e31cf78bb14a7212390e6a2e818a3f4fe5b0be4457fd0747d5"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-scan-command-report-projection.py"
+digest = "sha256:557a7a3729c9ef1e22723aa841fb4f7088ac0c0bbdcb2ade8424720ef2d5298a"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-security-lint-policy.py"
+digest = "sha256:c5275f033675f44c1c44861fef672239571eff6cf533c1851bbc5e0003e271d7"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-security-report-consumer-contract.py"
+digest = "sha256:872203be046455f790ce00301a95b44e961caf59eed03d1e3e4b3f955700c961"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-stable-evidence-folding.py"
+digest = "sha256:81d68a585d0503759d8aeb8b7dbab8d222e404cbe2c159acf5918fcb53f58516"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-stable-policy-selection.py"
+digest = "sha256:4d2b11feb349072e4558fd30f3f42f82d22a326b4139946760802152a0dcc262"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-stable-security-metric-projection.py"
+digest = "sha256:5f373ffbdbdfd25638f03071100581062fca519b1b9dd321dd2db6ce1e131e06"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-stable-static-finding-normalization.py"
+digest = "sha256:3336bbce595196352b8791f08d636954d18a691d020878fc3ccce865888764b3"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-static-scan-clean-report.py"
+digest = "sha256:678ad0db0f3a3ce2ea5d73b24c31ae818d4f496c5ec2eec7fd9e3b59276d5d40"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-vat-isolated-security-runner.py"
+digest = "sha256:829fb7fa05efe16c6c67c3fdf2500b6a4220b4d04ac5ed200fc1cdd289b6859c"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/guard_contract.py"
+digest = "sha256:f57dd6ef9a1339b396d9d3a92e1207927fcbb07c5497e19cbc22ea227cc3cbd9"
+
+[[sources]]
+path = "apps/guard/external-contracts/src/runner.py"
+digest = "sha256:4c7566415426929a610e82f7dd8048b629d55ff6291489e6d95401da4958a147"
+
+[[sources]]
+path = "apps/guard/external-contracts/tests/unit/test_guard_contract.py"
+digest = "sha256:a18413498d947da7d64911c8c2c38d40e4af15a57ea49f7121eb47e55a929e3c"
+
+[[cases]]
+id = "guard-aw-health-security-metric"
+capability_id = "security-ec-profile"
+claim_id = "aw-health-security-metric"
+contract_id = "guard-aw-health-security-metric"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-aw-health-security-metric"
+test_path = "apps/guard/external-contracts/src/cases/guard-aw-health-security-metric.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-aw-health-security-metric"
+required_for_production = true
+assertions = [
+    "A Guard report exposes a fail-closed machine-readable security metric whose status, exit code, finding count, completion state, and agent prompt change together when a security finding is present.",
+    "artifact: artifact:guard/security-ec-profile",
+    "oracle: The Python contract drives only the compiled guard CLI against independent clean and vulnerable fixtures and checks the complete public report transition; it never invokes aw ec check as its own oracle.",
+    "target: rust",
+]
+evidence_digest = "sha256:ed3bff888510a7ea8de35d27e2b62f887efeb0e25d484af06289377d8d8293b4"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:04ff509e7a286d987ba9f8c13a970474d71891c9bdb41678bd9e1d9c2ffac736"
+
+[[cases]]
+id = "guard-baseline-static-policy"
+capability_id = "security-policy-profile"
+claim_id = "baseline-static-policy"
+contract_id = "guard-baseline-static-policy"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-baseline-static-policy"
+test_path = "apps/guard/external-contracts/src/cases/guard-baseline-static-policy.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-baseline-static-policy"
+required_for_production = true
+assertions = [
+    "The baseline-static profile maps a Compass JavaScript dynamic-evaluation diagnostic into one actionable Guard finding with stable policy identity and severity.",
+    "artifact: artifact:guard/security-policy-profile",
+    "oracle: The Python contract creates a JavaScript eval fixture, executes the compiled guard CLI, and independently checks the public report profile, JS004 rule, severity, remediation, exit code, and Compass evidence source.",
+    "target: rust",
+]
+evidence_digest = "sha256:d4fde581ff13041597ffb3bcb8142310464ed25c3328fefb4e3e2f62f06705ad"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e3cad9db1038ae920226e49d6205391cc1ca0a5b837b784646c3d41f863bff87"
+
+[[cases]]
+id = "guard-cli-module-registration"
+capability_id = "security-policy-profile"
+claim_id = "cli-module-registration"
+contract_id = "guard-cli-module-registration"
+dimension = "behavior"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-cli-module-registration"
+test_path = "apps/guard/external-contracts/src/cases/guard-cli-module-registration.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-cli-module-registration"
+required_for_production = true
+assertions = [
+    "The public Guard executable exposes scan, report, spec, and llm, and its offline spec command returns a guard.report/1 envelope.",
+    "artifact: artifact:guard/security-policy-profile",
+    "oracle: The Python contract executes the compiled public binary's help and spec surfaces and checks their observable commands and JSON response without importing or inspecting the Rust CLI registry.",
+    "target: rust",
+]
+evidence_digest = "sha256:bbb15ea3f87cf0f9242bb76863a2ce5b1d178f96cbc6ac9e11f5da24e54b7e5d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1d1fc3093b70411c9ce5163e92b85bff803a3b97fb16df4b39a4f524aef302ab"
+
+[[cases]]
+id = "guard-compass-backed-diagnostic-scan"
+capability_id = "static-security-scan"
+claim_id = "compass-backed-diagnostic-scan"
+contract_id = "guard-compass-backed-diagnostic-scan"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-compass-backed-diagnostic-scan"
+test_path = "apps/guard/external-contracts/src/cases/guard-compass-backed-diagnostic-scan.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-compass-backed-diagnostic-scan"
+required_for_production = true
+assertions = [
+    "Guard scans supported source through Compass and preserves the diagnostic rule, source identity, location, and deterministic finding count in guard.report/1.",
+    "artifact: artifact:guard/static-security-scan",
+    "oracle: The Python contract creates a one-line JavaScript eval fixture and checks the compiled CLI's public report for one JS004 finding, Compass source attribution, one-based location, and count/list consistency.",
+    "target: rust",
+]
+evidence_digest = "sha256:f45719ba26d5cfb757c6db637d9c857c187268eaae0589b3d6721812e59554c8"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:dcb137eb63841bddbd18b02416ce3df6512de970ce1c8c2e936db19d3e92b2ac"
+
+[[cases]]
+id = "guard-dynamic-adapter-routing"
+capability_id = "dynamic-security-evidence"
+claim_id = "dynamic-adapter-routing"
+contract_id = "guard-dynamic-adapter-routing"
+dimension = "behavior"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-dynamic-adapter-routing"
+test_path = "apps/guard/external-contracts/src/cases/guard-dynamic-adapter-routing.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-dynamic-adapter-routing"
+required_for_production = true
+assertions = [
+    "Guard maps vat-runner, rig-scenario, and meter-target inputs to the exact public adapter argv and faithfully folds each subprocess result into its evidence array.",
+    "artifact: artifact:guard/dynamic-security-evidence",
+    "oracle: The Python contract substitutes only the three external processes, records their actual argv, and compares every public command, label, exit result, report schema, clean state, and summary with the independent subprocess traces.",
+    "target: rust",
+]
+evidence_digest = "sha256:69a66078f9b5f8982ff10af731ce9cbdb77b785fe491d2c2f474e48f5eea4853"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b0051adaa23f4f184e6e91db6bbdbf96d2c66152db2645d6f2394270036a1a41"
+
+[[cases]]
+id = "guard-ec-security-evidence-command"
+capability_id = "security-ec-profile"
+claim_id = "ec-security-evidence-command"
+contract_id = "guard-ec-security-evidence-command"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-ec-security-evidence-command"
+test_path = "apps/guard/external-contracts/src/cases/guard-ec-security-evidence-command.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command"
+required_for_production = true
+assertions = [
+    "Guard composes clean vat, rig, and meter results into one complete security envelope and fails closed independently for nonzero adapter exits and non-clean reports while preserving external finding counts.",
+    "artifact: artifact:guard/security-ec-profile",
+    "oracle: The Python contract places independent configurable protocol processes beside the current-worktree compiled Guard executable, compares caller-owned inputs with the exact invocation log and folded records, then independently varies Rig process exit, report cleanliness, and finding count while checking public exit, status, evidence_failed, finding_count, preview fidelity, and RIG-EVIDENCE.",
+    "target: rust",
+]
+evidence_digest = "sha256:e313b560b231f02f0314b3df0c4b0d6002a8fc9d24642d1b7c93b9c787361d1f"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:05f6f50dd96ff6bc70b458920797dabf5b92d4de4459b89c84073f4a1e882077"
+
+[[cases]]
+id = "guard-meter-dos-resource-evidence-bridge"
+capability_id = "dynamic-security-evidence"
+claim_id = "meter-dos-resource-evidence-bridge"
+contract_id = "guard-meter-dos-resource-evidence-bridge"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-meter-dos-resource-evidence-bridge"
+test_path = "apps/guard/external-contracts/src/cases/guard-meter-dos-resource-evidence-bridge.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-meter-dos-resource-evidence-bridge"
+required_for_production = true
+assertions = [
+    "The meter-target flag executes the sibling Meter adapter with the declared target and folds its clean resource evidence into guard.report/1.",
+    "artifact: artifact:guard/dynamic-security-evidence",
+    "oracle: The Python contract substitutes only the external Meter process at the executable boundary, records its argv, and independently validates Guard's public meter evidence item and summary.",
+    "target: rust",
+]
+evidence_digest = "sha256:be563efdd99294210a95a2efadcc3fcbdc63ab4a6d81ea65e76364d09c0cf910"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1010877bc57761065017f4d2f43f9c4ce4e4cc3202e4e3bb519b223e4aeacc08"
+
+[[cases]]
+id = "guard-rig-exploit-journey-bridge"
+capability_id = "dynamic-security-evidence"
+claim_id = "rig-exploit-journey-bridge"
+contract_id = "guard-rig-exploit-journey-bridge"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-rig-exploit-journey-bridge"
+test_path = "apps/guard/external-contracts/src/cases/guard-rig-exploit-journey-bridge.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-rig-exploit-journey-bridge"
+required_for_production = true
+assertions = [
+    "The rig-scenario flag executes the sibling Rig adapter with the declared scenario and folds its clean journey evidence into guard.report/1.",
+    "artifact: artifact:guard/dynamic-security-evidence",
+    "oracle: The Python contract substitutes only the external Rig process at the executable boundary, records its argv, and independently validates Guard's public rig evidence item and summary.",
+    "target: rust",
+]
+evidence_digest = "sha256:fdee255aaba2981f949cd663a65b7deca287998f53cd2c30088ee1bf760c15f5"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:32fe946d62ba674940a9e4cac8d4c1a8e7c528d20b12bc724d52e0387d680d24"
+
+[[cases]]
+id = "guard-scan-command-report-projection"
+capability_id = "static-security-scan"
+claim_id = "scan-command-report-projection"
+contract_id = "guard-scan-command-report-projection"
+dimension = "behavior"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-scan-command-report-projection"
+test_path = "apps/guard/external-contracts/src/cases/guard-scan-command-report-projection.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection"
+required_for_production = true
+assertions = [
+    "The public scan command projects the selected filesystem target and default static policy into one guard.report/1 scan response.",
+    "artifact: artifact:guard/static-security-scan",
+    "oracle: The Python contract creates an independent nested source fixture, invokes the compiled guard scan command, and validates only the observable target, verb, policy, integration, and completion fields.",
+    "target: rust",
+]
+evidence_digest = "sha256:fd3803f280f0abf4457f5bfd33333599a466b620323dbbd376bbab56159c9abf"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:92ebae7f9fc568b62266c76e6208615362bc6b7f72c7a47b710272fba301e84b"
+
+[[cases]]
+id = "guard-security-lint-policy"
+capability_id = "security-policy-profile"
+claim_id = "security-lint-policy"
+contract_id = "guard-security-lint-policy"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-security-lint-policy"
+test_path = "apps/guard/external-contracts/src/cases/guard-security-lint-policy.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-security-lint-policy"
+required_for_production = true
+assertions = [
+    "Security-lint adds supply-chain lint to the baseline security policy while preserving an explicit profile identity and actionable remediation.",
+    "artifact: artifact:guard/security-policy-profile",
+    "oracle: The Python contract scans the same unpinned Dockerfile fixture under baseline-static and security-lint, then independently proves only security-lint emits the DK002 finding.",
+    "target: rust",
+]
+evidence_digest = "sha256:4e87d0f124d6213edbb5185315c1e216be921e5447cf0775d1b507e57546c122"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:392c95b7126e1fdfff9d770317b16e2a9941211733e6864bf0f3722663299653"
+
+[[cases]]
+id = "guard-security-report-consumer-contract"
+capability_id = "security-ec-profile"
+claim_id = "security-report-consumer-contract"
+contract_id = "guard-security-report-consumer-contract"
+dimension = "behavior"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-security-report-consumer-contract"
+test_path = "apps/guard/external-contracts/src/cases/guard-security-report-consumer-contract.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-security-report-consumer-contract"
+required_for_production = true
+assertions = [
+    "A lifecycle consumer can derive one unambiguous clean-or-findings decision from Guard's public status, exit code, summary, completion, and agent prompt fields.",
+    "artifact: artifact:guard/security-ec-profile",
+    "oracle: The Python contract drives the compiled Guard CLI against independent clean and vulnerable inputs, validates both complete public envelopes, and derives the consumer decision without importing implementation code.",
+    "target: rust",
+]
+evidence_digest = "sha256:0c0965c1f50279d442f772e461ee3269bc3e298973f0fc7a3039e9a911ad5183"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:12aceae412259c0ed40ca7000efdc7a8f51fe6611720f67e2fe35569f19da213"
+
+[[cases]]
+id = "guard-stable-evidence-folding"
+capability_id = "dynamic-security-evidence"
+claim_id = "stable-evidence-folding"
+contract_id = "guard-stable-evidence-folding"
+dimension = "stability"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-stable-evidence-folding"
+test_path = "apps/guard/external-contracts/src/cases/guard-stable-evidence-folding.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-stable-evidence-folding"
+required_for_production = true
+assertions = [
+    "Repeated vat, rig, and meter integrations preserve adapter command grammar and the folded schema, clean state, exit status, finding count, and summary for every tool.",
+    "artifact: artifact:guard/dynamic-security-evidence",
+    "oracle: The Python contract runs two fresh sets of independent adapter processes, validates each exact trace-to-evidence fold, normalizes only temporary path values, and compares the remaining public projections.",
+    "threshold: two fresh attempts; all three normalized command and folded-report projections are exactly identical",
+    "target: rust",
+]
+evidence_digest = "sha256:e458bd20f37e28ae731b0afcc18f1e5e08bbc5a255b817841fa59da3e50d2636"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:00460d37c40c499ce693849dd6d1e92747d1d861e5ff64dace32d89d8e3d0716"
+
+[[cases]]
+id = "guard-stable-policy-selection"
+capability_id = "security-policy-profile"
+claim_id = "stable-policy-selection"
+contract_id = "guard-stable-policy-selection"
+dimension = "stability"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-stable-policy-selection"
+test_path = "apps/guard/external-contracts/src/cases/guard-stable-policy-selection.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection"
+required_for_production = true
+assertions = [
+    "Repeated security-lint scans preserve the selected versioned policy and the actionable DK002 rule, severity, remediation, and source projection.",
+    "artifact: artifact:guard/security-policy-profile",
+    "oracle: The Python contract invokes the compiled Guard CLI twice against fresh equivalent Dockerfiles and compares policy and finding fields while excluding fixture paths.",
+    "threshold: two fresh attempts; versioned policy and actionable finding projections are exactly identical",
+    "target: rust",
+]
+evidence_digest = "sha256:261ee896728aef95c0d31b7416d6d8093ef4e091c27ab92e1012a4ce14eb2e92"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2aa6fb7cc10dc25e79742e89386d28c93d89ed7d4ac94d2bbb7febe5f82491d4"
+
+[[cases]]
+id = "guard-stable-security-metric-projection"
+capability_id = "security-ec-profile"
+claim_id = "stable-security-metric-projection"
+contract_id = "guard-stable-security-metric-projection"
+dimension = "stability"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-stable-security-metric-projection"
+test_path = "apps/guard/external-contracts/src/cases/guard-stable-security-metric-projection.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-stable-security-metric-projection"
+required_for_production = true
+assertions = [
+    "Repeated scans of equivalent vulnerable inputs preserve Guard's lifecycle-facing schema, state, exit decision, finding count, rule projection, and completion result.",
+    "artifact: artifact:guard/security-ec-profile",
+    "oracle: The Python contract invokes the compiled Guard CLI twice in fresh fixture directories and compares a path-independent projection of both public reports.",
+    "threshold: two fresh attempts; path-independent lifecycle projections are exactly identical",
+    "target: rust",
+]
+evidence_digest = "sha256:8476c179f5849a0795e1158a0ea410216eea1127ef11554c3edccfa0630b8cdc"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f6ffce458cd0fb230e042ec137d76a3364583f4e8af3f0ea7b8bf8294a338134"
+
+[[cases]]
+id = "guard-stable-static-finding-normalization"
+capability_id = "static-security-scan"
+claim_id = "stable-static-finding-normalization"
+contract_id = "guard-stable-static-finding-normalization"
+dimension = "stability"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-stable-static-finding-normalization"
+test_path = "apps/guard/external-contracts/src/cases/guard-stable-static-finding-normalization.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization"
+required_for_production = true
+assertions = [
+    "Equivalent Compass diagnostics normalize to the same Guard schema, state, count, rule, severity, source, and one-based line across independent runs.",
+    "artifact: artifact:guard/static-security-scan",
+    "oracle: The Python contract invokes the compiled Guard CLI twice in fresh fixture directories and compares only path-independent public diagnostic fields.",
+    "threshold: two fresh attempts; normalized schema, state, count, rule, severity, source, and line are exactly identical",
+    "target: rust",
+]
+evidence_digest = "sha256:15e9fca99ff7e7926aee817a813ebaf5c24c144a05d7391c582ba0a18d4c6b60"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:123e66b09308a212c3ad56793f872d6082ad0f356518230405f8133a5fed2336"
+
+[[cases]]
+id = "guard-static-scan-clean-report"
+capability_id = "static-security-scan"
+claim_id = "json-report-envelope"
+contract_id = "guard-static-scan-clean-report"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-static-scan-clean-report"
+test_path = "apps/guard/external-contracts/src/cases/guard-static-scan-clean-report.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-static-scan-clean-report"
+required_for_production = true
+assertions = [
+    "A clean static scan exits zero and emits a self-consistent guard.report/1 JSON envelope with zero findings and Compass as its static engine.",
+    "artifact: artifact:guard/static-security-scan",
+    "oracle: The Python contract scans an independent safe JavaScript fixture and checks the compiled CLI's exit code, schema, status, summary/list consistency, completion, and integration map.",
+    "target: rust",
+]
+evidence_digest = "sha256:870d76fc28898cc70a94f44d6bc9f7b8a1a5a3450e9803cdbe8aa2eefcee0e8f"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ae5ca2278fab4b8348928d46f8328e4510e3c0295b2886833b7eea2c451e3e1c"
+
+[[cases]]
+id = "guard-vat-isolated-security-runner"
+capability_id = "dynamic-security-evidence"
+claim_id = "vat-isolated-security-runner"
+contract_id = "guard-vat-isolated-security-runner"
+dimension = "security"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-vat-isolated-security-runner"
+test_path = "apps/guard/external-contracts/src/cases/guard-vat-isolated-security-runner.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-vat-isolated-security-runner"
+required_for_production = true
+assertions = [
+    "The vat-runner flag executes the sibling VAT adapter with the declared runner id and folds its clean isolated evidence into guard.report/1.",
+    "artifact: artifact:guard/dynamic-security-evidence",
+    "oracle: The Python contract substitutes only the external VAT process at the executable boundary, records its argv, and independently validates Guard's public vat evidence item and summary.",
+    "target: rust",
+]
+evidence_digest = "sha256:ccefa5ed564d2ce6c38e7df68d044b962cc3641da0248761841c328d21c6178d"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:292e0f73b95978ff9c63b6c900fe3d09dcbe02f35c2a1f24f9c58b6f566639dc"

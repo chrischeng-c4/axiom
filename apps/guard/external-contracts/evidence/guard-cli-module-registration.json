@@ -1,0 +1,22 @@
+{
+  "assertions": [
+    "schema_version is guard.report/1",
+    "verb is spec",
+    "required report fields have stable JSON types",
+    "public help exposes scan, report, spec, and llm",
+    "offline spec identifies guard.report/1"
+  ],
+  "attempts": [
+    {
+      "assertion_count": 5,
+      "assertions_digest": "sha256:9503931ae288f276d085935445015a3ed7f397c426b78818acdb8f7879daac0f",
+      "elapsed_ms": 1434,
+      "exit_code": 0
+    }
+  ],
+  "case_id": "guard-cli-module-registration",
+  "exit_code": 0,
+  "implementation": "apps/guard/external-contracts/src/cases/guard-cli-module-registration.py",
+  "mode": "behavior",
+  "protocol": "aw.python-ec.evidence.v1"
+}

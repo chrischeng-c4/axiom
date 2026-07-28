@@ -1,0 +1,25 @@
+{
+  "assertions": [
+    "schema_version is guard.report/1",
+    "verb is scan",
+    "required report fields have stable JSON types",
+    "summary.security_findings equals findings length",
+    "status, exit_code, and completion.clean agree",
+    "scan projects the exact requested filesystem target",
+    "scan projects guard-baseline-static/1 by default",
+    "scan projects Compass as the static engine"
+  ],
+  "attempts": [
+    {
+      "assertion_count": 8,
+      "assertions_digest": "sha256:a141e17f1243d8844d77bdf47f2727dc1cd62702de6b204b2a88be0e8d6fba04",
+      "elapsed_ms": 1449,
+      "exit_code": 0
+    }
+  ],
+  "case_id": "guard-scan-command-report-projection",
+  "exit_code": 0,
+  "implementation": "apps/guard/external-contracts/src/cases/guard-scan-command-report-projection.py",
+  "mode": "behavior",
+  "protocol": "aw.python-ec.evidence.v1"
+}

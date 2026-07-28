@@ -1,0 +1,25 @@
+{
+  "assertions": [
+    "schema_version is guard.report/1",
+    "verb is scan",
+    "required report fields have stable JSON types",
+    "summary.security_findings equals findings length",
+    "status, exit_code, and completion.clean agree",
+    "safe static scan exits zero with no findings",
+    "static integration identity is Compass",
+    "clean report marks completion clean"
+  ],
+  "attempts": [
+    {
+      "assertion_count": 8,
+      "assertions_digest": "sha256:321e4ed7df4c495a3e8c8212fef84e442c23b962b406f85a899944991934918d",
+      "elapsed_ms": 1450,
+      "exit_code": 0
+    }
+  ],
+  "case_id": "guard-static-scan-clean-report",
+  "exit_code": 0,
+  "implementation": "apps/guard/external-contracts/src/cases/guard-static-scan-clean-report.py",
+  "mode": "security",
+  "protocol": "aw.python-ec.evidence.v1"
+}

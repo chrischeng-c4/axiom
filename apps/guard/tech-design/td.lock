@@ -1,61 +1,84 @@
-version = 1
+version = 2
 project = "guard"
+ir_kind = "td"
 td_path = "apps/guard/tech-design"
-generated_at = "2026-06-23T14:06:43.451762+00:00"
-digest = "sha256:f9b63094847e6a4e7325ad9a4bb78e17793495a4e7245170895dfba2cfae9d0a"
+generated_at = "2026-07-28T16:40:53.558987+00:00"
+digest = "sha256:40ef6265206c9f298f1992731ae953d8e6f57bf22a52d2d1337cc4027eeedce6"
+source_digest = "sha256:40ef6265206c9f298f1992731ae953d8e6f57bf22a52d2d1337cc4027eeedce6"
+ir_digest = "sha256:7ff6f03c05e40f745950efb53185f24397b80a30fe4db794334d0fcfa2514121"
 
 [[files]]
-path = "semantic/guard-build-script.md"
-digest = "sha256:aa666bd92ef8f43bda01ae450bf7d0201aee35a45b3fe7a70998f2cc085f1de8"
+path = "src/guard/design/build_script.py"
+digest = "sha256:bacce079c1559260467dd9bb87e7fb72ceaa91724d165809203042fe4084716c"
 
 [[files]]
-path = "semantic/guard-ec-static-security-smoke.md"
-digest = "sha256:d5a3d76524695abdb0e8c1d1bd0888130f77b9e6091ae017e0d150a3cfa8f88a"
+path = "src/guard/design/cli_api.py"
+digest = "sha256:be4c35156d295dd06f20c251b7e1d5a961b6996c29252a8925af69e26587d22e"
 
 [[files]]
-path = "semantic/guard-guard-cli-src-bin.md"
-digest = "sha256:f5f74e1df591aaf0e66c848840a994331a5cd5041df405d87887a2b60edd3726"
+path = "src/guard/design/cli_binary.py"
+digest = "sha256:d7aaa643f30d808902ec4a17da8984c3b89c40b0d193c1e70bd704f64c7132d8"
 
 [[files]]
-path = "semantic/guard-guard-cli-src.md"
-digest = "sha256:242b56df92a40c36564d604aee0dcbb9fb1383566ed9a3e2499e0e7df47d2189"
+path = "src/guard/design/cli_binary_api.py"
+digest = "sha256:54fa5a2a5b253818b31fe64916c979204e4a05ce97b43726fc84f938d16c02e6"
 
 [[files]]
-path = "semantic/guard-install-script.md"
-digest = "sha256:8120ba4c665ffe7f4d9ce3b45321a5378975422e1f81a84b1a9288027bb40b00"
+path = "src/guard/design/cli_dispatch.py"
+digest = "sha256:1b6fb9337751bd353fc853ee165ea2d29fa32bd9c5294a5bb57fd333d2fed4ad"
 
 [[files]]
-path = "semantic/guard-projects-guard.md"
-digest = "sha256:12c7c0f674f261b14bdcd2f41af78573860d554b1eb7159a1af0a479d1d6f3b7"
+path = "src/guard/design/cli_registry.py"
+digest = "sha256:3114cadf70e669e7894d4cd37afb1001d99860f7c310b0e9bc17531343268989"
 
 [[files]]
-path = "semantic/guard-src.md"
-digest = "sha256:e6400608d444046fbef0b76a39705a61a71906e9fb0bb950bdb5df36506e737d"
+path = "src/guard/design/external_evidence.py"
+digest = "sha256:516dab554341cdf09c65e52e6c50ed83626438c29e1a0c130db363a0aac8ec31"
 
 [[files]]
-path = "semantic/source/projects-guard-guard-cli-src-bin-guard-rs.md"
-digest = "sha256:bb62565f6bf42a7bd6163024e3b14c88000065d53dcc1b7fdf54a689212952fb"
+path = "src/guard/design/external_security_contracts.py"
+digest = "sha256:a72a02db68590b4e6605422a75a7bb3242da6f55516b116619dcef1bbc412e05"
 
 [[files]]
-path = "semantic/source/projects-guard-guard-cli-src-dispatch-rs.md"
-digest = "sha256:5c6ef13e0f5e3e7c0ecc34655c4023b3d2ebda27ca572c3e744f38b2afccae62"
+path = "src/guard/design/install_script.py"
+digest = "sha256:d4ae24bfbe26fd6efb5a314046811e35022e65c7e556c17f26d5c44eacbb30b0"
 
 [[files]]
-path = "semantic/source/projects-guard-guard-cli-src-lib-rs.md"
-digest = "sha256:3590a975e86582ac1047fe816df4c02ae2f0672795e21159e6386526b99aace1"
+path = "src/guard/design/library_api.py"
+digest = "sha256:f134982868aab7a5037092fd6a2150cf4939f4322253668d81ab1f1ed6d64d9b"
 
 [[files]]
-path = "semantic/source/projects-guard-src-evidence-rs.md"
-digest = "sha256:18f0c566a5cf135de6fb01927f0b94431c2e5edb230a7433f71ca625fae29c84"
+path = "src/guard/design/library_module.py"
+digest = "sha256:041ce39772ea8edf7874b1a4ec98729d3b91ff9ce998d4ce9ba1ecca53e78dd3"
 
 [[files]]
-path = "semantic/source/projects-guard-src-lib-rs.md"
-digest = "sha256:8d6c49e626e1500f825d459982527e8d32c3b5a923f2b7bee0aa4f31df16ef3d"
+path = "src/guard/design/project_layout.py"
+digest = "sha256:2c81d3849b2e0663f879587cdace6657ad076e07eb6aac01d750f0586d53ca3c"
 
 [[files]]
-path = "semantic/source/projects-guard-src-report-rs.md"
-digest = "sha256:43a8faf95a760595219c656fc34631ff041f8dd733e7fa8356a6c1a93514915c"
+path = "src/guard/design/report_model.py"
+digest = "sha256:3bb7cff72294747f9d9885b935f1a600a7b25ac22334e0b652b75520190364a3"
 
 [[files]]
-path = "semantic/source/projects-guard-src-scan-rs.md"
-digest = "sha256:ae540441fbf437b92ee183d4457815fdf4a94086a589fddee0b54236b882a7f2"
+path = "src/guard/design/scan_policy.py"
+digest = "sha256:0d2eb4ccea39402512a1a5bebd7bb504b46d3a9f3ba8580f21581ae897f1ca25"
+
+[[files]]
+path = "src/guard/public_contracts/dynamic_security_evidence.py"
+digest = "sha256:a70d14c002ac1c5a91ca2056701e6a78f4110863bf1a36c31956fe1f264fe61f"
+
+[[files]]
+path = "src/guard/public_contracts/security_ec_profile.py"
+digest = "sha256:c25dc74bdee1c5725a9b04f69af05fc2fec4a1568e92b9e46a752bc9eacc85fe"
+
+[[files]]
+path = "src/guard/public_contracts/security_policy_profile.py"
+digest = "sha256:f688b5271307876be122121dea62ed83d70e8563c3cac0319378a970aeb110c2"
+
+[[files]]
+path = "src/guard/public_contracts/static_security_scan.py"
+digest = "sha256:389af576500d37b3e22999d97f7cd28afa192ec1dae6fde2990581b24179cd67"
+
+[[files]]
+path = "tests/unit/test_guard_design.py"
+digest = "sha256:8fd7e7430fba0b284ecf2ac56b0be606ba954a95446c76c5d668cf78a7487e85"

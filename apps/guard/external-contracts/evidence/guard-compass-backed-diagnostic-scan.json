@@ -1,0 +1,25 @@
+{
+  "assertions": [
+    "schema_version is guard.report/1",
+    "verb is scan",
+    "required report fields have stable JSON types",
+    "summary.security_findings equals findings length",
+    "status, exit_code, and completion.clean agree",
+    "one JS004 diagnostic becomes one Guard finding",
+    "finding identity preserves Compass and JS004",
+    "finding location points to line one of unsafe.js"
+  ],
+  "attempts": [
+    {
+      "assertion_count": 8,
+      "assertions_digest": "sha256:6e6d18c15258c0780837951bd95c6ade001c8da7b371054493595076f749ca9a",
+      "elapsed_ms": 1403,
+      "exit_code": 0
+    }
+  ],
+  "case_id": "guard-compass-backed-diagnostic-scan",
+  "exit_code": 0,
+  "implementation": "apps/guard/external-contracts/src/cases/guard-compass-backed-diagnostic-scan.py",
+  "mode": "security",
+  "protocol": "aw.python-ec.evidence.v1"
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": "guard",
+  "source_digest": "sha256:801558dfdffd5efc1dc864e636d5d4c600700a9ebb619340e536a0ddf3579772",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:codex-cli:external-guard-ec-review-v6",
+  "reviewed_at": "2026-07-28T16:11:56.102337+00:00",
+  "summary": "Accepted after independent semantic review. All 16 EC unit tests, 7 TD unit tests, 17 declared EC commands, TD check, and EC check passed. Direct execution confirmed distinct non-clean exit-zero journeys with two and zero findings, public fail-closed status/exit, exactly-once adapter invocation, digest-bound current-worktree Guard binary, and exact preservation of adapter exit, report.clean, finding_count, and findings_preview.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": []
+}
