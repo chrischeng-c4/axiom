@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -2080,21 +2081,90 @@ struct ObservedRowRecord {
     sut_ev: ExecutedCommandEvidence,
 }
 
+fn parse_command_spec(cmd_str: &str) -> Result<(String, Vec<String>), String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for ch in cmd_str.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if !in_single_quote => {
+                escaped = true;
+            }
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+            }
+            ' ' | '\t' | '\n' | '\r' if !in_single_quote && !in_double_quote => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+    if in_single_quote || in_double_quote || escaped {
+        return Err(format!(
+            "Unterminated quote or escape in command: '{cmd_str}'"
+        ));
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    if tokens.is_empty() {
+        return Err(format!("Empty command string: '{cmd_str}'"));
+    }
+    let program = tokens.remove(0);
+    Ok((program, tokens))
+}
+
 fn run_command_with_evidence(
     cmd_str: &str,
     cwd: &std::path::Path,
     timeout: Duration,
 ) -> ExecutedCommandEvidence {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd_str)
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let (program, args) = match parse_command_spec(cmd_str) {
+        Ok(spec) => spec,
+        Err(e) => {
+            use sha2::{Digest, Sha256};
+            let stderr_sha256 = format!("{:x}", Sha256::digest(e.as_bytes()));
+            return ExecutedCommandEvidence {
+                exit_code: Some(1),
+                signal: None,
+                timed_out: false,
+                stdout_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_string(),
+                stderr_sha256,
+                stdout_text: String::new(),
+                stderr_text: e,
+            };
+        }
+    };
+
+    let mut command = Command::new(&program);
+    command.args(&args);
+    command.current_dir(cwd);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.process_group(0);
+
+    let mut child = command
         .spawn()
-        .unwrap_or_else(|e| panic!("spawn sh -c '{cmd_str}' (cwd={}): {e}", cwd.display()));
+        .unwrap_or_else(|e| panic!("spawn '{cmd_str}' (cwd={}): {e}", cwd.display()));
 
     let pid = child.id() as libc::pid_t;
+    let pgid = pid;
 
     let mut stdout_pipe = child.stdout.take().expect("capture stdout");
     let stdout_reader = thread::spawn(move || {
@@ -2110,35 +2180,56 @@ fn run_command_with_evidence(
         bytes
     });
 
-    let completion = Arc::new((Mutex::new(false), Condvar::new()));
-    let timed_out_flag = Arc::new(AtomicBool::new(false));
-    let watchdog_completion = Arc::clone(&completion);
-    let watchdog_timed_out = Arc::clone(&timed_out_flag);
-
-    let watchdog = thread::spawn(move || {
-        let (lock, wake) = &*watchdog_completion;
-        let done = lock.lock().expect("watchdog lock");
-        let (done, wait) = wake
-            .wait_timeout_while(done, timeout, |d| !*d)
-            .expect("watchdog wait");
-        if !*done && wait.timed_out() {
-            watchdog_timed_out.store(true, Ordering::SeqCst);
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-        }
-    });
-
+    let start = Instant::now();
     let mut raw_status = 0;
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    let _ = unsafe { libc::wait4(pid, &mut raw_status, 0, &mut usage) };
+    let mut timed_out = false;
 
-    {
-        let (lock, wake) = &*completion;
-        *lock.lock().expect("completion lock") = true;
-        wake.notify_all();
+    loop {
+        let res = unsafe { libc::wait4(pid, &mut raw_status, libc::WNOHANG, &mut usage) };
+        if res == pid {
+            timed_out = false;
+            break;
+        } else if res == 0 {
+            if start.elapsed() >= timeout {
+                timed_out = true;
+                if pgid > 1 {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                    }
+                }
+                loop {
+                    let reap_res = unsafe { libc::wait4(pid, &mut raw_status, 0, &mut usage) };
+                    if reap_res == pid {
+                        break;
+                    }
+                    if reap_res == -1 {
+                        let err = std::io::Error::last_os_error().raw_os_error();
+                        if err == Some(libc::EINTR) {
+                            continue;
+                        }
+                        panic!("wait4 reap failed for child {pid}: error {err:?}");
+                    }
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        } else if res == -1 {
+            let err = std::io::Error::last_os_error().raw_os_error();
+            if err == Some(libc::EINTR) {
+                continue;
+            }
+            panic!("wait4 failed for child {pid}: error {err:?}");
+        } else {
+            thread::sleep(Duration::from_millis(5));
+        }
     }
-    watchdog.join().ok();
+
+    if pgid > 1 {
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
 
     let status = ExitStatus::from_raw(raw_status);
     let stdout_bytes = stdout_reader.join().unwrap_or_default();
@@ -2156,7 +2247,7 @@ fn run_command_with_evidence(
     ExecutedCommandEvidence {
         exit_code: status.code(),
         signal: status.signal(),
-        timed_out: timed_out_flag.load(Ordering::SeqCst),
+        timed_out,
         stdout_sha256,
         stderr_sha256,
         stdout_text: String::from_utf8_lossy(&stdout_bytes).into_owned(),
@@ -4802,6 +4893,110 @@ case = []
         pkg_ev.exit_code,
         Some(0),
         "Canary 50 (repo-root-relative command under package dir must fail) FAILED"
+    );
+
+    // 51. Fast-command canary proving repeated fast exits complete safely below deadline and return timed_out=false
+    let fast_cmd = "python3.12 -c \"print('FAST_OK')\"";
+    for i in 0..5 {
+        let start_fast = Instant::now();
+        let fast_ev = run_command_with_evidence(fast_cmd, repo_root, Duration::from_millis(500));
+        let elapsed_fast = start_fast.elapsed();
+        assert_eq!(
+            fast_ev.exit_code,
+            Some(0),
+            "Canary 51 (fast command iteration {i} exit code) FAILED"
+        );
+        assert!(
+            !fast_ev.timed_out,
+            "Canary 51 (fast command iteration {i} timed out) FAILED"
+        );
+        assert_eq!(
+            fast_ev.stdout_text.trim(),
+            "FAST_OK",
+            "Canary 51 (fast command iteration {i} stdout) FAILED"
+        );
+        assert!(
+            elapsed_fast < Duration::from_millis(500),
+            "Canary 51 (fast command iteration {i} exceeded deadline: {elapsed_fast:?}) FAILED"
+        );
+    }
+
+    // 52. Deliberate direct-child hang canary timing out and reaping process
+    let hang_cmd = "python3.12 -c \"import time; time.sleep(10)\"";
+    let start_hang = Instant::now();
+    let hang_ev = run_command_with_evidence(hang_cmd, repo_root, Duration::from_millis(150));
+    let elapsed_hang = start_hang.elapsed();
+    assert!(
+        hang_ev.timed_out,
+        "Canary 52 (direct child hang must time out) FAILED"
+    );
+    assert!(
+        elapsed_hang < Duration::from_secs(3),
+        "Canary 52 (direct child hang took too long: {elapsed_hang:?}) FAILED"
+    );
+
+    // 53. Deliberate descendant hang canary killed as process group and closing pipes
+    let descendant_hang_cmd = "python3.12 -u -c \"import subprocess, sys, time; p = subprocess.Popen(['python3.12', '-c', 'import time; time.sleep(30)']); print(p.pid); sys.stdout.flush(); time.sleep(30)\"";
+    let start_desc = Instant::now();
+    let desc_ev =
+        run_command_with_evidence(descendant_hang_cmd, repo_root, Duration::from_millis(1500));
+    let elapsed_desc = start_desc.elapsed();
+    assert!(
+        desc_ev.timed_out,
+        "Canary 53 (descendant hang must time out) FAILED"
+    );
+    assert!(
+        elapsed_desc < Duration::from_secs(5),
+        "Canary 53 (descendant hang process group cleanup took too long: {elapsed_desc:?}) FAILED"
+    );
+    let desc_pid_str = desc_ev.stdout_text.trim();
+    let desc_pid: libc::pid_t = desc_pid_str.parse().unwrap_or_else(|e| {
+        panic!("Canary 53 (parse descendant PID from stdout {desc_pid_str:?}: {e}) FAILED")
+    });
+    let start_check = Instant::now();
+    let mut desc_alive = true;
+    while start_check.elapsed() < Duration::from_secs(1) {
+        if unsafe { libc::kill(desc_pid, 0) != 0 } {
+            desc_alive = false;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !desc_alive,
+        "Canary 53 (descendant PID {desc_pid} must no longer be live) FAILED"
+    );
+
+    // 54. Pipe closure and digest canary on timeout
+    let pipe_hang_cmd = "python3.12 -u -c \"import sys, time; print('PIPES_OPEN'); sys.stdout.flush(); time.sleep(30)\"";
+    let pipe_ev = run_command_with_evidence(pipe_hang_cmd, repo_root, Duration::from_millis(1500));
+    assert!(
+        pipe_ev.timed_out,
+        "Canary 54 (pipe closure timed out) FAILED"
+    );
+    assert!(
+        pipe_ev.stdout_text.contains("PIPES_OPEN"),
+        "Canary 54 (pipe closure drained stdout) FAILED"
+    );
+    assert!(
+        !pipe_ev.stdout_sha256.is_empty(),
+        "Canary 54 (stdout digest non-empty) FAILED"
+    );
+
+    // 55. Exact three-token repo-relative command string parser/argv shape canary
+    let sut_cmd = "target/release/mamba run projects/mamba/tests/governance/gates/t1_oracle_hierarchy_inventory/probes/to_thread_gather_behavior_green.py";
+    let (prog, args) = parse_command_spec(sut_cmd).expect("Canary 55 parse sut_cmd FAILED");
+    assert_eq!(
+        prog, "target/release/mamba",
+        "Canary 55 (program token match) FAILED"
+    );
+    assert_eq!(
+        args,
+        vec![
+            "run",
+            "projects/mamba/tests/governance/gates/t1_oracle_hierarchy_inventory/probes/to_thread_gather_behavior_green.py"
+        ],
+        "Canary 55 (argv vector match) FAILED"
     );
 }
 
