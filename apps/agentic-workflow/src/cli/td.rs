@@ -3625,12 +3625,15 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
             configured_project,
         )?;
         let ir = crate::services::python_td::compile_python_td_project(&candidate)?;
+        let unit_tests =
+            crate::services::python_artifact_unit_tests::run_authored_unit_tests(&candidate)?;
         if args.json {
             println!("{}", serde_json::to_string(&ir)?);
         } else {
             println!(
-                "Python TD check passed: {} module(s), semantic digest {}",
+                "Python TD check passed: {} module(s), {} authored unit-test file(s), semantic digest {}",
                 ir.modules.len(),
+                unit_tests.file_count,
                 ir.semantic_digest
             );
         }

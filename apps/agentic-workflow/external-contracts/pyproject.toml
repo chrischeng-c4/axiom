@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 [tool.aw.python-artifact]
 protocol = "aw.python-artifact.v1"
 entrypoint = "src/runner.py"
-source_roots = ["src"]
+source_roots = ["src", "tests/unit"]
 dependency_files = ["pyproject.toml"]
 evidence_dir = "evidence"
 
@@ -17,7 +17,7 @@ efficiency_policy = "required"
 
 [[tool.aw.python-ec.cases]]
 id = "coordination-event-validation"
-artifact_id = "artifact:agentic-workflow/coordination-event-validation"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "fail-closed-coordination-event-validation"
 dimension = "behavior"
@@ -31,7 +31,7 @@ evidence_paths = ["evidence/coordination-event-validation.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "coordination-authority"
-artifact_id = "artifact:agentic-workflow/coordination-authority"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "aw-only-completion-and-decision-authority"
 dimension = "behavior"
@@ -45,7 +45,7 @@ evidence_paths = ["evidence/coordination-authority.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "coordination-contract-schema"
-artifact_id = "artifact:agentic-workflow/coordination-contract-schema"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "versioned-client-independent-coordination-contract"
 dimension = "behavior"
@@ -59,7 +59,7 @@ evidence_paths = ["evidence/coordination-contract-schema.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "python-ec-cache-safe-discovery"
-artifact_id = "artifact:agentic-workflow/python-ec-cache-safe-discovery"
+artifact_id = "artifact:project-local-td-and-ec-gates/public-contract"
 capability_id = "project-local-td-and-ec-gates"
 use_case_id = "python-ec-cache-safe-discovery"
 dimension = "behavior"
@@ -73,7 +73,7 @@ evidence_paths = ["evidence/python-ec-cache-safe-discovery.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-four-type-taxonomy"
-artifact_id = "artifact:agentic-workflow/work-item-four-type-taxonomy"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "canonical-four-type-wi-taxonomy"
 dimension = "behavior"
@@ -87,7 +87,7 @@ evidence_paths = ["evidence/work-item-four-type-taxonomy.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "issue-cache-canonical-change"
-artifact_id = "artifact:agentic-workflow/issue-cache-canonical-change"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "canonical-change-cache-round-trip"
 dimension = "behavior"
@@ -101,7 +101,7 @@ evidence_paths = ["evidence/issue-cache-canonical-change.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-type-templates"
-artifact_id = "artifact:agentic-workflow/work-item-type-templates"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "typed-work-item-authoring-profiles"
 dimension = "behavior"
@@ -115,7 +115,7 @@ evidence_paths = ["evidence/work-item-type-templates.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-spike-terminal"
-artifact_id = "artifact:agentic-workflow/work-item-spike-terminal"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "spike-terminal-convergence"
 dimension = "behavior"
@@ -129,7 +129,7 @@ evidence_paths = ["evidence/work-item-spike-terminal.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-report-triage"
-artifact_id = "artifact:agentic-workflow/work-item-report-triage"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "report-terminal-triage"
 dimension = "behavior"
@@ -143,7 +143,7 @@ evidence_paths = ["evidence/work-item-report-triage.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "shared-cli-issue-report-intake"
-artifact_id = "artifact:agentic-workflow/shared-cli-issue-report-intake"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "shared-cli-report-intake"
 dimension = "behavior"
@@ -157,7 +157,7 @@ evidence_paths = ["evidence/shared-cli-issue-report-intake.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-intake-health"
-artifact_id = "artifact:agentic-workflow/work-item-intake-health"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "typed-intake-health"
 dimension = "behavior"
@@ -171,7 +171,7 @@ evidence_paths = ["evidence/work-item-intake-health.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-type-vocabulary"
-artifact_id = "artifact:agentic-workflow/work-item-type-vocabulary"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "terminology-first-work-item-vocabulary"
 dimension = "behavior"
@@ -185,7 +185,7 @@ evidence_paths = ["evidence/work-item-type-vocabulary.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "authoritative-fixture-blocks-on-regenerability-gap"
-artifact_id = "artifact:agentic-workflow/authoritative-fixture-blocks-on-regenerability-gap"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "authoritative-fixture-blocks-on-regenerability-gap"
 dimension = "behavior"
@@ -199,7 +199,7 @@ evidence_paths = ["evidence/authoritative-fixture-blocks-on-regenerability-gap.j
 
 [[tool.aw.python-ec.cases]]
 id = "aw-core-client-core-concept-model-phase-less-admission"
-artifact_id = "artifact:agentic-workflow/aw-core-client-core-concept-model-phase-less-admission"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "core-concept-model-and-invariants"
 dimension = "behavior"
@@ -213,7 +213,7 @@ evidence_paths = ["evidence/aw-core-client-core-concept-model-phase-less-admissi
 
 [[tool.aw.python-ec.cases]]
 id = "aw-health-default-full-verification-smoke"
-artifact_id = "artifact:agentic-workflow/aw-health-default-full-verification-smoke"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "aw-health-default-full-verification-smoke"
 dimension = "behavior"
@@ -227,7 +227,7 @@ evidence_paths = ["evidence/aw-health-default-full-verification-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "capability-control-plane-markdown-capability-schema"
-artifact_id = "artifact:agentic-workflow/capability-control-plane-markdown-capability-schema"
+artifact_id = "artifact:capability-control-plane/public-contract"
 capability_id = "capability-control-plane"
 use_case_id = "markdown-capability-schema"
 dimension = "behavior"
@@ -241,7 +241,7 @@ evidence_paths = ["evidence/capability-control-plane-markdown-capability-schema.
 
 [[tool.aw.python-ec.cases]]
 id = "capability-control-plane-missing-readme-initialization"
-artifact_id = "artifact:agentic-workflow/capability-control-plane-missing-readme-initialization"
+artifact_id = "artifact:capability-control-plane/public-contract"
 capability_id = "capability-control-plane"
 use_case_id = "missing-readme-initialization"
 dimension = "behavior"
@@ -255,7 +255,7 @@ evidence_paths = ["evidence/capability-control-plane-missing-readme-initializati
 
 [[tool.aw.python-ec.cases]]
 id = "capability-scoped-dependency-verification"
-artifact_id = "artifact:agentic-workflow/capability-scoped-dependency-verification"
+artifact_id = "artifact:capability-control-plane/public-contract"
 capability_id = "capability-control-plane"
 use_case_id = "scoped-capability-verification"
 dimension = "behavior"
@@ -269,7 +269,7 @@ evidence_paths = ["evidence/capability-scoped-dependency-verification.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "external-fixture-reports-advisory-gap"
-artifact_id = "artifact:agentic-workflow/external-fixture-reports-advisory-gap"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "external-fixture-reports-advisory-gap"
 dimension = "behavior"
@@ -283,7 +283,7 @@ evidence_paths = ["evidence/external-fixture-reports-advisory-gap.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "self-hosting-bounded-admission"
-artifact_id = "artifact:agentic-workflow/self-hosting-bounded-admission"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "self-hosting-root-runner-policy"
 dimension = "efficiency"
@@ -298,7 +298,7 @@ evidence_paths = ["evidence/self-hosting-bounded-admission.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "self-hosting-health-policy"
-artifact_id = "artifact:agentic-workflow/self-hosting-health-policy"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "self-hosting-root-runner-policy"
 dimension = "behavior"
@@ -312,7 +312,7 @@ evidence_paths = ["evidence/self-hosting-health-policy.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "self-hosting-capability-admission"
-artifact_id = "artifact:agentic-workflow/self-hosting-capability-admission"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "self-hosting-root-runner-policy"
 dimension = "behavior"
@@ -326,7 +326,7 @@ evidence_paths = ["evidence/self-hosting-capability-admission.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "self-hosting-identity-stability"
-artifact_id = "artifact:agentic-workflow/self-hosting-identity-stability"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "self-hosting-root-runner-policy"
 dimension = "stability"
@@ -341,7 +341,7 @@ evidence_paths = ["evidence/self-hosting-identity-stability.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "self-hosting-wi-admission"
-artifact_id = "artifact:agentic-workflow/self-hosting-wi-admission"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "self-hosting-root-runner-policy"
 dimension = "behavior"
@@ -355,7 +355,7 @@ evidence_paths = ["evidence/self-hosting-wi-admission.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "standardize-audit-first-contract-test"
-artifact_id = "artifact:agentic-workflow/standardize-audit-first-contract-test"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "standardize-audit-first-contract-test"
 dimension = "behavior"
@@ -369,7 +369,7 @@ evidence_paths = ["evidence/standardize-audit-first-contract-test.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "td-artifact-producer-cli-fixture"
-artifact_id = "artifact:agentic-workflow/td-artifact-producer-cli-fixture"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "shared-artifact-producer-contract"
 dimension = "behavior"
@@ -383,7 +383,7 @@ evidence_paths = ["evidence/td-artifact-producer-cli-fixture.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "td-cb-lifecycle-automation-remove-td-merge-command"
-artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-remove-td-merge-command"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "remove-td-merge-command"
 dimension = "behavior"
@@ -397,7 +397,7 @@ evidence_paths = ["evidence/td-cb-lifecycle-automation-remove-td-merge-command.j
 
 [[tool.aw.python-ec.cases]]
 id = "wi-close-remote-real-cli"
-artifact_id = "artifact:agentic-workflow/wi-close-remote-real-cli"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "wi-close-remote-rehydration"
 dimension = "behavior"
@@ -411,7 +411,7 @@ evidence_paths = ["evidence/wi-close-remote-real-cli.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-typed-epic-owner"
-artifact_id = "artifact:agentic-workflow/wi-typed-epic-owner"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "typed-epic-owner-authoring"
 dimension = "behavior"
@@ -425,7 +425,7 @@ evidence_paths = ["evidence/wi-typed-epic-owner.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-typed-priority-label"
-artifact_id = "artifact:agentic-workflow/wi-typed-priority-label"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "typed-priority-label-authoring"
 dimension = "behavior"
@@ -439,7 +439,7 @@ evidence_paths = ["evidence/wi-typed-priority-label.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-create-help-command"
-artifact_id = "artifact:agentic-workflow/wi-create-help-command"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "capability-to-epic-planning"
 dimension = "behavior"
@@ -453,7 +453,7 @@ evidence_paths = ["evidence/wi-create-help-command.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-create-help-smoke"
-artifact_id = "artifact:agentic-workflow/wi-create-help-smoke"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "wi-create-help-smoke"
 dimension = "behavior"
@@ -467,7 +467,7 @@ evidence_paths = ["evidence/wi-create-help-smoke.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-create-remote-flag-tests"
-artifact_id = "artifact:agentic-workflow/wi-create-remote-flag-tests"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "wi-create-remote-flag-tests"
 dimension = "behavior"
@@ -481,7 +481,7 @@ evidence_paths = ["evidence/wi-create-remote-flag-tests.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-create-remote-unit-command"
-artifact_id = "artifact:agentic-workflow/wi-create-remote-unit-command"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "capability-to-epic-planning"
 dimension = "behavior"
@@ -495,7 +495,7 @@ evidence_paths = ["evidence/wi-create-remote-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-remove-agent-estimate-build"
-artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-build"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "capability-to-epic-planning"
 dimension = "behavior"
@@ -509,7 +509,7 @@ evidence_paths = ["evidence/wi-remove-agent-estimate-build.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-remove-agent-estimate-spec-check"
-artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-spec-check"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "capability-to-epic-planning"
 dimension = "behavior"
@@ -523,7 +523,7 @@ evidence_paths = ["evidence/wi-remove-agent-estimate-spec-check.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "wi-remove-agent-estimate-unit-command"
-artifact_id = "artifact:agentic-workflow/wi-remove-agent-estimate-unit-command"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "wi-remove-agent-estimate-unit-command"
 dimension = "behavior"
@@ -537,7 +537,7 @@ evidence_paths = ["evidence/wi-remove-agent-estimate-unit-command.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-planning-epic-to-change-atomization"
-artifact_id = "artifact:agentic-workflow/work-item-planning-epic-to-change-atomization"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "epic-to-change-atomization"
 dimension = "behavior"
@@ -551,7 +551,7 @@ evidence_paths = ["evidence/work-item-planning-epic-to-change-atomization.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "workflow-root-runner-parent-rollup-routing"
-artifact_id = "artifact:agentic-workflow/workflow-root-runner-parent-rollup-routing"
+artifact_id = "artifact:workflow-root-runner/public-contract"
 capability_id = "workflow-root-runner"
 use_case_id = "parent-rollup-routing"
 dimension = "behavior"
@@ -565,7 +565,7 @@ evidence_paths = ["evidence/workflow-root-runner-parent-rollup-routing.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "aw-core-client-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/aw-core-client-operational-efficiency"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "aw-core-client-operational-efficiency"
 dimension = "efficiency"
@@ -580,7 +580,7 @@ evidence_paths = ["evidence/aw-core-client-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "aw-core-client-operational-stability"
-artifact_id = "artifact:agentic-workflow/aw-core-client-operational-stability"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "aw-core-client-operational-stability"
 dimension = "stability"
@@ -595,7 +595,7 @@ evidence_paths = ["evidence/aw-core-client-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "capability-control-plane-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/capability-control-plane-operational-efficiency"
+artifact_id = "artifact:capability-control-plane/public-contract"
 capability_id = "capability-control-plane"
 use_case_id = "capability-control-plane-operational-efficiency"
 dimension = "efficiency"
@@ -610,7 +610,7 @@ evidence_paths = ["evidence/capability-control-plane-operational-efficiency.json
 
 [[tool.aw.python-ec.cases]]
 id = "capability-control-plane-operational-stability"
-artifact_id = "artifact:agentic-workflow/capability-control-plane-operational-stability"
+artifact_id = "artifact:capability-control-plane/public-contract"
 capability_id = "capability-control-plane"
 use_case_id = "capability-control-plane-operational-stability"
 dimension = "stability"
@@ -625,7 +625,7 @@ evidence_paths = ["evidence/capability-control-plane-operational-stability.json"
 
 [[tool.aw.python-ec.cases]]
 id = "existing-project-standardization-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/existing-project-standardization-operational-efficiency"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "existing-project-standardization-operational-efficiency"
 dimension = "efficiency"
@@ -640,7 +640,7 @@ evidence_paths = ["evidence/existing-project-standardization-operational-efficie
 
 [[tool.aw.python-ec.cases]]
 id = "existing-project-standardization-operational-stability"
-artifact_id = "artifact:agentic-workflow/existing-project-standardization-operational-stability"
+artifact_id = "artifact:existing-project-standardization/public-contract"
 capability_id = "existing-project-standardization"
 use_case_id = "existing-project-standardization-operational-stability"
 dimension = "stability"
@@ -655,7 +655,7 @@ evidence_paths = ["evidence/existing-project-standardization-operational-stabili
 
 [[tool.aw.python-ec.cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-operational-efficiency"
+artifact_id = "artifact:manual-evidence-artifacts/public-contract"
 capability_id = "manual-evidence-artifacts"
 use_case_id = "manual-evidence-artifacts-operational-efficiency"
 dimension = "efficiency"
@@ -670,7 +670,7 @@ evidence_paths = ["evidence/manual-evidence-artifacts-operational-efficiency.jso
 
 [[tool.aw.python-ec.cases]]
 id = "manual-evidence-artifacts-operational-stability"
-artifact_id = "artifact:agentic-workflow/manual-evidence-artifacts-operational-stability"
+artifact_id = "artifact:manual-evidence-artifacts/public-contract"
 capability_id = "manual-evidence-artifacts"
 use_case_id = "manual-evidence-artifacts-operational-stability"
 dimension = "stability"
@@ -685,7 +685,7 @@ evidence_paths = ["evidence/manual-evidence-artifacts-operational-stability.json
 
 [[tool.aw.python-ec.cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-operational-efficiency"
+artifact_id = "artifact:project-local-td-and-ec-gates/public-contract"
 capability_id = "project-local-td-and-ec-gates"
 use_case_id = "project-local-td-and-ec-gates-operational-efficiency"
 dimension = "efficiency"
@@ -700,7 +700,7 @@ evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-efficiency
 
 [[tool.aw.python-ec.cases]]
 id = "project-local-td-and-ec-gates-operational-stability"
-artifact_id = "artifact:agentic-workflow/project-local-td-and-ec-gates-operational-stability"
+artifact_id = "artifact:project-local-td-and-ec-gates/public-contract"
 capability_id = "project-local-td-and-ec-gates"
 use_case_id = "project-local-td-and-ec-gates-operational-stability"
 dimension = "stability"
@@ -715,7 +715,7 @@ evidence_paths = ["evidence/project-local-td-and-ec-gates-operational-stability.
 
 [[tool.aw.python-ec.cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-operational-efficiency"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "td-cb-lifecycle-automation-operational-efficiency"
 dimension = "efficiency"
@@ -730,7 +730,7 @@ evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-efficiency.js
 
 [[tool.aw.python-ec.cases]]
 id = "td-cb-lifecycle-automation-operational-stability"
-artifact_id = "artifact:agentic-workflow/td-cb-lifecycle-automation-operational-stability"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "td-cb-lifecycle-automation-operational-stability"
 dimension = "stability"
@@ -745,7 +745,7 @@ evidence_paths = ["evidence/td-cb-lifecycle-automation-operational-stability.jso
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-planning-operational-efficiency"
-artifact_id = "artifact:agentic-workflow/work-item-planning-operational-efficiency"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "work-item-planning-operational-efficiency"
 dimension = "efficiency"
@@ -760,7 +760,7 @@ evidence_paths = ["evidence/work-item-planning-operational-efficiency.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "work-item-planning-operational-stability"
-artifact_id = "artifact:agentic-workflow/work-item-planning-operational-stability"
+artifact_id = "artifact:work-item-planning/public-contract"
 capability_id = "work-item-planning"
 use_case_id = "work-item-planning-operational-stability"
 dimension = "stability"
@@ -775,7 +775,7 @@ evidence_paths = ["evidence/work-item-planning-operational-stability.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "python-ec-only-authoring"
-artifact_id = "artifact:agentic-workflow/python-ec-only-authoring"
+artifact_id = "artifact:project-local-td-and-ec-gates/public-contract"
 capability_id = "project-local-td-and-ec-gates"
 use_case_id = "python-ec-only-authoring"
 dimension = "behavior"
@@ -789,7 +789,7 @@ evidence_paths = ["evidence/python-ec-only-authoring.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "td-create-dirty-persistent-branch"
-artifact_id = "artifact:agentic-workflow/td-create-dirty-persistent-branch"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "td-create-dirty-persistent-branch"
 dimension = "behavior"
@@ -803,7 +803,7 @@ evidence_paths = ["evidence/td-create-dirty-persistent-branch.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "td-existing-workspace-dirty-persistent-branch"
-artifact_id = "artifact:agentic-workflow/td-existing-workspace-dirty-persistent-branch"
+artifact_id = "artifact:td-cb-lifecycle-automation/public-contract"
 capability_id = "td-cb-lifecycle-automation"
 use_case_id = "td-existing-workspace-dirty-persistent-branch"
 dimension = "behavior"
@@ -816,21 +816,21 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 evidence_paths = ["evidence/td-existing-workspace-dirty-persistent-branch.json"]
 [[tool.aw.python-ec.cases]]
 id = "project-health-total-observation"
-artifact_id = "artifact:agentic-workflow/project-health-total-observation"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "health-total-observation-and-readiness-gate"
 dimension = "behavior"
 applicability = "td"
 test_path = "src/cases/project-health-total-observation.py"
-promise = "Every resolvable health request emits a structured envelope and matching payload, focused sections isolate unrelated evaluators, and focused failed or unavailable axes retain fail-closed exit codes while not-applicable remains successful."
-oracle = "Isolated Python-first projects make the mutation evidence directory unreadable to inject evaluator unavailability, switch advisory to required policy, remove the poison to produce ordinary failure, and use locked self-hosting fixtures to prove aggregate required-unavailable is exactly indeterminate without a readiness claim, advisory-unavailable remains degraded and ready, and required-failed is blocked and nonzero. Every aggregate assessment, readiness state, production status, and mutation-axis result is compared with its durable payload; focused capability must leave the poisoned mutation axis not configured, proving the evaluator was not called."
+promise = "Project semantic health contains exactly ec_accepts_td and ec_td_alignment: TD-applicable EC evidence accepts or rejects TD, while public EC/TD identities are compared in both directions without requiring EC coverage for internal TD artifacts."
+oracle = "An isolated Python-first project drives the real aw health command with passing, missing, and identity-mutated EC/TD artifacts. The independent Python oracle rejects any third semantic cell, requires result/payload correspondence, proves matching evidence and identities pass, proves EC-only and public-TD-only identities are reported in opposite set differences, and proves an internal TD-only artifact is ignored."
 target = "rust"
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 evidence_paths = ["evidence/project-health-total-observation.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "python-td-global-artifact-identity"
-artifact_id = "artifact:agentic-workflow/python-td-global-artifact-identity"
+artifact_id = "artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 use_case_id = "python-td-global-artifact-identity"
 dimension = "behavior"

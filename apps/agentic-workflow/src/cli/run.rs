@@ -4001,6 +4001,8 @@ mod tests {
                 crate::cli::project::ProjectHealthAssessment::Blocked
             },
             axis_assessments: std::collections::BTreeMap::new(),
+            semantic_health:
+                crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::not_evaluated(),
             capability_ready: true,
             managed_ready: true,
             semantic_ready: true,

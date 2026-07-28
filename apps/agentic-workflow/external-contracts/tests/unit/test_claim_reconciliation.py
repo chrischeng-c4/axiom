@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 import claim_reconciliation as subject  # noqa: E402

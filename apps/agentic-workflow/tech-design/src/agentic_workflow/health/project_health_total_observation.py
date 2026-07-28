@@ -1,4 +1,4 @@
-"""Canonical Python TD for the Agentic Workflow health observation contract.
+"""Canonical Python TD for the two-cell semantic-health contract.
 
 @spec #2785
 """
@@ -9,72 +9,62 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-__aw_artifact_id__ = "artifact:health/project-health-total-observation"
+__aw_artifact_id__ = "artifact:agentic-workflow/project-health-total-observation"
 
 
-class AxisRequirement(str, Enum):
-    REQUIRED = "required"
-    ADVISORY = "advisory"
-    NOT_APPLICABLE = "not_applicable"
-
-
-class AxisEvaluation(str, Enum):
+class CellEvaluation(str, Enum):
     PASSED = "passed"
     FAILED = "failed"
     UNAVAILABLE = "unavailable"
     NOT_EVALUATED = "not_evaluated"
-    NOT_CONFIGURED = "not_configured"
-    NOT_APPLICABLE = "not_applicable"
 
 
 class HealthAssessment(str, Enum):
     HEALTHY = "healthy"
-    DEGRADED = "degraded"
     BLOCKED = "blocked"
     INDETERMINATE = "indeterminate"
 
 
 @dataclass(frozen=True)
-class AxisAssessment:
-    requirement: AxisRequirement
-    evaluation: AxisEvaluation
+class EcAcceptsTd:
+    evaluation: CellEvaluation
     findings: tuple[str, ...] = ()
 
 
-def reduce_health(axes: tuple[AxisAssessment, ...]) -> HealthAssessment:
-    if any(
-        axis.requirement is AxisRequirement.REQUIRED
-        and axis.evaluation is AxisEvaluation.FAILED
-        for axis in axes
-    ):
+@dataclass(frozen=True)
+class EcTdAlignment:
+    missing_in_td: tuple[str, ...] = ()
+    missing_in_ec: tuple[str, ...] = ()
+
+    @property
+    def evaluation(self) -> CellEvaluation:
+        if self.missing_in_td or self.missing_in_ec:
+            return CellEvaluation.FAILED
+        return CellEvaluation.PASSED
+
+
+@dataclass(frozen=True)
+class SemanticHealth:
+    ec_accepts_td: EcAcceptsTd
+    ec_td_alignment: EcTdAlignment
+
+
+def reduce_health(health: SemanticHealth) -> HealthAssessment:
+    cells = (
+        health.ec_accepts_td.evaluation,
+        health.ec_td_alignment.evaluation,
+    )
+    if CellEvaluation.FAILED in cells:
         return HealthAssessment.BLOCKED
     if any(
-        axis.requirement is AxisRequirement.REQUIRED
-        and axis.evaluation
-        in {
-            AxisEvaluation.UNAVAILABLE,
-            AxisEvaluation.NOT_EVALUATED,
-            AxisEvaluation.NOT_CONFIGURED,
-        }
-        for axis in axes
+        cell in {CellEvaluation.UNAVAILABLE, CellEvaluation.NOT_EVALUATED}
+        for cell in cells
     ):
         return HealthAssessment.INDETERMINATE
-    if any(
-        axis.requirement is AxisRequirement.ADVISORY
-        and axis.evaluation in {AxisEvaluation.FAILED, AxisEvaluation.UNAVAILABLE}
-        for axis in axes
-    ):
-        return HealthAssessment.DEGRADED
     return HealthAssessment.HEALTHY
 
 
 def aggregate_exit_code(assessment: HealthAssessment) -> int:
     if assessment in {HealthAssessment.BLOCKED, HealthAssessment.INDETERMINATE}:
-        return 1
-    return 0
-
-
-def focused_exit_code(evaluation: AxisEvaluation) -> int:
-    if evaluation in {AxisEvaluation.FAILED, AxisEvaluation.UNAVAILABLE}:
         return 1
     return 0

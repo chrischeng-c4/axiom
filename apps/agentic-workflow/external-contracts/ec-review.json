@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "agentic-workflow",
-  "source_digest": "sha256:c05e0ec76a1ffa3ce7346da537b18482bf731d512b8488f2b644ea7b44e612d6",
+  "source_digest": "sha256:8b7e962a6263f0c4037af3e0fc766206c5f280b21576aa4790931a1a1bede155",
   "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:/root/review_self_hosting_ec",
-  "reviewed_at": "2026-07-28T04:09:33.532683+00:00",
-  "summary": "Accepted: #2785 pins focused isolation and aggregate health policy with durable correspondence; #2786 pins complete Python TD identity and mutation inventory; the sibling takeover case proves not-applicable and recorded states plus exact durable audit producer, file, health, and payload correspondence.",
+  "reviewed_at": "2026-07-28T06:27:39.081808+00:00",
+  "summary": "Accepted for the exact reviewed digest: all 58 configured cases pass structural inventory checks, and the revised two-cell project-health EC exercises healthy, explicit failed-evidence, missing-evidence, internal-artifact, behavior-only drift, and artifact-only drift outcomes through the public aw health command with an independent Python oracle. The healthy branch pins one executed and one passed case, the failed branch pins exit_code=17 rejection to fixture-health, the alignment branches pin both directional set differences, and authored oracle tests reject zero-case false greens.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -15,5 +15,6 @@
     "loopholes_checked": true,
     "false_green_risk_checked": true
   },
-  "findings": []
+  "findings": [],
+  "target_path": "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
 }

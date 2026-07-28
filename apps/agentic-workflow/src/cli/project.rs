@@ -147,6 +147,9 @@ pub struct ProjectHealthReport {
     pub assessment: ProjectHealthAssessment,
     /// Uniform policy/evaluation projection for every health axis.
     pub axis_assessments: BTreeMap<String, ProjectHealthAxisAssessment>,
+    /// The complete semantic-health contract. Operational axes remain
+    /// diagnostics; only these two cells decide the semantic assessment.
+    pub semantic_health: crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth,
     pub capability_ready: bool,
     pub managed_ready: bool,
     pub semantic_ready: bool,
@@ -772,6 +775,14 @@ fn build_health_report_with_options_and_plan(
                     ProjectHealthAxisRequirement::Required,
                     error,
                 );
+            }
+        }
+        if post.semantic {
+            if let Err(error) = apply_ec_td_semantic_health_to_report(&mut report) {
+                report.semantic_health =
+                    crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::unavailable(
+                        format!("EC/TD semantic-health evaluator unavailable: {error}"),
+                    );
             }
         }
         if post.claims {
@@ -1464,6 +1475,8 @@ impl ProjectHealthReport {
                 ProjectHealthAssessment::Blocked
             },
             axis_assessments: BTreeMap::new(),
+            semantic_health:
+                crate::services::python_ec_td_semantic_health::PythonEcTdSemanticHealth::not_evaluated(),
             capability_ready,
             managed_ready,
             semantic_ready,
@@ -1808,38 +1821,23 @@ impl ProjectHealthReport {
         axes.extend(unavailable);
         self.axis_assessments = axes;
 
-        let required_failed = self.axis_assessments.values().any(|axis| {
-            axis.requirement == ProjectHealthAxisRequirement::Required
-                && axis.evaluation == ProjectHealthAxisEvaluation::Failed
-        });
-        let required_unknown = self.axis_assessments.values().any(|axis| {
-            axis.requirement == ProjectHealthAxisRequirement::Required
-                && matches!(
-                    axis.evaluation,
-                    ProjectHealthAxisEvaluation::Unavailable
-                        | ProjectHealthAxisEvaluation::NotEvaluated
-                        | ProjectHealthAxisEvaluation::NotConfigured
-                )
-        });
-        let advisory_degraded = self.axis_assessments.values().any(|axis| {
-            axis.requirement == ProjectHealthAxisRequirement::Advisory
-                && matches!(
-                    axis.evaluation,
-                    ProjectHealthAxisEvaluation::Failed | ProjectHealthAxisEvaluation::Unavailable
-                )
-        });
-        self.assessment =
-            if required_failed || matches!(self.production_status, ProductionStatus::Blocked) {
-                ProjectHealthAssessment::Blocked
-            } else if required_unknown
-                || matches!(self.production_status, ProductionStatus::NotEvaluated)
-            {
-                ProjectHealthAssessment::Indeterminate
-            } else if advisory_degraded {
-                ProjectHealthAssessment::Degraded
-            } else {
-                ProjectHealthAssessment::Healthy
-            };
+        use crate::services::python_ec_td_semantic_health::SemanticCellEvaluation;
+        let cells = [
+            self.semantic_health.ec_accepts_td.evaluation,
+            self.semantic_health.ec_td_alignment.evaluation,
+        ];
+        self.assessment = if cells.contains(&SemanticCellEvaluation::Failed) {
+            ProjectHealthAssessment::Blocked
+        } else if cells.iter().any(|evaluation| {
+            matches!(
+                evaluation,
+                SemanticCellEvaluation::Unavailable | SemanticCellEvaluation::NotEvaluated
+            )
+        }) {
+            ProjectHealthAssessment::Indeterminate
+        } else {
+            ProjectHealthAssessment::Healthy
+        };
     }
 
     /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#logic
@@ -2403,6 +2401,7 @@ pub fn project_health_compact_summary(report: &ProjectHealthReport) -> serde_jso
             "action": "health",
             "project": &report.project,
             "assessment": report.assessment,
+            "semantic_health": &report.semantic_health,
             "completion": project_health_compact_completion(report),
             "next": project_health_next(report),
             "readiness": project_health_compact_readiness(report),
@@ -2479,6 +2478,7 @@ pub fn project_health_section_summary(
         ProjectHealthSection::Ec => project_ec_gate_summary(&report.ec),
         ProjectHealthSection::Mutation => unreachable!(),
         ProjectHealthSection::Spec => serde_json::json!({
+            "semantic_health": &report.semantic_health,
             "python_spec": &report.python_artifact,
             "mutation": &report.mutation_adequacy,
             "production_ready": report.production_ready,
@@ -2672,6 +2672,7 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
             "action": "health",
             "project": &report.project,
             "assessment": report.assessment,
+            "semantic_health": &report.semantic_health,
             "completion": project_health_completion(report),
             "next": project_health_next(report),
             "readiness": project_health_readiness_summary(report),
@@ -3937,6 +3938,7 @@ struct HealthVerificationFlags {
 struct HealthPostEvaluationPlan {
     ec: bool,
     python_artifact: bool,
+    semantic: bool,
     claims: bool,
     mutation: bool,
 }
@@ -3946,6 +3948,7 @@ impl HealthPostEvaluationPlan {
         Self {
             ec: true,
             python_artifact: true,
+            semantic: true,
             claims: true,
             mutation: true,
         }
@@ -3963,13 +3966,15 @@ impl HealthPostEvaluationPlan {
             ) => Self::all(),
             Some(ProjectHealthSection::Ec) => Self {
                 ec: true,
-                python_artifact: false,
+                python_artifact: true,
+                semantic: true,
                 claims: false,
                 mutation: false,
             },
             Some(ProjectHealthSection::Claims) => Self {
                 ec: true,
                 python_artifact: false,
+                semantic: true,
                 claims: true,
                 mutation: false,
             },
@@ -3990,6 +3995,7 @@ impl HealthPostEvaluationPlan {
             ) => Self {
                 ec: false,
                 python_artifact: false,
+                semantic: true,
                 claims: false,
                 mutation: false,
             },
@@ -4594,6 +4600,14 @@ pub(crate) fn apply_python_artifact_readiness_to_report(
     let readiness =
         crate::services::python_artifact_readiness::evaluate(&project_root, &report.project)?;
     apply_python_artifact_readiness_projection(report, readiness);
+    Ok(())
+}
+
+fn apply_ec_td_semantic_health_to_report(report: &mut ProjectHealthReport) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    report.semantic_health =
+        crate::services::python_ec_td_semantic_health::evaluate(&project_root, &report.project)?;
+    report.refresh_observation_assessment();
     Ok(())
 }
 
@@ -5383,6 +5397,11 @@ fn print_health_section(report: &ProjectHealthReport, section: ProjectHealthSect
 fn print_health_report(report: &ProjectHealthReport) {
     println!("project health: {} ({:?})", report.project, report.status);
     println!(
+        "semantic_health: ec_accepts_td={:?}, ec_td_alignment={:?}",
+        report.semantic_health.ec_accepts_td.evaluation,
+        report.semantic_health.ec_td_alignment.evaluation
+    );
+    println!(
         "production_ready: {}",
         if report.production_ready { "yes" } else { "no" }
     );
@@ -5843,9 +5862,31 @@ mod tests {
         }
     }
 
+    fn mark_semantic_health_passed(report: &mut ProjectHealthReport) {
+        use crate::services::python_ec_td_semantic_health::{
+            EcAcceptsTdCell, EcTdAlignmentCell, PythonEcTdSemanticHealth, SemanticCellEvaluation,
+        };
+        report.semantic_health = PythonEcTdSemanticHealth {
+            ec_accepts_td: EcAcceptsTdCell {
+                evaluation: SemanticCellEvaluation::Passed,
+                case_count: 1,
+                passed_count: 1,
+                failed_cases: Vec::new(),
+                missing_evidence_cases: Vec::new(),
+                findings: Vec::new(),
+            },
+            ec_td_alignment: EcTdAlignmentCell {
+                evaluation: SemanticCellEvaluation::Passed,
+                missing_in_td: Vec::new(),
+                missing_in_ec: Vec::new(),
+            },
+        };
+    }
+
     #[test]
-    fn health_assessment_degrades_for_advisory_failure_without_blocking_readiness() {
+    fn operational_advisory_failure_does_not_create_a_semantic_cell() {
         let mut report = ready_project_health_report("agentic-workflow");
+        mark_semantic_health_passed(&mut report);
         report.mutation_adequacy.enabled = true;
         report.mutation_adequacy.ready = false;
         report.mutation_adequacy.status =
@@ -5857,7 +5898,7 @@ mod tests {
 
         report.refresh_observation_assessment();
 
-        assert_eq!(report.assessment, ProjectHealthAssessment::Degraded);
+        assert_eq!(report.assessment, ProjectHealthAssessment::Healthy);
         assert!(report.production_ready);
         assert_eq!(
             report.axis_assessments["mutation"].evaluation,
@@ -5866,8 +5907,9 @@ mod tests {
     }
 
     #[test]
-    fn required_evaluator_unavailability_is_indeterminate_not_failed() {
+    fn operational_evaluator_unavailability_does_not_redefine_semantic_health() {
         let mut report = ready_project_health_report("demo");
+        mark_semantic_health_passed(&mut report);
 
         report.record_axis_unavailable(
             "claims",
@@ -5875,12 +5917,29 @@ mod tests {
             "fixture transport error",
         );
 
-        assert_eq!(report.assessment, ProjectHealthAssessment::Indeterminate);
+        assert_eq!(report.assessment, ProjectHealthAssessment::Healthy);
         assert_eq!(report.production_status, ProductionStatus::NotEvaluated);
         assert_eq!(
             report.axis_assessments["claims"].evaluation,
             ProjectHealthAxisEvaluation::Unavailable
         );
+    }
+
+    #[test]
+    fn semantic_alignment_failure_blocks_the_assessment() {
+        use crate::services::python_ec_td_semantic_health::SemanticCellEvaluation;
+        let mut report = ready_project_health_report("demo");
+        mark_semantic_health_passed(&mut report);
+        report.semantic_health.ec_td_alignment.evaluation = SemanticCellEvaluation::Failed;
+        report
+            .semantic_health
+            .ec_td_alignment
+            .missing_in_ec
+            .push("artifact:demo/td-only".to_string());
+
+        report.refresh_observation_assessment();
+
+        assert_eq!(report.assessment, ProjectHealthAssessment::Blocked);
     }
 
     #[test]
@@ -5892,6 +5951,7 @@ mod tests {
             HealthPostEvaluationPlan {
                 ec: false,
                 python_artifact: false,
+                semantic: true,
                 claims: false,
                 mutation: false,
             }

@@ -8,6 +8,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from oracles.project_health_contract import (
+    assert_alignment,
+    assert_ec_accepts_td,
+    assert_two_cell_health,
+)
 from wi_contract_fixture import final_json, run_aw
 
 
@@ -176,10 +181,11 @@ requires-python = ">=3.11"
     )
     (project / "tech-design/src/fixture_health.py").write_text(
         """\
-__aw_artifact_id__ = "artifact:fixture/health"
+__aw_artifact_id__ = "artifact:fixture/fixture-health"
+__aw_public_contract__ = True
 
 
-def fixture_health() -> bool:
+def fixture_health_contract() -> bool:
     return True
 """,
         encoding="utf-8",
@@ -249,7 +255,14 @@ mutation_source_path = "projects/fixture/src"
     evidence_path = project / "evidence/mutation-adequacy"
     evidence_path.parent.mkdir(parents=True)
     (project / "external-contracts/evidence/fixture-health.json").write_text(
-        '{"status":"passed"}\n',
+        json.dumps(
+            {
+                "protocol": "aw.python-ec.evidence.v1",
+                "case_id": "fixture-health",
+                "exit_code": 0,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     if poison_evidence_directory:
@@ -283,22 +296,209 @@ def _assert_aggregate_outcome_correspondence(
     result: dict[str, Any],
     payload: dict[str, Any],
 ) -> None:
-    assert result["readiness"]["assessment"] == result["assessment"]
-    assert payload["assessment"] == result["assessment"]
-    assert (
-        payload["production_ready"]
-        == result["readiness"]["production_ready"]
-    )
-    assert (
-        payload["production_status"]
-        == result["readiness"]["production_status"]
-    )
-    assert payload["axis_assessments"]["mutation"]["requirement"] == (
-        result["axes"]["mutation"]["requirement"]
-    )
-    assert payload["axis_assessments"]["mutation"]["evaluation"] == (
-        result["axes"]["mutation"]["evaluation"]
-    )
+    assert_two_cell_health(result, payload)
+
+
+def _verify_two_cell_semantic_health() -> list[str]:
+    with tempfile.TemporaryDirectory(
+        prefix="aw-python-ec-two-cell-health-"
+    ) as raw_root:
+        root = Path(raw_root)
+        _write_total_observation_fixture(
+            root,
+            mutation_policy="advisory",
+            poison_evidence_directory=False,
+        )
+        project = root / "projects/fixture"
+
+        healthy = run_aw(root, "health", "--project", "fixture")
+        healthy_result = final_json(healthy)
+        healthy_payload = json.loads(
+            Path(healthy_result["payload_path"]).read_text(encoding="utf-8")
+        )
+        assert healthy_result["assessment"] == "healthy"
+        _assert_aggregate_outcome_correspondence(
+            healthy_result,
+            healthy_payload,
+        )
+        assert (
+            healthy_result["semantic_health"]["ec_accepts_td"]["evaluation"]
+            == "passed"
+        )
+        assert_ec_accepts_td(
+            healthy_result["semantic_health"]["ec_accepts_td"],
+            evaluation="passed",
+            case_count=1,
+            passed_count=1,
+            failed_cases=[],
+            missing_evidence_cases=[],
+        )
+        assert_alignment(
+            healthy_result["semantic_health"]["ec_td_alignment"],
+            missing_in_td=[],
+            missing_in_ec=[],
+        )
+
+        fixture_evidence = (
+            project / "external-contracts/evidence/fixture-health.json"
+        )
+        passing_evidence = fixture_evidence.read_text(encoding="utf-8")
+        fixture_evidence.write_text(
+            json.dumps(
+                {
+                    "protocol": "aw.python-ec.evidence.v1",
+                    "case_id": "fixture-health",
+                    "exit_code": 17,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rejected = run_aw(
+            root,
+            "health",
+            "--project",
+            "fixture",
+            expect_success=False,
+        )
+        rejected_result = final_json(rejected)
+        rejected_payload = json.loads(
+            Path(rejected_result["payload_path"]).read_text(encoding="utf-8")
+        )
+        assert rejected_result["assessment"] == "blocked"
+        _assert_aggregate_outcome_correspondence(
+            rejected_result,
+            rejected_payload,
+        )
+        assert_ec_accepts_td(
+            rejected_result["semantic_health"]["ec_accepts_td"],
+            evaluation="failed",
+            case_count=1,
+            passed_count=0,
+            failed_cases=["fixture-health"],
+            missing_evidence_cases=[],
+        )
+        fixture_evidence.write_text(passing_evidence, encoding="utf-8")
+
+        (project / "tech-design/src/internal.py").write_text(
+            """\
+__aw_artifact_id__ = "artifact:fixture/internal"
+
+
+def internal() -> bool:
+    return True
+""",
+            encoding="utf-8",
+        )
+        internal_extra = final_json(
+            run_aw(root, "health", "--project", "fixture")
+        )
+        assert_alignment(
+            internal_extra["semantic_health"]["ec_td_alignment"],
+            missing_in_td=[],
+            missing_in_ec=[],
+        )
+
+        inventory_path = project / "external-contracts/pyproject.toml"
+        inventory = inventory_path.read_text(encoding="utf-8")
+        inventory_path.write_text(
+            inventory.replace(
+                'use_case_id = "fixture-health-contract"',
+                'use_case_id = "fixture-health-renamed"',
+            ),
+            encoding="utf-8",
+        )
+        behavior_misaligned = run_aw(
+            root,
+            "health",
+            "--project",
+            "fixture",
+            expect_success=False,
+        )
+        behavior_result = final_json(behavior_misaligned)
+        behavior_payload = json.loads(
+            Path(behavior_result["payload_path"]).read_text(encoding="utf-8")
+        )
+        assert behavior_result["assessment"] == "blocked"
+        _assert_aggregate_outcome_correspondence(
+            behavior_result,
+            behavior_payload,
+        )
+        assert_alignment(
+            behavior_result["semantic_health"]["ec_td_alignment"],
+            missing_in_td=[
+                "artifact:fixture/fixture-health#fixture-health-renamed"
+            ],
+            missing_in_ec=[
+                "artifact:fixture/fixture-health#fixture-health-contract"
+            ],
+        )
+        inventory_path.write_text(inventory, encoding="utf-8")
+
+        inventory_path.write_text(
+            inventory.replace(
+                'artifact_id = "artifact:fixture/fixture-health"',
+                'artifact_id = "artifact:fixture/ec-only"',
+            ),
+            encoding="utf-8",
+        )
+        misaligned = run_aw(
+            root,
+            "health",
+            "--project",
+            "fixture",
+            expect_success=False,
+        )
+        misaligned_result = final_json(misaligned)
+        misaligned_payload = json.loads(
+            Path(misaligned_result["payload_path"]).read_text(encoding="utf-8")
+        )
+        assert misaligned_result["assessment"] == "blocked"
+        _assert_aggregate_outcome_correspondence(
+            misaligned_result,
+            misaligned_payload,
+        )
+        assert_alignment(
+            misaligned_result["semantic_health"]["ec_td_alignment"],
+            missing_in_td=["artifact:fixture/ec-only#fixture-health-contract"],
+            missing_in_ec=[
+                "artifact:fixture/fixture-health#fixture-health-contract"
+            ],
+        )
+
+        inventory_path.write_text(inventory, encoding="utf-8")
+        (project / "external-contracts/evidence/fixture-health.json").unlink()
+        missing_evidence = run_aw(
+            root,
+            "health",
+            "--project",
+            "fixture",
+            expect_success=False,
+        )
+        missing_result = final_json(missing_evidence)
+        missing_payload = json.loads(
+            Path(missing_result["payload_path"]).read_text(encoding="utf-8")
+        )
+        assert missing_result["assessment"] == "indeterminate"
+        _assert_aggregate_outcome_correspondence(
+            missing_result,
+            missing_payload,
+        )
+        assert (
+            missing_result["semantic_health"]["ec_accepts_td"]["evaluation"]
+            == "not_evaluated"
+        )
+
+    return [
+        "matching TD-applicable EC evidence makes ec_accepts_td pass",
+        "explicit failing EC evidence rejects TD with exact case counts",
+        "matching executable public behaviors make ec_td_alignment pass",
+        "internal TD artifacts do not require EC coverage",
+        "same-artifact behavior drift is reported in both directions",
+        "EC-only and public-TD-only behaviors are reported in opposite directions",
+        "missing TD-stage evidence is indeterminate rather than false-green",
+        "stdout and durable payload expose exactly the same two semantic cells",
+    ]
 
 
 def _health_snapshot(*, authoritative: bool) -> dict[str, Any]:
@@ -332,6 +532,9 @@ def _health_snapshot(*, authoritative: bool) -> dict[str, Any]:
 
 def _verify_health(case_id: str) -> list[str]:
     if case_id == "project-health-total-observation":
+        return _verify_two_cell_semantic_health()
+
+    if case_id == "__retired-project-health-total-observation":
         with tempfile.TemporaryDirectory(
             prefix="aw-python-ec-health-total-"
         ) as raw_root:

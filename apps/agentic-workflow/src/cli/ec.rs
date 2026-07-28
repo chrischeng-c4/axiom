@@ -2176,14 +2176,25 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
         return emit_python_ec_scaffold_required(&project_root, &ctx, &args);
     }
     let summary = check_ec_context(&ctx)?;
+    let authored_unit_tests = if ctx.artifact_model
+        == crate::models::project::ProjectArtifactModel::PythonV1
+    {
+        Some(crate::services::python_artifact_unit_tests::run_authored_unit_tests(&ctx.ec_root)?)
+    } else {
+        None
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
         if summary.clean {
             if summary.configured {
                 println!(
-                    "ec check {}: clean ({} case(s))",
-                    summary.project, summary.case_count
+                    "ec check {}: clean ({} case(s), {} authored unit-test file(s))",
+                    summary.project,
+                    summary.case_count,
+                    authored_unit_tests
+                        .as_ref()
+                        .map_or(0, |report| report.file_count)
                 );
             } else {
                 println!(

@@ -3,14 +3,14 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-generated_at = "2026-07-28T04:09:33.636931+00:00"
-ir_digest = "sha256:ce0bdb88e75ddaf562ed9152a9980adacfee9bd0beb300f8d1504f95bb5b86f6"
-source_digest = "sha256:7d2b8286f61471c33a4cc4256af31a6b5aec5c941f0a5d8968f9739758b0bfec"
+generated_at = "2026-07-28T06:32:52.053959+00:00"
+ir_digest = "sha256:e1793c04411c1e6d2fade03e0b7285ac7fa4f4d28c2fed8c9781e9ce9631aa92"
+source_digest = "sha256:6626cb95da78a2f5087f72c9c7516b8d8c332e69c24b3af993ad8e5b4c2613ef"
 tool_contracts = []
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/pyproject.toml"
-digest = "sha256:79fcc49e581b6ca3faf21b5de767e03b3cabc33074ad8cd18ac0dc942ea021cc"
+digest = "sha256:f9cd505cc6b2646274bbab8127ea4b89cecc26d178e8886b054201ed2cc6726c"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/authoritative-fixture-blocks-on-regenerability-gap.py"
@@ -90,7 +90,7 @@ digest = "sha256:9e38b77fe1b00ecf871f41533ac9858ac89326b2f7a9c9dd88f824cb7dc42df
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-health-total-observation.py"
-digest = "sha256:2eaad3b82b31d5b8151b7387c9a1ef2a08428a138ca5db1caefdfcd766ffe657"
+digest = "sha256:6a7d532eba3a25441352fee9c5c6b901a36332e465e6f540a76d22c72aadefac"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/cases/project-local-td-and-ec-gates-operational-efficiency.py"
@@ -270,7 +270,7 @@ digest = "sha256:bc485dcbb3879fc10c50b8925683259f64a31f02ae57d2a0bed577472a9905f
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_health.py"
-digest = "sha256:8dba81fef39a9f5122f86798572061d4f521ef998d24e450c214edffe9f2454a"
+digest = "sha256:0bcf72bd85a62a2ffca05b9ba660f641c2270a6292edfdc4ef98f92e3dd74843"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/migration_clusters/existing_service_kit.py"
@@ -313,12 +313,24 @@ path = "apps/agentic-workflow/external-contracts/src/migration_reconciliation.py
 digest = "sha256:be59adbe9070c888611272ec539bab31771e683e522debf5d724639a076565eb"
 
 [[sources]]
+path = "apps/agentic-workflow/external-contracts/src/oracles/project_health_contract.py"
+digest = "sha256:c3d693e76e0f9fade7e481bb641fefc90a25df9de71c7ba3c6f0585c096e7e2c"
+
+[[sources]]
 path = "apps/agentic-workflow/external-contracts/src/runner.py"
 digest = "sha256:3dc90509a8c8fd1472e80871b5ad17c133e126932d381eb239a7734d55ad824e"
 
 [[sources]]
 path = "apps/agentic-workflow/external-contracts/src/wi_contract_fixture.py"
 digest = "sha256:749ccbc6a7eecc86ff8a3163b3b04dfb20aad54814832ca96df24a3ed15774d4"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/tests/unit/test_claim_reconciliation.py"
+digest = "sha256:fe11e0054e83ccefad9583c4f69e81b03ec018481480a89b288479b51de4fadd"
+
+[[sources]]
+path = "apps/agentic-workflow/external-contracts/tests/unit/test_project_health_contract.py"
+digest = "sha256:2af8fd91c78a0244e4f8dce292b80ccb55d74e1f4ba78a56d0d2a773d452d98d"
 
 [[cases]]
 id = "authoritative-fixture-blocks-on-regenerability-gap"
@@ -332,13 +344,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "a non-self fixture configured generator_authoritative reports production_ready false for a tracked regenerability gap; the health payload exposes the regenerability production blocker and a runnable remediation command",
-    "artifact: artifact:agentic-workflow/authoritative-fixture-blocks-on-regenerability-gap",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
     "target: rust",
 ]
 evidence_digest = "sha256:557969141342905870a1cd86f32426b578bdf4573664a2b938f94f09f3976e54"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7875bb8e12ff16e8a481d69f204eba33910e0f6c8d0cd4aab4a55912821a1381"
+digest = "sha256:02219d4a499d0e15a1ce4c057948dd754220c2d5d075bbc4086b8d78c65b3c17"
 
 [[cases]]
 id = "aw-core-client-core-concept-model-phase-less-admission"
@@ -352,13 +364,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "a phase-less project WorkItem enters EC authoring before any TD authoring command",
-    "artifact: artifact:agentic-workflow/aw-core-client-core-concept-model-phase-less-admission",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:fa17638fb6a97c02e9878f1c47883e011af780c74c7546351c07f2ae6d9ec33d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9a6861eca445a86de83d12b12d5513ede7123fc86191ac5db23c7ad472bfd6fa"
+digest = "sha256:ac4f44c800b0980847db06a553efa5ac3df77901075f9be439076eb6d5ce2216"
 
 [[cases]]
 id = "aw-core-client-operational-efficiency"
@@ -372,14 +384,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python prompt and runner scenario completes within 120 seconds, executes its representative assertions, and performs no cargo delegation.",
-    "artifact: artifact:agentic-workflow/aw-core-client-operational-efficiency",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:ca2f1f38d54198d9d3831cb1803ad13d0ce51cb116f6211ab9a606cadcea528c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:5627750c6a37ba22785b2fc69571ff3e6e6f8c4258f263b5bfeb5b75f7825f5f"
+digest = "sha256:398a8ac8db3200854cbf0445c4b84d3c887e647b675a726da90c74644d9a8b11"
 
 [[cases]]
 id = "aw-core-client-operational-stability"
@@ -393,14 +405,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python prompt and runner scenarios produce identical prompt documentation and preserve the same typed lifecycle invariants without cargo delegation.",
-    "artifact: artifact:agentic-workflow/aw-core-client-operational-stability",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:9bdf407dabd12d5d329b8894a8427493491e93b72a8046fca94d4c13f9d3d15b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8ae1816bd105da313c418ca876d08fe88940d13c3b9439238c0b8443b12496f1"
+digest = "sha256:1e9ef582f7fc125cbca56d7cc33dabb8711011a1b1e7fa018f1f6e2b63c76211"
 
 [[cases]]
 id = "aw-health-default-full-verification-smoke"
@@ -414,13 +426,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "stdout includes progress JSONL events before the final result when long gates run; the final result includes payload_path; the payload file contains complete blocker and command evidence",
-    "artifact: artifact:agentic-workflow/aw-health-default-full-verification-smoke",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
     "target: rust",
 ]
 evidence_digest = "sha256:15a062f5a158f721b76de88d1b3f1711f066e94ecf442cd59cdd0df4f941810c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0f45acc534d8410e530c8e0b4ee6daee09cb7793ac5160b3f1db48cfdca4d6c5"
+digest = "sha256:33fb31e30561023e47be5343036234a5bb05e2efd5a11d77ec67f85476f246fe"
 
 [[cases]]
 id = "capability-control-plane-markdown-capability-schema"
@@ -434,13 +446,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "canonical field-style capability contracts parse from Markdown",
-    "artifact: artifact:agentic-workflow/capability-control-plane-markdown-capability-schema",
+    "artifact: artifact:capability-control-plane/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:c4b675f6c48bcbf5709df6fad71a88f16daef75adb252e513fb79caa95cbee93"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f497a7ed8491957be1e26ca88d9228afbc7e993d91da06b647efde89bea487e2"
+digest = "sha256:97ded3cfbde499fe12dde358259c89665c9f3ef6f1b49bf1912b81c4680533ac"
 
 [[cases]]
 id = "capability-control-plane-missing-readme-initialization"
@@ -454,13 +466,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "capability init renders a canonical README shell",
-    "artifact: artifact:agentic-workflow/capability-control-plane-missing-readme-initialization",
+    "artifact: artifact:capability-control-plane/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:fddf04dce8ca503b0fe77d13e0d13d622491bd8d1db6ad455d40591dd6a3b440"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7d6228554c3149898b58b845025bc1e43ac441de0021fc61d1d949c9e2a00d11"
+digest = "sha256:41855eace8a1a6f22d891a1589c5eadd66a95d7ce5381d9464bac3ed4a7a68b6"
 
 [[cases]]
 id = "capability-control-plane-operational-efficiency"
@@ -474,14 +486,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python capability init, report, and sweep scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
-    "artifact: artifact:agentic-workflow/capability-control-plane-operational-efficiency",
+    "artifact: artifact:capability-control-plane/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:bafdbe99846715b5fecc2eda70a2b8c2720f115cdb94a6a03c8f950c52202c5c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d9923d11a427f542936328c69cc18ddccc389f6df1e2d48c2396d7720828be70"
+digest = "sha256:d6c2dda9ec467be9ea7af045c39d606261656e7bf0b918ab7d206d471bb715c2"
 
 [[cases]]
 id = "capability-control-plane-operational-stability"
@@ -495,14 +507,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python capability scenarios preserve the same project identity and both parse the canonical Markdown capability contract without cargo delegation.",
-    "artifact: artifact:agentic-workflow/capability-control-plane-operational-stability",
+    "artifact: artifact:capability-control-plane/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:32ee6c7ab59e2eb6f1fe61bdc1a0daece6ed7cdf5759bc5793923fd0e4a77718"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:727d99d6618864c6dc8f9f20918e946291f57e809ce18320bfad2ae4e97525c0"
+digest = "sha256:1437cb050712c4d522f970ae11b8d00a053ebe33d6f59e2d10b12f0a24ffdd05"
 
 [[cases]]
 id = "capability-scoped-dependency-verification"
@@ -516,13 +528,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "a capability goal verifies only the requested capability and its transitive dependencies, excludes workspace-wide test gates, and retains scope in follow-up commands",
-    "artifact: artifact:agentic-workflow/capability-scoped-dependency-verification",
+    "artifact: artifact:capability-control-plane/public-contract",
     "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated capability catalog, observes gate side effects, and independently proves unrelated and unknown capability gates never run.",
     "target: rust",
 ]
 evidence_digest = "sha256:42d725be80fa7a07424b0ed45116178aefb2cd0dd619fe3e9efb41813165781c"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ae13dae3d99b28e7cceba6c17b8e6fccfa37caaf543d85273206ae45f412a15e"
+digest = "sha256:15f2bc3eaab426fbe94248b8d93fc525056111c46ad38779b2335076bc6e42ba"
 
 [[cases]]
 id = "coordination-authority"
@@ -536,13 +548,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Only AW-owned durable coordination state may advance completion or a decision, and it does so only for the active dispatch after every required gate is satisfied and cited as evidence.",
-    "artifact: artifact:agentic-workflow/coordination-authority",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The Python external contract establishes state through public AW authority commands, then submits only untrusted events. It independently checks durable active and interrupted dispatches, a positive two-gate completion with exact stored evidence, a concrete non-empty human decision, and rejection of forged authority/satisfaction, identity mismatch, empty gate or decision inputs, pending/wrong/partial gates, and non-human decision authority without durable decision mutation.",
     "target: rust",
 ]
 evidence_digest = "sha256:1174bef2f236dc173ac7d6e100631cb3180993cf003aacc34ce5c8c96b167611"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:91e896130859ce36a2e8c36b17d5582dfcb4ee44936d549e16ab1d68184411d9"
+digest = "sha256:8755e467ad4c81ebde05b568b4e43f729ad0dc51ff2d23ee5c459970790b64e5"
 
 [[cases]]
 id = "coordination-contract-schema"
@@ -556,13 +568,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Task, dispatch, message, and gate documents share one versioned, client-independent JSON contract that round-trips valid fixtures and rejects unknown versions, missing identity or linkage, untyped fields, invalid enums, and structural drift.",
-    "artifact: artifact:agentic-workflow/coordination-contract-schema",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The Python external contract reads only the four published JSON Schema artifacts, evaluates representative fixtures through an independent schema interpreter, pins each schema's complete required-property set, and mutates every required field, typed field, enum, and const.",
     "target: rust",
 ]
 evidence_digest = "sha256:be5e49b6dfb9918318381d5fa1f83ea1a5c93b54e1e9222b0ea8a99ec120c01e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6c7aabfad4376072262bbe21e4cd495d217cbbf907cf28bebf09ef30ad94e521"
+digest = "sha256:ddb936fa46e48565a10bb24cac9bd56f4158b1aa9f7b40eac8ca13a8570f9024"
 
 [[cases]]
 id = "coordination-event-validation"
@@ -576,13 +588,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Stale, unauthorised, and structurally invalid coordination events fail closed without durable mutation and return stable codes plus an executable exact remediation.",
-    "artifact: artifact:agentic-workflow/coordination-event-validation",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The Python external contract drives public AW coordination commands against durable state, accepts sequences 1, 2, and 3 around stale/authority/structural rejection groups, mutates sequence/event/dispatch/sender identities and every structural boundary, proves rejection does not consume sequence or persist events, executes each emitted remediation, and requires the embedded schema to equal the published message.schema.json.",
     "target: rust",
 ]
 evidence_digest = "sha256:ec4acd5b2cd1bb3b0b9e85095b14a27d927edfd0f0e7d76d2c487f1314985851"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:67ed6533e8086e59c51efdf281a977aa13f6731a8c1b11568f71af9482cc7f5f"
+digest = "sha256:01a69709023aedddf110652d4f1a4c3d054ee805ba9a05bdbf87577f51330a12"
 
 [[cases]]
 id = "existing-project-standardization-operational-efficiency"
@@ -596,14 +608,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python existing-project health scenario completes within 120 seconds against the real AW health surface without cargo delegation.",
-    "artifact: artifact:agentic-workflow/existing-project-standardization-operational-efficiency",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:0372e38e5adcfb4e07e9348e2228b35afa94876e25fa3d4f8dd7e4d3509ecd16"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:35f1e0e07c1ac3252dc80210b4cfc2bda16b4fc1e6ea42f827648972996bf8b9"
+digest = "sha256:572bae52b4d95cc8660f6aee9e116d9def7140963ae71b549b7b876115155cd4"
 
 [[cases]]
 id = "existing-project-standardization-operational-stability"
@@ -617,14 +629,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python existing-project health scenarios preserve the same stable readiness-axis statuses and configured gate identities without cargo delegation.",
-    "artifact: artifact:agentic-workflow/existing-project-standardization-operational-stability",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:a8d4c2b4a07a926b835aec0e2135c8f480b310ba0a4318c18ab81cb6fadf7c14"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a173bfb09debf45e083c6c9ec2417b7e72933879a94848336646404258e4c507"
+digest = "sha256:ea9aebbb312b8f280a9fac80db9aaf6c151cad4bbdde2235a6898d49890da0ed"
 
 [[cases]]
 id = "external-fixture-reports-advisory-gap"
@@ -638,13 +650,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "the external-advisory fixture reports the regenerability gap as an advisory warning; the advisory gap does not add a production blocker when all required gates are clean",
-    "artifact: artifact:agentic-workflow/external-fixture-reports-advisory-gap",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
     "target: rust",
 ]
 evidence_digest = "sha256:862f7edcfa17cb7e6d9449c6b984a528d29af19f012b453b15d299aec56badb7"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0e5a70b76e3af7f7eec13dd03513800b9a6d33cdc8317753e9e23ee5a937c085"
+digest = "sha256:0544a82c52c34879d80f18e79e42c62325b4c8ef2e4da4030b90010a49da8aab"
 
 [[cases]]
 id = "issue-cache-canonical-change"
@@ -658,13 +670,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Canonical Change work items serialize and parse as type change in the issue cache, and one cached Change cannot poison list, show, or EC draft for another work item.",
-    "artifact: artifact:agentic-workflow/issue-cache-canonical-change",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: An isolated local-backend repository inspects the raw cache frontmatter, then executes the real aw list, show, and EC draft surfaces without importing production source.",
     "target: rust",
 ]
 evidence_digest = "sha256:f1198222d5aaa398ddc48a1668937ed940088768bb05874123f3b4bbb41ca5f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:37df94d84924910e499e27e6c70655b771284d76302e30f450d183710468fd81"
+digest = "sha256:2917c8fc5606773f11ad02b23baa6083cd676690f89417bddba9153b50985dee"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-efficiency"
@@ -678,14 +690,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python EC scaffold and evidence scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
-    "artifact: artifact:agentic-workflow/manual-evidence-artifacts-operational-efficiency",
+    "artifact: artifact:manual-evidence-artifacts/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:1435a452d4b2f39ebd63b3a6af24b1879d9ac17100a5bce7a9fa781c76b8bba8"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f9b515c9cdc8a6892055dd0e89002091363f302f1c68d44781d07bf535508711"
+digest = "sha256:023b1c721c6efa14b7771bb039aad5f98394ce7d73ff9ccb1588330e5102b590"
 
 [[cases]]
 id = "manual-evidence-artifacts-operational-stability"
@@ -699,14 +711,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python EC scaffold scenarios produce identical case and evidence identities and the same structural-check continuation without cargo delegation.",
-    "artifact: artifact:agentic-workflow/manual-evidence-artifacts-operational-stability",
+    "artifact: artifact:manual-evidence-artifacts/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:b335ced3899d499f862349b1c25bf2ff694640223d5a75dab8aef2691adaf7fb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d2d26a3c13f0ca9a602758d09e5bc1a51b5f3045f781f7137cd5c9904c000e68"
+digest = "sha256:ec6dd5541da376a60ed7f7dd7b1fb469c47d13bcec7d326b888036fc6f8ddfda"
 
 [[cases]]
 id = "project-health-total-observation"
@@ -719,14 +731,14 @@ test_path = "apps/agentic-workflow/external-contracts/src/cases/project-health-t
 command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 required_for_production = true
 assertions = [
-    "Every resolvable health request emits a structured envelope and matching payload, focused sections isolate unrelated evaluators, and focused failed or unavailable axes retain fail-closed exit codes while not-applicable remains successful.",
-    "artifact: artifact:agentic-workflow/project-health-total-observation",
-    "oracle: Isolated Python-first projects make the mutation evidence directory unreadable to inject evaluator unavailability, switch advisory to required policy, remove the poison to produce ordinary failure, and use locked self-hosting fixtures to prove aggregate required-unavailable is exactly indeterminate without a readiness claim, advisory-unavailable remains degraded and ready, and required-failed is blocked and nonzero. Every aggregate assessment, readiness state, production status, and mutation-axis result is compared with its durable payload; focused capability must leave the poisoned mutation axis not configured, proving the evaluator was not called.",
+    "Project semantic health contains exactly ec_accepts_td and ec_td_alignment: TD-applicable EC evidence accepts or rejects TD, while public EC/TD identities are compared in both directions without requiring EC coverage for internal TD artifacts.",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
+    "oracle: An isolated Python-first project drives the real aw health command with passing, missing, and identity-mutated EC/TD artifacts. The independent Python oracle rejects any third semantic cell, requires result/payload correspondence, proves matching evidence and identities pass, proves EC-only and public-TD-only identities are reported in opposite set differences, and proves an internal TD-only artifact is ignored.",
     "target: rust",
 ]
-evidence_digest = "sha256:3c196e1843aa421b70a9a1649934fc8984a670cbbe3426ea379eb47f3133a40f"
+evidence_digest = "sha256:fe8ba46ddb05266ba5ff6d97d34d76e3736c62ab86505ddf5d89637d5b1b32f1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:155f0c1fbb67a1679c20e94b68987515218315690c8f6d56c4d4e7dfd078518b"
+digest = "sha256:c3078afe8b319a85fce164a3a5f1a4023c25932061b70ea23aacba3b8388ffe2"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-efficiency"
@@ -740,14 +752,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python project-local TD and EC producer scenario completes within 120 seconds and passes its representative assertions without cargo delegation.",
-    "artifact: artifact:agentic-workflow/project-local-td-and-ec-gates-operational-efficiency",
+    "artifact: artifact:project-local-td-and-ec-gates/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:8290ac59a6d8bf671efb2a5648b75b8deabea76542fe5d016252dac153006554"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:42a4914a4c3adcddc584b886e58177bfff475977f458ea3c45e2b1d85c9b52d9"
+digest = "sha256:0e1233d3d6f08ba983d11caa72a215133e2590d3e08240d246015854e3fb590a"
 
 [[cases]]
 id = "project-local-td-and-ec-gates-operational-stability"
@@ -761,14 +773,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python project-local TD and EC producer scenarios preserve artifact identities and the same inventory, source, validation, and continuation routes.",
-    "artifact: artifact:agentic-workflow/project-local-td-and-ec-gates-operational-stability",
+    "artifact: artifact:project-local-td-and-ec-gates/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:a1100bc16bd92ea8eaa80370b258e094c95d347eab81012291930ab9fcbf4b2d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b85c7796d997d3d81b9c78d6c2a717ecbde18342b336249e7f83569966335784"
+digest = "sha256:a72a7ed95e918cfd6f7eb16ae37c1e8bdd51d0c8de6bc36f8d7f205efa6249c5"
 
 [[cases]]
 id = "python-ec-cache-safe-discovery"
@@ -782,13 +794,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Public Python EC discovery ignores undeclared cache/build binaries while still rejecting a missing declared Python source or a binary path declared as the contract.",
-    "artifact: artifact:agentic-workflow/python-ec-cache-safe-discovery",
+    "artifact: artifact:project-local-td-and-ec-gates/public-contract",
     "oracle: An isolated Python-first repository executes the real aw ec check command against non-UTF-8 pyc and native-extension fixtures, then independently mutates only the declared test_path boundary to prove strict missing and source-type findings.",
     "target: rust",
 ]
 evidence_digest = "sha256:56991a4d858719e0969f7cb7c6d6a1366c4364f71e86ff5c7f6870cb95b3a802"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c1dc45ac19e9bf891d7573a6a59e190ebb14e81e33bf8849349f314fb933417b"
+digest = "sha256:0bb8892051002f8566bd3865be73817d340286bf89590b147b4223580a1ba25e"
 
 [[cases]]
 id = "python-ec-only-authoring"
@@ -802,13 +814,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Public EC authoring, checking, review, locking, and verification operate only on the project-local Python EC project, even when legacy spec_model configuration is present.",
-    "artifact: artifact:agentic-workflow/python-ec-only-authoring",
+    "artifact: artifact:project-local-td-and-ec-gates/public-contract",
     "oracle: A hand-authored Python black-box fixture executes the real aw CLI, inspects help and artifacts, independently supplies digest-bound review evidence, and rejects retired fill/gen commands.",
     "target: rust",
 ]
 evidence_digest = "sha256:3b2284aeeab2efa74afca2dcdf278562d380e4b2ce5d69d8819ad5779a9ec287"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0f51ebd3eb36d907125eeb792d2e5f432ac867a6f44f327351ca7e144a58979a"
+digest = "sha256:0af97541b69e939e2b4e4cd701b3ae12b498ea4e03ee913061adcad2fad51880"
 
 [[cases]]
 id = "python-td-global-artifact-identity"
@@ -822,13 +834,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Python TD module and explicit artifact identities are globally unique, the reviewed corpus remains complete, and role-distinct migrated projections cannot collapse into duplicate mutation identities.",
-    "artifact: artifact:agentic-workflow/python-td-global-artifact-identity",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
     "oracle: The Python EC compiles the complete public TD AST, pins the 1002-module and 995-explicit-artifact inventories plus the exact seven modules without explicit artifact IDs, requires exact role-distinct identities for both normalized logic-emitter paths, proves two reverse-created duplicate-ID groups emit one complete exact cross-group and within-group sorted diagnostic twice, and verifies the public typed mutation inventory against an exact 8756-descriptor count, sorted-ID digest, uniqueness, and both logic emitters.",
     "target: rust",
 ]
 evidence_digest = "sha256:3a84cf30abb2d42459fe5ce7a61cf0a7766947d49546e46db5ca6d66de699b44"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0dc1358643cd9778274ca8d6705f86c9301f3ecc44da9706165bc2eab63fe305"
+digest = "sha256:9bfe3af0a45740db0ca62a35780623b7c5b53caf0f9e37f77b3241b4b3df604d"
 
 [[cases]]
 id = "self-hosting-bounded-admission"
@@ -842,14 +854,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
-    "artifact: artifact:agentic-workflow/self-hosting-bounded-admission",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: A local fixture with no reviewed graph independently requires the public backlog root to emit planning remediation; repeated public WI envelopes and filesystem digests prove bounded admission.",
     "threshold: backlog admission reaches reviewed-graph preflight instead of a self-hosting rejection; repeat WI admission is byte-stable and does not mutate lifecycle state",
     "target: rust",
 ]
 evidence_digest = "sha256:757a27c0098bcc389ba3befd3d96b9160d4c303ae95452338cec334f05595169"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0b30ee6a4db2b45e7aaaccece8a3f289e1e8a9e5bee5d3b126f30a5a24d94d06"
+digest = "sha256:f00be03b8621029f3662eeb91871f8cd8ddb0306e6e67228908a6cca6b860b37"
 
 [[cases]]
 id = "self-hosting-capability-admission"
@@ -863,13 +875,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "scoped capability admission completes without unrelated project lifecycle gates and hands control to project rollup; backlog admission fail-closes on the absent reviewed graph with the exact project planning remediation",
-    "artifact: artifact:agentic-workflow/self-hosting-capability-admission",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: A canonical verified capability with a passing capability-owned gate independently requires scoped completion and project rollup, while the deliberately absent reviewed graph independently requires project planning; the verifier pins both public commands and reasons.",
     "target: rust",
 ]
 evidence_digest = "sha256:d8c2101a4de33e39e2e6ccc9a8b65aaf325addd1436f70a0ca5f0b919d865a99"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:32fe0c684509e0cb908e14ec424df754c51e42bbf0382443ce0a06d45e315ad6"
+digest = "sha256:be7772fe1fa5eebb973aea9d6704f70d2f3602136b3c43ed556405d462f4af87"
 
 [[cases]]
 id = "self-hosting-health-policy"
@@ -883,13 +895,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "public AW health declares Python-first root admission and limits bounded direct repair to a self-hosting-only fallback for a broken current worker verb",
-    "artifact: artifact:agentic-workflow/self-hosting-health-policy",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: Independent self-hosting and non-self-hosting fixtures invoke the public health command; the self-hosting result must expose every exact policy field while the control must expose none of them.",
     "target: rust",
 ]
 evidence_digest = "sha256:b84b2229ba14143089eff46cfb5978bef27959aa70fa5ae6ea0a9140eb6150f0"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c73add08f90deefbe5af59e2e0e47b05008c4cbf9623e022f0e31d727b8ba724"
+digest = "sha256:32938b268ef4deca0494527d48e17e934d0c70cda13e1bfd243d709c37e71fd9"
 
 [[cases]]
 id = "self-hosting-identity-stability"
@@ -903,14 +915,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
-    "artifact: artifact:agentic-workflow/self-hosting-identity-stability",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The verifier corrupts local WI frontmatter after a valid admission snapshot and compares repository/runtime digests around the public CLI call.",
     "threshold: a malformed self-hosting WI identity returns a normal blocked envelope; the failed resolution leaves repository and runtime state byte-identical",
     "target: rust",
 ]
 evidence_digest = "sha256:72843a95e598b8220e9eefed3aeb8cceb26bbfdce6c0f6043ac4b22a30cc233f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6bf1cd710f0cbdc9b33b2f2286d455b466e30ca261e06739da9d4c8afeca6899"
+digest = "sha256:bc0d6ac06f4ab4b381fe3fc4d220d9997ec7254519c8e2515facdb3a92741788"
 
 [[cases]]
 id = "self-hosting-wi-admission"
@@ -924,13 +936,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "the self-hosted WI root enters EC authoring and dispatches the exact project-and-WI-scoped EC check as its first worker command",
-    "artifact: artifact:agentic-workflow/self-hosting-wi-admission",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: A valid local AW-owned change with no lifecycle phase independently requires the public WI root to emit the exact EC-first action, state, reason, and command.",
     "target: rust",
 ]
 evidence_digest = "sha256:0d4c82f140f915ec8526408dd45263c78b1053f163a4ce929e2154aa66e10297"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:404fdd387986cae4bdbc5e7b60d9787b7317060faaa47008fd4f11382fc69dc2"
+digest = "sha256:ca094ace550478761fdfffec093069f0249acb8adcc252e0285398148abad179"
 
 [[cases]]
 id = "shared-cli-issue-report-intake"
@@ -944,13 +956,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "shared CLI issue create emits app identity plus type:report through its public dry-run, courier JSON transport, and credential-free fallback URL",
-    "artifact: artifact:agentic-workflow/shared-cli-issue-report-intake",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC builds and executes a real cli-std consumer, captures its courier request at the HTTP boundary, and independently inspects its public dry-run and fallback outputs.",
     "target: rust",
 ]
 evidence_digest = "sha256:996d64d677ec2c7b0bc1c3a71b2b8353d770fa13e1ec4a902311f0298aaa03eb"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4f1877dc5a60ec9784f6d6061473fbc3f4eca1f2f518748b4fac5a2fb1b5ca5d"
+digest = "sha256:8adeb93f75834acead29800dcd9b0d60269e90e4eed8a75403b1fdd1503b6f0b"
 
 [[cases]]
 id = "standardize-audit-first-contract-test"
@@ -964,13 +976,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Focused takeover-audit health succeeds as a not-applicable observation without a preservation baseline, then succeeds as a recorded observation after aw td audit-record captures the preservation contract.",
-    "artifact: artifact:agentic-workflow/standardize-audit-first-contract-test",
+    "artifact: artifact:existing-project-standardization/public-contract",
     "oracle: An isolated project runs the public focused health command before and after the public audit-record producer, requiring exact successful/healthy states, a false-to-true recorded transition, and the captured route and command surface.",
     "target: rust",
 ]
 evidence_digest = "sha256:5894754d276ffa1cbc00b4f5e0315f0f4034ad0c0beb6ef8aeea7c9cb5b6ef5a"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:16df3200ed8240bd9766619e11a852187aa512d72e0d4a73e850e525d326bd0e"
+digest = "sha256:58534b3a4c54094cf7d43ed907f6e8dc53e78b804f156e17c7e80a17e1531c9b"
 
 [[cases]]
 id = "td-artifact-producer-cli-fixture"
@@ -984,13 +996,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "aw td create initializes one WI-bound Python module below tech-design/src and emits the exact apply handoff without Markdown skeletons or JSON section payloads",
-    "artifact: artifact:agentic-workflow/td-artifact-producer-cli-fixture",
+    "artifact: artifact:aw-core-client-model-workitem-first-artifact-lifecycle/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:b728859dd5244808dbb08d81028deb3f1c1439a2c4341f0724ecc567b9d31d49"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:390db18a9d83a8ff63eca6abf350e5f61b53718daf23b583248ee46014ec480a"
+digest = "sha256:c0a66d8ed1b34575fa6506975d2ca15081eb36157f4e3dfd389cd8291cd6236b"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-efficiency"
@@ -1004,14 +1016,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python red-to-green terminal EC scenario completes within 120 seconds through the real AW binary and performs no cargo delegation.",
-    "artifact: artifact:agentic-workflow/td-cb-lifecycle-automation-operational-efficiency",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: elapsed <= 120 seconds; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:c4338943f46a5078f7876e4bbc66dcf9cfc82661dbe838f45e2baf9de5066ad3"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cbd963d59c9aa79b4e98cc2da73d49de25d854541a7e39deaf05c8561c96c181"
+digest = "sha256:915c7f453aacd4e789e0a973104dfd0127e16bdb0d6808b271e1aab6344393bf"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-operational-stability"
@@ -1025,14 +1037,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python terminal EC scenarios reproduce the same red and green verdicts and emit one deterministic close continuation per green run.",
-    "artifact: artifact:agentic-workflow/td-cb-lifecycle-automation-operational-stability",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "threshold: two attempts; identical passed/failed totals; passed tests >= 1; failed tests = 0",
     "target: rust",
 ]
 evidence_digest = "sha256:89bfd484b4a234e67a0e5f94ef479bf389316f210c50bc1b42da86891bad7068"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:225e681ff3e5a053dd6a8c9b03201dc63e57697d2ec4739e62063a4196d903cf"
+digest = "sha256:7d1744d614377eb0f7ce5d71cf9a02dedc2e77cbd1aaf9c30afdae5db7a0d97f"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-remove-td-merge-command"
@@ -1046,13 +1058,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "the retired `aw td merge` command is absent from the Clap tree and parsing it returns the literal unrecognized-subcommand failure (#914, refs #851)",
-    "artifact: artifact:agentic-workflow/td-cb-lifecycle-automation-remove-td-merge-command",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
     "oracle: Native Python black-box assertions execute the real aw product surface without cargo delegation.",
     "target: rust",
 ]
 evidence_digest = "sha256:6a944eb2a9baa19bcb62ca06eda1a08c5450e126ee454134c2208cf7597f4f27"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:864d2e79d6372c9d4333b2a52f8ad3d3a767accbcacb42d4f547c90c2a68a5e7"
+digest = "sha256:2f88ff7afbee1bff84ff3c46a725657546b68ee50bd78fdf6130e7180ca351df"
 
 [[cases]]
 id = "td-create-dirty-persistent-branch"
@@ -1066,13 +1078,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "TD create stays on a dirty persistent non-main project branch, commits only lifecycle-owned paths, and leaves unrelated modified, deleted, and untracked work byte-identical; dirty main still fails before branch activation.",
-    "artifact: artifact:agentic-workflow/td-create-dirty-persistent-branch",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
     "oracle: Two isolated real-git repositories independently expose branch identity, porcelain state, file bytes, TD source existence, and td-branch refs before and after the real aw td create command.",
     "target: rust",
 ]
 evidence_digest = "sha256:969a538c9adabbb0c48ea1b55791366871f5f7e4cd68ece066fa9194dd00099e"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:15615a84335908537c64e722764b60d7c39f4a792e0f047e4a63dc3751ce8528"
+digest = "sha256:3b5197530c248f5a94e0e05fcec35206882849f0637d3e6c5118be537e869a98"
 
 [[cases]]
 id = "td-existing-workspace-dirty-persistent-branch"
@@ -1086,13 +1098,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Public TD apply rejects malformed Python then advances with a semantic digest, and public CB generation stays on a dirty persistent non-main branch while committing only its generated target and preserving unrelated modified, deleted, and untracked paths; pre-existing staged paths fail closed, dirty main fails before switching, and clean main without a TD branch retains the workspace-not-found remediation.",
-    "artifact: artifact:agentic-workflow/td-existing-workspace-dirty-persistent-branch",
+    "artifact: artifact:td-cb-lifecycle-automation/public-contract",
     "oracle: Four isolated real-git repositories run the real aw TD/CB commands and independently expose syntax diagnostics, semantic digest and continuation, two exact commit deltas, staged-path refusal, branch identity and refs, porcelain state, file bytes, generated output, and remediation output.",
     "target: rust",
 ]
 evidence_digest = "sha256:d97a62aae39b5038ff7447c744d12768882aecfb280324ec4536cb5c52873d8f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:37db8e729b122bab5958ba73fc062980b116c96d23ae84643b1309ffd4f981ec"
+digest = "sha256:d697084cd7bad065ee23670c90a02bcf3d81d8691b286b103b20b622e37bd6ef"
 
 [[cases]]
 id = "wi-close-remote-real-cli"
@@ -1106,13 +1118,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend; --repo selects every remote read and mutation; the optional reason and close mutation each occur exactly once across a retry; a missing remote names its backend and repository and emits an executable recovery command; a local-only issue still moves from open to closed",
-    "artifact: artifact:agentic-workflow/wi-close-remote-real-cli",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions run the repo-built aw binary against an isolated HTTP tracker and local backend.",
     "target: rust",
 ]
 evidence_digest = "sha256:ab38030faf90b1bfe3337d32e200e18e602c0900135d024fb8956679d8084084"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f9c4804f0f1b46653b35e86563f6ff972821819c2104abe6ad161f0f0c8a022a"
+digest = "sha256:91b61e5049452570d7b771990dace9d6cccb0b198e9a679887b01d83692a949b"
 
 [[cases]]
 id = "wi-create-help-command"
@@ -1126,13 +1138,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "help output does not list --remote",
-    "artifact: artifact:agentic-workflow/wi-create-help-command",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions inspect the repo-built aw help output.",
     "target: rust",
 ]
 evidence_digest = "sha256:31eb923d97b29ecaac6834def8e1910c5a80932f26f55cf686f0b087f8e486f4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:71284701b598dbd1946f990c93a1a8117250930e4c959bd159483dcf56fa94bf"
+digest = "sha256:3c725bbdbee075f2c71609d51937e4e297054c84f10d98d8949499bdae545db4"
 
 [[cases]]
 id = "wi-create-help-smoke"
@@ -1146,13 +1158,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "stdout does not contain --remote",
-    "artifact: artifact:agentic-workflow/wi-create-help-smoke",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions inspect the repo-built aw help output.",
     "target: rust",
 ]
 evidence_digest = "sha256:f0f0616891af4c1059f18454b1590d96ef60203099b8d2ad1931456560fbbd9d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:62298cbfadd4399e4cd03f2259f9219cd6afd943deb857efac0e39d7dd4f0ff5"
+digest = "sha256:06d83e50bc167bdff55f54ae2ed666e49f7b37a1557e1e388deedd59adcd55fb"
 
 [[cases]]
 id = "wi-create-remote-flag-tests"
@@ -1166,13 +1178,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "create help hides remote flag; hidden remote compatibility flag parses; create behavior is config-driven",
-    "artifact: artifact:agentic-workflow/wi-create-remote-flag-tests",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation.",
     "target: rust",
 ]
 evidence_digest = "sha256:1a2813d3226211d0a22afbb0b41119ab992785d740a238de2078d5b1a33d686b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1054339e86918df334bdcd584c5dd81edf9e84f5d28e6a5667c9238eb37a1b3a"
+digest = "sha256:aeeba2a5507b70e59fca0fa4d36eb7f646c26ca5b562c429365a9870752ffdb1"
 
 [[cases]]
 id = "wi-create-remote-unit-command"
@@ -1186,13 +1198,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "help hides deprecated remote flag; compatibility flag parses; backend decision is config-driven",
-    "artifact: artifact:agentic-workflow/wi-create-remote-unit-command",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions exercise help, hidden compatibility parsing, and configuration-driven local creation.",
     "target: rust",
 ]
 evidence_digest = "sha256:58aa94928c88be0b3210fad0986d07c390e19634b8838871b2892235053b50dc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1bb3446c279a2d113c1245ee89b7f2baa74e03b72a79c88ba339b9f7054015a8"
+digest = "sha256:8fc620e6c77091f3001d8c0f4736271a51631ad4a7764c868cf9a6438c113663"
 
 [[cases]]
 id = "wi-remove-agent-estimate-build"
@@ -1206,13 +1218,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "prioritization output contains no estimate field while retaining the bounded capability-to-epic planning result",
-    "artifact: artifact:agentic-workflow/wi-remove-agent-estimate-build",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions validate real work items and inspect the emitted planning artifact.",
     "target: rust",
 ]
 evidence_digest = "sha256:764773fc2e94fef0c706cd0a14579ae343d2de3f51fa42e5db8679b3ea804116"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:363e7cd074058d0d010d112b42de989f29cfa95cc425945c500b889bb082ef90"
+digest = "sha256:0a201708b2bb48ba7759dbf45a30ec557da0cf91861ef432e33a454f7f21003c"
 
 [[cases]]
 id = "wi-remove-agent-estimate-spec-check"
@@ -1226,13 +1238,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "legacy Agent Estimate input remains parseable but is inert and creates no readiness requirement",
-    "artifact: artifact:agentic-workflow/wi-remove-agent-estimate-spec-check",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions validate a bounded work item containing the legacy inert section.",
     "target: rust",
 ]
 evidence_digest = "sha256:4735c21cb23975935dc6b9867bd7804d1442a301d7365de2a24a46d96442e32f"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bc2c28726f7f2624c991d02befd30c7f9cd892c58ac352d69eb14e6650a7315f"
+digest = "sha256:071ac8c68040b68ff8b48e42204a623e72545973f3daad43eb2a20668b2d4384"
 
 [[cases]]
 id = "wi-remove-agent-estimate-unit-command"
@@ -1246,13 +1258,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "bounded non-epic validates without estimate section; legacy estimate section remains parseable; generated body and planning output omit estimate fields",
-    "artifact: artifact:agentic-workflow/wi-remove-agent-estimate-unit-command",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions validate bounded current and legacy work-item bodies and inspect planning output.",
     "target: rust",
 ]
 evidence_digest = "sha256:24d579566dcccd2528c5e912fa4637ce1939a857a51a773b9cff2c20982ed4ae"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d39ba92867b48363cd140edb6f95997009cf129f7d33b4562d0d977b43216508"
+digest = "sha256:741c80680599375eff7ed227b6f064ee59a986a5c36ad87ab78a9512e9a3c841"
 
 [[cases]]
 id = "wi-typed-epic-owner"
@@ -1266,13 +1278,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "typed epic ownership is authorable on create/update, canonical in labels, visible in graph projection, body-only compatibility remains readable, and unowned creation emits an exact actionable command template",
-    "artifact: artifact:agentic-workflow/wi-typed-epic-owner",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions drive the repo-built aw binary in an isolated local tracker.",
     "target: rust",
 ]
 evidence_digest = "sha256:e57d7d65f09c4daaeada55ea5d199f1c210fbc9787489cf1b55a1b7b5d074714"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7c42b1d766acaedb60b431146b96fec934a8b00ae5bb199f1bd175e978e1f212"
+digest = "sha256:408f85b708cdb20ef2adb8ee488c76c9f92e66f5648351b38fe0fa6e458e122a"
 
 [[cases]]
 id = "wi-typed-priority-label"
@@ -1286,13 +1298,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "typed priority authoring documents and emits the canonical single-colon priority:<value> label and never publishes priority::<value>",
-    "artifact: artifact:agentic-workflow/wi-typed-priority-label",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions inspect repo-built aw help and create a local work item through the real CLI.",
     "target: rust",
 ]
 evidence_digest = "sha256:05ca0312934c06b3bcb3e46f092da0babf90aec747935feae982b6cc2f9962dc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cad30eaa89f928e6caf876c967f6b35b869418ea94073cee5454c73ceeaa3421"
+digest = "sha256:15d01c57720e2b6ffefa98c00dc98484918d8d8140f607cce8dfe5ba40c1c45c"
 
 [[cases]]
 id = "work-item-four-type-taxonomy"
@@ -1306,13 +1318,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "epic, change, spike, and report round-trip through the public CLI while only change enters the executable project graph",
-    "artifact: artifact:agentic-workflow/work-item-four-type-taxonomy",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC executes the real compiled aw binary against an isolated local-backend project and asserts public envelopes and graph projection without importing production source.",
     "target: rust",
 ]
 evidence_digest = "sha256:e16d116a37f6058baea0e22f81c65247e64f13b1f692f44a6d3ed631a00a8862"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:31dcac218d05a818b4e12f7009397c607dc8d58a11e52417b7d96d0abad0b664"
+digest = "sha256:c31d71df99bf29d7ec122d993c3666ee77e33f52ab42668244225d8689084b4e"
 
 [[cases]]
 id = "work-item-intake-health"
@@ -1326,13 +1338,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "health projects open Report and expired Spike counts plus the exact next typed intake remediation command",
-    "artifact: artifact:agentic-workflow/work-item-intake-health",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC creates real local-backend intake WIs, executes health, and independently checks the public intake_queue axis before and after triage.",
     "target: rust",
 ]
 evidence_digest = "sha256:52ec40dbdddd070a326ed359c353757bf1a1ac0d57d330f5f5b09f0271140136"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:906e409b65111db29ac8d5ed204483a635169f924e4d103039d86939e236ab96"
+digest = "sha256:02965807d8e80ffb2e4d416ae0e0366b30612f1af9ddb009ae196d945e12e3f1"
 
 [[cases]]
 id = "work-item-planning-epic-to-change-atomization"
@@ -1346,13 +1358,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "prioritization routes bounded changes into the ready lane",
-    "artifact: artifact:agentic-workflow/work-item-planning-epic-to-change-atomization",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Native Python black-box assertions inspect the strict project graph produced from a bounded owned change.",
     "target: rust",
 ]
 evidence_digest = "sha256:64122cbd7aabc3ab73cefc0c9aa25574e094fbd01dddabc4039715428cbd718b"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:da6606a405d2d09caf605d60cb90e47b562c26e06bb5a0c8a96a883b40c7d4ca"
+digest = "sha256:94aa73fed13725b66bcef0a0117542fef22dc998c1fc63c116b886c5e98b68ce"
 
 [[cases]]
 id = "work-item-planning-operational-efficiency"
@@ -1366,14 +1378,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "The native Python planning scenario completes within 120 seconds and passes every representative work-item assertion without cargo delegation.",
-    "artifact: artifact:agentic-workflow/work-item-planning-operational-efficiency",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: A monotonic clock around the native Python black-box suite enforces the elapsed-time limit.",
     "threshold: elapsed <= 120 seconds; every representative Python assertion passes",
     "target: rust",
 ]
 evidence_digest = "sha256:a56ad699f2f3e99c7a9c28c51b3e0dc7e09a9a0f4f04af3cc87d342ba0f0aa61"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bac746bc82b4edff1013124e2122384c8bd0059cc013b2f82a167c18b8cd999c"
+digest = "sha256:eed4e6bb6c160acf08d8a7746e6dc3204b69342b0f06a936c4067ea89a0843f5"
 
 [[cases]]
 id = "work-item-planning-operational-stability"
@@ -1387,14 +1399,14 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Two fresh native Python planning scenarios produce identical non-empty results and both pass every representative work-item assertion without cargo delegation.",
-    "artifact: artifact:agentic-workflow/work-item-planning-operational-stability",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: Two fresh native Python black-box suites must return identical all-pass snapshots.",
     "threshold: two attempts; identical representative assertion results",
     "target: rust",
 ]
 evidence_digest = "sha256:4a3a2c087ad4a3320cb4e4238812f2f0c2aa179ad47c8b5576eb92b8a6363a81"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dc6ef0ef79207ba7f4c85acf6a3e4a19bcd37ce2c14123a529957febab53caa3"
+digest = "sha256:f74ac520d6281a504954a6ddc244a41465eb5495edcd1d4a93e65d14a5135375"
 
 [[cases]]
 id = "work-item-report-triage"
@@ -1408,13 +1420,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Report type is immutable and typed triage either spawns linked delivery work for accepted or closes with a non-delivery verdict",
-    "artifact: artifact:agentic-workflow/work-item-report-triage",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC executes the real aw triage surface, reads persisted Report and spawned Change state, and proves type-label immutability.",
     "target: rust",
 ]
 evidence_digest = "sha256:d67f271b5cf2709f23926fd02f08b4a425b82f50e71c1af223d4d6f59a061dfc"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:370b806a402e5519c07c650ce06466354df959ba3f89205883faeaa0a67074d4"
+digest = "sha256:caf267c465b1e464b9cf240eeac302a3519c3b14fb27b48411c8d5910bd9bd47"
 
 [[cases]]
 id = "work-item-spike-terminal"
@@ -1428,13 +1440,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Spike cannot enter product source work and terminates only as decided with linked/no-action evidence or gave_up after expiry",
-    "artifact: artifact:agentic-workflow/work-item-spike-terminal",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC runs the real goal and spike commands, inspects persisted terminal records, and rejects a decision without an exit disposition.",
     "target: rust",
 ]
 evidence_digest = "sha256:cd451cafee9d19e5d03420825630ed2e9d8fa288528664f4bb343a999538bfd1"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:239cf67d268685f6b3d0ad5cf9b338aea752fb1899abb0bc09b7c964a1836350"
+digest = "sha256:aba49a2561484d5c3a55b450c0b0a98443e9d56661300f262d92a629c3c8917f"
 
 [[cases]]
 id = "work-item-type-templates"
@@ -1448,13 +1460,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "Spike and Report use exact hard authoring profiles, Report intake omits Capability Alignment, and cross-profile sections fail closed",
-    "artifact: artifact:agentic-workflow/work-item-type-templates",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC drives real aw create/show commands and independently checks the emitted work-item bodies and invalid-profile failure.",
     "target: rust",
 ]
 evidence_digest = "sha256:345a92494aa0703e6128089042d076802e6c164d83e8bc498425b3f5e94140d4"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7588a2ec158c936c5d5838f53260a9c28ddf6a9876ec27d1ad802bc2f0d2c4c9"
+digest = "sha256:242587fe5c9ec03c1821608e1103426089b385c8e703121dae03f80648425f9d"
 
 [[cases]]
 id = "work-item-type-vocabulary"
@@ -1468,13 +1480,13 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "aw llm and generated META-doc guidance define epic, change, spike, and report by canonical terminal states",
-    "artifact: artifact:agentic-workflow/work-item-type-vocabulary",
+    "artifact: artifact:work-item-planning/public-contract",
     "oracle: The hand-authored Python EC executes the real aw llm and meta producers, then independently checks their public output for the closed terminology-first terminal-state contract.",
     "target: rust",
 ]
 evidence_digest = "sha256:50407b46886d6289ddf16fd650668d9dcd295f0bceb09330df3ca4608fea3e52"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7d1d682df3a6ee790216d85fc0c01454701764f6d1af422497974fad6795f746"
+digest = "sha256:a948e598ce29c6350377abea018028f96c9b6e5ca4243871930a936fc4ae0229"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"
@@ -1488,10 +1500,10 @@ command = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case
 required_for_production = true
 assertions = [
     "closed change roots route agents to parent inspection",
-    "artifact: artifact:agentic-workflow/workflow-root-runner-parent-rollup-routing",
+    "artifact: artifact:workflow-root-runner/public-contract",
     "oracle: The preserved external Rust test command must exit zero and its original assertions remain the independent oracle.",
     "target: rust",
 ]
 evidence_digest = "sha256:ed7bd5cc8763b06d7187bcb16e2ea9a285116510c4cc9104473e356e19c7fd46"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:de71d4e92238dd68934948f25130b2b0d196ed8887244fede60d5fa7d7677822"
+digest = "sha256:f3a67002bc7888a895b016c7c5a20baf72cf730f895edaa1f773cd8889e3c90c"

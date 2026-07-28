@@ -1,4 +1,4 @@
-"""Native Python EC for total health observation and focused isolation."""
+"""Native Python EC for the two-cell semantic-health contract."""
 
 CASE_ID = "project-health-total-observation"
 CAPABILITY_ID = "aw-core-client-model-workitem-first-artifact-lifecycle"
@@ -6,11 +6,14 @@ USE_CASE_ID = "health-total-observation-and-readiness-gate"
 DIMENSION = "behavior"
 TARGET_COMMAND = "python3 apps/agentic-workflow/external-contracts/src/runner.py --case project-health-total-observation"
 ASSERTIONS = (
-    "focused capability does not call a deliberately poisoned mutation evaluator",
-    "focused advisory and required unavailability emit matching durable payloads",
-    "aggregate advisory unavailability remains degraded and production-ready",
-    "aggregate required failure is blocked and nonzero",
-    "focused failure is nonzero while not-applicable is successful",
+    "matching TD-applicable EC evidence makes ec_accepts_td pass",
+    "explicit failing EC evidence rejects TD with exact case counts",
+    "matching executable public behaviors make ec_td_alignment pass",
+    "internal TD artifacts do not require EC coverage",
+    "same-artifact behavior drift is reported in both directions",
+    "EC-only and public-TD-only behaviors are reported in opposite directions",
+    "missing TD-stage evidence is indeterminate rather than false-green",
+    "stdout and durable payload expose exactly the same two semantic cells",
 )
 
 

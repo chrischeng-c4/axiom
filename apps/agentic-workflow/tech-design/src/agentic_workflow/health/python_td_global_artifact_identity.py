@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-__aw_artifact_id__ = "artifact:health/python-td-global-artifact-identity"
+__aw_artifact_id__ = "artifact:agentic-workflow/python-td-global-artifact-identity"
 
 
 @dataclass(frozen=True)

@@ -2,18 +2,18 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-28T04:16:49.223741+00:00"
-digest = "sha256:01fb4c16051732d4b348dd96d3aaf273004c7e2fef066dd303a17add598cf73b"
-source_digest = "sha256:01fb4c16051732d4b348dd96d3aaf273004c7e2fef066dd303a17add598cf73b"
-ir_digest = "sha256:7f125a557f8d6048542832f2994e098c6930d652d41a90223276bd1cebbba2b5"
+generated_at = "2026-07-28T06:32:51.908026+00:00"
+digest = "sha256:3352484bab8d5687d7d2f68b05bb05f1245878bd3faaab747b5a8b0fd8a05b9e"
+source_digest = "sha256:3352484bab8d5687d7d2f68b05bb05f1245878bd3faaab747b5a8b0fd8a05b9e"
+ir_digest = "sha256:3bd7393b76f26c300731a6217a6dd133210d0fe856ad58c644224baa074540a3"
 
 [[files]]
 path = "src/agentic_workflow/health/project_health_total_observation.py"
-digest = "sha256:2fb2dabff3e4dfa515cb4b6192266e77d3f2954e3507e95e06d404ceacee1a4c"
+digest = "sha256:3ac91e039218efcb8868f65d1b74c88d310bf11fc8231b209fe17070f55f9faa"
 
 [[files]]
 path = "src/agentic_workflow/health/python_td_global_artifact_identity.py"
-digest = "sha256:79b2972166031a3c82511aa8bef37984184f255515f08cb4ef458b8955ba3d04"
+digest = "sha256:99b7d0f1df3947ec1faee534fdad76fe6834f03453c0717ba1052312605d9675"
 
 [[files]]
 path = "src/agentic_workflow/infrastructure/openapi_codegen_adapter.py"
@@ -3932,6 +3932,42 @@ path = "src/agentic_workflow/migrated/validate/rust_source_unit_ir_lossless_cst_
 digest = "sha256:e7338afe25a07f75e69181264f1c30936fb1eff07092cb9e00e0d68513b36450"
 
 [[files]]
+path = "src/agentic_workflow/public_contracts/__init__.py"
+digest = "sha256:6b56eeedd79afdefe637666483e5a8eb793c901816630ca4517aaf590bda56f1"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/aw_core_client.py"
+digest = "sha256:c39a00b8bb29e027fa70fc21b41948213947080a18e2e4ed48351461287293b0"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/capability_control_plane.py"
+digest = "sha256:76ab987e56702200e5f584ff331ad34b966c6d55bbcb3022a1f11debe2118f93"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/existing_project_standardization.py"
+digest = "sha256:f86239432ce91e437b45ab97143a993dd3dc1a08ae02d484ffdc324051e26ab3"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/manual_evidence_artifacts.py"
+digest = "sha256:c43fa1e8255eff468149dec98e4ad9afebbd55b15774edad0268460863c60595"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/project_local_td_and_ec_gates.py"
+digest = "sha256:239b3754c0b6e327f701f127def5347c69e70363f87abd3d051964f5b109da06"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/td_cb_lifecycle_automation.py"
+digest = "sha256:88f06692af2e1532fb84da7b583bb112330588d5cb6b9923e9bad735b7cfacbf"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/work_item_planning.py"
+digest = "sha256:9e367000b8863dd4ecd6dfab85eb2709c1a6000143e48ab2984230f0f99f2be9"
+
+[[files]]
+path = "src/agentic_workflow/public_contracts/workflow_root_runner.py"
+digest = "sha256:f23885899deef520a6a116234c56186d6a5c868f4b3be65dd3f15f2a1023364a"
+
+[[files]]
 path = "src/agentic_workflow/work_items/coordination_authority.py"
 digest = "sha256:85ce95bab692a9954aef21b65cb29589e4ae5fc7a962c34f0e6b801c3ac3bb25"
 
@@ -4014,3 +4050,7 @@ digest = "sha256:f992fd7ec1deda05b66b8e76a03a04571cca60bf4a94a6355e551e8bd722329
 [[files]]
 path = "src/self_hosting.py"
 digest = "sha256:c4f1dfea4b5abebdf7a87aefd0f19982e2c704653dc5ec0a31734bce3ac9baef"
+
+[[files]]
+path = "tests/unit/test_project_health_contract.py"
+digest = "sha256:17e3b906d0434602496da7a02801cb29ff1527b87924b3ba8c22ef2a49aa5881"
