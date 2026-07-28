@@ -61,3 +61,54 @@ flowchart TD
     N -- "graded evidence missing or red" --> O["FAIL: unanchored baseline provenance, missing graded perf trial,\nhost drift, or unexplained CPU or RSS regression blocks completion"]
     N -- "graded evidence green" --> M
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/mamba/src/lower/ast_to_hir.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: annotation_repr_opt
+  - path: projects/mamba/src/types/check_expr.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: check_structured_stdlib_call
+  - path: projects/mamba/tests/harness/cpython/tools/strict_type_accounting.py
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/mamba/tests/governance/schema_gates/strict_type_accounting_gate_704.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: strict_type_accounting_requires_authoritative_contract_inventory
+  - path: projects/mamba/tests/external_contracts/ec_mamba_t1_force_typed_contract_completion.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: mamba_t1_force_typed_contract_completion
+  - path: projects/mamba/tests/governance/gates/t1_implicit_any_ingress_matrix/cases.jsonl
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/mamba/tests/governance/gates/t1_explicit_any_acceptance_matrix/cases.jsonl
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/mamba/tests/governance/gates/t1_forcetyped_contract_completion_inventory/cases.jsonl
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/mamba/tests/cpython/concurrency/primitives/threading/force_typed_contract_completion_parallel_compile_progress.py
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/mamba/tests/harness/cpython/config/perf/pins/force_typed_contract_completion_2011.toml
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
