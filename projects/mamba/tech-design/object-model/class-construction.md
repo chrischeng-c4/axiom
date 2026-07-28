@@ -8,8 +8,10 @@ built, and the rules the super/`__new__`/`__init__` machinery must uphold.
 `PendingClassRegistration` drains in a fixed order at each class's textual
 `ClassDefPlaceholder` (and a fallback loop for hand-built HIR):
 
-1. `mb_class_define_multi` — create the record.
-2. `mb_class_update_bases` — resolve runtime-valued bases, finalize MRO.
+1. `mb_class_define_multi` — create the record, then immediately propagate any
+   pending exception raised while computing its static-base MRO.
+2. `mb_class_update_bases` — resolve runtime-valued bases, finalize MRO, then
+   immediately propagate any pending exception raised by that recomputation.
 3. `emit_class_slots_for` — register `__slots__` (MUST follow step 2: the
    slot merge reads the MRO; running it before update_bases drops inherited
    slots). Statically-based classes keep immediate registration (R3).
@@ -19,6 +21,27 @@ built, and the rules the super/`__new__`/`__init__` machinery must uphold.
 Invariant: a class with runtime bases follows define → update_bases →
 register_slots; the queue-and-drain pattern (`pending_class_*` vecs +
 `class_runtime_key_value` cached vreg) exists to enforce it.
+
+### MRO rejection barrier
+
+Class registration is a transaction boundary even though the registry may
+hold a provisional record internally. `compute_mro` owns C3 validation and
+sets a catchable `TypeError` for duplicate bases or an inconsistent
+linearization. Lowering MUST place an exception-propagation barrier directly
+after both runtime calls that can compute an MRO:
+`mb_class_define_multi[_named]` and `mb_class_update_bases`.
+
+If either barrier observes an exception, execution leaves the class statement
+before slots, body side effects, attributes, finalizers, decorators, or the
+source name binding run. An enclosing `try/except TypeError` can catch the
+error; an uncaught top-level error remains observable to the execution
+boundary before runtime cleanup. The fallback MRO stored by the runtime is
+recovery-only internal state and MUST NOT make the rejected class observable.
+
+Valid single inheritance, diamonds, and consistent multiple inheritance cross
+both barriers unchanged. Verification therefore needs paired witnesses:
+an inconsistent `A(X, Y)` / `B(Y, X)` / `C(A, B)` hierarchy that is caught at
+the `C` statement, and a valid diamond whose MRO and class body remain live.
 
 Step 4's `__init_subclass__` dispatch (`dispatch_type_new_creation_hooks`,
 mod.rs:1631) carries the same closure-handle hazard as `__init__` (Instance
