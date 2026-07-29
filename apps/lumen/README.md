@@ -40,867 +40,48 @@ concept, only the caller's `external_id` is.
   source-backed runbook needed to wire Lumen into an app without a docs site or
   running server.
 
-## Capabilities
-
-The RuntimeTool baseline capabilities selected by `aw.toml` are mandatory for
-this long-running service class. They do not replace Lumen's product
-capabilities; search, schema/ops, scale, deployment, observability, backup, and
-agent integration remain first-class domain roots.
-
-### Capability Index
-
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
-| CLI Standard Surface | 1164 | implemented | verified | conformance | ready | mandatory baseline: shared `cli-std` llm/upgrade/issue surface, distinct from Lumen domain commands |
-| Chainable Output Conformance | 1142 | implemented | verified | conformance | ready | mandatory baseline: operational CLI outputs emit next/done without wrapping raw artifact/data streams |
-| Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
-| Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: Lumen-only perf regression passes in vat against retained pg/OpenSearch-calibrated floors |
-| Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
-| Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist, plus disjoint bearer-secret and verified-identity registry namespaces, auth required unless a CR opts out, and one token-registry source enforced at apply time |
-| HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
-| Standard Operational Endpoints | 1166 | implemented | verified | conformance | ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `lumen spec` evidence |
-| EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
-| Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
-| Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
-| Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range (numeric and keyword byte-lexicographic), and sorted filters |
-| Vector & Hash Search | 4141 | implemented | verified | conformance | ready | domain: CPU vector kNN, filtered kNN, and Hamming hash search |
-| Hybrid Search | 4139 | implemented | verified | conformance | ready | domain: lexical+semantic RRF fusion |
-| Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
-| Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
-| Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
-| Dynamic Shard Topology | 1319 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, checkpointed autonomous reshard phase driver (threshold -> topology -> migration -> durable checkpoint -> cutover), and multi-shard kind proof |
-| Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
-| Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
-| Primary Replicas | - | implemented | verified | conformance, dogfood | ready | trait baseline: per-shard raft group — leader-applied writes, `replicasPerShard`/`voterCount` follower/voter selection, replica-loss and failover survival |
-| Observability | - | implemented | verified | conformance, dogfood | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP, plus control-plane self-observability — the operator's own metrics, Events, scrape target, and absence/error-rate alerts |
-| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator, with `status.conditions[]` as the convergence API, a two-replica leader-elected operator behind a PDB, and an opt-in default-deny network-policy component; current GKE Lumen-only operator acceptance is recorded below |
-| Stateful Service Workload | #2144 | implemented | verified | smoke | ready | mandatory stateful profile: active TD verification linkage #2144 composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots; original projection #1553 remains closed historical provenance |
-| Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
-| Agent Task Navigation | 1683 | verified | passing | conformance | ready | non-domain DX baseline: typed offline task manifest and runbooks generated from the DX contract, runtime field capabilities, and canonical OpenAPI surface |
-
-### CLI Interface
-
-ID: cli-interface
-Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen dockerfile render` - source/release image artifacts.; CLI: `lumen k8s crd render`, `lumen k8s operator render|run`, and `lumen k8s instance render` - cluster API, control-plane, and app-namespace deployment surfaces.; CLI: `lumen connect` - k8s port-forward + token resolution wrapper around a command.; CLI: `lumen query index|search|duplicates|collections list` - one-shot wire-body wrappers for the index/search/duplicates/collections-list API surface.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline CLI contract; behavior: named `api_e2e` subtests - API probe/OpenAPI/metrics evidence
-Root WI: 4143
-Status: verified
-Required Verification: conformance
-Promise:
-Expose lumen as one long-running binary with stable service, schema, agent,
-OpenAPI, and deployment-facing command surfaces.
-Gate Inventory:
-- apps/lumen/tests/spec_cli.rs; apps/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text); apps/lumen/src/bin/lumen.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| service-process-interface | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/tests/api_e2e.rs |
-| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-| query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
-| lumen-connect-query-k8s-agent-workflow | change | 1321 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs |
-| deployment-operator-command-surface | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/src/operator |
-
-### CLI Standard Surface
-
-ID: cli-standard-surface
-Type: RuntimeTool
-Surfaces: CLI: `lumen llm` - shared offline agent self-doc topic surface required by the ecosystem CLI convention.; CLI: `lumen upgrade` - shared self-update and `--check` surface provided through `cli-std`.; CLI: `lumen issue search`, `lumen issue view`, `lumen issue create`, and `lumen issue comment` - shared tracker read/write/follow-up surface scoped to `app:lumen`, separate from Lumen's domain commands.
-EC Dimensions: behavior: `cargo test -p lumen --test cli_convention help_ships_standard_issue_group_not_report_issue -- --exact` - top-level help keeps the standard `llm`, `upgrade`, and `issue` groups visible; behavior: `cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact` - the issue group exposes the shared search/view/create/comment verbs; behavior: `cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact` - shared issue create/comment and upgrade check remain runnable in offline smoke mode; behavior: `cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact` - the shared `llm` entrypoint still publishes the agent topic set.
-Root WI: 1164
-Status: verified
-Required Verification: conformance
-Promise:
-Ship the mandatory shared `cli-std` surface every ecosystem CLI owes without
-blurring it into Lumen-specific serve/spec/dockerfile/k8s/data-movement
-commands.
-Gate Inventory:
-- apps/lumen/tests/cli_convention.rs; apps/lumen/tests/spec_cli.rs; apps/lumen/src/bin/lumen.rs; libs/cli-std/src/issue.rs; libs/cli-std/src/upgrade.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| shared-llm-entrypoint-surface | epic | 1164 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs<br>apps/lumen/src/bin/lumen.rs |
-| shared-upgrade-check-surface | epic | 1164 | implemented | passing | conformance | apps/lumen/tests/cli_convention.rs<br>libs/cli-std/src/upgrade.rs |
-| shared-issue-search-view-create-comment-surface | epic | 1164 | implemented | passing | conformance | apps/lumen/tests/cli_convention.rs<br>libs/cli-std/src/issue.rs |
-
-### Chainable Output Conformance
-
-ID: chainable-output-conformance
-Type: RuntimeTool
-Surfaces: CLI: `lumen dockerfile render --out`, `lumen k8s crd|operator|instance render --out`, `lumen spec gen --out`, `lumen backup`, `lumen export --out`, `lumen import`, `lumen issue ...`, and `lumen upgrade --check` - operational/artifact-producing commands that expose a runnable continuation or an explicit terminal marker.; CLI: `lumen dockerfile render` without `--out`, `lumen k8s ... render` without `--out`, `lumen export` without `--out`, `lumen spec`, and `lumen llm` - streamed artifact/domain payloads that intentionally stay unwrapped.
-EC Dimensions: behavior: `cargo test -p lumen --test cli_convention` - shared chainable harness over the default dry-run/file-writing CLI surfaces; behavior: `cargo test -p lumen --features backup --test cli_convention backup_export_import_outputs_are_chainable -- --exact` - backup/export/import next/terminal markers through the built binary
-Root WI: 1142
-Status: verified
-Required Verification: conformance
-Promise:
-Keep Lumen's operational CLI outputs lightweight but chainable: file-writing
-commands end with a trailing `next: <command>`, machine-readable admin helpers
-emit a top-level JSON `next`, and terminal dry-run/read paths end with an
-explicit terminal marker. Raw artifact/data streams stay as raw bytes, not AW
-envelopes.
-Gate Inventory:
-- apps/lumen/tests/cli_convention.rs; apps/lumen/src/bin/lumen.rs; libs/cli-std/src/issue.rs; libs/cli-std/src/upgrade.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| artifact-render-follow-ups | epic | 1142 | implemented | passing | conformance | apps/lumen/tests/cli_convention.rs<br>apps/lumen/src/bin/lumen.rs |
-| backup-export-import-next-contract | epic | 1142 | implemented | passing | conformance | apps/lumen/tests/cli_convention.rs<br>apps/lumen/src/bin/lumen.rs |
-| shared-issue-upgrade-terminal-markers | epic | 1142 | implemented | passing | conformance | apps/lumen/tests/cli_convention.rs<br>libs/cli-std/src/issue.rs<br>libs/cli-std/src/upgrade.rs |
-
-### Competitive Search Feature Parity
-
-ID: competitor-feature-parity
-Type: RuntimeTool
-Surfaces: HTTP: `POST /index`, `POST /search` - OLTP-derived search API.; Rust API: lumen engine/query planner - search execution over caller-owned external IDs.; CLI: `lumen serve` - hosts the search API.
-EC Dimensions: behavior: `cargo test -p lumen` - search planner, field type, query, and API conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Lumen covers the search-side replacement breadth expected from this runtime
-class: exact/filter, BM25, vector, hybrid, hash, duplicates, nested/data-table,
-schema lifecycle, and API metadata over caller-owned external IDs.
-Gate Inventory:
-- apps/lumen/tests/planner_diff.rs; apps/lumen/tests/vector_e2e.rs; apps/lumen/tests/hash_hamming.rs; apps/lumen/tests/collapse_nested.rs; apps/lumen/tests/stats_metadata_e2e.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| search-feature-breadth | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs<br>apps/lumen/tests/vector_e2e.rs<br>apps/lumen/tests/hash_hamming.rs<br>apps/lumen/tests/collapse_nested.rs |
-| query-planner-boolean-eval-roaring-postings | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs |
-| schema-and-metadata-breadth | epic | - | implemented | passing | conformance | apps/lumen/tests/drop_field_e2e.rs<br>apps/lumen/tests/reindex_stream_e2e.rs<br>apps/lumen/tests/stats_metadata_e2e.rs |
-
-### Competitive Search Performance
-
-ID: competitor-performance
-Type: RuntimeTool
-Surfaces: Bench: `apps/lumen/scripts/bench_vs_db.py` - pg/OpenSearch/MongoDB comparison.; Bench: `lumen-bench run --types sorted_page_deep` - filter+sort deep-page keyset regression cell.; Rig/Meter: `apps/lumen/vat.toml` and EC efficiency cube - load and resource attribution.; HTTP: `POST /search` - performance-relevant search surface.
-EC Dimensions: efficiency: `rig + meter + arena` - latency, throughput, RSS, footprint, and competitor comparison; behavior: `cargo test -p lumen --test perf_gate --test perf_gate_vs_db` - perf gate conformance
-Root WI: -
-Status: verified
-Required Verification: conformance, dogfood
-Promise:
-Keep lumen's speed and footprint claims tied to ratcheted tests and competitor
-comparisons against Postgres/OpenSearch/MongoDB in the regime it is built for:
-large corpora, high QPS, and HTTP/2 multiplexed search/index traffic. Low-QPS
-rows stay useful as smoke and regression diagnostics, not as the product win
-condition.
-Gate Inventory:
-- apps/lumen/tests/perf_gate.rs; apps/lumen/tests/perf_gate_vs_db.rs; apps/lumen/tests/perf-baseline.json; apps/lumen/src/bin/lumen-bench.rs; apps/lumen/tests/rig/cases/load/data_table_browse.toml; apps/lumen/scripts/bench_vs_db.py; apps/arena/examples/lumen-vs-pg.toml; apps/arena/examples/lumen-vs-opensearch.toml
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| perf-gate-envelope-absolute-latency-throughput-floors | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate.rs |
-| competitive-regression-gate-beat-pg-os-per-cell-ratcheting | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/tests/perf-baseline.json |
-| depth-invariant-filter-sort-pagination | change | 10 | implemented | passing | conformance | apps/lumen/src/bin/lumen-bench.rs<br>apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/tests/rig/cases/load/data_table_browse.toml |
-| external-pg-and-opensearch-arena-comparison | epic | - | implemented | passing | dogfood | apps/lumen/vat.toml<br>apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/tests/perf-baseline.json<br>apps/arena/examples/lumen-vs-pg.toml<br>apps/arena/examples/lumen-vs-opensearch.toml |
-
-### Long-Running Stability
-
-ID: long-running-stability
-Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `apps/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Lumen WAL / raft-runtime - rebuildable derived-index mutation stream.
-EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `apps/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
-Root WI: -
-Status: verified
-Required Verification: conformance, dogfood
-Promise:
-Run as a long-lived derived-index service that rebuilds from the log, survives
-pod fault scenarios, exposes usable probes and observability, and keeps
-latency/resource behavior stable over soak.
-Gate Inventory:
-- apps/lumen/tests/rig/cases/resilience; apps/lumen/tests/rig/cases/endurance; apps/lumen/tests/backup_restore_e2e.rs; apps/lumen/scripts/kind-e2e.sh; apps/lumen/k8s; apps/lumen/src/operator
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | apps/lumen/src/raft_sm.rs<br>libs/raft-runtime/src/host.rs |
-| search-p99-survives-fault-and-recovers | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/resilience |
-| graceful-degradation-under-overload | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/load<br>apps/lumen/tests/rig/config/pins |
-| no-fd-socket-thread-leak | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/endurance |
-| no-latency-drift-over-soak | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/endurance |
-| kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | apps/lumen/k8s |
-| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
-| meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs |
-| shared-stateful-foundation-adoption | epic | 1646 | implemented | passing | conformance | `cargo test -p lumen --test shared_stateful_foundations`; `cargo test -p lumen --lib auth`; `cargo test -p lumen --test admission_e2e`; `cargo test -p lumen --lib tls`; `cargo test -p lumen --features operator --test operator_render`; `cargo test -p lumen --test rig_stateful_adapter` |
-
-### Security Hardening
-
-ID: security-hardening
-Type: SecurityTool
-Surfaces: HTTP: lumen API - bearer-token auth, RBAC, and query boundary.; HTTP: `Authorization: Bearer` resolved against the registry's `tokens` namespace and a provider-verified identity against its disjoint `identities` namespace (#2678).; Peer transport: rustls/mTLS config - long-running cluster transport security.; CRD: `spec.auth` defaults to `required`, and naming both `tokensSecret` and `tokensSecretProviderClass` is rejected at `kubectl apply` by an `x-kubernetes-validations` rule rather than resolved by a silent precedence.; Guard: future negative security inventory.
-EC Dimensions: security: `guard` - auth/RBAC/query-safety/security findings gate; behavior: `cargo test -p lumen --test auth_e2e --test authz_matrix_e2e` - security behavior conformance
-Root WI: -
-Status: verified
-Required Verification: conformance, negative
-Promise:
-Keep the long-running search service safe by enforcing API auth/RBAC, preserving
-collection/result confidentiality, rejecting unsafe query shapes, and keeping
-TLS/mTLS transport configuration testable. The permission table is readable
-without being a credential: bearer secrets and provider-verified identities live
-in two disjoint key namespaces, so a registry carrying only `identities` is
-ordinary reviewable configuration, and a bearer secret whose text happens to be
-a valid email can never inherit that email's grants. Authentication is on unless
-a CR asks for it to be off, and there is exactly one place a token registry can
-come from.
-Gate Inventory:
-- apps/lumen/tests/auth_e2e.rs; apps/lumen/tests/authz_matrix_e2e.rs; apps/lumen/tests/coverage_gaps_e2e.rs; apps/lumen/src/tls.rs; apps/lumen/src/auth.rs; libs/service-auth/src/role_map.rs; libs/service-auth/src/gcp.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| bearer-token-auth-lumen-auth | epic | - | implemented | passing | conformance | apps/lumen/tests/auth_e2e.rs |
-| role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | apps/lumen/tests/authz_matrix_e2e.rs |
-| adversarial-query-safety | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
-| score-confidentiality | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>`cargo test -p lumen --test shared_stateful_foundations`<br>apps/lumen/src/tls.rs |
-| identity-keyed-registry-namespaces | change | 2678 | implemented | passing | conformance | `cargo test -p service-auth`<br>`cargo test -p cli-std --features k8s --lib connect::`<br>libs/service-auth/src/gcp.rs |
-| auth-required-by-default | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>apps/lumen/src/auth.rs |
-| single-token-registry-source | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>`cargo test -p service-k8s`<br>apps/lumen/k8s/operator/crd.yaml |
-
-### HTTP/2 API List
-
-ID: http2-api-list
-Type: Service
-Surfaces: HTTP: `POST /index`, `POST /search`, `QUERY /collections/{id}` and `QUERY /collections` (RFC 10008 twins of `POST .../search` and `POST /collections:search`), collection/schema/stats/reindex/replay routes, `POST /admin/reshard:apply`, `POST /admin/backup:scoped`, `POST /admin/reshard:evict`, `POST /admin/reshard:fence`, `POST /admin/reshard:prune`, `POST /admin/checkpoint`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke; behavior: `cargo test -p lumen --test reshard_admin_e2e` - reshard admin verb conformance
-Root WI: 4143
-Status: verified
-Required Verification: conformance
-Promise:
-Publish Lumen's supported HTTP/2 API surface as a compact endpoint inventory
-and offline spec commands, without making OpenAPI completeness the capability
-definition. Every QUERY endpoint keeps a POST twin (same handler, byte-identical
-response), and `x-read-consistency` (leader/bounded/any) is enforced against
-live cluster state in primary-replica mode rather than parsed and discarded.
-Gate Inventory:
-- apps/lumen/README.md#api-surface; apps/lumen/tests/spec_cli.rs; apps/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text); apps/lumen/tests/reshard_admin_e2e.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| client-search-and-index-route-list | epic | - | implemented | passing | conformance | apps/lumen/README.md#api-surface; apps/lumen/tests/api_e2e.rs |
-| ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs |
-| offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-| query-method-post-twins-accept-query | change | 1297 | implemented | passing | conformance | apps/lumen/src/api.rs |
-| x-read-consistency-live-cluster-state | change | 1310 | implemented | passing | conformance | apps/lumen/src/api.rs |
-| x-read-consistency-raft-bootstrap-wiring | change | 1349 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs |
-| reshard-apply-scoped-backup-evict-admin-verbs | change | 1380 | implemented | passing | conformance | apps/lumen/tests/reshard_admin_e2e.rs |
-| synchronous-checkpoint-admin-verb | change | 1389 | implemented | passing | conformance | apps/lumen/src/api.rs |
-
-### Standard Operational Endpoints
-
-ID: standard-operational-endpoints
-Type: Service
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - auth-exempt liveness, readiness, scrape, live-spec, and Swagger UI endpoints served on the same listener as the data plane via `service_http::standard_probe_routes`.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline OpenAPI evidence for the same operational contract when no server is running.
-EC Dimensions: behavior: `cargo test -p lumen --test api_e2e health_and_ready -- --exact` - liveness and steady-state readiness surface; behavior: `cargo test -p lumen --test api_e2e readyz_reports_draining -- --exact` - drain flips readiness to 503 while `/healthz` stays live; behavior: `cargo test -p lumen --test api_e2e metrics_exposes_prometheus_text -- --exact` - Prometheus scrape surface; behavior: `cargo test -p lumen --test api_e2e openapi_spec_served -- --exact` - live one-port OpenAPI endpoint; behavior: `cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact` - Swagger UI is served and points at the live spec; behavior: `cargo test -p lumen --test spec_cli openapi_is_valid_json_with_search_path -- --exact` - offline `lumen spec` emits the same auth-exempt operational route inventory
-Root WI: 1166
-Status: verified
-Required Verification: conformance
-Promise:
-Expose the standard one-port operational surface the service trait requires:
-shared probe, metrics, live-spec, and Swagger UI endpoints stay available on
-the main listener, while `lumen spec` mirrors the same OpenAPI contract
-offline.
-Gate Inventory:
-- apps/lumen/src/api.rs; apps/lumen/tests/api_e2e.rs (health_and_ready, readyz_reports_draining, metrics_exposes_prometheus_text, openapi_spec_served); apps/lumen/tests/coverage_gaps_e2e.rs (s8_swagger_docs_endpoint_returns_html); apps/lumen/tests/spec_cli.rs (openapi_is_valid_json_with_search_path)
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| service-http-standard-probe-routes | epic | 1166 | implemented | passing | conformance | apps/lumen/src/api.rs<br>apps/lumen/tests/api_e2e.rs |
-| live-openapi-and-swagger-ui-surface | epic | 1166 | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs<br>apps/lumen/tests/coverage_gaps_e2e.rs |
-| offline-openapi-matches-operational-surface | epic | 1166 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs<br>apps/lumen/README.md#openapi |
-
-### EC Gates Configured
-
-ID: ec-gates-configured
-Type: Devops
-Surfaces: Config: `apps/lumen/aw.toml` - AW EC inventory, generated claim catalog, and dispatch commands for behavior/efficiency/stability verification.; Config: `apps/lumen/vat.toml` - vat-managed `rig-*` and `ec-efficiency*` runners backing the rig and meter EC tools.; Docs: `apps/lumen/external-contracts/claim-closure/production-claims.md` - claim-closure mappings from README promises to executable EC commands.; Tests: `apps/lumen/tests/behavior_lumen_claim_*.rs`, `apps/lumen/tests/efficiency_lumen_claim_*.rs`, `apps/lumen/tests/stability_lumen_claim_*.rs`, and `apps/lumen/tests/security_lumen_claim_*.rs` - generated claim evidence stubs tied back to the EC inventory.
-EC Dimensions: behavior: `./target/debug/aw ec check --project lumen` - aw.toml/generated-case inventory stays in sync with claim tests; behavior: `./target/debug/aw ec review --project lumen` - typed capabilities keep required EC dimensions covered; efficiency: `cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter` - meter-wrapped Lumen-only efficiency gate dispatch; stability: `cd apps/lumen && ../../target/debug/vat run rig-resilience` - vat-managed rig stability dispatch
-Root WI: 1165
-Status: verified
-Required Verification: conformance
-Promise:
-Keep Lumen's service-trait EC baseline explicit and runnable: AW knows where the
-claim inventory lives, vat owns the meter/rig gate runners, and
-external-contract claim closure maps each production claim to concrete
-executable evidence.
-Gate Inventory:
-- apps/lumen/aw.toml; apps/lumen/vat.toml; apps/lumen/external-contracts/claim-closure/production-claims.md; apps/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs; apps/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs; apps/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs; apps/lumen/tests/security_lumen_claim_security_bearer_auth.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| aw-ec-generated-inventory-and-dispatch | epic | 1165 | implemented | passing | conformance | apps/lumen/aw.toml |
-| vat-managed-meter-and-rig-runners | epic | 1165 | implemented | passing | conformance | apps/lumen/vat.toml<br>apps/lumen/tests/rig/cases/resilience<br>apps/lumen/tests/rig/cases/endurance<br>apps/lumen/tests/rig/config/pins |
-| external-contract-claim-closure-evidence | epic | 1165 | implemented | passing | conformance | apps/lumen/external-contracts/claim-closure/production-claims.md<br>apps/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs<br>apps/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs<br>apps/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs<br>apps/lumen/tests/security_lumen_claim_security_bearer_auth.rs |
-
-### Search Core
-
-ID: search-core
-Type: Service
-Surfaces: HTTP: `POST /index` + `POST /search` - client API for indexing caller-owned records and querying ranked external_id results.; CLI: `lumen serve` - search service process.
-EC Dimensions: behavior: `cargo test -p lumen --test planner_diff` - query planner conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Input a query with relevance, filters, and sort, and output ranked/sorted
-`external_id`s only. Lumen never stores or returns caller documents.
-Gate Inventory:
-- apps/lumen/tests/planner_diff.rs; apps/lumen/scripts/bench_vs_db.py
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| query-planner-boolean-eval-roaring-postings | epic | - | implemented | passing | conformance | apps/lumen/tests/planner_diff.rs |
-| filter-sort-early-termination | epic | - | implemented | passing | conformance | apps/lumen/scripts/bench_vs_db.py<br>apps/lumen/src/bin/lumen-bench.rs<br>apps/lumen/tests/perf_gate_vs_db.rs |
-
-### Lexical Search
-
-ID: lexical-search
-Type: Service
-Surfaces: HTTP: `POST /search` - text BM25 query surface.; CLI: `lumen serve` - analyzer-backed planner.
-EC Dimensions: behavior: `cargo test -p lumen` - BM25 analyzer/ranking conformance; efficiency: `meter` - BM25 search profile
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-BM25 ranking over `text`, with tokenization built in through whitespace, ngram,
-and jieba analyzers.
-Gate Inventory:
-- apps/lumen/tests/perf_gate_vs_db.rs; apps/lumen/src/storage.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| bm25-ranking-and-analyzers | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/src/storage.rs |
-| jieba-fallback-cjk-bigram | change | 1975 | implemented | passing | conformance | apps/lumen/src/tokenize.rs |
-
-### Exact & Filter Search
-
-ID: exact-filter-search
-Type: Service
-Surfaces: HTTP: `POST /search` - keyword, number, set, boolean, range, and sort filters; range bounds cover both number (numeric) and keyword (byte-lexicographic string/date) fields in one `RangeQuery` node.; CLI: `lumen serve` - exact/filter planner.
-EC Dimensions: behavior: `cargo test -p lumen` - term/range/set planner conformance; efficiency: `meter` - filter and range profile
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Support keyword terms, number ranges, keyword byte-lexicographic string/date
-ranges, set membership, boolean composition, and sort/filter early
-termination at roaring-bitmap and sorted-column speed.
-Gate Inventory:
-- apps/lumen/tests/perf_gate_vs_db.rs; apps/lumen/src/storage.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| term-range-set-early-termination | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate_vs_db.rs |
-| wide-range-filter-index-on-disk-sorted-value-range | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/src/storage.rs |
-| keyword-byte-lexicographic-range-query | change | 1307 | implemented | passing | conformance | apps/lumen/src/storage.rs |
-
-### Vector & Hash Search
-
-ID: vector-hash-search
-Type: Service
-Surfaces: HTTP: `POST /search` - vector kNN, filtered kNN, and hash Hamming query surface.; CLI: `lumen serve` - vector/hash planner.
-EC Dimensions: behavior: `cargo test -p lumen --test vector_e2e --test hash_hamming` - vector/hash conformance; efficiency: `meter` - kNN profile
-Root WI: 4141
-Status: verified
-Required Verification: conformance
-Promise:
-Index caller-owned embeddings and perceptual/structural hashes, then answer CPU
-vector kNN, filter-correct kNN, and Hamming search without owning model
-artifacts.
-Gate Inventory:
-- apps/lumen/tests/vector_e2e.rs; apps/lumen/tests/hash_hamming.rs; apps/lumen/tests/perf_gate_vs_db.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| hnsw-vector-knn-cpu | epic | - | implemented | passing | conformance | apps/lumen/tests/vector_e2e.rs |
-| filtered-knn-no-recall-collapse | epic | 4141 | implemented | passing | conformance | apps/lumen/tests/vector_e2e.rs |
-| hash-hamming-search | epic | - | implemented | passing | conformance | apps/lumen/tests/hash_hamming.rs |
-
-### Hybrid Search
-
-ID: hybrid-search
-Type: Service
-Surfaces: HTTP: `POST /search` - RRF hybrid lexical+semantic query surface.; CLI: `lumen serve` - hybrid planner.
-EC Dimensions: behavior: `cargo test -p lumen --test hybrid_rrf` - RRF fusion conformance
-Root WI: 4139
-Status: verified
-Required Verification: conformance
-Promise:
-Fuse lexical BM25 and semantic vector rankings with Reciprocal Rank Fusion,
-keeping filters inside each leg so the kNN leg remains filter-correct.
-Gate Inventory:
-- apps/lumen/tests/hybrid_rrf.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| rrf-fusion-node-planner-integration | epic | 4139 | implemented | passing | conformance | apps/lumen/tests/hybrid_rrf.rs |
-
-### Duplicate & Nested Search
-
-ID: duplicate-nested-search
-Type: Service
-Surfaces: HTTP: `POST /search` - duplicate, group, has_child, collapse, exists, and CJK substring query surface.; CLI: `lumen serve` - nested/data-table planner.
-EC Dimensions: behavior: `cargo test -p lumen --test collapse_nested` - nested planner and data-table conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Cover Airtable-style data tables and duplicate/group use cases with
-posting-list-cheap duplicates, nested has_child/group queries, collapse, exists,
-and CJK substring search.
-Gate Inventory:
-- apps/lumen/tests/collapse_nested.rs; apps/lumen/tests/api_e2e.rs; apps/lumen/tests/properties.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| duplicates-group-by | epic | - | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs |
-| nested-group-has-child-collapse | epic | - | implemented | passing | conformance | apps/lumen/tests/collapse_nested.rs |
-
-### Schema & Ops Lifecycle
-
-ID: schema-ops-lifecycle
-Type: Service
-Surfaces: HTTP: collection DDL, drop-field, reindex, replay, stats, and metadata API routes.; CLI: `lumen serve` - schema/ops lifecycle endpoints.
-EC Dimensions: behavior: `cargo test -p lumen --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e` - schema and ops lifecycle conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Provide the operational surface beyond search: collection DDL, online
-drop-field drain, reindex/replay stream, and stats/metadata introspection.
-Gate Inventory:
-- apps/lumen/tests/drop_field_e2e.rs; apps/lumen/tests/drop_drain_e2e.rs; apps/lumen/tests/reindex_stream_e2e.rs; apps/lumen/tests/stats_metadata_e2e.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| schema-ddl-drop-field-drain | epic | - | implemented | passing | conformance | apps/lumen/tests/drop_field_e2e.rs<br>apps/lumen/tests/drop_drain_e2e.rs |
-| reindex-replay-stream | epic | - | implemented | passing | conformance | apps/lumen/tests/reindex_stream_e2e.rs |
-| stats-metadata | epic | - | implemented | passing | conformance | apps/lumen/tests/stats_metadata_e2e.rs |
-
-### Elastic Scale
-
-ID: elastic-scale
-Type: Service
-Surfaces: Storage: columnar mmap segment tier - RAM=hot/disk=all storage path.; CLI: `lumen serve` - segment-backed persistence mode.
-EC Dimensions: behavior: `cargo test -p lumen --test disk_scale_proof` - disk/RAM boundedness and reopen conformance; efficiency: `meter` - RSS/footprint profile
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Keep hot working sets in RAM while the full indexed corpus lives on disk-backed
-columnar mmap segments, with deterministic reopen from local log/checkpoints.
-Gate Inventory:
-- apps/lumen/tests/disk_scale_proof.rs; apps/lumen/src/storage.rs
-
-Disk-full behavior (#2516): when a durable write path (local AOF append, a
-segment/RDB checkpoint save, or — under `--wal raft` — a raft log append)
-hits ENOSPC, the pod enters a sticky, process-local degraded read-only mode:
-the failing write and every subsequent mutating request (`index`,
-`docs:replace`, delete, create/drop collection, `admin/restore`) get a
-structured `507 Insufficient Storage` response (`{"error":"storage_full",...}`)
-without retrying the durable path, while reads/search/`/healthz`/`/readyz`
-keep serving normally (`/readyz` intentionally stays `200` — the node is
-still useful for reads). Visibility is via the `lumen_storage_degraded` gauge
-and `lumen_storage_full_errors_total` counter (`/metrics`) plus the
-`LumenStorageDegraded` alert, paired with the existing `LumenPvcNearFull`
-alert (fires at <10% free on the `raft-<ordinal>` PVC) as its early-warning
-companion — `LumenPvcNearFull` should page first, well before disk
-actually fills. Recovery is automatic: every `LUMEN_STORAGE_FULL_REPROBE_SECS` (default `30`) the pod
-retries a small write into `--data-dir` and clears the flag once one
-succeeds — freeing space or expanding the PVC online is enough; a pod
-restart also clears it (the flag is process-local, not persisted).
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | apps/lumen/tests/disk_scale_proof.rs<br>apps/lumen/src/storage.rs |
-
-Capacity guidance (#2517): docs-per-shard sizing and the per-shard
-indexing/search throughput envelope below is benchmark-backed, not modeled —
-derived from `lumen-bench` plus the existing `write_qps`/`perf_gate_vs_db`
-scale-bench surfaces on a **named reference profile**: Apple M1 Max (10-core,
-64 GiB RAM), macOS 26.5.2, `cargo build --release`, quiet/idle machine, single
-`shardCount:1` node. **Validate on your target instance class before treating
-these as SLOs.** Corpus: 3 fields/doc (`bio` Text, `city` Keyword, `age`
-Number) — the same shape `docs/benchmarks-scale.md` uses.
-
-| metric | measured | detail |
-|---|---:|---|
-| indexing throughput, 100 workers (saturation) | 768.1k-769.8k docs/s | HTTP `POST /index`, embedded local WAL (no fsync/raft durability), 100-doc/300-item batches; p50 12.0ms, p99 21.1-25.5ms |
-| indexing throughput, 10 workers | 742.8k-772.4k docs/s | p50 1.19-1.23ms, p99 2.19-2.35ms |
-| search QPS sustained, per shard, 1k-1M docs | >=1000 req/s, p50 0.13-0.44ms | `text_bm25`/`kw_term`/`bool_filter`, real HTTP path over disk-backed segments; harness-bound (HARN) at every N tested, see boundary below |
-| on-disk footprint | converges to ~28.8-29.4 bytes/doc by 100k-1M docs | 0.07 MiB@1k (75.6 B/doc, fixed overhead) -> 2.80 MiB@100k (29.4 B/doc) -> 27.50 MiB@1M (28.8 B/doc) |
-| peak build/reshard RSS | ~1.4-1.5 KiB/doc marginal by 100k-1M docs | 184.2 MiB@100k -> 1,424.8 MiB@1M; spans index+`flush_to_segments`+serve, so it is a conservative upper bound — a reopened read-only shard's steady resident RSS is only ~30-49% of full in-RAM per `tests/disk_scale_proof.rs` (separate proof, not re-verified this round) |
-
-Docs-per-shard ceiling: `spec.serving.memory` defaults to `4Gi`, applied as
-request==limit (Guaranteed QoS, no burst headroom below the cgroup limit).
-Budgeting ~60% of that limit (2.4Gi) for peak build/reshard RSS against the
-measured ~1.4-1.5 KiB/doc marginal cost lands around **1.5-2M docs/shard** as
-a starting planning ceiling for this corpus shape — wider schemas or larger
-text fields raise bytes/doc and lower this number proportionally; re-run the
-reproduction commands below against your own schema to recompute it.
-
-Memory/disk rules of thumb: budget disk generously (~29 bytes/doc for this
-corpus is rarely the binding constraint, and PVC expansion is cheap relative
-to a pod OOM); budget RAM against `spec.serving.memory` using the
-peak-RSS-per-doc curve above, not the on-disk figure.
-
-Pre-shard vs auto-split: `spec.reshardPolicy.maxShardBytes` is unset by
-default, so the operator only reports recommendations and never auto-splits
-(`recommendationOnly: true` until set). It gates against each pod's
-`lumen_storage_bytes` metric — an *approximate in-memory index byte estimate*
-scraped from `/metrics`, not raw on-disk `.lseg` bytes or process RSS — so
-size it relative to `spec.serving.memory`, not PVC size.
-`prepareAtPercent`/`urgentAtPercent` default to 50%/85% of that budget. Prefer
-pre-sharding (`spec.shardCount` > 1 at deploy time) when the expected corpus
-is likely to clear the single-shard ceiling above during initial rollout,
-since the reshard workflow is a rare, checkpointed background migration
-(`PrepareSplit -> Splitting -> CatchingUp -> Complete`), not instant. Rely on
-`maxShardBytes` auto-split for organic/unpredictable growth once already
-running — it is autonomous and zero-human-step end to end, but only grows
-shard count (`spec.reshardPolicy.maxShards` bounds how far; no
-merge/contraction path exists yet, see Dynamic Shard Topology below).
-
-Boundaries this bench round did not establish — do not extrapolate past
-these: the true per-shard search QPS ceiling (every qps1000 row above was
-harness-bound on this box, i.e. the load generator saturated first, not
-lumen — the actual ceiling is higher and unmeasured here); indexing
-throughput under the production raft-durable write path (`--wal raft`) —
-`write_qps.rs`'s `LUMEN_WRITE_MODES` covers
-`embedded`/`sharded`/`nats`/`natssharded`/`pg`/`os` but has no raft mode, so
-raft-durable docs/s is an open gap, not a number in this table; and
-steady-state (post-reopen, serving-only) RSS in isolation from build-time
-peak — this round's peak RSS spans build+flush+serve together, not a
-reopen-only measurement.
-
-Reproduce:
-
-```sh
-# search-latency curve at increasing corpus size (raw Engine query path, no HTTP/disk)
-./target/release/lumen-bench run --types sorted_page_deep,bool_filter --documents 100000
-
-# indexing throughput (embedded local WAL, HTTP POST /index; workers=1,10,100)
-LUMEN_WRITE_MODES=embedded LUMEN_WRITE_WARMUP_S=1.0 LUMEN_WRITE_WINDOW_S=3.0 \
-    cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
-
-# footprint + search-QPS ladder across 1k/10k/100k docs (disk-backed segments)
-LUMEN_SCALE_ROWS=1000,10000,100000 LUMEN_SCALE_CELLS=text_bm25,kw_term,bool_filter \
-    LUMEN_SCALE_QPS_TARGETS=100,1000 LUMEN_GATE_WINDOW_S=2 \
-    cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture lumen_scale_bench
-
-# 1M footprint-only point (skips the qps ladder for speed)
-LUMEN_SCALE_ROWS=1000000 LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_SCALE_QPS=0 \
-    LUMEN_SCALE_CELLS=text_bm25,kw_term,bool_filter \
-    cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture lumen_scale_bench
-```
-
-### Dynamic Shard Topology
-
-ID: dynamic-shard-topology
-Type: Service
-Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, `spec.shardMap`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied — wired for both the non-k8s `--search-shard-segment-dirs` fan-in serving mode (reads the shard map delivered through `SHARD_MAP_VERSION`/`SHARD_MAP_ASSIGNMENTS` env) and the operator/k8s routed serving topology (`SHARD_COUNT` env > 1 at `replicasPerShard <= 1`): each pod consumes the same delivered shard map at startup, answers local-owned buckets directly, and forwards remote-owned buckets one hop over h2c to the owning shard's stable headless-DNS pod (writes route by ownership too — `/index`, `docs:replace`, delete); `shardCount:1` deployments never construct a router (#1398, zero forwarding overhead).; Operator: checkpointed reshard phase driver (`PrepareSplit -> Splitting -> CatchingUp -> Complete`) that turns a crossed reshard-policy threshold into a resumable topology change, ending in a synchronous durability checkpoint and cutover restart with zero human step.
-EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map and bounded reshard batch conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance (rendering only); behavior: `cargo test -p lumen --features operator --test reshard_driver_e2e && cargo test -p lumen --test reshard_admin_e2e && cargo test -p lumen --lib segment_rdb` - reshard-durability gate: driver state machine and checkpoint-gated cutover, the four reshard/backup admin verbs including idempotency and auth, and cold-start durability of applied/evicted reshard mutations; behavior: `cargo test -p lumen --lib routing_remote::tests && cargo test -p lumen --features operator --test routed_shard_e2e` - cross-pod shard routing (#1398 R1-R3): real-TCP h2c forwarding of index/docs:replace/delete/search to the owning shard's pod, routing-key-less scatter/gather merge, the one-hop forwarding guard, retryable `shard_forward_unavailable` on an unreachable shard, and `shardCount:1` never constructing a router; stability: `apps/lumen/scripts/kind-e2e.sh` - live operator dogfood for shardCount=2 with replicasPerShard=1 and replicasPerShard=3
-Root WI: 1319
-Status: verified
-Required Verification: conformance, dogfood
-Promise:
-Scale storage by moving virtual buckets between physical shards under an
-operator-autonomous workflow end to end — threshold detection, topology
-change, data migration, durable checkpoint, and cutover all execute without
-a human step — while keeping replica HA and HPA-driven query capacity
-separate from data ownership. Boundary: today the workflow only grows shard
-count (`PrepareSplit -> Splitting -> CatchingUp -> Complete` splits one shard
-into two); there is no merge/contraction path, and
-`spec.reshardPolicy.maxShards` bounds how far the topology can grow, not
-shrink.
-Gate Inventory:
-- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; #1319 autonomous reshard workflow epic; #1398 cross-pod shard routing for operator/k8s serving pods; apps/lumen/src/routing.rs; apps/lumen/src/reshard.rs; apps/lumen/src/operator; apps/lumen/src/operator/reshard_driver.rs; apps/lumen/src/routing_remote.rs; apps/lumen/tests/operator_render.rs; apps/lumen/tests/reshard_driver_e2e.rs; apps/lumen/tests/reshard_admin_e2e.rs; apps/lumen/scripts/kind-e2e.sh
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| versioned-virtual-bucket-shard-map | epic | 1182 | implemented | passing | conformance | apps/lumen/src/routing.rs<br>apps/lumen/tests/operator_render.rs |
-| storage-pressure-operator-split-policy | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| autonomous-reshard-workflow | epic | 1319 | implemented | passing | dogfood | apps/lumen/src/operator/reshard_driver.rs<br>apps/lumen/tests/reshard_driver_e2e.rs |
-| reshard-data-plane-admin-verbs | change | 1380 | implemented | passing | conformance | apps/lumen/tests/reshard_admin_e2e.rs |
-| checkpointed-reshard-phase-driver | change | 1381 | implemented | passing | conformance | apps/lumen/src/operator/reshard_driver.rs<br>apps/lumen/tests/reshard_driver_e2e.rs |
-| serve-consumes-delivered-shard-map | change | 1384 | implemented | passing | dogfood | apps/lumen/src/bin/lumen.rs<br>apps/lumen/src/operator/render.rs |
-| stale-single-member-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator |
-| post-cutover-usage-freshness-split-gate | change | 1386 | implemented | passing | conformance | apps/lumen/src/operator/reshard_driver.rs |
-| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs |
-| reshard-apply-evict-synchronous-checkpoint | change | 1389 | implemented | passing | dogfood | apps/lumen/src/operator/reshard_driver.rs<br>apps/lumen/src/api.rs |
-| cross-pod-shard-routing | change | 1398 | implemented | passing | dogfood | apps/lumen/src/routing_remote.rs<br>apps/lumen/src/api.rs<br>apps/lumen/src/bin/lumen.rs |
-| multi-shard-replica-kind-e2e | epic | 1179 | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
-
-### Backup & Restore
-
-ID: backup-restore
-Type: Service
-Surfaces: CLI: `lumen serve` - snapshot restore and periodic object-snapshot loop.; Rust API: `LocalFsRdbStore` - local-dev snapshot sink wrapper over `libs/storage-durable` atomic snapshot files.; Admin/backup path: external snapshot bytes written through service-backup object-store sinks for cold DR seed.
-EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Keep Lumen durable-only in production: accepted writes land in durable
-WAL/raft-backed state before success, while scheduled SnapshotV1 backups are
-written to object storage for cold-start and disaster-recovery. Live replicas
-synchronize through raft log/snapshot mechanics; backup artifacts seed cold
-restore and future empty-PVC bootstrap, not normal replica replication.
-Local RDB/AOF durability composes `libs/storage-durable` for fsync policy,
-atomic snapshot replacement, CRC-framed AOF records, torn-tail recovery, and
-compaction; Lumen keeps only the `SnapshotV1`/`WalRecord` codecs and engine
-restore semantics locally.
-Gate Inventory:
-- apps/lumen/tests/backup_restore_e2e.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| rdb-snapshot-restore-localfsrdbstore | epic | - | implemented | passing | conformance | apps/lumen/tests/backup_restore_e2e.rs |
-| periodic-snapshotter-serve | epic | - | implemented | passing | smoke | apps/lumen/src/bin/lumen.rs |
-
-### Replica Sync & Bootstrap
-
-ID: replica-sync-bootstrap
-Type: Service
-Surfaces: RaftHost: leader forwarding, append/apply, install snapshot, compaction, and follower catch-up.; Lumen engine state machine: committed `WalRecord` bytes applied into shard-local index state.; Backup/seed: exact `file://` or backup-enabled `s3://bucket/key` SnapshotV1 seed before WAL/raft delta catch-up for empty PVCs.
-EC Dimensions: stability: existing raft and backup tests cover live replica convergence and cold restore separately; behavior: `cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture` - empty-PVC seed restore before catch-up; behavior: `cargo test -p service-backup` - shared exact object fetch contract
-Root WI: 1181
-Status: verified
-Required Verification: conformance, dogfood
-Promise:
-Make replica behavior agent-readable: existing PVC restarts replay local raft
-state/logs, replacement replicas seed from snapshot/object storage before raft
-delta catch-up, and disaster recovery restores from external backup without
-confusing backup with live replica synchronization.
-Gate Inventory:
-- #1181 empty-PVC replica bootstrap seed path; apps/lumen/src/bin/lumen.rs; apps/lumen/src/raft.rs; apps/lumen/src/raft_sm.rs; libs/raft-runtime; libs/service-backup
-
-Deployer note (seed-bucket IAM, #2514): a `spec.serving.bootstrap.seedUri`
-instance reads the seed object through the SERVING pod's own auto-created
-Workload Identity KSA, not the backup GSA — the backup GSA's grant only
-covers the backup Job's write path. Grant that KSA's federated principal
-`roles/storage.objectViewer` on the seed bucket:
-`principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<project-id>.svc.id.goog/subject/ns/<namespace>/sa/<ksa-name>`.
-Without it the pod crash-loops on a GCS 403 at boot. `spec.serviceAccountName`
-(0.4.25+) can point the pod at a pre-existing KSA that already carries the
-grant, instead of the operator-created per-CR default.
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | apps/lumen/src/raft.rs<br>apps/lumen/src/raft_sm.rs<br>libs/raft-runtime |
-| external-backup-disaster-recovery-seed | epic | - | implemented | passing | conformance | apps/lumen/tests/backup_restore_e2e.rs |
-| empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>libs/service-backup/src/source.rs |
-
-### Primary Replicas
-
-ID: primary-replicas
-Type: Runtime
-Root WI: -
-Status: verified
-Surfaces: Raft: per-shard consensus group over `libs/raft-core` (feature `raft-wal`), with `raft_runtime::cluster` deriving the StatefulSet peer topology consumed unconditionally by `src/config.rs`/`src/raft.rs`.; CRD: `spec.replicasPerShard` (gates raft consensus only, never persistence) and `spec.voterCount` select follower replicas and voter quorum per shard.; Writes: commit through the shard leader and replicate to followers; replacement replicas rejoin via snapshot/log catch-up (see replica-sync-bootstrap).
-EC Dimensions: stability: `cargo test -p lumen --test stability_lumen_topology_existing_raft_replica_sync` - existing-PVC replica raft sync; behavior: `cargo test -p lumen --test behavior_lumen_claim_http2_read_consistency_raft_bootstrap` - read consistency across raft bootstrap; stability: `apps/lumen/scripts/kind-e2e.sh` - live kind dogfood at shardCount=2 with replicasPerShard=3
-Required Verification: conformance, dogfood
-Promise:
-Baseline primary/replica topology contract derived from the `primary_replicas`
-trait: each shard is a raft group — one leader, follower replicas selected by
-`replicasPerShard`, voter quorum by `voterCount` — so committed writes survive
-replica loss and leader failover without a separate replication subsystem.
-Deep contracts live in replica-sync-bootstrap (seed and catch-up mechanics)
-and dynamic-shard-topology (shard-count changes); this row pins the per-shard
-HA baseline itself.
-Gate Inventory:
-- apps/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs; apps/lumen/tests/behavior_lumen_claim_http2_read_consistency_raft_bootstrap.rs; apps/lumen/tests/stability_lumen_claim_dynamic_multi_shard_replica_kind.rs; apps/lumen/scripts/kind-e2e.sh; apps/lumen/src/raft.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| per-shard-raft-leader-follower-baseline | epic | - | implemented | passing | dogfood | apps/lumen/src/raft.rs<br>apps/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs<br>apps/lumen/scripts/kind-e2e.sh |
-
-### Observability
-
-ID: observability
-Type: Devops
-Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint, including the `lumen_search_latency_seconds` histogram (`_bucket{le=...}`/`_sum`/`_count`, SLO-sized buckets from 1ms to 5s) and the `lumen_slow_queries_total` counter; the legacy `lumen_search_latency_ms_sum`/`_count` pair stays published (deprecated) for dashboard back-compat.; K8s: ServiceMonitor + PrometheusRule manifests, including the `LumenSlowQueries` alert (#2519).; Logs: structured stdout with per-request trace correlation — the shared `service-http` trace layer accepts a valid W3C version-00 `traceparent` (invalid input is treated as absent) and generates a fresh local root context otherwise, so every request span and log line carries `trace_id`/`span_id`/`parent_span_id`/`trace_flags`.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.; Config: `LUMEN_SLOW_QUERY_MS` (default `500`) - search-latency threshold in milliseconds at/above which a query increments `lumen_slow_queries_total`.; HTTP: Server-Timing response attribution — shared `service-http::server_timing` contract (`Server-Timing: app;dur=` per-response latency) on every response.
-EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
-Root WI: -
-Status: verified
-Required Verification: conformance
-Promise:
-Expose metrics and telemetry surfaces for long-running operations: Prometheus
-pull metrics, kustomize scrape/alert resources, structured logs, and opt-in
-OTLP traces/metrics. Every HTTP request is correlatable end to end: W3C
-`traceparent` is honored when present and a local root trace is created when
-absent, with the ids flowing into every request span and structured log line.
-The `otlp` feature upgrades this from local correlation to full OpenTelemetry
-export via the shared observability/service HTTP libraries. Server-Timing
-per-response latency attribution (the shared `service-http::server_timing`
-contract) is wired into lumen's HTTP stack: every response carries a
-`Server-Timing: app;dur=<ms>` baseline (#2490).
-A data-plane metric cannot report a control plane that stopped reconciling —
-every data-plane alert reading green is exactly what a wedged operator looks
-like. The operator therefore publishes its own scrape surface (reconcile
-attempts, failures, duration, and leader state, prefixed from the manager name
-so all six services share one Prometheus without colliding), emits Kubernetes
-`Event`s for reconcile decisions and failures so `kubectl describe` can say why
-nothing happened, and ships its own ServiceMonitor plus absence and
-error-rate alerts (#2620, #2621).
-Gate Inventory:
-- apps/lumen/tests/api_e2e.rs; apps/lumen/k8s/components/observability; apps/lumen/k8s/components/operator-monitoring; apps/lumen/k8s/operator/service.yaml; apps/lumen/compose.yaml; libs/service-k8s/src/metrics.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | apps/lumen/tests/api_e2e.rs |
-| servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | apps/lumen/k8s/components/observability |
-| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml<br>apps/lumen/tests/shared_stateful_foundations.rs |
-| control-plane-self-observability | change | 2620 | implemented | passing | conformance | `cargo test -p service-k8s`<br>libs/service-k8s/src/metrics.rs |
-| operator-scrape-target-and-alerts | change | 2621 | implemented | passing | dogfood | `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`<br>apps/lumen/k8s/components/operator-monitoring |
-
-### Kubernetes-Native Deployment
-
-ID: kubernetes-native-deployment
-Type: Devops
-Surfaces: K8s: `apps/lumen/k8s` - kustomize base, overlays, HPA, PDB, ServiceMonitor.; K8s: `Lumen` CRD + kube-rs operator - declarative reconcile surface.
-EC Dimensions: behavior: `cargo test -p lumen --features operator --test operator_render` - offline operator render conformance; stability: `apps/lumen/scripts/kind-e2e.sh` - live operator dogfood
-Root WI: -
-Status: verified
-Required Verification: conformance, dogfood
-Promise:
-Ship both namespaced kustomize deployment artifacts and a CRD/operator path for
-declarative reconcile. The default operator watches one namespace and owns
-storage topology, reshard phases, and status conditions for Lumen instances in
-that namespace; cluster-wide operation is an optional platform mode. HPA may
-scale stateless or near-stateless query/read workers, but never changes shard
-ownership.
-A deployer can ask "is it converged?" without reading logs: `status` carries
-`observedGeneration`, printer columns, and a `metav1.Condition` array
-(`Ready`, `Progressing`, and Lumen's own `ReshardInProgress`), so
-`kubectl wait --for=condition=Ready` and Argo/Flux health assessment have
-something to read (#2601). The rendered operator Deployment defaults to two
-leader-elected replicas behind a PDB, so a node drain does not stop
-reconciliation (#2602), and every instance can compose a default-deny
-`network-policy` kustomize component — a component and not a base resource, so
-a cluster whose CNI does not enforce NetworkPolicy opts out instead of
-silently believing it is isolated (#2603).
-Gate Inventory:
-- apps/lumen/k8s; apps/lumen/k8s/components/network-policy; apps/lumen/k8s/operator/pdb.yaml; apps/lumen/src/operator; apps/lumen/src/operator/render.rs; apps/lumen/tests/operator_render.rs; apps/lumen/tests/operator_backup_kubernetes_wiring.rs; apps/lumen/scripts/kind-e2e.sh; acceptance/gcp/scripts/run.sh
-
-Verified GKE evidence (2026-07-23, run `0723041614`, source `f4762759d8`):
-the persistent Standard GKE cluster reconciled a fresh 1×1 Lumen instance,
-wrote and read back a nonempty run-scoped GCS snapshot (271 bytes), retained
-the indexed document across a Lumen pod restart, and autonomously converged a
-disk-pressure 1→2 shard split with two serving pods and PVCs. The harness
-created only the run-scoped bucket, backup GSA, bucket writer binding, and
-`lumen/lumen-backup` Workload Identity binding; all four were destroyed and
-the cleanup verifier reported `clean`. Reproduce with an immutable Lumen image:
-`PROJECT_ID=<project> LUMEN_ONLY=1 LUMEN_IMAGE=<image@sha256:...> bash acceptance/gcp/scripts/run.sh`.
-This proof deliberately excludes Sift collection, CPU/memory actuation, live
-replica membership, and cold restore from GCS; each has its own gate.
-
-CRD versioning policy, the CRD-first safe upgrade order (the #2456
-schema-pruning lesson), and the binary/CRD rollback contract are documented in
-`apps/lumen/docs/deployment-handoff.md` (§3f).
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | apps/lumen/k8s |
-| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
-| operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs<br>apps/lumen/scripts/kind-e2e.sh |
-| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator<br>apps/lumen/scripts/kind-e2e.sh |
-| status-conditions-convergence-api | change | 2601 | implemented | passing | dogfood | `cargo test -p service-k8s`<br>`cargo test -p lumen --features operator --test operator_render` |
-| operator-ha-replicas-and-pdb | change | 2602 | implemented | passing | dogfood | `cargo test -p lumen --features operator --test operator_backup_kubernetes_wiring`<br>apps/lumen/k8s/operator/pdb.yaml |
-| per-instance-network-isolation | change | 2603 | implemented | passing | dogfood | `cargo test -p service-k8s`<br>apps/lumen/k8s/components/network-policy |
-| checked-in-crd-matches-the-renderer | change | 2678 | implemented | passing | conformance | `cargo test -p lumen --features operator --test operator_render`<br>apps/lumen/k8s/operator/crd.yaml |
-
-### Stateful Service Workload
-
-ID: stateful-service-workload
-Type: Service
-Root WI: #2144
-Historical WI: #1553 (closed; original capability projection)
-Status: verified
-Surfaces: Durable index and checkpoint state plus stateful deployment:
-`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-runtime`,
-`apps/lumen/src/backup.rs`, and the operator-owned StatefulSet rendering
-surface under `apps/lumen/src/operator/` and `apps/lumen/k8s/`.
-EC Dimensions: behavior: `aw capability check --project lumen
---skip-issue-inventory` confirms the `stateful_storage` profile has its
-required root; stability: existing replica recovery, snapshot/restore, and
-kind operator gates remain authoritative, while their unfinished dogfood or
-security work remains explicit in those linked capability roots.
-Required Verification: smoke
-Promise:
-Lumen projects the shared stateful-service workload baseline without a duplicate
-service implementation. Durable index/checkpoint state, stable shard and PVC
-identity, raft replica recovery, snapshot/backup/bootstrap, observability,
-security, and StatefulSet lifecycle remain owned by the linked capability roots
-below; this baseline does not turn their remaining planned work into a completed
-claim.
-Gate Inventory:
-- `aw capability check --project lumen --skip-issue-inventory`
-- apps/lumen/tests/{backup_restore_e2e,api_e2e,operator_render}.rs
-- apps/lumen/scripts/kind-e2e.sh
-- apps/lumen/k8s/components/observability
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| stateful-service-workload-projection | change | #2144 | implemented | passing | smoke | `aw capability check --project lumen --skip-issue-inventory`; primary TD verification linkage is #2144; closed #1553 remains historical projection provenance; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
-
-### Developer & Agent Experience
-
-ID: developer-agent-experience
-Type: AgentFirst
-Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline --format json` + `lumen llm --topic <id> [--format md|json]` + `lumen connect` + `lumen query` - offline self-description, typed agent onboarding, and interactive CLI commands.; Artifact: `clients/openapi.json` - committed OpenAPI contract regenerated from and byte-diff-enforced against the live document.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema, LLM topic, committed-contract-freshness, and client-integration-contract-disclosure conformance
-Root WI: 4143
-Status: verified
-Required Verification: conformance
-Promise:
-An installed `lumen` binary does not just expose its surface — it teaches an
-agent or operator how to use it, offline and interactively, and its
-contracts cannot silently lag what is actually shipped. `lumen spec` emits
-machine schemas and query catalogs whose committed `clients/openapi.json`
-snapshot is byte-diff-enforced against the live document; `lumen llm --topic
-outline --format json` emits the typed `cclab.llm.v2` task manifest and each
-task emits one source-backed Markdown/JSON runbook; `lumen connect` and `lumen query` give an
-interactive CLI onto a running instance without hand-built HTTP calls; and
-client-visible integration semantics (routed-mode retry codes, read
-consistency, bounded staleness, the reshard write-fence 503 contract) are
-disclosed alongside the surface they describe and test-asserted so they
-cannot regress silently.
-Gate Inventory:
-- apps/lumen/tests/spec_cli.rs; apps/lumen/src/spec.rs; apps/lumen/clients/openapi.json; apps/lumen/src/bin/lumen.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs<br>apps/lumen/clients/openapi.json |
-| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
-| interactive-tooling | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/tests/cli_convention.rs |
-| integration-contract | epic | 1480 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-
-### Agent Task Navigation
-
-ID: agent-task-navigation
-Type: AgentFirst
-Surfaces: CLI: `lumen llm --topic outline --format json` and `lumen llm --topic <id> [--format md|json]` - offline, typed task selection and deterministic runbooks; Artifact: `apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md` - DX decisions that drive the task registry.
-EC Dimensions: behavior: `cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact` - manifest, typed runbook, and markdown/JSON provenance; behavior: `cargo test -p lumen --test cli_convention llm_outline_advertised_topic_commands_parse -- --exact` - every advertised task is a valid CLI topic
-Root WI: 1683
-Status: verified
-Required Verification: conformance
-Promise:
-Lumen exposes an offline `cclab.llm.v2` task manifest rather than accepting
-free-form intent: each task identifies when it applies, its prerequisites,
-evidence it reads and produces, risk, contract refs, and either a fully-bound
-command or a typed command template. Long-text (`text`) BM25 behavior and
-varchar-like (`keyword`) range/sort behavior are projected from the same
-`FieldType` capability mapping runtime validation consults.
-Gate Inventory:
-- apps/lumen/src/dx.rs; apps/lumen/src/types.rs; apps/lumen/src/storage.rs; apps/lumen/tests/spec_cli.rs; apps/lumen/tests/cli_convention.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/src/dx.rs<br>apps/lumen/tests/spec_cli.rs |
+## Contributing
+
+Project-local authoring and verification rules live in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Repository-wide rules remain
+authoritative when the two differ.
+
+## Capability Contract
+
+Lumen is a derived-index service. Its core job is to build indexes over
+caller-owned data and query those indexes. Lumen is not a system of record,
+analytics engine, identity provider, or certificate authority.
+
+The canonical contract is [`CAPABILITIES.md`](CAPABILITIES.md). It has two
+feature roots only. Core means the capability changes what Lumen indexes or
+how it answers queries. Non-core means the capability makes those jobs usable
+in production; it does not mean optional.
+
+### Core Features
+
+- **Indexing** — schema validation, ingestion, mutation, derived-index
+  persistence, checkpointing, and rebuild over caller-owned data.
+- **Querying** — lexical, exact/filter, vector/hash, hybrid, duplicate/nested,
+  pagination, sort, and read-consistency semantics.
+
+### Non-Core Features
+
+- **Kubernetes-Native Deployment** — independently rendered image, CRD,
+  operator, and instance layers with declarative reconciliation.
+- **Security & Access** — Kubernetes ServiceAccount TokenReview/SAR for client
+  requests plus separate instance-scoped mTLS for Raft peers. This capability
+  is being replaced and is not production-ready.
+- **Scaling & Availability** — elastic segments, shard topology, replicas,
+  failover, and replacement bootstrap.
+- **Durability & Recovery** — WAL/checkpoint recovery, backup/restore, and cold
+  seed.
+- **Operations & Observability** — health, readiness, conditions, metrics,
+  events, alerts, tracing, and long-running-operation state.
+- **API, CLI & Agent Integration** — HTTP/1.1 and HTTP/2, OpenAPI, clients,
+  standard CLI surfaces, chainable output, and offline agent guidance.
+
+Stable capability and claim IDs live in `CAPABILITIES.md`. Delivery planning
+lives in GitHub and references those IDs one way.
 
 ## Benchmarks
 
@@ -1433,73 +614,65 @@ three setups, in order of preference:
 | Go `net/http` | ✅ | needs `x/net/http2` h2c transport | ✅ ALPN |
 | browser (Swagger `/docs`) | ✅ | ✗ (browsers require TLS) | ✅ ALPN |
 
-### Auth
+### Authentication and authorization
 
-Production deployments should run the server with:
+> Security & Access is being replaced and is not yet
+> production-ready. This section defines the target contract. Do not configure
+> or restore the retired bearer registry, Google-token verifier, Secret
+> Manager/CSI auth projection, metadata-server token path, or token
+> environment injection.
 
-```env
-LUMEN_AUTH=required
-LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+For `spec.auth: required`, Lumen accepts only a short-lived Kubernetes
+ServiceAccount token with audience `lumen.axiom.dev`:
+
+```text
+Google user or Google service account
+  -> authenticate to kube-apiserver through kubeconfig
+  -> RBAC-authorized TokenRequest for one explicitly named client KSA
+  -> short-lived KSA token
+  -> Lumen TokenReview
+  -> system:serviceaccount:<namespace>:<name>
+  -> Lumen SubjectAccessReview
 ```
 
-The registry file maps each principal to its subject and roles, mounted from a
-Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
-materialize that file through External Secrets Operator or Secret Store CSI.
-Lumen's adapter delegates validation and atomic last-known-good replacement to
-`service-auth`; `LumenVerifier::reload_file` and `reload_json` are the explicit
-in-process rotation boundary. Rotation is automatic: whenever
-`LUMEN_TOKEN_REGISTRY_FILE` is set, the default `serve` bootstrap spawns
-`service_auth::spawn_registry_file_watcher`, which polls the mounted file
-every 15s and hot-swaps the live verifier on change — no pod restart or
-external Secret-reloader controller required. Invalid replacements are
-rejected and the process stays on its last-known-good registry, emitting a
-redacted auth audit event.
+Google credentials stop at kube-apiserver. A Google access token, Google ID
+token, ADC credential, GSA credential, or metadata-server token sent directly
+to Lumen is rejected even if GKE would accept that principal at the Kubernetes
+API boundary.
 
-`token-registry.json` has two **disjoint** namespaces (#2678). `tokens` keys
-are bearer secrets; `identities` keys are emails an external provider verified.
-A presented bearer token is only ever looked up in `tokens`, so a secret that
-happens to be spelled like an email can never inherit that email's grants:
+Lumen maps authenticated requests to virtual Kubernetes resources in API group
+`lumen.axiom.dev`:
 
-```json
-{
-  "tokens": {
-    "admin-token": {
-      "subject": "platform-admin",
-      "roles": { "*": "admin" }
-    },
-    "product-reader-token": {
-      "subject": "products-reader",
-      "roles": { "products": "read" }
-    }
-  },
-  "identities": {
-    "data-team@example.com": {
-      "subject": "data-team",
-      "roles": { "products": "read" }
-    }
-  }
-}
-```
+| Lumen decision | Kubernetes resource attribute |
+|---|---|
+| read one collection | `get` on `lumencollections/<collection-id>` |
+| write one collection | `update` on `lumencollections/<collection-id>` |
+| administer one collection | `delete` on `lumencollections/<collection-id>` |
+| instance-level administration | the corresponding verb on `lumenadmin` |
 
-Only the `tokens` half is a credential, so a registry that carries `identities`
-alone is ordinary configuration — versionable, diffable, reviewable. A flat
-document with no sections is still accepted and read entirely as `tokens`:
+The request namespace is part of every decision. Collection-list and
+multi-collection operations authorize the concrete resources they touch; an
+instance admin grant is not modeled as wildcard access to every collection.
+Authentication failures return 401 and authenticated denials return 403.
 
-```json
-{ "admin-token": { "subject": "platform-admin", "roles": { "*": "admin" } } }
-```
+The Lumen CLI uses the current kubeconfig, including the GKE credential plugin,
+to request a 600-second token for an explicitly supplied namespace and client
+KSA. `lumen query` keeps the token in memory. `lumen connect` gives its child
+only a loopback URL and injects the header in a local proxy; it does not expose
+the token through environment, argv, files, clipboard, or stdout.
 
-Role values are `read`, `write`, and `admin`; `*` grants across all collections.
-Clients only need:
+Serving, operator/reshard, backup, and external-client ServiceAccounts are
+separate identities with least-privilege bindings. TokenRequest permission is
+restricted to one named client KSA and is never a namespace-wide wildcard.
+Probe/spec/scrape routes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
+`/docs`) remain auth-exempt.
 
-```env
-LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
-LUMEN_TOKEN=<token>
-```
-
-and send `Authorization: Bearer <token>` on API requests. Probe/spec/scrape
-routes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`) stay
-auth-exempt.
+Raft peer identity is a separate plane. Replicated traffic on `:7374` requires
+an instance-scoped X.509 certificate and mTLS, with no plaintext fallback. A
+KSA token does not authenticate a peer, and a peer certificate grants no
+collection or admin access. North-south Gateway/Ingress TLS, certificate
+issuance, Google IAM automation, and general user/group management are outside
+the Security & Access capability.
 
 ## OpenAPI
 

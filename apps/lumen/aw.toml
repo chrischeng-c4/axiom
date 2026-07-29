@@ -1,6 +1,6 @@
 [project]
 name = "lumen"
-cap_path = "README.md"
+cap_path = "CAPABILITIES.md"
 label = "app:lumen"
 
 [ec.efficiency]
