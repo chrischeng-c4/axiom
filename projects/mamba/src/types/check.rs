@@ -3451,22 +3451,60 @@ impl TypeChecker {
             BindingScope::ClassAttribute => ("class_attribute", "class attribute"),
             BindingScope::Other => return,
         };
-        if let Expr::ListLit(elems) = &value.node {
-            if elems.is_empty() {
-                let path = format!("{prefix} -> list_literal -> element");
-                let decl = DeclaredType::from_implicit_unknown(&path);
-                self.record_declared_type(target_span, decl);
-                self.error(
-                    target_span,
-                    format!("cannot infer type for {scope_desc} `{name}`: {path}"),
-                );
-            } else if let Ty::List(elem_ty) = self.tcx.get(value_ty) {
-                if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
-                    let path = format!("{prefix} -> list_literal");
-                    let decl = DeclaredType::from_inferred(&path, value_ty);
+        match &value.node {
+            Expr::ListLit(elems) => {
+                if elems.is_empty() {
+                    let path = format!("{prefix} -> list_literal -> element");
+                    let decl = DeclaredType::from_implicit_unknown(&path);
                     self.record_declared_type(target_span, decl);
+                    self.error(
+                        target_span,
+                        format!("cannot infer type for {scope_desc} `{name}`: {path}"),
+                    );
+                } else if let Ty::List(elem_ty) = self.tcx.get(value_ty) {
+                    if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
+                        let path = format!("{prefix} -> list_literal");
+                        let decl = DeclaredType::from_inferred(&path, value_ty);
+                        self.record_declared_type(target_span, decl);
+                    }
                 }
             }
+            Expr::ListComp { generators, .. } if scope == BindingScope::Local => {
+                if generators.len() == 1 {
+                    let gen = &generators[0];
+                    if gen.targets.len() == 1
+                        && !gen.unpack_target
+                        && !gen.is_async
+                        && gen.conditions.is_empty()
+                    {
+                        let mut walrus_targets = Vec::new();
+                        crate::resolve::pass::collect_walrus_targets(&value.node, &mut walrus_targets);
+                        if !walrus_targets.is_empty() {
+                            return;
+                        }
+                        if let Expr::ListLit(elems) = &gen.iter.node {
+                            if elems.is_empty() {
+                                let path = "comprehension -> generator -> iterable -> list_literal -> element";
+                                let decl = DeclaredType::from_implicit_unknown(path);
+                                self.record_declared_type(target_span, decl);
+                                self.error(
+                                    target_span,
+                                    format!("cannot infer comprehension type for binding `{name}`: {path}"),
+                                );
+                                return;
+                            }
+                        }
+                        if let Ty::List(elem_ty) = self.tcx.get(value_ty) {
+                            if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
+                                let path = "comprehension -> element";
+                                let decl = DeclaredType::from_inferred(path, value_ty);
+                                self.record_declared_type(target_span, decl);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -6500,5 +6538,206 @@ mod tests {
             checker.get_declared_type(ret_expr.span).is_none(),
             "preceding non-return statement before return [] must NOT trigger N3-R1"
         );
+    }
+
+    #[test]
+    fn test_n3_cm1_negative_comprehension_empty_list_inference_failure() {
+        use crate::source::span::FileId;
+        let src = "def exercise_comprehension():\n    items = [item for item in []]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer comprehension type for binding `items`: comprehension -> generator -> iterable -> list_literal -> element"));
+
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "comprehension -> generator -> iterable -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_cm1_explicit_comprehension_any_acceptance() {
+        use crate::source::span::FileId;
+        let src = "from typing import Any\ndef exercise_comprehension():\n    items: Any = [item for item in []]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::VarDecl { ty, .. } = &body[0].node else { panic!() };
+        let decl = checker
+            .get_declared_type(ty.span)
+            .expect("explicit annotation aggregate recorded");
+        assert!(matches!(decl.source(), SourceAnnotation::Authored(_)));
+        assert_eq!(decl.normalized(), Some(checker.tcx.any()));
+        assert_eq!(*decl.provenance(), TypeProvenance::ExplicitAny);
+        assert_eq!(
+            checker.declared_types.len(),
+            1,
+            "explicit target annotation must contain exactly the one authored annotation entry"
+        );
+    }
+
+    #[test]
+    fn test_n3_cm1_non_empty_homogeneous_comprehension_list_inference() {
+        use crate::source::span::FileId;
+        let src = "def exercise_comprehension():\n    items = [item for item in [1, 2]]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        let int_ty = checker.tcx.int();
+        let expected_list = checker.tcx.intern(Ty::List(int_ty));
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), Some(expected_list));
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "comprehension -> element".to_string()
+            }
+        );
+
+        let items_sym = checker.symbols.lookup_in_scope(1, "items").expect("items defined in function scope 1");
+        assert_eq!(checker.get_sym_type(items_sym.0), expected_list);
+    }
+
+    #[test]
+    fn test_n3_cm1_scope_isolation() {
+        use crate::source::span::FileId;
+        let src = "def exercise_comprehension():\n    items = [item for item in [1, 2]]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        assert!(
+            checker.symbols.lookup_in_scope(1, "items").is_some(),
+            "`items` must exist in function scope 1"
+        );
+        assert!(
+            checker.symbols.lookup_in_scope(1, "item").is_none(),
+            "comprehension target `item` must NOT exist in function scope 1"
+        );
+        assert!(
+            checker.symbols.lookup_in_scope(0, "item").is_none(),
+            "comprehension target `item` must NOT exist in module scope 0"
+        );
+        assert!(
+            checker.symbols.lookup_in_scope(2, "item").is_some(),
+            "comprehension target `item` must exist only in nested comprehension scope 2"
+        );
+    }
+
+    #[test]
+    fn test_n3_cm1_negative_controls_excluded_forms() {
+        use crate::source::span::FileId;
+
+        // 1. Module-level list comprehension
+        let src1 = "items = [item for item in []]\n";
+        let module1 = crate::parser::parse(src1, FileId(0)).unwrap();
+        let mut checker1 = TypeChecker::new();
+        let errors1 = checker1.check_module(&module1);
+        assert!(errors1.is_empty(), "module comprehension should remain unchanged");
+        let Stmt::Assign { target, .. } = &module1.stmts[0].node else { panic!() };
+        assert!(checker1.get_declared_type(target.span).is_none());
+
+        // 2. Class attribute list comprehension
+        let src2 = "class C:\n    items = [item for item in []]\n";
+        let module2 = crate::parser::parse(src2, FileId(0)).unwrap();
+        let mut checker2 = TypeChecker::new();
+        let errors2 = checker2.check_module(&module2);
+        assert!(errors2.is_empty(), "class comprehension should remain unchanged");
+        let Stmt::ClassDef { body, .. } = &module2.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker2.get_declared_type(target.span).is_none());
+
+        // 3. Set comprehension
+        let src3 = "def f():\n    items = {item for item in []}\n";
+        let module3 = crate::parser::parse(src3, FileId(0)).unwrap();
+        let mut checker3 = TypeChecker::new();
+        let errors3 = checker3.check_module(&module3);
+        assert!(errors3.is_empty(), "set comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module3.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker3.get_declared_type(target.span).is_none());
+
+        // 4. Dict comprehension
+        let src4 = "def f():\n    items = {item: item for item in []}\n";
+        let module4 = crate::parser::parse(src4, FileId(0)).unwrap();
+        let mut checker4 = TypeChecker::new();
+        let errors4 = checker4.check_module(&module4);
+        assert!(errors4.is_empty(), "dict comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module4.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker4.get_declared_type(target.span).is_none());
+
+        // 5. Generator expression
+        let src5 = "def f():\n    items = (item for item in [])\n";
+        let module5 = crate::parser::parse(src5, FileId(0)).unwrap();
+        let mut checker5 = TypeChecker::new();
+        let errors5 = checker5.check_module(&module5);
+        assert!(errors5.is_empty(), "generator expression should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module5.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker5.get_declared_type(target.span).is_none());
+
+        // 6. Multiple generators
+        let src6 = "def f():\n    items = [x for xs in [] for x in xs]\n";
+        let module6 = crate::parser::parse(src6, FileId(0)).unwrap();
+        let mut checker6 = TypeChecker::new();
+        let errors6 = checker6.check_module(&module6);
+        assert!(errors6.is_empty(), "multi-generator comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module6.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker6.get_declared_type(target.span).is_none());
+
+        // 7. Unpacked target
+        let src7 = "def f():\n    items = [a for a, b in []]\n";
+        let module7 = crate::parser::parse(src7, FileId(0)).unwrap();
+        let mut checker7 = TypeChecker::new();
+        let errors7 = checker7.check_module(&module7);
+        assert!(errors7.is_empty(), "unpacked target comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module7.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker7.get_declared_type(target.span).is_none());
+
+        // 8. Filter condition
+        let src8 = "def f():\n    items = [item for item in [] if True]\n";
+        let module8 = crate::parser::parse(src8, FileId(0)).unwrap();
+        let mut checker8 = TypeChecker::new();
+        let errors8 = checker8.check_module(&module8);
+        assert!(errors8.is_empty(), "filtered comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module8.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker8.get_declared_type(target.span).is_none());
+
+        // 9. Walrus target in element
+        let src9 = "def f():\n    items = [(x := 1) for _ in []]\n";
+        let module9 = crate::parser::parse(src9, FileId(0)).unwrap();
+        let mut checker9 = TypeChecker::new();
+        let errors9 = checker9.check_module(&module9);
+        assert!(errors9.is_empty(), "walrus element comprehension should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module9.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker9.get_declared_type(target.span).is_none());
+
+        // 10. Async comprehension
+        let src10 = "async def f():\n    items = [item async for item in []]\n";
+        let module10 = crate::parser::parse(src10, FileId(0)).unwrap();
+        let mut checker10 = TypeChecker::new();
+        let errors10 = checker10.check_module(&module10);
+        assert!(errors10.is_empty(), "async comprehension should remain unchanged");
+        let Stmt::AsyncFnDef { body, .. } = &module10.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker10.get_declared_type(target.span).is_none());
     }
 }

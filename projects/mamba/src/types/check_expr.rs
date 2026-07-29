@@ -1439,13 +1439,16 @@ impl TypeChecker {
                         self.check_expr(cond);
                     }
                 }
-                self.check_expr(element);
+                let elem_ty = self.check_expr(element);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
                 let mut conditional = Vec::new();
                 crate::resolve::pass::collect_walrus_targets(&expr.node, &mut conditional);
                 self.invalidate_conditional_binding_names(conditional);
-                self.tcx.any()
+                match &expr.node {
+                    Expr::ListComp { .. } => self.tcx.intern(Ty::List(elem_ty)),
+                    _ => self.tcx.any(),
+                }
             }
             Expr::DictComp {
                 key,
