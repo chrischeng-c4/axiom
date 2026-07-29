@@ -46,128 +46,11 @@ fn openapi_value() -> Value {
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
-    serde_json::to_string_pretty(&json!({
-        "components": api.components,
-        "operationalSchemas": {
-            "TokenRegistry": token_registry_schema()
-        }
-    }))
-    .expect("components serialize to JSON")
-}
-
-/// The deployment-side token registry file schema. This is not an HTTP request
-/// body, so it lives under `operationalSchemas` in `lumen spec --format
-/// json-schema` and in `lumen llm --topic auth`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
-pub fn token_registry_schema() -> Value {
-    // One claims object, inlined into both accepted shapes. `$ref` would need a
-    // resolution base this schema does not own — it is embedded under
-    // `operationalSchemas` in a larger document.
-    let claims = json!({
-        "type": "object",
-        "required": ["subject"],
-        "additionalProperties": false,
-        "properties": {
-            "subject": {
-                "type": "string",
-                "description": "Human-readable or service-account identity attached to requests authenticated with this entry."
-            },
-            "roles": {
-                "type": "object",
-                "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
-                "additionalProperties": {
-                    "type": "string",
-                    "enum": ["read", "write", "admin"]
-                },
-                "default": {}
-            }
-        }
-    });
-    json!({
-        "description": "JSON object mounted as token-registry.json. Two disjoint namespaces (#2678): `tokens` is keyed by the exact bearer secret, `identities` by an email an external provider verified. A presented bearer token resolves against `tokens` only, so a secret spelled like an email cannot inherit that email's grants. A flat object carrying neither section is still accepted and read entirely as `tokens`.",
-        "type": "object",
-        "anyOf": [
-            {
-                "title": "sectioned",
-                "additionalProperties": false,
-                "properties": {
-                    "tokens": {
-                        "type": "object",
-                        "description": "Bearer secrets. This half is the credential.",
-                        "additionalProperties": claims
-                    },
-                    "identities": {
-                        "type": "object",
-                        "description": "Emails an external identity provider verified. Not credentials, so this half is ordinary reviewable configuration.",
-                        "additionalProperties": claims
-                    }
-                }
-            },
-            {
-                "title": "flat (compatibility)",
-                "description": "Pre-#2678 shape: every property name is a bearer secret. Read as `tokens`.",
-                "additionalProperties": claims
-            }
-        ],
-        "examples": [
-            {
-                "tokens": {
-                    "admin-token": {
-                        "subject": "platform-admin",
-                        "roles": { "*": "admin" }
-                    },
-                    "product-reader-token": {
-                        "subject": "products-reader",
-                        "roles": { "products": "read" }
-                    },
-                    "product-writer-token": {
-                        "subject": "products-writer",
-                        "roles": { "products": "write" }
-                    }
-                },
-                "identities": {
-                    "data-team@example.com": {
-                        "subject": "data-team",
-                        "roles": { "products": "read" }
-                    }
-                }
-            },
-            {
-                "admin-token": {
-                    "subject": "platform-admin",
-                    "roles": { "*": "admin" }
-                }
-            }
-        ]
-    })
-}
-
-/// Pretty JSON example for `token-registry.json`.
-/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
-pub fn token_registry_example_json() -> String {
-    serde_json::to_string_pretty(&json!({
-        "tokens": {
-            "admin-token": {
-                "subject": "platform-admin",
-                "roles": { "*": "admin" }
-            },
-            "product-reader-token": {
-                "subject": "products-reader",
-                "roles": { "products": "read" }
-            },
-            "product-writer-token": {
-                "subject": "products-writer",
-                "roles": { "products": "write" }
-            }
-        },
-        "identities": {
-            "data-team@example.com": {
-                "subject": "data-team",
-                "roles": { "products": "read" }
-            }
-        }
-    }))
-    .expect("token registry example serializes")
+    // #2871 retired the bearer/identity registry, so `operationalSchemas` no
+    // longer carries a `TokenRegistry` entry: nothing reads that file, and a
+    // published schema for it would read as a supported deployment shape.
+    serde_json::to_string_pretty(&json!({ "components": api.components }))
+        .expect("components serialize to JSON")
 }
 
 /// A cookbook of canonical query shapes. Each entry is a ready-to-POST
@@ -284,8 +167,9 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
-- `lumen llm --topic auth` — bearer-token auth contract, token-registry.json schema,
-  Secret Manager / Kubernetes Secret projection, and client header wiring.
+- `lumen llm --topic auth` — request-authentication contract: the only mode that
+  starts today (`disabled`), why `required` refuses to, and the Kubernetes
+  TokenReview/SubjectAccessReview model that replaces the retired registry.
 - `lumen llm --topic deployment` — Kubernetes-native deployment topology:
   StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
   and empty-PVC bootstrap.
@@ -442,57 +326,40 @@ live replica synchronization mechanism.
     out
 }
 
-/// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
-/// as Markdown.
+/// Request-authentication contract (`lumen llm --topic auth`) as Markdown.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
-    let mut out = format!(
+    let mut out = String::from(
         r#"# lumen auth
 
 ## Runtime contract
-Production servers should run with:
+There is no working server-side request authentication in this build (#2871).
+The bearer/identity registry it used to load from a mounted file is retired,
+and the Kubernetes TokenReview/SubjectAccessReview verifier that replaces it
+has not landed yet. So a server runs with exactly one setting:
 
 ```env
-LUMEN_AUTH=required
-LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+LUMEN_AUTH=disabled
 ```
+
+`LUMEN_AUTH=required` (`spec.auth: required`) does not start: rather than
+serve an API that accepts everyone while claiming to require identity, the
+process exits naming the missing verifier. Treat a Lumen reachable on the
+network today as open, and keep it behind a NetworkPolicy.
 
 Clients only need:
 
 ```env
 LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
-LUMEN_TOKEN=<token>
 ```
 
-Send the token on data/admin API calls:
+There is no client credential to configure. An `Authorization` header sent
+today resolves to nothing: the registry a bearer used to be looked up in is
+gone, so a presented token is not a stronger identity than no token — it is
+simply an unknown one, and an open server accepts both.
 
-```http
-Authorization: Bearer <LUMEN_TOKEN>
-```
-
-Probe/spec/scrape routes stay auth-exempt: `/healthz`, `/readyz`, `/metrics`,
-`/openapi.json`, and `/docs`.
-
-## token-registry.json
-The registry file is a JSON object with two **disjoint** namespaces (#2678).
-`tokens` keys are exact bearer secret strings; `identities` keys are emails an
-external provider verified. A presented bearer token is only ever looked up in
-`tokens`, so a secret that happens to be spelled like an email can never
-inherit that email's grants. Each value declares the authenticated subject and
-optional collection roles:
-
-```json
-{}
-```
-
-Only the `tokens` half is a credential, so a registry carrying `identities`
-alone is ordinary configuration — versionable, diffable, reviewable. A flat
-document with no sections is still accepted and read entirely as `tokens`.
-
-Role values are `read`, `write`, or `admin`; `admin` covers `write` and `read`,
-and `write` covers `read`. Role keys are collection ids. The literal key `*`
-grants the role across all collections. A missing collection role rejects that
-request with 403.
+Probe/spec/scrape routes stay auth-exempt regardless: `/healthz`, `/readyz`,
+`/metrics`, `/openapi.json`, and `/docs`.
 
 ## Kubernetes: who a caller is, is the cluster's answer
 The CRD configures **no** credential source. `spec.tokensSecret`,
@@ -500,10 +367,10 @@ The CRD configures **no** credential source. `spec.tokensSecret`,
 that sets any of them is rejected by the API server's strict decoding rather
 than applied and quietly ignored.
 
-`auth: required` — the default — means every request carries a short-lived,
-audience-bound Kubernetes ServiceAccount token, obtained from the TokenRequest
-API. Lumen answers two questions with the cluster, not with a file it was
-handed:
+`auth: required` — the default, and today a mode that refuses to start — will
+mean every request carries a short-lived, audience-bound Kubernetes
+ServiceAccount token, obtained from the TokenRequest API. Lumen will answer two
+questions with the cluster, not with a file it was handed:
 
 - **Who is this?** `TokenReview`, with the audience checked. The principal it
   returns must be exactly `system:serviceaccount:<namespace>:<name>`; nothing
@@ -520,12 +387,17 @@ mount whose refresh behaviour has to be reasoned about. Google user and GSA
 credentials authenticate to the kube-apiserver only — lumen never sees one, and
 never verifies a Google-issued token itself.
 
+Until that verifier lands, none of the above is enforced by lumen. The two
+halves were deliberately not shipped together: the bearer and Google-token
+paths were deleted first (#2871) so neither can survive as a silent fallback
+underneath the replacement.
+
 ## Generated clients
-Generated Python clients accept either `auth_token="<token>"` or
-`default_headers={{"Authorization": "Bearer <token>"}}` in `Client` and
-`AsyncClient`. Other clients send the same `Authorization: Bearer` header.
+Generated Python clients still accept `auth_token="<token>"` and
+`default_headers={"Authorization": "Bearer <token>"}` in `Client` and
+`AsyncClient`. Nothing server-side reads that header today; it is the seam the
+KSA token will travel on.
 "#,
-        token_registry_example_json()
     );
     out.push_str("\n## Shared auth primitive\n");
     out.push_str(service_auth::llm::topic().body);
@@ -751,13 +623,12 @@ each with a documented alternative:
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
 is the compatibility/smoke path; the performance target is high-QPS, large
 corpus traffic over pooled HTTP/2 streams, where multiplexing and connection
-reuse dominate per-request overhead. When the node runs with
-`LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
-Production server pods load the token registry from
-`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; on GKE
-that file should be materialized from GCP Secret Manager through Kubernetes
-Secret projection, External Secrets Operator, or Secret Store CSI. Sharded
-deployments route on the client: `crc32(collection_id) % shard_count`.
+reuse dominate per-request overhead. Requests carry no credential in this
+build: the bearer/identity registry is retired and the Kubernetes
+TokenReview/SubjectAccessReview verifier that replaces it has not landed
+(#2871), so a reachable node serves everyone — keep it behind a
+NetworkPolicy. Sharded deployments route on the client:
+`crc32(collection_id) % shard_count`.
 
 ## Do NOT ask lumen to
 - store or return documents — it returns `external_id`s; hydrate them yourself
@@ -824,11 +695,11 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
-Assumes a node at `http://localhost:7373` (`lumen serve`). Add
-`-H 'authorization: Bearer <LUMEN_TOKEN>'` when `LUMEN_AUTH=required`. In
-production the server-side `.env` contract is `LUMEN_AUTH=required` plus
-`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; clients
-only need `LUMEN_URL` and `LUMEN_TOKEN`.
+Assumes a node at `http://localhost:7373` (`lumen serve`). No request carries
+a credential: the bearer/identity registry is retired and its Kubernetes
+TokenReview/SubjectAccessReview replacement has not landed (#2871), so
+`LUMEN_AUTH=disabled` is the only mode a server starts in and every reachable
+node serves everyone. Clients need `LUMEN_URL` and nothing else.
 
 ## 1. Declare a collection
 ```bash
@@ -1211,10 +1082,10 @@ lumen import --url http://localhost:7373 --file snapshot.json
 `import`. With no `--out`, dump/export write the exact SnapshotV1 JSON bytes to
 stdout; with no `--file`, load/import read SnapshotV1 JSON from stdin. These
 verbs do not add a new format, merge mode, or partial import semantics:
-load/import still replace all engine state via `/admin/restore`. `--token`
-uses the control plane's workload identity when `LUMEN_AUTH_GOOGLE_AUDIENCES`
-is configured; omit `--token` to use an implicit ID token minted by the
-metadata server for the first audience in the list.
+load/import still replace all engine state via `/admin/restore`. Neither verb
+acquires a credential of its own: the metadata-server ID token they used to
+mint is gone (#2871), because a Google-issued token is not something the
+Kubernetes-native verifier can ever accept.
 
 ### Required production scheduled backup: `spec.serving.backup`
 Production Lumen CRs set `spec.serving.backup` so the operator renders a
@@ -1259,9 +1130,10 @@ lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
   [--retention-secs 604800]
 ```
 
-`--url` points at the serving Service (not a specific pod); `--token` omitted
-in the CronJob, which instead relies on the control plane's workload identity
-via `LUMEN_AUTH_GOOGLE_AUDIENCES`. The verb GETs `/admin/backup`, hands the
+`--url` points at the serving Service (not a specific pod); `--token` is
+omitted in the CronJob, and the verb no longer mints a metadata-server ID
+token to fill the gap (#2871) — with no `--token` the request simply carries
+no `Authorization` header. The verb GETs `/admin/backup`, hands the
 bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by

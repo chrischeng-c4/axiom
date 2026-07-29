@@ -61,12 +61,21 @@ fn trait_profile_requires_shared_service_baselines() {
     for (heading, id) in [
         ("#### Indexing", "`indexing`"),
         ("#### Querying", "`querying`"),
-        ("#### Kubernetes-Native Deployment", "`kubernetes-native-deployment`"),
+        (
+            "#### Kubernetes-Native Deployment",
+            "`kubernetes-native-deployment`",
+        ),
         ("#### Security & Access", "`security-hardening`"),
         ("#### Scaling & Availability", "`scaling-availability`"),
         ("#### Durability & Recovery", "`durability-recovery`"),
-        ("#### Operations & Observability", "`operations-observability`"),
-        ("#### API, CLI & Agent Integration", "`api-cli-agent-integration`"),
+        (
+            "#### Operations & Observability",
+            "`operations-observability`",
+        ),
+        (
+            "#### API, CLI & Agent Integration",
+            "`api-cli-agent-integration`",
+        ),
     ] {
         assert!(
             CAPABILITIES.contains(heading),
@@ -85,7 +94,10 @@ fn trait_profile_requires_shared_service_baselines() {
     // The two roots are the whole taxonomy; a third root would put a capability
     // somewhere neither `aw capability` nor a reader looks.
     for root in ["### Core Features", "### Non-Core Features"] {
-        assert!(CAPABILITIES.contains(root), "capability root {root} is missing");
+        assert!(
+            CAPABILITIES.contains(root),
+            "capability root {root} is missing"
+        );
     }
 
     assert!(
@@ -117,11 +129,30 @@ fn platform_mechanisms_delegate_to_shared_owners() {
         "service_http::init_tracing_with_identity",
         "raft_runtime::RaftHost",
         "RaftHost::spawn_with_peer_transport",
-        "service_auth::spawn_registry_file_watcher",
     ] {
         assert!(
             CLI.contains(seam),
             "CLI/runtime seam must delegate through {seam}"
+        );
+    }
+
+    // #2871 retired the projected registry file, so the binary no longer
+    // spawns `service_auth::spawn_registry_file_watcher`. The ownership rule
+    // that seam encoded is unchanged and is asserted from the other side
+    // below (auth mechanics come from `service-auth`); what the binary must
+    // not do is re-grow a local credential loader to replace the shared one.
+    assert!(
+        CLI.contains("AuthConfig::from_env"),
+        "the binary must build its auth config through lumen's service-auth adapter"
+    );
+    for regrown in [
+        "fn watch_token_registry",
+        "notify::",
+        "spawn_registry_file_watcher",
+    ] {
+        assert!(
+            !CLI.contains(regrown),
+            "credential-file watching is not lumen's to own again: {regrown}"
         );
     }
 
@@ -133,7 +164,11 @@ fn platform_mechanisms_delegate_to_shared_owners() {
         assert!(API.contains(seam), "HTTP seam must delegate through {seam}");
     }
 
-    assert!(AUTH.contains("Thin lumen adapter over `service_auth::role_map`"));
+    // The auth adapter's shape changed with #2871 — the registry it wrapped is
+    // gone — but its ownership did not: the verifier and the middleware are
+    // still `service-auth`'s, and lumen holds only the policy newtype around
+    // them. A lumen-local verifier implementation would be the regression.
+    assert!(AUTH.contains("service_auth::StaticRoleMapVerifier"));
     assert!(AUTH.contains("service_auth::auth_middleware::<LumenVerifier>"));
     assert!(OPERATOR_RENDER.contains("use service_k8s::render"));
     assert!(OPERATOR_RENDER.contains("render::service_statefulset"));

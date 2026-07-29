@@ -19,13 +19,13 @@ evidence.
 e2e_tests:
   - id: lumen-security-hardening-access-control
     capability_id: security-hardening
-    claim_id: role-based-authz-matrix-per-route
+    claim_id: kubernetes-native-request-identity-and-authorization
     contract_id: search-security-rbac-and-limit
     category: security
     test_path: apps/lumen/tests/security_lumen_security_hardening_access_control.rs
     command: "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
     assertions:
-      - "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope."
+      - "FILTERING: under LUMEN_AUTH=required a search over any collection is refused with 401 and returns no rows, so no result reaches an unidentified caller. (#2871 removed the 403 read-scope column; it returns with SubjectAccessReview.)"
       - "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded."
   - id: lumen-security-hardening-query-injection
     capability_id: security-hardening

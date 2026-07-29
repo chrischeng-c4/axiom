@@ -6,7 +6,6 @@
 //! behavior under test that isn't already specified elsewhere — these
 //! exist to keep coverage honest as the codebase grows.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -14,7 +13,7 @@ use axum_test::TestServer;
 use serde_json::{json, Value};
 
 use lumen::api::{router, AppState};
-use lumen::auth::{AuthConfig, Role, TokenClaims};
+use lumen::auth::AuthConfig;
 use lumen::storage::Engine;
 
 fn server() -> TestServer {
@@ -22,23 +21,14 @@ fn server() -> TestServer {
     TestServer::new(router(AppState::open(engine))).unwrap()
 }
 
-fn auth_server(tokens: Vec<(&str, TokenClaims)>) -> TestServer {
+/// #2871: the only non-open config that can be built. It has no registry
+/// behind it, so every request it sees is unauthenticated — the role
+/// dimension these helpers used to carry returns with SubjectAccessReview
+/// (#2869).
+fn required_server() -> TestServer {
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig::with_tokens(
-        true,
-        tokens
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-    );
+    let cfg = AuthConfig { required: true };
     TestServer::new(router(AppState::new(engine, Arc::new(cfg)))).unwrap()
-}
-
-fn admin(subject: &str) -> TokenClaims {
-    TokenClaims {
-        subject: subject.into(),
-        roles: HashMap::from([("*".to_string(), Role::Admin)]),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,89 +383,63 @@ async fn nested_and_or_combination_evaluates_correctly() {
 }
 
 // ---------------------------------------------------------------------------
-// §6: RBAC for the rest of the endpoints
+// §6: auth gating for the rest of the endpoints (#2871)
 // ---------------------------------------------------------------------------
 
+/// Endpoints that carry no `:collection` existence precondition worth setting
+/// up, checked two-sidedly: they answer on an open server, and they 401 under
+/// a `required` config. The 403 role column these used to assert cannot be
+/// produced until SubjectAccessReview lands (#2869) — asserting it against a
+/// config that 401s everything would have been a test that passes for the
+/// wrong reason.
 #[tokio::test]
-async fn search_requires_read_role() {
-    let s = auth_server(vec![("a", admin("ops"))]);
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer a")
+async fn read_endpoints_answer_open_and_401_under_required() {
+    let open = server();
+    open.put("/collections/u")
         .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
         .await
         .assert_status_ok();
-    // No bearer → 401.
-    let resp = s
-        .post("/collections/u/search")
+    open.post("/collections/u/search")
         .json(&json!({ "query": { "term": { "field": "e", "value": "x" } }, "limit": 1 }))
-        .await;
-    resp.assert_status(StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn stats_requires_read_role() {
-    let s = auth_server(vec![("a", admin("ops"))]);
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer a")
-        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
         .await
         .assert_status_ok();
-    let resp = s.get("/collections/u/stats").await;
-    resp.assert_status(StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn duplicates_requires_read_role() {
-    let s = auth_server(vec![("a", admin("ops"))]);
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer a")
-        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
-        .await
-        .assert_status_ok();
-    let resp = s
-        .post("/collections/u/duplicates")
+    open.get("/collections/u/stats").await.assert_status_ok();
+    open.post("/collections/u/duplicates")
         .json(&json!({ "field": "e" }))
-        .await;
-    resp.assert_status(StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn backup_endpoint_requires_admin_wildcard() {
-    let s = auth_server(vec![(
-        "tok-w",
-        TokenClaims {
-            subject: "worker".into(),
-            roles: HashMap::from([("u".to_string(), Role::Write)]),
-        },
-    )]);
-    let resp = s
-        .get("/admin/backup")
-        .add_header("authorization", "Bearer tok-w")
-        .await;
-    resp.assert_status(StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn drop_field_requires_admin() {
-    let s = auth_server(vec![
-        (
-            "tok-r",
-            TokenClaims {
-                subject: "viewer".into(),
-                roles: HashMap::from([("u".to_string(), Role::Read)]),
-            },
-        ),
-        ("tok-a", admin("ops")),
-    ]);
-    s.put("/collections/u")
-        .add_header("authorization", "Bearer tok-a")
-        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
         .await
         .assert_status_ok();
-    let resp = s
-        .delete("/collections/u/fields/e")
-        .add_header("authorization", "Bearer tok-r")
-        .await;
-    resp.assert_status(StatusCode::FORBIDDEN);
+
+    let s = required_server();
+    s.post("/collections/u/search")
+        .json(&json!({ "query": { "term": { "field": "e", "value": "x" } }, "limit": 1 }))
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+    s.get("/collections/u/stats")
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+    s.post("/collections/u/duplicates")
+        .json(&json!({ "field": "e" }))
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+}
+
+/// The admin surface gets the same treatment. `GET /admin/backup` and
+/// `DELETE /collections/{id}/fields/{field}` used to be the two clearest
+/// role-gated routes in the file; today the only thing that can be asserted
+/// about them is that they are not reachable without an identity — and that a
+/// presented credential does not change that.
+#[tokio::test]
+async fn admin_endpoints_401_under_required_with_or_without_a_credential() {
+    let s = required_server();
+    for tok in [None, Some("tok-w")] {
+        let mut backup = s.get("/admin/backup");
+        let mut drop_field = s.delete("/collections/u/fields/e");
+        if let Some(t) = tok {
+            backup = backup.add_header("authorization", format!("Bearer {t}"));
+            drop_field = drop_field.add_header("authorization", format!("Bearer {t}"));
+        }
+        backup.await.assert_status(StatusCode::UNAUTHORIZED);
+        drop_field.await.assert_status(StatusCode::UNAUTHORIZED);
+    }
 }
 // CODEGEN-END

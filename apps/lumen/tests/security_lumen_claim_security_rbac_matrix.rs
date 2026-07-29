@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes.
+// Contract: Every serving route is exercised twice - it answers on an open server and returns 401 under LUMEN_AUTH=required - so a route that silently disappeared cannot pass as a protected one; index size and result pages stay bounded. (#2871 removed the role dimension; it returns with SubjectAccessReview.)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_security_rbac_matrix() {

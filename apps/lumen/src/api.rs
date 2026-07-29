@@ -469,10 +469,6 @@ impl AppState {
         auth: Arc<AuthConfig>,
         writer: Arc<dyn WriteSink>,
     ) -> Self {
-        // #2475: the reload sink needs its own `Engine` handle so it can
-        // publish onto the same `/metrics` surface `GET /metrics` renders;
-        // cloned before `engine` moves into the field below.
-        let metrics_engine = engine.clone();
         Self {
             search_backend: Arc::new(LocalEngineSearch {
                 engine: engine.clone(),
@@ -481,7 +477,7 @@ impl AppState {
                 writer: writer.clone(),
             }),
             engine,
-            verifier: Arc::new(LumenVerifier::with_metrics(auth.clone(), metrics_engine)),
+            verifier: Arc::new(LumenVerifier::new(auth.clone())),
             auth,
             cluster: None,
             writer,
@@ -530,8 +526,6 @@ impl AppState {
     }
 
     /// The exact auth verifier used by every router built from this state.
-    /// Serving uses this handle for projected-registry rotation so a live
-    /// router and its watcher cannot diverge onto separate snapshots.
     pub fn verifier(&self) -> Arc<LumenVerifier> {
         Arc::clone(&self.verifier)
     }
@@ -703,10 +697,7 @@ impl MetricsProvider for Engine {
 /// This is used by the access log to include subject information in per-request logs.
 /// Called after auth_middleware, so AuthContext is already in the extensions.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
-async fn record_subject_to_span(
-    req: Request,
-    next: Next,
-) -> axum::response::Response {
+async fn record_subject_to_span(req: Request, next: Next) -> axum::response::Response {
     // Record subject to the current span for inclusion in access logs.
     // If AuthContext exists in extensions, use its subject; otherwise use "anonymous".
     let subject = req

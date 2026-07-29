@@ -181,7 +181,7 @@ e2e_tests:
     category: security
     command: "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
     assertions:
-      - "Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required."
+      - "Under LUMEN_AUTH=required every serving route is refused with 401 whether or not a credential is presented, and the binary exits at startup rather than degrade to an open API; under auth disabled the whole data plane still serves unauthenticated. (#2871 retired the bearer registry, so no credential is acceptable until TokenReview lands.)"
   - id: lumen-claim-security-rbac-matrix
     capability_id: security-hardening
     claim_id: kubernetes-native-request-identity-and-authorization
@@ -189,7 +189,7 @@ e2e_tests:
     category: security
     command: "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
     assertions:
-      - "Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes."
+      - "Every serving route is exercised twice - it answers on an open server and returns 401 under LUMEN_AUTH=required - so a route that silently disappeared cannot pass as a protected one; index size and result pages stay bounded. (#2871 removed the role dimension; it returns with SubjectAccessReview.)"
   - id: lumen-claim-security-query-safety
     capability_id: querying
     claim_id: query-quality

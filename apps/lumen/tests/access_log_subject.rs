@@ -1,5 +1,13 @@
 // Verify access log subject field is recorded from auth context
 // Tests AC1: the http.access line contains authenticated subject or "anonymous"
+//
+// #2871: the named-subject case is not covered here any more. Producing one
+// required a bearer the registry could resolve to `alice@example.com`, and
+// that registry is retired; a named subject becomes producible again when
+// TokenReview returns `system:serviceaccount:<ns>:<name>` (#2869), which is
+// where that assertion should be rebuilt. What is still covered is that the
+// `subject` attribute is always present — on an open request, and on a
+// rejected one, where losing the line entirely would be the worse failure.
 
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -12,7 +20,7 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;
 
 use lumen::api::{router, AppState};
-use lumen::auth::{AuthConfig, Role, TokenClaims};
+use lumen::auth::AuthConfig;
 use lumen::storage::Engine;
 
 #[derive(Clone, Default)]
@@ -49,96 +57,6 @@ impl SharedWriter {
     fn output(&self) -> String {
         String::from_utf8(self.bytes.lock().unwrap().clone()).unwrap()
     }
-}
-
-fn claim(subject: &str, roles: &[(&str, Role)]) -> TokenClaims {
-    TokenClaims {
-        subject: subject.into(),
-        roles: roles.iter().map(|(c, r)| (c.to_string(), *r)).collect(),
-    }
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn access_log_records_authenticated_subject() {
-    let writer = SharedWriter::default();
-    let identity = service_observability::ServiceIdentity::new("lumen", "test").unwrap();
-    let layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .with_writer(writer.clone())
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .with_line_number(false)
-        .json()
-        .with_current_span(true)
-        .event_format(service_observability::ServiceJsonFormatter::new(identity));
-
-    let subscriber = tracing_subscriber::registry()
-        .with(layer)
-        .with(tracing_subscriber::filter::EnvFilter::new("debug"));
-
-    let _guard = tracing::subscriber::set_default(subscriber);
-
-    // Set up lumen with auth enabled and a bearer token
-    let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig::with_tokens(
-        true, // required
-        vec![("tok-test".to_string(), claim("alice@example.com", &[("*", Role::Admin)]))].into_iter().collect(),
-    );
-    let app = router(AppState::new(engine, Arc::new(cfg)));
-
-    // Make a request with the valid bearer token using tower
-    let request = Request::builder()
-        .method("GET")
-        .uri("/collections")
-        .header("authorization", "Bearer tok-test")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app
-        .clone()
-        .oneshot(request)
-        .await
-        .unwrap();
-
-    assert_eq!(response.status().as_u16(), 200);
-
-    let output = writer.output();
-    let records: Vec<_> = output
-        .lines()
-        .filter_map(|line| {
-            if line.trim().is_empty() {
-                return None;
-            }
-            serde_json::from_str::<serde_json::Value>(line).ok()
-        })
-        .collect();
-
-    // Find the access log line for /collections
-    let access_log_line = records
-        .iter()
-        .find(|r| {
-            r.get("attributes")
-                .and_then(|a| a.get("target"))
-                .and_then(|t| t.as_str()) == Some("http.access")
-                && r.get("attributes")
-                    .and_then(|a| a.get("uri"))
-                    .and_then(|u| u.as_str())
-                    .map(|uri| uri.ends_with("/collections"))
-                    .unwrap_or(false)
-        })
-        .expect("should have http.access line for /collections");
-
-    // Verify the subject field is recorded
-    let subject = access_log_line
-        .get("attributes")
-        .and_then(|a| a.get("subject"))
-        .and_then(|s| s.as_str());
-
-    assert_eq!(
-        subject, Some("alice@example.com"),
-        "authenticated request should contain subject from token claims"
-    );
 }
 
 #[tokio::test]
@@ -195,7 +113,8 @@ async fn access_log_records_anonymous_when_auth_disabled() {
         .find(|r| {
             r.get("attributes")
                 .and_then(|a| a.get("target"))
-                .and_then(|t| t.as_str()) == Some("http.access")
+                .and_then(|t| t.as_str())
+                == Some("http.access")
                 && r.get("attributes")
                     .and_then(|a| a.get("uri"))
                     .and_then(|u| u.as_str())
@@ -211,7 +130,8 @@ async fn access_log_records_anonymous_when_auth_disabled() {
         .and_then(|s| s.as_str());
 
     assert_eq!(
-        subject, Some("anonymous"),
+        subject,
+        Some("anonymous"),
         "unauthenticated request should contain subject='anonymous'"
     );
 }
@@ -237,18 +157,20 @@ async fn access_log_records_anonymous_for_rejected_request() {
 
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    // Set up lumen with auth required and a bearer token
+    // Set up lumen with auth required. Nothing can satisfy it (#2871), which
+    // is exactly the state this test wants: a rejected request.
     let engine = Arc::new(Engine::new());
-    let cfg = AuthConfig::with_tokens(
-        true, // required
-        vec![("tok-test".to_string(), claim("alice@example.com", &[("*", Role::Admin)]))].into_iter().collect(),
-    );
+    let cfg = AuthConfig { required: true };
     let app = router(AppState::new(engine, Arc::new(cfg)));
     let server = TestServer::new(app).expect("test server");
 
     // Make a request WITHOUT bearer token (should be rejected with 401)
     let resp = server.get("/collections").await;
-    assert_eq!(resp.status_code(), 401, "request without auth token should be rejected with 401");
+    assert_eq!(
+        resp.status_code(),
+        401,
+        "request without auth token should be rejected with 401"
+    );
 
     let output = writer.output();
     let records: Vec<_> = output
@@ -267,7 +189,8 @@ async fn access_log_records_anonymous_for_rejected_request() {
         .find(|r| {
             r.get("attributes")
                 .and_then(|a| a.get("target"))
-                .and_then(|t| t.as_str()) == Some("http.access")
+                .and_then(|t| t.as_str())
+                == Some("http.access")
                 && r.get("attributes")
                     .and_then(|a| a.get("uri"))
                     .and_then(|u| u.as_str())
@@ -283,7 +206,8 @@ async fn access_log_records_anonymous_for_rejected_request() {
         .and_then(|s| s.as_str());
 
     assert_eq!(
-        subject, Some("anonymous"),
+        subject,
+        Some("anonymous"),
         "rejected request must still record subject=anonymous"
     );
 }

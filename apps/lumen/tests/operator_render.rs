@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase,
-    ReshardPolicy, ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
+    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
+    ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{prunes, render};
 use lumen::operator::{Lumen, LumenSpec};
@@ -632,7 +632,6 @@ fn prometheus_rule_covers_backup_failure_and_crash_looping() {
             "LumenReshardWorkflowStalled",
             "LumenPvcNearFull",
             "LumenStorageDegraded",
-            "LumenAuthRegistryReloadFailing",
             "LumenSlowQueries",
         ]
     );
@@ -725,13 +724,16 @@ fn prometheus_rule_covers_raft_reshard_pvc_and_auth_failure_modes() {
     assert!(pvc_expr.contains("namespace=\"acme\""));
     assert!(pvc_expr.contains("persistentvolumeclaim=~\"^raft-lumen-[0-9]+$\""));
 
-    let auth_reload_failing = rules
-        .iter()
-        .find(|r| r["alert"] == "LumenAuthRegistryReloadFailing")
-        .unwrap();
-    let auth_expr = auth_reload_failing["expr"].as_str().unwrap();
-    assert!(auth_expr.contains("lumen_auth_registry_reload_failures_total"));
-    assert!(auth_expr.contains("namespace=\"acme\""));
+    // #2871 retired the bearer/identity registry, so the counter
+    // `LumenAuthRegistryReloadFailing` read no longer exists. No alert may
+    // name it — an alert whose `expr` reads a series nothing publishes is a
+    // permanently-silent rule that reads like coverage.
+    assert!(
+        !serde_json::to_string(&rules)
+            .unwrap()
+            .contains("auth_registry_reload"),
+        "no rule may read a retired auth-registry series (#2871)"
+    );
 }
 
 /// #2519: the slow-query alert binds to `lumen_slow_queries_total`
@@ -790,8 +792,6 @@ fn prometheus_rule_covers_storage_degraded() {
     assert!(runbook.contains("LumenReshardWorkflowStalled"));
     assert!(runbook.contains("LUMEN_STORAGE_FULL_REPROBE_SECS"));
 }
-
-
 
 #[test]
 fn reshard_status_is_recommendation_only_without_capacity_ceiling() {
@@ -1220,7 +1220,10 @@ fn the_crd_accepts_placement() {
     );
     let props = &placement["properties"];
     assert_eq!(props["nodeSelector"]["type"], "object");
-    assert_eq!(props["nodeSelector"]["additionalProperties"]["type"], "string");
+    assert_eq!(
+        props["nodeSelector"]["additionalProperties"]["type"],
+        "string"
+    );
     assert_eq!(props["tolerations"]["type"], "array");
     for field in ["key", "operator", "value", "effect", "tolerationSeconds"] {
         assert!(

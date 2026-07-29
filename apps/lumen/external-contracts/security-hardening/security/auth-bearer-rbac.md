@@ -13,13 +13,13 @@ fill_sections: [e2e-test, tool-contract]
 e2e_tests:
   - id: lumen-security-hardening-auth-bearer-rbac
     capability_id: security-hardening
-    claim_id: bearer-token-auth-lumen-auth
+    claim_id: kubernetes-native-request-identity-and-authorization
     contract_id: bearer-token-auth-lumen-auth
     category: security
     command: "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
     assertions:
-      - "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens."
-      - "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin)."
+      - "Under LUMEN_AUTH=required both a missing credential and an unresolvable one are rejected with 401, and the process refuses to start instead of serving an open API. (#2871 retired the bearer registry, so there is no valid token to accept until TokenReview lands.)"
+      - "The authz matrix covers every API route from both sides - open server answers, required-auth server returns 401 - so route coverage cannot be faked by a route that no longer exists. (#2871 removed the read/write/admin dimension; it returns with SubjectAccessReview.)"
 ```
 
 ## Tool Contract

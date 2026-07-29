@@ -121,6 +121,7 @@ use utoipa::{
 };
 
 use axum::http::HeaderMap;
+use axum::middleware::{from_fn, Next};
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
@@ -551,10 +552,6 @@ impl AppState {
         auth: Arc<AuthConfig>,
         writer: Arc<dyn WriteSink>,
     ) -> Self {
-        // #2475: the reload sink needs its own `Engine` handle so it can
-        // publish onto the same `/metrics` surface `GET /metrics` renders;
-        // cloned before `engine` moves into the field below.
-        let metrics_engine = engine.clone();
         Self {
             search_backend: Arc::new(LocalEngineSearch {
                 engine: engine.clone(),
@@ -563,7 +560,7 @@ impl AppState {
                 writer: writer.clone(),
             }),
             engine,
-            verifier: Arc::new(LumenVerifier::with_metrics(auth.clone(), metrics_engine)),
+            verifier: Arc::new(LumenVerifier::new(auth.clone())),
             auth,
             cluster: None,
             writer,
@@ -612,8 +609,6 @@ impl AppState {
     }
 
     /// The exact auth verifier used by every router built from this state.
-    /// Serving uses this handle for projected-registry rotation so a live
-    /// router and its watcher cannot diverge onto separate snapshots.
     pub fn verifier(&self) -> Arc<LumenVerifier> {
         Arc::clone(&self.verifier)
     }
@@ -781,6 +776,25 @@ impl MetricsProvider for Engine {
     }
 }
 
+/// Middleware that records the authenticated subject to the request span.
+/// This is used by the access log to include subject information in per-request logs.
+/// Called after auth_middleware, so AuthContext is already in the extensions.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
+async fn record_subject_to_span(
+    req: Request,
+    next: Next,
+) -> axum::response::Response {
+    // Record subject to the current span for inclusion in access logs.
+    // If AuthContext exists in extensions, use its subject; otherwise use "anonymous".
+    let subject = req
+        .extensions()
+        .get::<AuthContext>()
+        .and_then(|auth| auth.subject())
+        .unwrap_or("anonymous");
+    tracing::Span::current().record("subject", subject);
+    next.run(req).await
+}
+
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
@@ -864,14 +878,19 @@ pub fn router_with_admission(
         .route("/admin/reshard:evict", post(reshard_evict))
         .route("/admin/reshard:fence", post(reshard_fence))
         .route("/admin/checkpoint", post(admin_checkpoint))
+        .layer(from_fn(record_subject_to_span))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
-        // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler. Shared with
+        // guard); 8MiB is the broker payload budget. Enforces the cap at the HTTP
+        // layer with a structured 413 envelope and streams/chunked bodies bounded
+        // mid-read, replacing the prior axum::extract::DefaultBodyLimit which only
+        // caught Content-Length headers. Shared with
         // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
         // reshard driver's oversize-batch detection can never drift from the
-        // limit actually enforced here.
-        .layer(axum::extract::DefaultBodyLimit::max(
+        // limit actually enforced here. Probe routes (/healthz, /readyz, /metrics,
+        // /version, /docs) are unaffected as they are merged separately and stay
+        // unbounded.
+        .layer(service_http::body_limit_layer(
             crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
         ));
     let data_plane = match admission {

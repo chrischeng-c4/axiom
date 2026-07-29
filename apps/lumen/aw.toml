@@ -903,7 +903,7 @@ td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen
 test_path = "apps/lumen/tests/security_lumen_claim_security_bearer_auth.rs"
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
 required_for_production = true
-assertions = ["Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required."]
+assertions = ["Under LUMEN_AUTH=required every serving route is refused with 401 whether or not a credential is presented, and the binary exits at startup rather than degrade to an open API; under auth disabled the whole data plane still serves unauthenticated. (#2871 retired the bearer registry, so no credential is acceptable until TokenReview lands.)"]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-security-query-safety"
@@ -927,7 +927,7 @@ td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen
 test_path = "apps/lumen/tests/security_lumen_claim_security_rbac_matrix.rs"
 command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
 required_for_production = true
-assertions = ["Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes."]
+assertions = ["Every serving route is exercised twice - it answers on an open server and returns 401 under LUMEN_AUTH=required - so a route that silently disappeared cannot pass as a protected one; index size and result pages stay bounded. (#2871 removed the role dimension; it returns with SubjectAccessReview.)"]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-security-score-confidentiality"
@@ -1263,7 +1263,7 @@ test_path = "apps/lumen/tests/security_lumen_security_hardening_access_control.r
 command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = [
-    "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope.",
+    "FILTERING: under LUMEN_AUTH=required a search over any collection is refused with 401 and returns no rows, so no result reaches an unidentified caller. (#2871 removed the 403 read-scope column; it returns with SubjectAccessReview.)",
     "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded.",
 ]
 
@@ -1278,8 +1278,8 @@ test_path = "apps/lumen/tests/security_lumen_security_hardening_auth_bearer_rbac
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
 required_for_production = true
 assertions = [
-    "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
-    "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
+    "Under LUMEN_AUTH=required both a missing credential and an unresolvable one are rejected with 401, and the process refuses to start instead of serving an open API. (#2871 retired the bearer registry, so there is no valid token to accept until TokenReview lands.)",
+    "The authz matrix covers every API route from both sides - open server answers, required-auth server returns 401 - so route coverage cannot be faked by a route that no longer exists. (#2871 removed the read/write/admin dimension; it returns with SubjectAccessReview.)",
 ]
 
 [[aw.ec.generated.cases]]

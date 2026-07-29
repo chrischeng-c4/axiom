@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
-use lumen::auth::{AuthConfig, TOKEN_REGISTRY_FILE_ENV};
+use lumen::auth::AuthConfig;
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
@@ -1302,35 +1302,20 @@ fn crd_yaml() -> String {
     cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
-/// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
-/// `dest` via `libs/service-backup`, printing the resulting
-/// `BackupRunResult` as JSON. This is what the operator's optional backup
-/// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
-/// well ad hoc against any running serving node.
+/// The one credential `lumen backup` may present is the one its caller
+/// handed it. The metadata-server ID token this used to mint as a fallback
+/// is gone (#2871): a Google ID token is not something the replacement
+/// verifier can ever accept — submitted to `TokenReview` it comes back
+/// `{"user": {}, "error": "invalid bearer token"}` — so falling back to it
+/// only produced a request that failed later and less clearly. With no
+/// token, the request goes out with no `Authorization` header.
 #[cfg(feature = "backup")]
-async fn resolve_admin_token(token: Option<String>) -> Result<Option<String>> {
-    if let Some(t) = token {
-        if !t.trim().is_empty() {
-            return Ok(Some(t));
-        }
-    }
-    if let Ok(audiences) = std::env::var("LUMEN_AUTH_GOOGLE_AUDIENCES") {
-        if let Some(aud) = audiences.split(',').map(|s| s.trim()).find(|s| !s.is_empty()) {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .context("build metadata client")?;
-            let source = service_auth::gcp::MetadataTokenSource::default_gcp(client);
-            let token = source
-                .fetch_id_token(aud)
-                .await
-                .context("fetch metadata identity token")?;
-            return Ok(Some(token));
-        }
-    }
-    Ok(None)
+fn resolve_admin_token(token: Option<String>) -> Option<String> {
+    token.filter(|t| !t.trim().is_empty())
 }
 
+/// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
+/// `dest` via `libs/service-backup`, printing the resulting
 /// `BackupRunResult` as JSON. This is what the operator's optional backup
 /// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
 /// well ad hoc against any running serving node.
@@ -1341,9 +1326,8 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
-    let token = resolve_admin_token(args.token.clone()).await?;
-    let result =
-        lumen::backup::run_backup(&args.url, token.as_deref(), &dest, &retention).await?;
+    let token = resolve_admin_token(args.token.clone());
+    let result = lumen::backup::run_backup(&args.url, token.as_deref(), &dest, &retention).await?;
     // Chainable output (#963): `lumen backup` always emits a single JSON
     // object, so the contract's "next" is a top-level field, not a text tail
     // line. `service_backup::BackupRunResult` stays untouched (shared type) —
@@ -1404,7 +1388,7 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
 /// SnapshotV1 JSON bytes to stdout or `--out`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
-    let token = resolve_admin_token(args.token).await?;
+    let token = resolve_admin_token(args.token);
     let payload = lumen::backup::fetch_snapshot_bytes(&args.url, token.as_deref()).await?;
     if let Some(out) = args.out {
         if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -1412,8 +1396,7 @@ async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
                 .with_context(|| format!("create {}", parent.display()))?;
         }
         std::fs::write(&out, &payload).with_context(|| format!("write {}", out.display()))?;
-        let next =
-            restore_file_next_command(args.url.trim_end_matches('/'), &out, token.is_some());
+        let next = restore_file_next_command(args.url.trim_end_matches('/'), &out, token.is_some());
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -1444,7 +1427,7 @@ async fn dispatch_snapshot_export(_args: SnapshotExportArgs) -> Result<()> {
 /// stdin and POST them to `{url}/admin/restore`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
-    let token = resolve_admin_token(args.token).await?;
+    let token = resolve_admin_token(args.token);
     let payload = match &args.file {
         Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
         None => {
@@ -1478,11 +1461,7 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
 
 #[cfg(feature = "backup")]
 fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String {
-    let auth = if has_token {
-        " --token <token>"
-    } else {
-        ""
-    };
+    let auth = if has_token { " --token <token>" } else { "" };
     format!("lumen import --url {url}{auth} --file {}", path.display())
 }
 
@@ -2548,16 +2527,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // `AuthConfig::from_env` refuses to return a `required` config while no
+    // identity verifier exists (#2871), so reaching this line means auth is
+    // off. Say so plainly instead of pointing at a mode that cannot start.
     let auth = Arc::new(AuthConfig::from_env()?);
-    if auth.required {
-        tracing::info!(
-            tokens = auth.registry.tokens.len(),
-            identities = auth.registry.identities.len(),
-            "auth required"
-        );
-    } else {
-        tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
-    }
+    tracing::warn!(
+        "auth=off — request authentication is unimplemented in this build; the Kubernetes \
+         TokenReview/SubjectAccessReview verifier arrives with the KSA-only serving auth work"
+    );
     let admission = service_http::AdmissionConfig::from_env("LUMEN")?.controller(
         "lumen.read",
         "lumen.write",
@@ -2568,19 +2545,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
-    if let Some(path) = std::env::var_os(TOKEN_REGISTRY_FILE_ENV) {
-        let path = PathBuf::from(path);
-        // `AppState` owns the exact verifier its router uses, so a
-        // Secret/CSI replacement becomes visible to live requests without a
-        // Lumen restart. Invalid replacements remain on the shared
-        // last-known-good snapshot and emit redacted auth audit events.
-        let _ =
-            service_auth::spawn_registry_file_watcher(state.verifier().registry_verifier(), &path);
-        tracing::info!(
-            path = %path.display(),
-            "watching bearer token registry for credential rotation"
-        );
-    }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
     // its own snapshot mechanism and is out of the reshard driver's scope
@@ -3321,10 +3285,10 @@ mod tests {
             out: None,
         });
         for knob in [
-            "nodeSelector",              // which node pool
-            "raftStorageClass",          // SSD vs standard disk
-            "serviceAccountName",        // the KSA the data plane runs as
-            "cpu:",                      // request — what triggers shard autoscaling
+            "nodeSelector",       // which node pool
+            "raftStorageClass",   // SSD vs standard disk
+            "serviceAccountName", // the KSA the data plane runs as
+            "cpu:",               // request — what triggers shard autoscaling
             "memory:",
             "raftStorage:", // per-tenant disk size
             "prunePolicy",

@@ -172,59 +172,20 @@ fn json_schema_emits_component_schemas() {
 }
 
 #[test]
-fn json_schema_emits_token_registry_operational_schema() {
+// #2871 retired the bearer/identity registry, so `lumen spec --format
+// json-schema` must not publish a `TokenRegistry` operational schema. A schema
+// for a file no code reads is a supported-looking deployment shape an
+// integrator would build against and never get authenticated by.
+fn json_schema_no_longer_publishes_a_token_registry_schema() {
     let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
-    let schema = &v["operationalSchemas"]["TokenRegistry"];
-    assert_eq!(
-        schema["type"], "object",
-        "TokenRegistry is an object schema"
+    assert!(
+        v.get("operationalSchemas").is_none(),
+        "no operationalSchemas block survives the registry retirement: {v}"
     );
-
-    // #2678: the published schema describes two disjoint namespaces, plus the
-    // pre-#2678 flat form it still accepts. Before, `additionalProperties` sat
-    // at the top level and described a claims object — a schema that now
-    // rejects the very shape the product recommends.
-    let branches = schema["anyOf"]
-        .as_array()
-        .expect("TokenRegistry publishes its accepted shapes as `anyOf`");
-    assert_eq!(branches.len(), 2, "sectioned + flat: {schema}");
-    let sectioned = &branches[0];
-    for half in ["tokens", "identities"] {
-        assert_eq!(
-            sectioned["properties"][half]["additionalProperties"]["properties"]["roles"]
-                ["additionalProperties"]["enum"],
-            json!(["read", "write", "admin"]),
-            "`{half}` publishes the exact role enum"
-        );
-    }
-    assert_eq!(
-        branches[1]["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
-        json!(["read", "write", "admin"]),
-        "the flat compatibility shape publishes the exact role enum"
+    assert!(
+        !json_schema_json().contains("token-registry.json"),
+        "the retired registry file is not named anywhere in the published schema"
     );
-
-    assert_eq!(
-        schema["examples"][0]["tokens"]["admin-token"]["roles"]["*"],
-        "admin",
-        "TokenRegistry example includes wildcard admin role: {schema}"
-    );
-
-    // The oracle that matters: every published example has to be something the
-    // real loader accepts. A schema example the product rejects is worse than
-    // no example — an integrator copies it and gets a pod that never starts.
-    for (i, example) in schema["examples"]
-        .as_array()
-        .expect("TokenRegistry publishes examples")
-        .iter()
-        .enumerate()
-    {
-        let parsed = service_auth::Registry::parse(&example.to_string())
-            .unwrap_or_else(|e| panic!("example {i} is rejected by the real loader: {e}\n{example}"));
-        assert!(
-            !parsed.is_empty(),
-            "example {i} parses to an empty registry: {example}"
-        );
-    }
 }
 
 #[test]
@@ -412,29 +373,49 @@ fn llm_outline_maps_agent_topics() {
     }
 }
 
+/// #2871: the auth topic is what an agent reads before wiring a client, so it
+/// is the one place a stale credential story does the most damage. It must
+/// state the mode a server actually starts in, say that `required` refuses to
+/// start, and stop handing out a registry file shape to fill in.
 #[test]
-fn llm_auth_publishes_token_registry_shape() {
+fn llm_auth_states_the_phase_one_contract() {
     let auth = llm_auth_md();
     assert!(!auth.trim().is_empty(), "auth topic is non-empty");
     for needle in [
-        "LUMEN_AUTH=required",
-        "LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json",
-        "LUMEN_TOKEN=<token>",
-        "Authorization: Bearer <LUMEN_TOKEN>",
-        "\"admin-token\"",
-        "\"roles\"",
-        "\"*\": \"admin\"",
-        "\"products\": \"read\"",
+        "LUMEN_AUTH=disabled",
+        "does not start",
+        "TokenReview",
+        "SubjectAccessReview",
+        "system:serviceaccount:<namespace>:<name>",
+        "lumencollections",
         "tokensSecret",
-        "Secret Manager",
         "Client",
         "auth_token",
         "default_headers",
         "Shared auth primitive",
-        "<SVC>_TOKEN_REGISTRY_FILE",
         "service-auth",
     ] {
         assert!(auth.contains(needle), "auth topic missing `{needle}`");
+    }
+    // The registry file shape is gone, not merely deprecated in place: an
+    // example an agent can copy is the thing that outlives the prose around it.
+    // Only lumen's own half is asserted on — the appended `service-auth` topic
+    // is the shared library's contract, still live for the services that have
+    // not migrated.
+    let lumen_half = auth
+        .split("\n## Shared auth primitive\n")
+        .next()
+        .expect("auth topic has a lumen-authored half");
+    for retired in [
+        "token-registry.json",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "\"admin-token\"",
+        "\"*\": \"admin\"",
+    ] {
+        assert!(
+            !lumen_half.contains(retired),
+            "auth topic still publishes retired registry detail `{retired}`"
+        );
     }
 }
 
@@ -605,11 +586,16 @@ fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
         "retentionSecs",
         "adminTokenSecret",
         "lumen backup",
-        "LUMEN_AUTH_GOOGLE_AUDIENCES",
         "--retention-secs",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
+    // #2871: the CronJob's metadata-server ID-token fallback is gone, so the
+    // topic must not still name the audience list that selected it.
+    assert!(
+        !storage.contains("LUMEN_AUTH_GOOGLE_AUDIENCES"),
+        "storage topic still points `lumen backup` at a retired Google-token path"
+    );
 }
 
 /// #809: a `spec.serving.raftStorage` CR edit does not, by itself, resize
@@ -688,11 +674,17 @@ fn llm_workflow_covers_the_integration_model() {
         "compatibility/smoke path",
         "high-QPS",
         "pooled HTTP/2 streams",
-        "Authorization: Bearer",
-        "LUMEN_TOKEN_REGISTRY_FILE",
         "Do NOT", // non-goals
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
+    }
+    // #2871: the connection section no longer tells a caller to send a bearer
+    // or points at a registry file the server stopped reading.
+    for retired in ["Authorization: Bearer", "LUMEN_TOKEN_REGISTRY_FILE"] {
+        assert!(
+            !g.contains(retired),
+            "workflow topic still teaches the retired bearer path `{retired}`"
+        );
     }
 }
 
@@ -864,9 +856,16 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     let q = llm_quickstart_md();
     assert!(!q.trim().is_empty(), "quickstart is non-empty");
     assert!(q.contains("curl"), "quickstart has runnable curl");
+    // #2871: the quickstart used to hand out the production auth env. There is
+    // none to hand out, so it must say the node is open rather than imply a
+    // credential the reader could go find.
     assert!(
-        q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
-        "quickstart documents production auth env"
+        !q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
+        "quickstart still names the retired registry env"
+    );
+    assert!(
+        q.contains("LUMEN_AUTH=disabled"),
+        "quickstart names the only mode a server starts in"
     );
     for path in ["/collections/products", "/index", "/search"] {
         assert!(q.contains(path), "quickstart exercises `{path}`");

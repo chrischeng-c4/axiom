@@ -595,11 +595,9 @@ fn service_monitor(cx: &RenderCtx<'_>) -> Value {
 }
 
 // #2475: alerts are added here only when the metric an `expr` reads is
-// actually published today. `LumenRaftLeaderAbsent` and
-// `LumenAuthRegistryReloadFailing` read this pod's self-scraped
-// `lumen_raft_leader_known` / `lumen_auth_registry_reload_failures_total`
-// gauges/counters (`src/metrics.rs`, wired in `src/bin/lumen.rs` and
-// `src/auth.rs`). `LumenPvcNearFull` reads the kubelet's
+// actually published today. `LumenRaftLeaderAbsent` reads this pod's
+// self-scraped `lumen_raft_leader_known` gauge (`src/metrics.rs`, wired in
+// `src/bin/lumen.rs`). `LumenPvcNearFull` reads the kubelet's
 // `kubelet_volume_stats_*` series against the `raft-<name>-<ordinal>`
 // StatefulSet PVC name pattern (`volumeClaimTemplates` name is `raft`, see
 // `serving_statefulset`). `LumenStorageDegraded` (#2516) reads
@@ -720,19 +718,6 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                         "annotations": {
                             "summary": "lumen pod {{ $labels.pod }} is in ENOSPC degraded read-only mode in {{ $labels.namespace }} -- mutating writes are being fast-failed with 507 storage_full",
                             "runbook": "kubectl exec -n {{ $labels.namespace }} {{ $labels.pod }} -- df -h; a durable write (AOF append, segment/RDB checkpoint, or raft log append) hit ENOSPC on the raft-<ordinal> PVC -- LumenPvcNearFull should have fired earlier as the early warning, so also check why it didn't. Free space (prune old snapshots/segments, or expand volumeClaimTemplates if the StorageClass supports online resize); the pod's periodic re-probe (LUMEN_STORAGE_FULL_REPROBE_SECS, default 30s) clears this automatically once a probe write succeeds, or restart the pod. If disk pressure traces back to an unfinished reshard leaving stale buckets, see LumenReshardWorkflowStalled too.",
-                        },
-                    },
-                    {
-                        "alert": "LumenAuthRegistryReloadFailing",
-                        "expr": format!(
-                            "increase(lumen_auth_registry_reload_failures_total{{namespace=\"{}\"}}[15m]) > 0",
-                            cx.ns
-                        ),
-                        "for": "5m",
-                        "labels": { "severity": "warning" },
-                        "annotations": {
-                            "summary": "lumen bearer-token registry hot-reload is failing in {{ $labels.namespace }} -- serving the last known-good registry, not the latest rotation",
-                            "runbook": "kubectl logs -n {{ $labels.namespace }} <serving-pod> | grep credential_registry_reload; check logs for details about the reload failure.",
                         },
                     },
                     {

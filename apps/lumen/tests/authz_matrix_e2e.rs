@@ -1,59 +1,70 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! Authorization matrix (TEST-STRATEGY security gate): every data-plane
-//! endpoint × {no token, wrong-scope token, right-scope token} returns the
-//! correct 401 / 403 / 200, and no handler silently skips `auth.ensure`.
+//! Authorization matrix (TEST-STRATEGY security gate), phase 1 (#2871).
+//!
+//! The role dimension is gone with the registry: there is no way to be
+//! authenticated-but-under-privileged until SubjectAccessReview lands
+//! (#2869), so the 403 column of the old matrix cannot be produced. What
+//! survives is the column that actually protects anything today — every
+//! data-plane endpoint × {no credential, unknown credential} under a
+//! `required` config must be 401, with no handler quietly skipping
+//! `auth.ensure`. A route that answered 200 here would be a hole no later
+//! phase would notice, because the later phases only ever add checks.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum_test::TestServer;
 use serde_json::{json, Value};
 
 use lumen::api::{router, AppState};
-use lumen::auth::{AuthConfig, Role, TokenClaims};
+use lumen::auth::AuthConfig;
 use lumen::storage::Engine;
 
-const READER: &str = "tok-reader"; // Read on "users"
-const WRITER: &str = "tok-writer"; // Write on "users"
-const ADMIN: &str = "tok-admin"; //  Admin on "*"
-
-fn claims(roles: &[(&str, Role)]) -> TokenClaims {
-    TokenClaims {
-        subject: "s".into(),
-        roles: roles.iter().map(|(c, r)| (c.to_string(), *r)).collect(),
-    }
-}
-
-fn auth_server() -> TestServer {
-    let mut tokens = HashMap::new();
-    tokens.insert(READER.to_string(), claims(&[("users", Role::Read)]));
-    tokens.insert(WRITER.to_string(), claims(&[("users", Role::Write)]));
-    tokens.insert(ADMIN.to_string(), claims(&[("*", Role::Admin)]));
-    let auth = AuthConfig::with_tokens(true, tokens);
+fn required_server() -> TestServer {
     let engine = Arc::new(Engine::new());
+    let auth = AuthConfig { required: true };
     TestServer::new(router(AppState::new(engine, Arc::new(auth)))).expect("server")
 }
 
-/// POST `path` with `body`, optionally bearer-authenticated → HTTP status.
-async fn post(s: &TestServer, path: &str, body: &Value, tok: Option<&str>) -> u16 {
-    let mut r = s.post(path).json(body);
-    if let Some(t) = tok {
-        r = r.add_header("authorization", format!("Bearer {t}"));
-    }
-    r.await.status_code().as_u16()
+fn open_server() -> TestServer {
+    let engine = Arc::new(Engine::new());
+    TestServer::new(router(AppState::open(engine))).expect("server")
 }
 
-async fn get(s: &TestServer, path: &str, tok: Option<&str>) -> u16 {
-    let mut r = s.get(path);
-    if let Some(t) = tok {
-        r = r.add_header("authorization", format!("Bearer {t}"));
-    }
-    r.await.status_code().as_u16()
+/// Every data-plane verb this file covers, as (method, path, body). Kept as
+/// one list so a new endpoint is added to the gate in one place.
+fn endpoints() -> Vec<(&'static str, &'static str, Option<Value>)> {
+    let schema = json!({ "fields": { "email": { "type": "keyword" } } });
+    let search =
+        json!({ "query": { "term": { "field": "email", "value": "a@x.com" } }, "limit": 5 });
+    let index = json!({ "items": [{ "external_id": "u1", "field": "email", "value": "a@x.com" }] });
+    vec![
+        ("GET", "/collections", None),
+        ("PUT", "/collections/users", Some(schema)),
+        ("POST", "/collections/users/search", Some(search)),
+        ("POST", "/collections/users/index", Some(index)),
+        ("GET", "/collections/users/stats", None),
+        ("DELETE", "/collections/users", None),
+    ]
 }
 
-async fn put(s: &TestServer, path: &str, body: &Value, tok: Option<&str>) -> u16 {
-    let mut r = s.put(path).json(body);
+async fn status(
+    s: &TestServer,
+    method: &str,
+    path: &str,
+    body: &Option<Value>,
+    tok: Option<&str>,
+) -> u16 {
+    let mut r = match method {
+        "GET" => s.get(path),
+        "PUT" => s.put(path),
+        "POST" => s.post(path),
+        "DELETE" => s.delete(path),
+        other => panic!("unhandled method {other}"),
+    };
+    if let Some(b) = body {
+        r = r.json(b);
+    }
     if let Some(t) = tok {
         r = r.add_header("authorization", format!("Bearer {t}"));
     }
@@ -61,83 +72,34 @@ async fn put(s: &TestServer, path: &str, body: &Value, tok: Option<&str>) -> u16
 }
 
 #[tokio::test]
-async fn authz_matrix_enforced_on_every_endpoint() {
-    let s = auth_server();
-    let schema = json!({ "fields": { "email": { "type": "keyword" } } });
-    let search =
-        json!({ "query": { "term": { "field": "email", "value": "a@x.com" } }, "limit": 5 });
-    let index = json!({ "items": [{ "external_id": "u1", "field": "email", "value": "a@x.com" }] });
-
-    // create = Admin: seed "users".
-    assert_eq!(
-        put(&s, "/collections/users", &schema, Some(ADMIN)).await,
-        200
-    );
-
-    // No token → 401 on every endpoint (no handler skips auth).
-    assert_eq!(
-        post(&s, "/collections/users/search", &search, None).await,
-        401
-    );
-    assert_eq!(get(&s, "/collections/users/stats", None).await, 401);
-    assert_eq!(
-        post(&s, "/collections/users/index", &index, None).await,
-        401
-    );
-    assert_eq!(put(&s, "/collections/users", &schema, None).await, 401);
-
-    // Bogus token → 401.
-    assert_eq!(
-        post(&s, "/collections/users/search", &search, Some("nope")).await,
-        401
-    );
-
-    // Read endpoints (search, stats): reader / writer / admin all 200.
-    for t in [READER, WRITER, ADMIN] {
+async fn every_endpoint_is_401_under_required_auth_with_or_without_a_credential() {
+    let s = required_server();
+    for (method, path, body) in endpoints() {
         assert_eq!(
-            post(&s, "/collections/users/search", &search, Some(t)).await,
-            200,
-            "search/{t}"
+            status(&s, method, path, &body, None).await,
+            401,
+            "{method} {path} with no credential"
         );
         assert_eq!(
-            get(&s, "/collections/users/stats", Some(t)).await,
-            200,
-            "stats/{t}"
+            status(&s, method, path, &body, Some("tok-admin")).await,
+            401,
+            "{method} {path} with an unknown credential"
         );
     }
+}
 
-    // Write endpoint (index): reader 403, writer/admin 200.
-    assert_eq!(
-        post(&s, "/collections/users/index", &index, Some(READER)).await,
-        403,
-        "index/reader"
-    );
-    assert_eq!(
-        post(&s, "/collections/users/index", &index, Some(WRITER)).await,
-        200,
-        "index/writer"
-    );
-    assert_eq!(
-        post(&s, "/collections/users/index", &index, Some(ADMIN)).await,
-        200,
-        "index/admin"
-    );
-
-    // Admin endpoint (create new collection): reader/writer 403, admin 200.
-    assert_eq!(
-        put(&s, "/collections/other", &schema, Some(READER)).await,
-        403,
-        "create/reader"
-    );
-    assert_eq!(
-        put(&s, "/collections/other", &schema, Some(WRITER)).await,
-        403,
-        "create/writer"
-    );
-    assert_eq!(
-        put(&s, "/collections/other", &schema, Some(ADMIN)).await,
-        200,
-        "create/admin"
-    );
+/// The other half of the same gate: the same endpoint list must all answer on
+/// an open server. Without this, the assertion above would still pass if a
+/// route were removed or permanently broken — 401 and 404 are both "not 200".
+#[tokio::test]
+async fn every_endpoint_answers_on_an_open_server() {
+    let s = open_server();
+    for (method, path, body) in endpoints() {
+        let code = status(&s, method, path, &body, None).await;
+        assert!(
+            (200..300).contains(&code),
+            "{method} {path} on an open server returned {code}"
+        );
+    }
 }
 // CODEGEN-END
