@@ -486,6 +486,8 @@ publishes that returned type instead of blindly restoring the original
 order-sensitive conditional recovery type. Recording `Inferred` without
 publishing the same selected type is not completion.
 
+Completed by #2965 (`114f6ca798`).
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
