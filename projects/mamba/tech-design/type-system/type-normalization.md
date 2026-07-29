@@ -141,6 +141,39 @@ parameters and must not implement the later seven-family Force Typed wall.
 - Keep unresolved authored types distinct from `ExplicitAny`.
 - Add checker-local construction and invariant tests.
 
+N2 is split at the checker ownership seam:
+
+#### N2a — parameter-boundary provenance
+
+Completed by #2918 (`65f4929cdf`).
+
+- Introduce the `DeclaredType` aggregate and `TypeProvenance` value object.
+- Construct authored parameter declarations from N1 annotation presence.
+- Prove that `Any` and `typing.Any` are `ExplicitAny`, while `object` and
+  unresolved authored names remain `Explicit`.
+- Keep omitted parameters outside the authored constructor.
+
+#### N2b — canonical checker annotation cache
+
+- Replace the parallel bare `Span -> TypeId` semantic-annotation cache and
+  parameter-only declaration map with one checker-local
+  `Span -> DeclaredType` aggregate store.
+- Record only authored top-level annotation entrypoints. Recursive or synthetic
+  type-expression resolution may contribute the normalized value but must not
+  manufacture authored provenance.
+- Keep the lowering compatibility projection
+  `resolved_type_expr(span) -> Option<TypeId>`, backed by the aggregate, so
+  this slice does not change lowering behavior.
+- Expose a read-only aggregate lookup for later N3/N4 consumers.
+- Cover authored parameter and non-parameter annotation entrypoints for bare
+  `Any`, `typing.Any`, a concrete type, `object`, and an unresolved name.
+- Prove omitted parameters are absent, checker instances remain isolated, and
+  there is exactly one mutable semantic-annotation store.
+
+N2b must not infer omitted declarations, introduce `ImplicitUnknown`
+diagnostics, change annotation compatibility, or propagate a dynamic-boundary
+license. Those belong to N3 and N4.
+
 ### N3 — infer or reject omitted binding types
 
 - Run inference only for `SourceAnnotation::Omitted`.
