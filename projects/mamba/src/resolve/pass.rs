@@ -1280,6 +1280,7 @@ mod tests {
                     Param {
                         name: "a".into(),
                         ty: sp(TypeExpr::Named("int".into())),
+                        annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("int".into()))),
                         default: None,
                         kind: ParamKind::Regular,
                         pos_only: false,
@@ -1289,6 +1290,7 @@ mod tests {
                     Param {
                         name: "b".into(),
                         ty: sp(TypeExpr::Named("int".into())),
+                        annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("int".into()))),
                         default: None,
                         kind: ParamKind::Regular,
                         pos_only: false,
@@ -1736,6 +1738,7 @@ mod tests {
                 params: vec![Param {
                     name: "n".into(),
                     ty: sp(TypeExpr::Named("int".into())),
+                    annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("int".into()))),
                     default: None,
                     kind: ParamKind::Regular,
                     pos_only: false,
@@ -2036,6 +2039,7 @@ mod tests {
                     params: vec![Param {
                         name: "self".into(),
                         ty: sp(TypeExpr::Named("C".into())),
+                        annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("C".into()))),
                         default: None,
                         kind: ParamKind::Regular,
                         pos_only: false,
@@ -2505,6 +2509,7 @@ mod tests {
                     Param {
                         name: "a".into(),
                         ty: sp(TypeExpr::Named("int".into())),
+                        annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("int".into()))),
                         default: None,
                         kind: ParamKind::Regular,
                         pos_only: false,
@@ -2514,6 +2519,7 @@ mod tests {
                     Param {
                         name: "b".into(),
                         ty: sp(TypeExpr::Named("int".into())),
+                        annotation: ParamAnnotation::Authored(sp(TypeExpr::Named("int".into()))),
                         default: None,
                         kind: ParamKind::Regular,
                         pos_only: false,

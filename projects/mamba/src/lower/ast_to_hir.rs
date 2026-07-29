@@ -3009,7 +3009,7 @@ fn func_sig_meta(
             default,
             default_opaque,
             frozen_default,
-            annotation: annotation_repr_opt(&p.ty.node),
+            annotation: p.authored_type().map(|ty| type_expr_repr(&ty.node)),
             // Keep the source declaration before the entry ABI is rewritten
             // for methods, decorators, closures, or default mutation.
             declared_ty: Some(lowerer.resolve_type_expr_ro(&p.ty)),
@@ -3021,7 +3021,7 @@ fn func_sig_meta(
         params: out,
         return_annotation: return_ty
             .as_ref()
-            .and_then(|t| annotation_repr_opt(&t.node)),
+            .map(|t| type_expr_repr(&t.node)),
     }
 }
 
@@ -3035,17 +3035,6 @@ fn attach_entry_types(
     for (param, (_, entry_ty)) in sig.params.iter_mut().zip(params.iter()) {
         param.entry_ty = Some(*entry_ty);
         param.boxed_primitive_entry = boxed_primitive_entry;
-    }
-}
-
-/// Textual annotation for introspection, or None for the parser's implicit
-/// `Any` filler (an un-annotated param/return parses as `Named("Any")`).
-fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
-    let repr = type_expr_repr(ty);
-    if repr == "Any" {
-        None
-    } else {
-        Some(repr)
     }
 }
 
@@ -3119,6 +3108,7 @@ fn erase_param_annotations(params: &[ast::Param]) -> Vec<ast::Param> {
         .cloned()
         .map(|mut p| {
             p.ty = Spanned::new(ast::TypeExpr::Named("Any".to_string()), p.ty.span);
+            p.annotation = ast::ParamAnnotation::Omitted;
             p
         })
         .collect()
@@ -3941,7 +3931,7 @@ impl<'a> AstLowerer<'a> {
                 if simple {
                     let unann: Vec<bool> = params
                         .iter()
-                        .map(|p| matches!(&p.ty.node, ast::TypeExpr::Named(n) if n == "Any"))
+                        .map(|p| p.is_omitted())
                         .collect();
                     unannotated_params.insert(name.clone(), unann);
                     fn_bodies.push((name.clone(), body.as_slice()));
@@ -4740,7 +4730,7 @@ impl<'a> AstLowerer<'a> {
         // Method params use `any` because they receive NaN-boxed MbValues via mb_call_method.
         // Non-method params use the resolved annotation type so match patterns see the
         // correct subject type (e.g. Class{...} for `p: Point`, List(int) for `xs: list[int]`).
-        // EXCEPTION: truly unannotated params (annotation is a bare `Any` name) keep `int` to
+        // EXCEPTION: truly unannotated params (source presence is ParamAnnotation::Omitted) keep `int` to
         // preserve the raw-i64 calling convention used by arithmetic and generators.
         // Complex annotations (Generic, Union, Tuple) that fail interning stay `any` so they
         // are treated as boxed NaN-values (needed for `xs: list[int]` sequence patterns) (#827).
@@ -4841,14 +4831,14 @@ impl<'a> AstLowerer<'a> {
                     // wrapper passes boxed values but primitive annotations let
                     // hir_to_mir insert an unbox at entry.
                     let resolved = self.resolve_type_expr_ro(&p.ty);
-                    if resolved == any_ty {
+                    if p.is_omitted() {
                         any_ty
                     } else {
                         resolved
                     }
                 } else {
                     let resolved = self.resolve_type_expr_ro(&p.ty);
-                    if resolved == any_ty {
+                    if p.is_omitted() {
                         // Only fall back to raw-int convention for bare/unannotated params.
                         // Generic/Union/Tuple annotations that failed interning must stay `any`
                         // so the param is treated as a boxed NaN-value at pattern-match time.
@@ -4878,11 +4868,6 @@ impl<'a> AstLowerer<'a> {
                             // generator trampoline ABI.
                             _ if is_gen_fn => any_ty,
                             _ => {
-                                // Unannotated param: default int, but promote to float
-                                // when every call site passes a float at this position,
-                                // or to `any` (boxed) when float is mixed with a
-                                // non-float — a raw f64 in an int slot leaks its bits
-                                // as an int (e.g. `isinstance(0.5, int)` → True).
                                 match param_float_hints.as_ref().and_then(|h| h.get(idx)).copied() {
                                     Some(FloatHint::Float) => float_ty,
                                     Some(FloatHint::Boxed) => any_ty,
@@ -10139,6 +10124,7 @@ impl<'a> AstLowerer<'a> {
                 let param = ast::Param {
                     name: param_name.clone(),
                     ty: Spanned::new(ast::TypeExpr::Named("Any".to_string()), expr.span),
+                    annotation: ast::ParamAnnotation::Omitted,
                     default: None,
                     kind: ast::ParamKind::Regular,
                     pos_only: false,
@@ -11507,6 +11493,7 @@ mod tests {
         Param {
             name: name.to_string(),
             ty: sp(TypeExpr::Named("Any".to_string())),
+            annotation: ParamAnnotation::Omitted,
             default: None,
             kind: ParamKind::Regular,
             pos_only: false,
@@ -15235,5 +15222,117 @@ async def main():
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_hir_metadata_omitted_vs_authored_any_all_shapes() {
+        let src = r#"
+def f_reg_omitted(x):
+    pass
+
+def f_reg_authored_any(x: Any):
+    pass
+
+def f_reg_authored_int(x: int):
+    pass
+
+def f_pos_omitted(x, /):
+    pass
+
+def f_pos_authored_any(x: Any, /):
+    pass
+
+def f_kw_omitted(*, x):
+    pass
+
+def f_kw_authored_any(*, x: Any):
+    pass
+
+def f_star_omitted(*args):
+    pass
+
+def f_star_authored_any(*args: Any):
+    pass
+
+def f_dstar_omitted(**kwargs):
+    pass
+
+def f_dstar_authored_any(**kwargs: Any):
+    pass
+
+class C:
+    def m_omitted(self):
+        pass
+    def m_authored_any(self: Any):
+        pass
+
+def dec(fn):
+    return fn
+
+@dec
+def fn_dec_omitted(x):
+    pass
+
+@dec
+def fn_dec_authored_any(x: Any):
+    pass
+
+def gen_omitted(x):
+    yield x
+
+def gen_authored_any(x: Any):
+    yield x
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let find_sig = |name: &str| {
+            hir.func_sigs
+                .iter()
+                .find(|(sym, _)| checker.symbols.get_symbol(crate::resolve::scope::SymbolId(**sym)).name == name)
+                .map(|(_, sig)| sig)
+                .or_else(|| {
+                    hir.functions
+                        .iter()
+                        .find(|f| checker.symbols.get_symbol(f.name).name == name)
+                        .and_then(|f| f.func_sig.as_ref())
+                })
+                .unwrap_or_else(|| panic!("missing function signature for {}", name))
+        };
+
+        // Regular parameter
+        assert_eq!(find_sig("f_reg_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_reg_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(find_sig("f_reg_authored_int").params[0].annotation, Some("int".to_string()));
+
+        // Positional-only parameter
+        assert_eq!(find_sig("f_pos_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_pos_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Keyword-only parameter
+        assert_eq!(find_sig("f_kw_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_kw_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Star args parameter
+        assert_eq!(find_sig("f_star_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_star_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Double star kwargs parameter
+        assert_eq!(find_sig("f_dstar_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_dstar_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Method self parameter
+        assert_eq!(find_sig("m_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("m_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Decorated function parameter
+        assert_eq!(find_sig("fn_dec_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("fn_dec_authored_any").params[0].annotation, Some("Any".to_string()));
+
+        // Generator function parameter
+        assert_eq!(find_sig("gen_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("gen_authored_any").params[0].annotation, Some("Any".to_string()));
     }
 }

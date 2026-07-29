@@ -241,11 +241,21 @@ pub struct WithItem {
     pub alias: Option<Name>,
 }
 
-/// Function parameter with mandatory type annotation.
+/// Parameter annotation presence in source syntax.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParamAnnotation {
+    Omitted,
+    Authored(Spanned<TypeExpr>),
+}
+
+pub type SourceAnnotation = ParamAnnotation;
+
+/// Function parameter with type annotation presence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Name,
     pub ty: Spanned<TypeExpr>,
+    pub annotation: ParamAnnotation,
     pub default: Option<Spanned<Expr>>,
     pub kind: ParamKind,
     /// Declared before a `/` separator (PEP 570 positional-only).
@@ -255,6 +265,23 @@ pub struct Param {
     /// Introspection metadata only — call binding is unaffected.
     pub kw_only: bool,
     pub span: Span,
+}
+
+impl Param {
+    pub fn is_authored(&self) -> bool {
+        matches!(self.annotation, ParamAnnotation::Authored(_))
+    }
+
+    pub fn is_omitted(&self) -> bool {
+        matches!(self.annotation, ParamAnnotation::Omitted)
+    }
+
+    pub fn authored_type(&self) -> Option<&Spanned<TypeExpr>> {
+        match &self.annotation {
+            ParamAnnotation::Authored(ref ty) => Some(ty),
+            ParamAnnotation::Omitted => None,
+        }
+    }
 }
 
 /// Parameter kind (#218).
