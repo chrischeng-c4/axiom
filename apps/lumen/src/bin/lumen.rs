@@ -2012,13 +2012,13 @@ fn profile_spec_body(body: InstanceBody, image: &str) -> String {
             yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  auth: disabled\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
         }
         InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  tokensSecret: REPLACE_ME__TOKENS_SECRET\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  auth: required\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
     yaml
@@ -2035,11 +2035,11 @@ enum InstanceBody {
 /// `spec.defaults` for `k8s fleet render --profile template`, at four-space
 /// indent.
 ///
-/// Names no token source: the credential source is per-tenant here (each app
-/// team's own Secret Manager entry), and a `LumenFleet` whose defaults set
-/// `tokensSecret` while its instances set `tokensSecretProviderClass` merges
-/// into a spec naming both — which the one-token-source rule rejects, so
-/// every entry in the handed-out template would fail to materialize.
+/// Names no token source, because there is no longer one to name: a caller's
+/// identity comes from the cluster's TokenRequest/TokenReview path, not from
+/// anything a fleet or its instances configure (#2872). A template that still
+/// carried a credential field would hand every app team a spec the API server
+/// now rejects outright.
 const FLEET_TEMPLATE_DEFAULTS: &str = "\
     \x20   image: __IMAGE__\n\
     \x20   imagePullPolicy: IfNotPresent\n\
@@ -2166,9 +2166,6 @@ fn render_fleet_yaml(args: &K8sFleetRenderArgs) -> String {
                  \x20         cpu: REPLACE_ME__CPU\n\
                  \x20         memory: REPLACE_ME__MEMORY\n\
                  \x20         raftStorage: REPLACE_ME__DISK\n\
-                 \x20       # The tenant's bearer token registry, if using bearer\n\
-                 \x20       # authentication instead of Workload Identity.\n\
-                 \x20       tokensSecret: REPLACE_ME__TOKENS_SECRET\n\
                  \x20 # Retain (default) leaves an instance running when its entry\n\
                  \x20 # is removed; Delete removes it and its PVCs.\n\
                  \x20 prunePolicy: Retain\n",
@@ -3326,8 +3323,7 @@ mod tests {
         for knob in [
             "nodeSelector",              // which node pool
             "raftStorageClass",          // SSD vs standard disk
-            "serviceAccountName",        // Workload Identity
-            "tokensSecret",              // per-tenant bearer token registry (optional)
+            "serviceAccountName",        // the KSA the data plane runs as
             "cpu:",                      // request — what triggers shard autoscaling
             "memory:",
             "raftStorage:", // per-tenant disk size

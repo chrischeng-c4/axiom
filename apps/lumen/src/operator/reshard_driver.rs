@@ -724,22 +724,19 @@ impl ClusterControl for KubeClusterControl {
         if !matches!(lumen.spec.auth, AuthMode::Required) {
             return Ok(None);
         }
-        let Some(audience) = lumen.spec.identity_audiences.first() else {
-            bail!(
-                "auth is required but spec.identityAudiences is empty; \
-                 set spec.identityAudiences so the driver can resolve an admin-role bearer token"
-            );
-        };
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .context("build metadata client")?;
-        let token_source = service_auth::gcp::MetadataTokenSource::default_gcp(client);
-        let token = token_source
-            .fetch_id_token(audience)
-            .await
-            .context("fetch metadata identity token")?;
-        Ok(Some(token))
+        // The audience this used to read (`spec.identityAudiences`) is gone
+        // with the rest of the registry model (#2872), and the credential it
+        // named it for — a metadata-server ID token — is one the serving side
+        // will refuse anyway. There is no silent degradation available here:
+        // returning `Ok(None)` would send the driver's admin calls out
+        // unauthenticated against an instance that requires an identity, so
+        // the reshard fails loudly instead. #2877 gives the operator its own
+        // projected ServiceAccount token and this becomes a token request.
+        bail!(
+            "auth is required but the operator has no credential to present: \
+             the identity-registry audience was retired with #2872 and the \
+             operator's own projected ServiceAccount token is not wired yet (#2877)"
+        )
     }
 
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
@@ -2493,9 +2490,6 @@ mod tests {
             log_format: Default::default(),
             log_level: None,
             auth: Default::default(),
-            tokens_secret: None,
-            identities: BTreeMap::new(),
-            identity_audiences: Vec::new(),
             serving: ServingSpec::default(),
             reshard_policy: ReshardPolicy {
                 max_shard_bytes,

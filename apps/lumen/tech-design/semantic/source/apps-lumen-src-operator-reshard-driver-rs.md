@@ -45,27 +45,27 @@ Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated fr
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 439 |  |
-| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 833 |  |
-| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 651 |  |
-| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 |  |
-| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 513 | clear_convergence_stall(namespace: &str, name: &str) |
-| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 345 | clear_oversize_block(namespace: &str, name: &str) |
-| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 948 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | convergence_stall_budget_secs() -> u64 |
-| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
-| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 933 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2375 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 657 | new(client: Client) -> Self |
-| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
-| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 523 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
-| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 358 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
-| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 489 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
-| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 325 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
-| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1424 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 870 | should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2422 | spawn_reshard_driver_loop(client: Client) |
+| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 438 |  |
+| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 816 |  |
+| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 650 |  |
+| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 263 |  |
+| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 512 | clear_convergence_stall(namespace: &str, name: &str) |
+| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 344 | clear_oversize_block(namespace: &str, name: &str) |
+| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 931 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 447 | convergence_stall_budget_secs() -> u64 |
+| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 540 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
+| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 916 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 233 | default_write_fence_ttl_secs() -> u64 |
+| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2358 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 656 | new(client: Client) -> Self |
+| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 398 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
+| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 522 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
+| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 357 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
+| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 488 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
+| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 324 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
+| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1407 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 853 | should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2405 | spawn_reshard_driver_loop(client: Client) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -251,13 +251,12 @@ Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated fr
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use serde_json::json;
 
-use crate::auth::{Role, TokenClaims};
 use crate::operator::crd::{AuthMode, Lumen, ReshardPhase};
 use crate::operator::lease::{self, Election};
 use crate::reshard::{
@@ -797,22 +796,19 @@ impl ClusterControl for KubeClusterControl {
         if !matches!(lumen.spec.auth, AuthMode::Required) {
             return Ok(None);
         }
-        let Some(audience) = lumen.spec.identity_audiences.first() else {
-            bail!(
-                "auth is required but spec.identityAudiences is empty; \
-                 set spec.identityAudiences so the driver can resolve an admin-role bearer token"
-            );
-        };
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .context("build metadata client")?;
-        let token_source = service_auth::gcp::MetadataTokenSource::default_gcp(client);
-        let token = token_source
-            .fetch_id_token(audience)
-            .await
-            .context("fetch metadata identity token")?;
-        Ok(Some(token))
+        // The audience this used to read (`spec.identityAudiences`) is gone
+        // with the rest of the registry model (#2872), and the credential it
+        // named it for — a metadata-server ID token — is one the serving side
+        // will refuse anyway. There is no silent degradation available here:
+        // returning `Ok(None)` would send the driver's admin calls out
+        // unauthenticated against an instance that requires an identity, so
+        // the reshard fails loudly instead. #2877 gives the operator its own
+        // projected ServiceAccount token and this becomes a token request.
+        bail!(
+            "auth is required but the operator has no credential to present: \
+             the identity-registry audience was retired with #2872 and the \
+             operator's own projected ServiceAccount token is not wired yet (#2877)"
+        )
     }
 
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
@@ -2566,9 +2562,6 @@ mod tests {
             log_format: Default::default(),
             log_level: None,
             auth: Default::default(),
-            tokens_secret: None,
-            tokens_secret_provider_class: None,
-            tokens_secret_csi_driver: None,
             serving: ServingSpec::default(),
             reshard_policy: ReshardPolicy {
                 max_shard_bytes,
@@ -2578,6 +2571,7 @@ mod tests {
             network_policy: false,
             admission: None,
             service_account_name: None,
+            service_account_annotations: BTreeMap::new(),
         }
     }
 

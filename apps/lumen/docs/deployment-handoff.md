@@ -111,7 +111,7 @@ promise, so only additive `v1alpha1` evolution is supported until one ships.
 
 **Upgrade order — CRD first, always** (the #2456 lesson): the API server
 silently prunes any field the *stored* schema doesn't know yet, so applying a
-CR with a new field (e.g. `tokensSecretCsiDriver`, `serviceAccountName`)
+CR with a new field (e.g. `serviceAccountName`, `serviceAccountAnnotations`)
 against the *old* CRD drops that field without an error.
 
 ```bash
@@ -161,11 +161,20 @@ is only ever matched against `tokens` (#2678):
 A flat `{secret: {subject, roles}}` document is still read as bearer secrets only.
 
 > **Production:** set `LUMEN_AUTH=required` + `LUMEN_TOKEN_REGISTRY_FILE`,
-> `LUMEN_LOG_FORMAT=json`, and an OTLP endpoint. Under the operator you set
-> `spec.auth: required` (the CRD default) plus exactly one of `spec.tokensSecret`
-> or `spec.tokensSecretProviderClass`, and the registry file path is wired for
-> you. There is no inline-credential env var: a credential passed in the
-> environment is a credential in `kubectl describe pod`.
+> `LUMEN_LOG_FORMAT=json`, and an OTLP endpoint. There is no inline-credential
+> env var: a credential passed in the environment is a credential in
+> `kubectl describe pod`.
+>
+> **Under the operator there is no credential field to set at all.** `spec.auth:
+> required` is the CRD default and names no source: the CR carried
+> `spec.tokensSecret`, `spec.identities` and `spec.identityAudiences` until
+> #2872 removed them from the schema, and a CR that still sets one is now
+> rejected by the API server rather than applied and ignored. Client identity
+> comes from the cluster — a short-lived, audience-bound ServiceAccount token
+> that lumen resolves through TokenReview and SubjectAccessReview — so nothing
+> mounts a registry into the serving pod (#2870). The `LUMEN_TOKEN_REGISTRY_FILE`
+> path above is the standalone-process contract only, and it goes with the
+> runtime bearer path in #2871.
 
 ---
 

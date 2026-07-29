@@ -325,10 +325,12 @@ fn k8s_instance_render_prod_accepts_app_namespace_overrides() {
     }
 }
 
-/// #2678: `spec.auth` fails closed, so a rendered CR that omits it is a
-/// `required` instance with no token source — a data plane that never passes
-/// readiness. Every profile therefore states its posture, and every profile
-/// that says `required` also names where the registry comes from.
+/// #2678: `spec.auth` fails closed, so every profile states its posture
+/// explicitly rather than relying on a reader knowing the default.
+///
+/// #2872 inverted the second half of this check. A `required` profile used to
+/// have to name a token source; now it must name none, because the fields that
+/// did are gone from the schema and a CR carrying one is rejected outright.
 #[test]
 fn k8s_instance_render_every_profile_states_its_auth_posture() {
     for profile in ["dev", "staging", "prod", "template"] {
@@ -342,11 +344,14 @@ fn k8s_instance_render_every_profile_states_its_auth_posture() {
             matches!(auth, "required" | "disabled"),
             "profile `{profile}`: `auth: {auth}` is not a CRD enum value"
         );
-        if auth == "required" {
+        // A profile must name *no* token source. The retired fields are gone
+        // from the schema (#2872), so a rendered CR that still carried one
+        // would be rejected by the API server at `kubectl apply` — the check
+        // that used to demand one now proves the opposite.
+        for retired in ["tokensSecret", "tokensSecretProviderClass", "identities", "identityAudiences"] {
             assert!(
-                rendered.contains("\n  tokensSecret:")
-                    || rendered.contains("\n  tokensSecretProviderClass:"),
-                "profile `{profile}` requires auth but names no token source:\n{rendered}"
+                !rendered.contains(&format!("\n  {retired}:")),
+                "profile `{profile}` renders retired field `{retired}`:\n{rendered}"
             );
         }
     }

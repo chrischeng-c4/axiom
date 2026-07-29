@@ -24,12 +24,12 @@ Public API manifest for `apps/lumen/src/spec.rs` generated from AST during Score
 | `json_schema_json` | apps/lumen/src/spec.rs | function | pub | 47 | json_schema_json() -> String |
 | `llm_auth_md` | apps/lumen/src/spec.rs | function | pub | 448 | llm_auth_md() -> String |
 | `llm_deployment_md` | apps/lumen/src/spec.rs | function | pub | 313 | llm_deployment_md() -> String |
-| `llm_integration_md` | apps/lumen/src/spec.rs | function | pub | 780 | llm_integration_md() -> String |
+| `llm_integration_md` | apps/lumen/src/spec.rs | function | pub | 784 | llm_integration_md() -> String |
 | `llm_outline_md` | apps/lumen/src/spec.rs | function | pub | 273 | llm_outline_md() -> String |
-| `llm_quickstart_md` | apps/lumen/src/spec.rs | function | pub | 820 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | apps/lumen/src/spec.rs | function | pub | 895 | llm_recipes_md() -> String |
-| `llm_storage_md` | apps/lumen/src/spec.rs | function | pub | 921 | llm_storage_md() -> String |
-| `llm_workflow_md` | apps/lumen/src/spec.rs | function | pub | 536 | llm_workflow_md() -> String |
+| `llm_quickstart_md` | apps/lumen/src/spec.rs | function | pub | 824 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | apps/lumen/src/spec.rs | function | pub | 899 | llm_recipes_md() -> String |
+| `llm_storage_md` | apps/lumen/src/spec.rs | function | pub | 925 | llm_storage_md() -> String |
+| `llm_workflow_md` | apps/lumen/src/spec.rs | function | pub | 540 | llm_workflow_md() -> String |
 | `openapi_json` | apps/lumen/src/spec.rs | function | pub | 16 | openapi_json() -> String |
 | `openapi_yaml` | apps/lumen/src/spec.rs | function | pub | 22 | openapi_yaml() -> String |
 | `query_shapes` | apps/lumen/src/spec.rs | function | pub | 178 | query_shapes() -> Value |
@@ -535,27 +535,31 @@ and `write` covers `read`. Role keys are collection ids. The literal key `*`
 grants the role across all collections. A missing collection role rejects that
 request with 403.
 
-## Kubernetes / cloud secret ownership
-The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
-`token-registry.json` key. The operator mounts that key at
-`/var/run/secrets/lumen/token-registry.json` and sets
-`LUMEN_TOKEN_REGISTRY_FILE` for serving pods when `auth: required`.
-Alternatively, `spec.tokensSecretProviderClass` names an existing
-`SecretProviderClass` mounted via the Secrets Store CSI driver at that same
-path, so the registry content never becomes a Secret or ConfigMap object at
-all. Exactly one of the two: setting both is rejected by the CRD's
-`x-kubernetes-validations` at `kubectl apply` (#2678), rather than resolved by
-a precedence rule nothing surfaces.
+## Kubernetes: who a caller is, is the cluster's answer
+The CRD configures **no** credential source. `spec.tokensSecret`,
+`spec.identities` and `spec.identityAudiences` are gone (#2872): a Lumen CR
+that sets any of them is rejected by the API server's strict decoding rather
+than applied and quietly ignored.
 
-On GKE, keep GCP Secret Manager as the source of truth and materialize the file
-through External Secrets Operator, Secret Store CSI, or a platform-approved
-Secret sync. Lumen polls the mounted registry every 15s and hot-swaps the live
-verifier when the bytes change, so rotation needs no rolling restart on lumen's
-side; a rejected replacement leaves the previous registry serving. The
-remaining caveat is at the CSI layer: a CSI-mounted file only refreshes on the
-underlying value's rotation when the cluster's CSI driver has secret rotation
-enabled (GKE's managed add-on defaults it off), and with rotation disabled the
-mounted file never changes for the watcher to notice.
+`auth: required` — the default — means every request carries a short-lived,
+audience-bound Kubernetes ServiceAccount token, obtained from the TokenRequest
+API. Lumen answers two questions with the cluster, not with a file it was
+handed:
+
+- **Who is this?** `TokenReview`, with the audience checked. The principal it
+  returns must be exactly `system:serviceaccount:<namespace>:<name>`; nothing
+  else is accepted as an identity.
+- **May they do this?** `SubjectAccessReview` against the virtual resources
+  `lumencollections` and `lumenadmin` in API group `lumen.axiom.dev`. RBAC in
+  the cluster is the authorization source of truth, so a grant is a Role a
+  reviewer can read, `kubectl auth can-i` can answer, and the audit log
+  records.
+
+Nothing is a long-lived secret: tokens are minted per use and expire, so there
+is no registry to rotate, no Secret to sync from Secret Manager, and no CSI
+mount whose refresh behaviour has to be reasoned about. Google user and GSA
+credentials authenticate to the kube-apiserver only — lumen never sees one, and
+never verifies a Google-issued token itself.
 
 ## Generated clients
 Generated Python clients accept either `auth_token="<token>"` or
@@ -1277,9 +1281,10 @@ a local-dev, migration, or break-glass sink and does not satisfy the production
 service archetype.
 
 `adminTokenSecret` (the Secret name above) is deprecated and has no effect as of
-#2764 — the CronJob now uses Workload Identity or metadata server ID tokens when
-`spec.identityAudiences` is configured; setting this field generates no error but
-no bearer token is injected.
+#2764; setting it generates no error but no bearer token is injected. The
+backup runner authenticates as its own ServiceAccount, with a projected
+audience-bound token the cluster mints for it — there is no Secret, and no
+Google-issued token, anywhere on that path.
 
 Omitting `spec.serving.backup` renders no CronJob. That is acceptable for local
 development or manual recovery exercises, but a production Lumen instance is not

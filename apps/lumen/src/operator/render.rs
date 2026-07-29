@@ -288,13 +288,7 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push("--retention-secs".to_string());
         args.push(secs.to_string());
     }
-    let mut env = Vec::new();
-    if !lumen.spec.identity_audiences.is_empty() {
-        env.push(json!({
-            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
-            "value": lumen.spec.identity_audiences.join(","),
-        }));
-    }
+    let env: Vec<serde_json::Value> = Vec::new();
     let image_pull_policy = lumen
         .spec
         .image_pull_policy
@@ -501,14 +495,6 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     // this must mirror that same condition exactly.
     if !lumen.spec.shard_map.assignments.is_empty() {
         env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
-    }
-    if matches!(lumen.spec.auth, super::crd::AuthMode::Required)
-        && !lumen.spec.identity_audiences.is_empty()
-    {
-        env.push(json!({
-            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
-            "value": lumen.spec.identity_audiences.join(","),
-        }));
     }
     if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
         env.push(json!({

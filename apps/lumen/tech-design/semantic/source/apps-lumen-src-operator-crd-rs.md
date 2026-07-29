@@ -20,28 +20,28 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 |  |
-| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 412 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 558 |  |
-| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 389 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 620 |  |
+| `AdmissionSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 162 |  |
+| `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 444 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 590 |  |
+| `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 421 |  |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 652 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 43 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 582 |  |
-| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 356 |  |
-| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 255 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 290 |  |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 533 |  |
-| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 510 |  |
-| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 442 |  |
-| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 227 |  |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 400 | as_env(self) -> &'static str |
-| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 430 | as_env(self) -> &'static str |
-| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 366 | as_str(self) -> &'static str |
-| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 375 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 718 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 803 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 699 | storage_pod_count(&self) -> i32 |
-| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 686 | validate(&self) -> Result<(), String> |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 614 |  |
+| `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 388 |  |
+| `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 287 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 322 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 566 |  |
+| `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 543 |  |
+| `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 475 |  |
+| `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 259 |  |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 432 | as_env(self) -> &'static str |
+| `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 463 | as_env(self) -> &'static str |
+| `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 398 | as_str(self) -> &'static str |
+| `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 407 | progress_percent(self) -> u8 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 744 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 829 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 725 | storage_pod_count(&self) -> i32 |
+| `validate` | apps/lumen/src/operator/crd.rs | function | pub | 721 | validate(&self) -> Result<(), String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -129,8 +129,8 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `required` (the default — supply a token registry via
-    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    /// Auth mode: `required` (the default — callers are resolved through the
+    /// cluster's own TokenReview/SubjectAccessReview) or `disabled`.
     ///
     /// `required` is the default because the other way round, forgetting this
     /// field ships an open cluster and nothing says so; forgetting it now
@@ -142,15 +142,6 @@ pub struct LumenSpec {
     /// env var takes — the two spellings are not interchangeable.)
     #[serde(default)]
     pub auth: AuthMode,
-
-    /// Retired (#2870). The operator no longer mounts this Secret into the
-    /// serving pod, so setting it has no effect on any rendered object.
-    ///
-    /// The field is still accepted so an existing CR keeps applying while
-    /// authorization moves to the cluster's own TokenReview/SubjectAccessReview;
-    /// #2872 removes it from the schema.
-    #[serde(default)]
-    pub tokens_secret: Option<String>,
 
     /// Name of a pre-existing, externally-managed ServiceAccount for the
     /// workload pods. When set, the operator uses this SA and never creates,
@@ -505,10 +496,11 @@ pub enum AuthMode {
     /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token or verified-identity required; the registry file comes
-    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
-    /// `Lumen` that omits `spec.auth` fails startup asking for credentials
-    /// instead of serving an open API silently.
+    /// Authenticated callers only, resolved by the cluster: every request
+    /// carries a short-lived audience-bound ServiceAccount token, which the
+    /// serving pod checks with TokenReview and authorizes with
+    /// SubjectAccessReview. The default, so a `Lumen` that omits `spec.auth`
+    /// requires an identity instead of serving an open API silently.
     #[default]
     Required,
 }
@@ -624,8 +616,8 @@ pub struct ServingBackupSpec {
     #[serde(flatten)]
     pub policy: service_backup::ScheduledBackupPolicy,
     /// Name of a Secret whose `token` key holds a bearer token with
-    /// `Role::Admin` on `*`. Deprecated; the CronJob uses Workload Identity
-    /// or metadata ID tokens when `spec.identityAudiences` is configured.
+    /// `Role::Admin` on `*`. Deprecated; the backup runner authenticates with
+    /// its own projected ServiceAccount token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -763,24 +755,18 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
-    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    /// Cross-field invariants the structural schema cannot express (#2678 R7,
+    /// #2764).
     ///
-    /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
-    /// `kubectl apply`. This is the second line: a cluster still running an
-    /// older CRD, or an object written before the rule existed, must not
-    /// silently serve one of two credential sets. Naming **both** fields
-    /// matters — an operator who set `tokensSecretProviderClass` and got a
-    /// message about `tokensSecret` has no idea what to remove.
+    /// It carries no rule today. The one it used to carry — identity grants
+    /// with no audience — described a verifier this operator no longer
+    /// configures: authentication is the cluster's TokenReview, and an audience
+    /// is no longer a field an author can leave empty (#2872). The hook stays
+    /// because it is the only place on the reconcile path that can refuse a
+    /// spec, and because [`crate::operator::fleet`] runs it over the specs it
+    /// composes — a rule added here holds for both, and a rule added anywhere
+    /// else would not.
     pub fn validate(&self) -> Result<(), String> {
-        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
-            return Err(format!(
-                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
-                 remove one — with both present there is no way to tell which registry is \
-                 actually being served",
-                self.tokens_secret.as_deref().unwrap_or_default(),
-                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
-            ));
-        }
         Ok(())
     }
 

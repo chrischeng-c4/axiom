@@ -784,19 +784,19 @@ mod tests {
     /// RFC 7386's `null`: the only way to *unset* something the defaults set.
     #[test]
     fn a_null_override_clears_an_inherited_field() {
-        let with_secret = LumenFleet::new(
+        let with_log_level = LumenFleet::new(
             "search",
             LumenFleetSpec {
                 defaults: serde_json::from_value(json!({
-                    "image": "img", "tokensSecret": "shared-registry",
+                    "image": "img", "logLevel": "warn",
                 }))
                 .unwrap(),
-                instances: vec![instance("team-c", Some(json!({ "tokensSecret": null })))],
+                instances: vec![instance("team-c", Some(json!({ "logLevel": null })))],
                 prune_policy: PrunePolicy::default(),
             },
         );
-        let planned = plan(&with_secret);
-        assert!(ready(&planned[0]).get("tokensSecret").is_none());
+        let planned = plan(&with_log_level);
+        assert!(ready(&planned[0]).get("logLevel").is_none());
     }
 
     /// The failure mode a free-form override has to be defended against: a
@@ -837,18 +837,27 @@ mod tests {
         assert!(rejection(&planned[0]).contains("auth"));
     }
 
-    /// The cross-field rule the `Lumen` CRD enforces with CEL has to hold for
-    /// a spec the fleet composes too — otherwise the fleet is a way around it.
+    /// The retired registry fields (#2872) must not survive as a fleet
+    /// override either. The fleet is the one path that takes free-form spec
+    /// JSON, so a platform team that kept the old grants in their defaults
+    /// would otherwise get them merged in and dropped without a word — the
+    /// exact silent no-op the retirement exists to prevent.
     #[test]
-    fn naming_two_token_sources_is_rejected_at_the_fleet_too() {
-        let planned = plan(&fleet(vec![instance(
-            "team-g",
-            Some(json!({
-                "tokensSecret": "a",
-                "tokensSecretProviderClass": "b",
-            })),
-        )]));
-        assert!(rejection(&planned[0]).contains("tokensSecretProviderClass"));
+    fn a_retired_registry_override_is_rejected_at_the_fleet_too() {
+        for retired in [
+            json!({ "tokensSecret": "lumen-tokens" }),
+            json!({ "identities": { "svc@proj.iam.gserviceaccount.com": { "subject": "team-g" } } }),
+            json!({ "identityAudiences": ["https://lumen.example.com"] }),
+        ] {
+            let key = retired.as_object().unwrap().keys().next().unwrap().clone();
+            let planned = plan(&fleet(vec![instance("team-g", Some(retired))]));
+            let reason = rejection(&planned[0]);
+            assert!(reason.contains(&key), "{reason}");
+            assert!(
+                reason.contains("a Lumen does not have"),
+                "a retired field is now an unknown field, not a validate() rule: {reason}"
+            );
+        }
     }
 
     /// One tenant's bad edit must not stop every other tenant from converging.
@@ -942,7 +951,7 @@ mod tests {
         );
         // The defaults are fully schema-validated, so the platform team's own
         // typo is still caught at `kubectl apply`.
-        assert!(yaml.contains("tokensSecretProviderClass"), "{yaml}");
+        assert!(yaml.contains("shardCount"), "{yaml}");
     }
 }
 // CODEGEN-END

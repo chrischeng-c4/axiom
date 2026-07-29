@@ -227,9 +227,6 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
         log_format: Default::default(),
         log_level: None,
         auth: Default::default(),
-        tokens_secret: None,
-        identities: std::collections::BTreeMap::new(),
-        identity_audiences: Vec::new(),
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy {
             max_shard_bytes,

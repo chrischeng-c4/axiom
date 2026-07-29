@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, GrantRole, IdentityGrant, LogFormat, PlacementSpec, ReshardPhase,
+    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase,
     ReshardPolicy, ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{prunes, render};
@@ -44,9 +44,6 @@ fn dev_spec() -> LumenSpec {
         log_format: LogFormat::Pretty,
         log_level: None,
         auth: AuthMode::Off,
-        tokens_secret: None,
-        identities: BTreeMap::new(),
-        identity_audiences: Vec::new(),
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 1,
@@ -76,9 +73,6 @@ fn prod_spec() -> LumenSpec {
         log_format: LogFormat::Json,
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
-        tokens_secret: Some("lumen-tokens".into()),
-        identities: BTreeMap::new(),
-        identity_audiences: Vec::new(),
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 6,
@@ -96,28 +90,6 @@ fn prod_spec() -> LumenSpec {
         admission: None,
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
-    }
-}
-
-/// A spec that actually *populates* the retired identity surface.
-///
-/// `dev_spec` and `prod_spec` both leave `identities` empty, and the renderer
-/// being retired here was already conditional on `!identities.is_empty()` — so
-/// an absence assertion run against those two fixtures alone passes on the
-/// unmodified tree and proves nothing. This fixture is the one that makes
-/// `no_retired_credential_registry_projections` fail if the projection comes
-/// back. It is deleted along with `spec.identities` itself in #2872.
-fn identity_spec() -> LumenSpec {
-    LumenSpec {
-        identities: BTreeMap::from([(
-            "dev@example.com".to_string(),
-            IdentityGrant {
-                subject: "dev".into(),
-                roles: BTreeMap::from([("orders".to_string(), GrantRole::Read)]),
-            },
-        )]),
-        identity_audiences: vec!["https://lumen.example.com".into()],
-        ..prod_spec()
     }
 }
 
@@ -595,10 +567,13 @@ fn prod_wires_auth_and_observability() {
 }
 
 /// #2870 AC1: the token and identity registry projections (retired phase 1) are
-/// no longer rendered. Asserted for auth=off, auth=required, and auth=required
-/// *with* identity grants — the last one is the only fixture under which the
-/// retired code would have rendered anything, so without it the identity half
-/// of this test passes on the unmodified tree.
+/// no longer rendered, for auth=off and auth=required alike.
+///
+/// The third fixture this ran against — one that populated `spec.identities`,
+/// the only shape under which the retired code rendered anything — is gone,
+/// because #2872 removed the field it set. What replaces it as the gate that
+/// cannot pass on an unmodified tree is the schema itself: there is no longer
+/// a way to express the input the retired projection consumed.
 #[test]
 fn no_retired_credential_registry_projections() {
     // Substring residue, not a structural walk: the retired projections reached
@@ -613,7 +588,7 @@ fn no_retired_credential_registry_projections() {
         "search-identities",
     ];
 
-    for spec_fn in [dev_spec, prod_spec, identity_spec] {
+    for spec_fn in [dev_spec, prod_spec] {
         let auth = spec_fn().auth;
         let objs = render(&lumen("search", spec_fn()));
 
@@ -1380,10 +1355,13 @@ fn backup_cronjob_wires_schedule_and_destination() {
     assert_eq!(owner["uid"], "uid-1234");
 }
 
+/// #2872 renamed this from `..._and_audiences_env`: the audience env var it
+/// checked for came from `spec.identityAudiences`, and both are gone. The
+/// CronJob now carries no credential env at all — asserted, because "no token
+/// is injected" is the whole security claim on this path.
 #[test]
-fn backup_cronjob_wires_retention_and_audiences_env() {
+fn backup_cronjob_wires_retention_and_carries_no_credential_env() {
     let mut spec = dev_spec();
-    spec.identity_audiences = vec!["https://lumen.example.com".into()];
     spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
             schedule: "@daily".into(),
@@ -1410,21 +1388,16 @@ fn backup_cronjob_wires_retention_and_audiences_env() {
     );
 
     let env = env_names(c);
-    assert!(
-        !env.iter().any(|e| e.contains("BACKUP_TOKEN")),
-        "CronJob should carry no token env var: {env:?}"
-    );
-    assert!(
-        env.contains(&"LUMEN_AUTH_GOOGLE_AUDIENCES".to_string()),
-        "missing LUMEN_AUTH_GOOGLE_AUDIENCES in {env:?}"
-    );
-    let aud_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_AUTH_GOOGLE_AUDIENCES")
-        .unwrap();
-    assert_eq!(aud_env["value"], "https://lumen.example.com");
+    for retired in [
+        "BACKUP_TOKEN",
+        "LUMEN_AUTH_GOOGLE_AUDIENCES",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+    ] {
+        assert!(
+            !env.iter().any(|e| e.contains(retired)),
+            "CronJob should carry no `{retired}` env var: {env:?}"
+        );
+    }
 }
 
 #[test]

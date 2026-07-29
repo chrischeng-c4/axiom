@@ -57,9 +57,9 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 130 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 155 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 119 | wants_hpa(_lumen: &Lumen) -> bool |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 99 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 124 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 88 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -354,13 +354,7 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push("--retention-secs".to_string());
         args.push(secs.to_string());
     }
-    let mut env = Vec::new();
-    if !lumen.spec.identity_audiences.is_empty() {
-        env.push(json!({
-            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
-            "value": lumen.spec.identity_audiences.join(","),
-        }));
-    }
+    let env: Vec<serde_json::Value> = Vec::new();
     let image_pull_policy = lumen
         .spec
         .image_pull_policy
@@ -567,14 +561,6 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     // this must mirror that same condition exactly.
     if !lumen.spec.shard_map.assignments.is_empty() {
         env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
-    }
-    if matches!(lumen.spec.auth, super::crd::AuthMode::Required)
-        && !lumen.spec.identity_audiences.is_empty()
-    {
-        env.push(json!({
-            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
-            "value": lumen.spec.identity_audiences.join(","),
-        }));
     }
     if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
         env.push(json!({
