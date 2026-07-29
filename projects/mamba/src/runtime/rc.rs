@@ -893,7 +893,7 @@ impl MbObject {
             },
             data: ObjData::Str(s),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate an immortal string — rc is set to IMMORTAL_REFCOUNT so
@@ -906,7 +906,7 @@ impl MbObject {
             },
             data: ObjData::Str(s),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Create a new list, taking ownership of elements (no retain).
@@ -948,7 +948,7 @@ impl MbObject {
             },
             data: ObjData::List(MbRwLock::new(buf)),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if track_gc {
             super::gc::gc_track(ptr);
         }
@@ -1003,7 +1003,7 @@ impl MbObject {
             },
             data: ObjData::Dict(MbRwLock::new(MbDictMap::default())),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if track_gc {
             super::gc::gc_track(ptr);
         }
@@ -1028,7 +1028,7 @@ impl MbObject {
             },
             data: ObjData::Dict(MbRwLock::new(MbDictMap::with_capacity(capacity))),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -1042,7 +1042,7 @@ impl MbObject {
             },
             data: ObjData::Tuple(elements),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if needs_tracking {
             super::gc::gc_track(ptr);
         }
@@ -1068,7 +1068,7 @@ impl MbObject {
             },
             data: ObjData::Set(MbRwLock::new(set)),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -1128,7 +1128,7 @@ impl MbObject {
             },
             data: ObjData::Bytes(data),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate immortal bytes — rc is set to IMMORTAL_REFCOUNT so
@@ -1144,7 +1144,7 @@ impl MbObject {
             },
             data: ObjData::Bytes(data),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_bytearray(data: Vec<u8>) -> *mut Self {
@@ -1155,7 +1155,7 @@ impl MbObject {
             },
             data: ObjData::ByteArray(MbRwLock::new(data)),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_frozenset(elements: Vec<super::value::MbValue>) -> *mut Self {
@@ -1167,7 +1167,7 @@ impl MbObject {
             },
             data: ObjData::FrozenSet(elements),
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         if needs_tracking {
             super::gc::gc_track(ptr);
         }
@@ -1183,7 +1183,7 @@ impl MbObject {
             },
             data: ObjData::BigInt(value),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate an immortal BigInt for compile-time integer constants.
@@ -1195,7 +1195,7 @@ impl MbObject {
             },
             data: ObjData::BigInt(value),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
@@ -1207,7 +1207,7 @@ impl MbObject {
             },
             data: ObjData::Complex(real, imag),
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     /// Allocate a CodeObject heap object produced by compile() (#976).
@@ -1233,7 +1233,7 @@ impl MbObject {
                 ast: Box::new(ast),
             },
         });
-        Box::into_raw(obj)
+        into_raw_tracked(obj)
     }
 
     pub fn new_instance(class_name: String) -> *mut Self {
@@ -1247,7 +1247,7 @@ impl MbObject {
                 fields: MbRwLock::new(InstanceFields::default()),
             },
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -1269,7 +1269,7 @@ impl MbObject {
                 )),
             },
         });
-        let ptr = Box::into_raw(obj);
+        let ptr = into_raw_tracked(obj);
         super::gc::gc_track(ptr);
         ptr
     }
@@ -1380,6 +1380,235 @@ unsafe fn debug_validate_obj(obj: *mut MbObject, caller: &str) {
     }
 }
 
+// =========================================================================
+// #2830: Debug-only allocation & final-deallocation leak balance recorder
+// =========================================================================
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeakBalanceStatus {
+    Inactive,
+    Active,
+    Finished,
+    Incomplete,
+}
+
+#[cfg(debug_assertions)]
+impl Default for LeakBalanceStatus {
+    fn default() -> Self { LeakBalanceStatus::Inactive }
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LeakBalanceSnapshot {
+    name: &'static str,
+    allocations: usize,
+    deallocations: usize,
+    status: LeakBalanceStatus,
+}
+
+#[cfg(debug_assertions)]
+impl LeakBalanceSnapshot {
+    pub fn name(&self) -> &'static str { self.name }
+    pub fn allocations(&self) -> usize { self.allocations }
+    pub fn deallocations(&self) -> usize { self.deallocations }
+    pub fn status(&self) -> LeakBalanceStatus { self.status }
+    pub fn delta(&self) -> isize { self.allocations as isize - self.deallocations as isize }
+    pub fn is_balanced(&self) -> bool {
+        (self.status == LeakBalanceStatus::Active || self.status == LeakBalanceStatus::Finished)
+            && self.allocations == self.deallocations
+    }
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Default)]
+struct LeakBalanceState {
+    name: &'static str,
+    status: LeakBalanceStatus,
+    allocations: usize,
+    deallocations: usize,
+}
+
+#[cfg(debug_assertions)]
+std::thread_local! {
+    static LEAK_BALANCE_STATE: std::cell::RefCell<LeakBalanceState> =
+        std::cell::RefCell::new(LeakBalanceState::default());
+}
+
+#[cfg(debug_assertions)]
+fn record_allocation_event() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        if s.status == LeakBalanceStatus::Active {
+            s.allocations += 1;
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+fn record_deallocation_event() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        if s.status == LeakBalanceStatus::Active {
+            s.deallocations += 1;
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+#[inline]
+fn into_raw_tracked(obj: Box<MbObject>) -> *mut MbObject {
+    record_allocation_event();
+    Box::into_raw(obj)
+}
+
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+fn into_raw_tracked(obj: Box<MbObject>) -> *mut MbObject {
+    Box::into_raw(obj)
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug)]
+pub(crate) struct LeakBalanceScopeGuard {
+    finished: bool,
+    _phantom: std::marker::PhantomData<*const ()>,
+}
+
+#[cfg(debug_assertions)]
+impl Drop for LeakBalanceScopeGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            LEAK_BALANCE_STATE.with(|st| {
+                let mut s = st.borrow_mut();
+                if s.status == LeakBalanceStatus::Active {
+                    s.status = LeakBalanceStatus::Incomplete;
+                }
+            });
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl LeakBalanceScopeGuard {
+    pub fn finish(mut self) -> Result<LeakBalanceSnapshot, String> {
+        let snap = finish_leak_balance_scope()?;
+        self.finished = true;
+        Ok(snap)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn start_leak_balance_scope(name: &'static str) -> Result<LeakBalanceScopeGuard, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        match s.status {
+            LeakBalanceStatus::Active => Err(format!(
+                "cannot start leak balance scope '{name}': scope '{}' is already active",
+                s.name
+            )),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "cannot start leak balance scope '{name}': previous scope '{}' is incomplete",
+                s.name
+            )),
+            LeakBalanceStatus::Inactive | LeakBalanceStatus::Finished => {
+                s.name = name;
+                s.status = LeakBalanceStatus::Active;
+                s.allocations = 0;
+                s.deallocations = 0;
+                Ok(LeakBalanceScopeGuard {
+                    finished: false,
+                    _phantom: std::marker::PhantomData,
+                })
+            }
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn finish_leak_balance_scope() -> Result<LeakBalanceSnapshot, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        match s.status {
+            LeakBalanceStatus::Inactive => Err("leak balance scope is inactive".to_string()),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "leak balance scope '{}' is incomplete (allocations={}, deallocations={})",
+                s.name, s.allocations, s.deallocations
+            )),
+            LeakBalanceStatus::Finished => Err(format!(
+                "leak balance scope '{}' is already finished",
+                s.name
+            )),
+            LeakBalanceStatus::Active => {
+                let snap = LeakBalanceSnapshot {
+                    name: s.name,
+                    allocations: s.allocations,
+                    deallocations: s.deallocations,
+                    status: LeakBalanceStatus::Active,
+                };
+                if !snap.is_balanced() {
+                    Err(format!(
+                        "leak balance mismatch for scope '{}': allocations={}, deallocations={}, delta={}",
+                        s.name, s.allocations, s.deallocations, snap.delta()
+                    ))
+                } else {
+                    s.status = LeakBalanceStatus::Finished;
+                    Ok(LeakBalanceSnapshot {
+                        status: LeakBalanceStatus::Finished,
+                        ..snap
+                    })
+                }
+            }
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn get_leak_balance_snapshot() -> Result<LeakBalanceSnapshot, String> {
+    LEAK_BALANCE_STATE.with(|st| {
+        let s = st.borrow();
+        match s.status {
+            LeakBalanceStatus::Inactive => Err("leak balance scope is inactive".to_string()),
+            LeakBalanceStatus::Incomplete => Err(format!(
+                "leak balance scope '{}' is incomplete (allocations={}, deallocations={})",
+                s.name, s.allocations, s.deallocations
+            )),
+            LeakBalanceStatus::Finished | LeakBalanceStatus::Active => Ok(LeakBalanceSnapshot {
+                name: s.name,
+                allocations: s.allocations,
+                deallocations: s.deallocations,
+                status: s.status,
+            }),
+        }
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn assert_leak_balanced() -> Result<LeakBalanceSnapshot, String> {
+    let snap = match get_leak_balance_snapshot() {
+        Ok(s) => s,
+        Err(e) => panic!("{e}"),
+    };
+    if !snap.is_balanced() {
+        panic!(
+            "leak balance mismatch for scope '{}': allocations={}, deallocations={}, delta={}",
+            snap.name, snap.allocations, snap.deallocations, snap.delta()
+        );
+    }
+    Ok(snap)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub(crate) fn reset_leak_balance_scope_for_testing() {
+    LEAK_BALANCE_STATE.with(|st| {
+        let mut s = st.borrow_mut();
+        s.status = LeakBalanceStatus::Inactive;
+        s.allocations = 0;
+        s.deallocations = 0;
+    });
+}
+
+
 /// Increment the reference count atomically.
 ///
 /// # Safety
@@ -1424,6 +1653,8 @@ pub unsafe fn mb_release(obj: *mut MbObject) {
         // and contained-values walk. Drop the Box (which frees the
         // Vec<u8> buffer) directly.
         if matches!((*obj).header.kind, ObjKind::Bytes) {
+            #[cfg(debug_assertions)]
+            record_deallocation_event();
             drop(Box::from_raw(obj));
             return;
         }
@@ -1432,6 +1663,8 @@ pub unsafe fn mb_release(obj: *mut MbObject) {
         (*obj).header.rc.store(IMMORTAL_REFCOUNT, Ordering::Relaxed);
         super::gc::gc_untrack(obj);
         release_contained_values(obj);
+        #[cfg(debug_assertions)]
+        record_deallocation_event();
         drop(Box::from_raw(obj));
     }
 }
@@ -2405,5 +2638,149 @@ mod tests {
             }
             mb_release(cx);
         }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_clean_scalar() {
+        let guard = start_leak_balance_scope("clean_scalar").expect("start");
+
+        unsafe {
+            let s = MbObject::new_str("clean_scalar".to_string());
+            mb_release(s);
+        }
+        let snap1 = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(snap1.allocations, 1);
+        assert_eq!(snap1.deallocations, 1);
+        assert!(snap1.is_balanced());
+
+        unsafe {
+            let b = MbObject::new_bytes(vec![1, 2, 3, 4]);
+            mb_release(b);
+        }
+        let snap2 = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(snap2.allocations, 2);
+        assert_eq!(snap2.deallocations, 2);
+        assert!(snap2.is_balanced());
+
+        unsafe {
+            mb_release(MbObject::new_list(vec![]));
+            mb_release(MbObject::new_dict());
+            mb_release(MbObject::new_dict_with_capacity(4));
+            mb_release(MbObject::new_tuple(vec![]));
+            mb_release(MbObject::new_set(vec![]));
+            mb_release(MbObject::new_bytearray(vec![0]));
+            mb_release(MbObject::new_frozenset(vec![]));
+            mb_release(MbObject::new_bigint(BigInt::from(42)));
+            mb_release(MbObject::new_complex(1.0, 2.0));
+            mb_release(MbObject::new_code_object(
+                "x = 1".into(),
+                "test.py".into(),
+                "exec".into(),
+                crate::parser::ast::Module { stmts: vec![] },
+            ));
+            mb_release(MbObject::new_instance("Foo".into()));
+            mb_release(MbObject::new_instance_with_capacity("Bar".into(), 4));
+        }
+
+        let snap_final = guard.finish().expect("balanced");
+        assert_eq!(snap_final.name, "clean_scalar");
+        assert_eq!(snap_final.allocations, 14);
+        assert_eq!(snap_final.deallocations, 14);
+        assert_eq!(snap_final.delta(), 0);
+        assert_eq!(snap_final.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_nested_container() {
+        let guard = start_leak_balance_scope("nested_container").expect("start");
+
+        unsafe {
+            let child = MbObject::new_str("child_str".to_string());
+            let child_val = MbValue::from_ptr(child);
+            let list = MbObject::new_list(vec![child_val]);
+
+            let mid_snap = get_leak_balance_snapshot().expect("active scope");
+            assert_eq!(mid_snap.allocations, 2);
+            assert_eq!(mid_snap.deallocations, 0);
+            assert_eq!(mid_snap.delta(), 2);
+            assert!(!mid_snap.is_balanced());
+
+            mb_release(list);
+        }
+
+        let final_snap = guard.finish().expect("balanced after releasing root");
+        assert_eq!(final_snap.name, "nested_container");
+        assert_eq!(final_snap.allocations, 2);
+        assert_eq!(final_snap.deallocations, 2);
+        assert_eq!(final_snap.delta(), 0);
+        assert_eq!(final_snap.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_deliberate_leak() {
+        let guard = start_leak_balance_scope("deliberate_leak").expect("start");
+        let leaked_ptr = unsafe { MbObject::new_str("deliberately_leaked".to_string()) };
+
+        let mid_snap = get_leak_balance_snapshot().expect("active scope");
+        assert_eq!(mid_snap.allocations, 1);
+        assert_eq!(mid_snap.deallocations, 0);
+        assert_eq!(mid_snap.delta(), 1);
+
+        let res = std::panic::catch_unwind(|| {
+            let _ = assert_leak_balanced();
+        });
+        assert!(res.is_err(), "assert_leak_balanced must panic on leak");
+
+        unsafe {
+            mb_release(leaked_ptr);
+        }
+
+        let post_cleanup_snap = guard.finish().expect("balanced after cleanup");
+        assert_eq!(post_cleanup_snap.name, "deliberate_leak");
+        assert_eq!(post_cleanup_snap.allocations, 1);
+        assert_eq!(post_cleanup_snap.deallocations, 1);
+        assert_eq!(post_cleanup_snap.delta(), 0);
+        assert_eq!(post_cleanup_snap.status, LeakBalanceStatus::Finished);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_ownership_leak_balance_missing_scope_falsification() {
+        reset_leak_balance_scope_for_testing();
+
+        let snap_res = get_leak_balance_snapshot();
+        assert!(snap_res.is_err());
+        assert_eq!(snap_res.unwrap_err(), "leak balance scope is inactive");
+
+        let assert_res = std::panic::catch_unwind(|| {
+            let _ = assert_leak_balanced();
+        });
+        assert!(assert_res.is_err(), "assert_leak_balanced must panic when scope is inactive");
+
+        let outer_guard = start_leak_balance_scope("outer_scope").expect("start outer");
+        let inner_res = start_leak_balance_scope("inner_scope");
+        assert!(inner_res.is_err(), "nested start must be rejected");
+        assert!(inner_res.unwrap_err().contains("already active"));
+
+        outer_guard.finish().expect("finish outer");
+
+        {
+            let _unfinished_guard =
+                start_leak_balance_scope("unfinished_scope").expect("start unfinished");
+        }
+
+        let inc_snap_res = get_leak_balance_snapshot();
+        assert!(inc_snap_res.is_err(), "incomplete scope must return Err");
+        let inc_err = inc_snap_res.unwrap_err();
+        assert!(inc_err.contains("unfinished_scope"), "error must include unfinished scope name");
+        assert!(inc_err.contains("incomplete"), "error must identify incomplete status");
+
+        let new_start_res = start_leak_balance_scope("new_scope");
+        assert!(new_start_res.is_err(), "new start must be rejected while scope is incomplete");
+
+        reset_leak_balance_scope_for_testing();
     }
 }
