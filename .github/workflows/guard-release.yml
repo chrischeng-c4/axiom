@@ -60,7 +60,7 @@ jobs:
           shared-key: guard-${{ matrix.target }}
 
       - name: Build guard binary
-        run: cargo build --release --locked -p guard-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p guard --bin guard --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package

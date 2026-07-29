@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# SPEC-MANAGED: apps/guard/tech-design/semantic/guard-build-script.md#text-source-unit
-# CODEGEN-BEGIN
+# SPEC-MANAGED: apps/guard/tech-design/src/distribution.py
+# HANDWRITE-BEGIN: gap=existing-project-patch tracker=#2823
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage: apps/guard/build.sh <debug|release>
 
-debug    Build guard-cli and install target/debug/guard to ~/.cargo/bin/guard.
+debug    Build guard and install target/debug/guard to ~/.cargo/bin/guard.
 release  Build/install guard, create a release commit, and print the tag to push after git:land.
 EOF
 }
@@ -57,10 +57,10 @@ install_guard() {
 }
 
 if [[ "$MODE" == "debug" ]]; then
-  VERSION_FILES=(apps/guard/Cargo.toml apps/guard/guard-cli/Cargo.toml)
-  CURRENT_VERSION="$(project_build_read_version apps/guard/guard-cli/Cargo.toml)"
+  VERSION_FILES=(apps/guard/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version apps/guard/Cargo.toml)"
   project_build_prepare_debug_version guard "$CURRENT_VERSION" "${VERSION_FILES[@]}"
-  cargo build -p guard-cli
+  cargo build -p guard --bin guard
   install_guard debug
   project_build_restore_manifests
   echo ""
@@ -68,13 +68,13 @@ if [[ "$MODE" == "debug" ]]; then
   exit 0
 fi
 
-VERSION_FILES=(apps/guard/Cargo.toml apps/guard/guard-cli/Cargo.toml)
-CURRENT_VERSION="$(project_build_read_version apps/guard/guard-cli/Cargo.toml)"
+VERSION_FILES=(apps/guard/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version apps/guard/Cargo.toml)"
 export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
 project_build_prepare_release_version guard "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p guard-cli
+cargo build --release -p guard --bin guard
 install_guard release
 
 TAG="${PROJECT_BUILD_RELEASE_TAG}"
@@ -82,4 +82,4 @@ git add Cargo.lock apps/guard
 git commit --allow-empty -m "release(guard): ${TAG}"
 
 project_build_print_release_next_steps guard "$TAG"
-# CODEGEN-END
+# HANDWRITE-END

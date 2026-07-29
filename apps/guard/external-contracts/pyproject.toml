@@ -44,18 +44,18 @@ command = "python3 apps/guard/external-contracts/src/runner.py --case guard-base
 evidence_paths = ["evidence/guard-baseline-static-policy.json"]
 
 [[tool.aw.python-ec.cases]]
-id = "guard-cli-module-registration"
+id = "guard-standalone-cli-distribution"
 artifact_id = "artifact:guard/security-policy-profile"
 capability_id = "security-policy-profile"
-use_case_id = "cli-module-registration"
+use_case_id = "standalone-cli-distribution"
 dimension = "behavior"
 applicability = "td"
-test_path = "src/cases/guard-cli-module-registration.py"
-promise = "The public Guard executable exposes scan, report, spec, and llm, and its offline spec command returns a guard.report/1 envelope."
-oracle = "The Python contract executes the compiled public binary's help and spec surfaces and checks their observable commands and JSON response without importing or inspecting the Rust CLI registry."
+test_path = "src/cases/guard-standalone-cli-distribution.py"
+promise = "The independently built Guard package emits the public guard binary with scan, report, spec, and llm, and its offline spec command returns a guard.report/1 envelope."
+oracle = "The Python contract builds the standalone Guard package, executes the emitted binary's help and spec surfaces, and checks their observable commands and JSON response without importing Rust internals."
 target = "rust"
-command = "python3 apps/guard/external-contracts/src/runner.py --case guard-cli-module-registration"
-evidence_paths = ["evidence/guard-cli-module-registration.json"]
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution"
+evidence_paths = ["evidence/guard-standalone-cli-distribution.json"]
 
 [[tool.aw.python-ec.cases]]
 id = "guard-compass-backed-diagnostic-scan"

@@ -3,14 +3,14 @@ project = "guard"
 ir_kind = "ec"
 ec_path = "apps/guard/external-contracts"
 inventory_path = "apps/guard/external-contracts/pyproject.toml"
-generated_at = "2026-07-28T16:12:05.904647+00:00"
-ir_digest = "sha256:08c9fd397e29853b73a0e40fcfe6cd9dd0c85ad92d3bc777fed00fa70046edc3"
-source_digest = "sha256:35d34fb15c364f4f9f2ada7d8c38fb5099b6eea69f09472ad639ae60ce09f672"
+generated_at = "2026-07-29T03:13:03.263932+00:00"
+ir_digest = "sha256:0f68e6bbd2de28f1849a49d7b85e0217aedaaf554a61649d51a919b25fd93433"
+source_digest = "sha256:1848e9feeae4d113a002335d7b8adb9f7502cbb90c8e24b1f1211adac7ae164e"
 tool_contracts = []
 
 [[sources]]
 path = "apps/guard/external-contracts/pyproject.toml"
-digest = "sha256:56673c575c9d3190ea1563fa86bb731d45be9eec739a2bcf4f602effe2f15c0f"
+digest = "sha256:ea11cacadc7827d70edbdf0744b14d4760060afd5adf0d8ba6a09e18b44a586d"
 
 [[sources]]
 path = "apps/guard/external-contracts/src/adapter_stub.py"
@@ -23,10 +23,6 @@ digest = "sha256:f2c67f707590cdc8513d93a99723ffb8aeef6449bc098fc2829aa4256689d27
 [[sources]]
 path = "apps/guard/external-contracts/src/cases/guard-baseline-static-policy.py"
 digest = "sha256:b5ca01fff4ff650d3c4a7e36973d73d7097372a9113e5910d1f78be85a29f963"
-
-[[sources]]
-path = "apps/guard/external-contracts/src/cases/guard-cli-module-registration.py"
-digest = "sha256:148b78bdb65aece1371e08be4f4b4c14606af10f0ece508e5121e58404a3ef16"
 
 [[sources]]
 path = "apps/guard/external-contracts/src/cases/guard-compass-backed-diagnostic-scan.py"
@@ -77,6 +73,10 @@ path = "apps/guard/external-contracts/src/cases/guard-stable-static-finding-norm
 digest = "sha256:3336bbce595196352b8791f08d636954d18a691d020878fc3ccce865888764b3"
 
 [[sources]]
+path = "apps/guard/external-contracts/src/cases/guard-standalone-cli-distribution.py"
+digest = "sha256:ba327f4b95ab0ce89d101516c5b9b8c52c55697cc2907ab420a9eaf6a3c46b54"
+
+[[sources]]
 path = "apps/guard/external-contracts/src/cases/guard-static-scan-clean-report.py"
 digest = "sha256:678ad0db0f3a3ce2ea5d73b24c31ae818d4f496c5ec2eec7fd9e3b59276d5d40"
 
@@ -86,7 +86,7 @@ digest = "sha256:829fb7fa05efe16c6c67c3fdf2500b6a4220b4d04ac5ed200fc1cdd289b6859
 
 [[sources]]
 path = "apps/guard/external-contracts/src/guard_contract.py"
-digest = "sha256:f57dd6ef9a1339b396d9d3a92e1207927fcbb07c5497e19cbc22ea227cc3cbd9"
+digest = "sha256:d3f1695a42029d0760d7c72f9afe90289ecdc064d3045787ef428ae3aa54ee38"
 
 [[sources]]
 path = "apps/guard/external-contracts/src/runner.py"
@@ -135,26 +135,6 @@ assertions = [
 evidence_digest = "sha256:d4fde581ff13041597ffb3bcb8142310464ed25c3328fefb4e3e2f62f06705ad"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:e3cad9db1038ae920226e49d6205391cc1ca0a5b837b784646c3d41f863bff87"
-
-[[cases]]
-id = "guard-cli-module-registration"
-capability_id = "security-policy-profile"
-claim_id = "cli-module-registration"
-contract_id = "guard-cli-module-registration"
-dimension = "behavior"
-source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-cli-module-registration"
-test_path = "apps/guard/external-contracts/src/cases/guard-cli-module-registration.py"
-command = "python3 apps/guard/external-contracts/src/runner.py --case guard-cli-module-registration"
-required_for_production = true
-assertions = [
-    "The public Guard executable exposes scan, report, spec, and llm, and its offline spec command returns a guard.report/1 envelope.",
-    "artifact: artifact:guard/security-policy-profile",
-    "oracle: The Python contract executes the compiled public binary's help and spec surfaces and checks their observable commands and JSON response without importing or inspecting the Rust CLI registry.",
-    "target: rust",
-]
-evidence_digest = "sha256:bbb15ea3f87cf0f9242bb76863a2ce5b1d178f96cbc6ac9e11f5da24e54b7e5d"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1d1fc3093b70411c9ce5163e92b85bff803a3b97fb16df4b39a4f524aef302ab"
 
 [[cases]]
 id = "guard-compass-backed-diagnostic-scan"
@@ -399,6 +379,26 @@ assertions = [
 evidence_digest = "sha256:15e9fca99ff7e7926aee817a813ebaf5c24c144a05d7391c582ba0a18d4c6b60"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:123e66b09308a212c3ad56793f872d6082ad0f356518230405f8133a5fed2336"
+
+[[cases]]
+id = "guard-standalone-cli-distribution"
+capability_id = "security-policy-profile"
+claim_id = "standalone-cli-distribution"
+contract_id = "guard-standalone-cli-distribution"
+dimension = "behavior"
+source_ref = "apps/guard/external-contracts/pyproject.toml#case:guard-standalone-cli-distribution"
+test_path = "apps/guard/external-contracts/src/cases/guard-standalone-cli-distribution.py"
+command = "python3 apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution"
+required_for_production = true
+assertions = [
+    "The independently built Guard package emits the public guard binary with scan, report, spec, and llm, and its offline spec command returns a guard.report/1 envelope.",
+    "artifact: artifact:guard/security-policy-profile",
+    "oracle: The Python contract builds the standalone Guard package, executes the emitted binary's help and spec surfaces, and checks their observable commands and JSON response without importing Rust internals.",
+    "target: rust",
+]
+evidence_digest = "sha256:a0a2fb3e3805d300d8cbed2636325598b3d3988b335d1a651d2ee399f685bcd9"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4516045dfa92d530c10a07a712aa8948210312f1151550df05184d0ae43970b3"
 
 [[cases]]
 id = "guard-static-scan-clean-report"

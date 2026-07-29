@@ -1,7 +1,27 @@
-"""Public TD boundary for Guard's static security scan."""
+"""Guard static scan contract and executable design."""
 
 __aw_artifact_id__ = "artifact:guard/static-security-scan"
 __aw_public_contract__ = True
+
+
+class ScanDesign:
+    """Compass-backed source coverage owned by the scan domain."""
+
+    SUPPORTED_LANGUAGES = (
+        "python",
+        "typescript",
+        "rust",
+        "javascript",
+        "go",
+        "html",
+        "css",
+        "dockerfile",
+        "hcl",
+        "yaml",
+        "toml",
+        "sql",
+        "graphql",
+    )
 
 
 def compass_backed_diagnostic_scan() -> str:

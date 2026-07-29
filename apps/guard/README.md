@@ -64,7 +64,7 @@ Last verified: 2026-06-13
 Production readiness: ready for static security, security lint, and configured dynamic evidence
 Tech design root: `apps/guard/tech-design`
 Source ownership: TD-first source snapshots
-Test gate: `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli`
+Test gate: `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`
 CLI smoke: `python3 apps/guard/external-contracts/src/runner.py --case guard-ec-security-evidence-command`
 Health gate: `aw health --project guard`
 Explicit non-goals: AST ownership, env isolation, e2e orchestration, profiling, benchmark comparison
@@ -95,12 +95,12 @@ Required Verification: smoke
 Promise:
 guard scans source/config files with compass and emits a deterministic `guard.report/1` security findings envelope.
 Gate Inventory:
-- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard-cli --bin guard -- scan apps/guard --compact`
+- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Compass-backed diagnostic scan | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard scan::tests::detects_javascript_eval_as_security_finding` |
-| JSON report envelope | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard-cli --bin guard -- scan apps/guard --compact` |
+| JSON report envelope | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo run -p guard --bin guard -- scan apps/guard --compact` |
 | Scan command report projection | change | - | implemented | verified | smoke | `python3 apps/guard/external-contracts/src/runner.py --case guard-scan-command-report-projection` |
 | Stable static finding normalization | change | - | implemented | verified | smoke | `python3 apps/guard/external-contracts/src/runner.py --case guard-stable-static-finding-normalization` |
 
@@ -109,20 +109,20 @@ Gate Inventory:
 ID: security-policy-profile
 Type: SecurityTool
 Surfaces: CLI: `guard scan --profile baseline-static` + `guard scan --profile security-lint` + `guard scan --profile strict` - Policy profile selection for baseline static, security lint, and strict security severity normalization.
-EC Dimensions: behavior: `python3 apps/guard/external-contracts/src/runner.py --case guard-cli-module-registration` - public CLI surface; security: `python3 apps/guard/external-contracts/src/runner.py --case guard-security-lint-policy` - policy findings; stability: `python3 apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` - repeatable policy selection
+EC Dimensions: behavior: `python3 apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution` - independently built public CLI surface; security: `python3 apps/guard/external-contracts/src/runner.py --case guard-security-lint-policy` - policy findings; stability: `python3 apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` - repeatable policy selection
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
 guard maps compass security diagnostics and security-impacting lint into policy severities, remediation, locations, and agent prompts.
 Gate Inventory:
-- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard-cli`
+- `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard`; `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo build -p guard --bin guard`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Baseline static policy | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard detects_javascript_eval_as_security_finding` |
 | Security lint policy | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -- --nocapture` |
-| CLI module registration | epic | - | implemented | verified | smoke | `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard-cli registered_in_slice` |
+| Standalone CLI distribution | epic | - | implemented | verified | smoke | `python3 apps/guard/external-contracts/src/runner.py --case guard-standalone-cli-distribution` |
 | Stable policy selection | change | - | implemented | verified | smoke | `python3 apps/guard/external-contracts/src/runner.py --case guard-stable-policy-selection` |
 
 ### Security EC Profile
@@ -172,7 +172,7 @@ Gate Inventory:
 ## Build & test
 
 ```bash
-cargo test -p guard -p guard-cli
+cargo test -p guard
 target/debug/guard scan apps/guard --profile security-lint --compact --no-persist
 apps/guard/build.sh debug
 ```

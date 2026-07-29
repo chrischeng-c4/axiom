@@ -1,9 +1,11 @@
-// SPEC-MANAGED: apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+// SPEC-MANAGED: apps/guard/tech-design/src/cli.py
+// HANDWRITE-BEGIN: gap=existing-project-patch tracker=#2823
 use std::path::PathBuf;
 
+use crate::evidence::EvidenceCommand;
+use crate::report::GuardReport;
+use crate::scan::{PolicyProfile, ScanOptions};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use guard::{EvidenceCommand, GuardReport, PolicyProfile, ScanOptions};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -12,7 +14,7 @@ use guard::{EvidenceCommand, GuardReport, PolicyProfile, ScanOptions};
     about = "guard — security posture gate (JSON on stdout by default)",
     disable_help_subcommand = true
 )]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub struct GuardCommand {
     #[command(subcommand)]
     pub verb: Verb,
@@ -21,7 +23,7 @@ pub struct GuardCommand {
 }
 
 #[derive(Args, Debug, Clone, Default)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub struct OutputOpts {
     /// Emit the report as a single dense line.
     #[arg(long, global = true)]
@@ -32,7 +34,7 @@ pub struct OutputOpts {
 }
 
 #[derive(Subcommand, Debug)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub enum Verb {
     /// Run the baseline static security profile over a file or directory.
     Scan(ScanArgs),
@@ -45,7 +47,7 @@ pub enum Verb {
 }
 
 #[derive(Args, Debug)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub struct ScanArgs {
     /// File or directory to scan.
     #[arg(default_value = ".")]
@@ -86,14 +88,14 @@ pub struct ScanArgs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/policy.py
 pub enum ProfileArg {
     BaselineStatic,
     SecurityLint,
     Strict,
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/policy.py
 impl From<ProfileArg> for PolicyProfile {
     fn from(value: ProfileArg) -> Self {
         match value {
@@ -104,7 +106,7 @@ impl From<ProfileArg> for PolicyProfile {
     }
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub fn dispatch(cmd: GuardCommand) -> GuardReport {
     match cmd.verb {
         Verb::Scan(args) => {
@@ -112,7 +114,7 @@ pub fn dispatch(cmd: GuardCommand) -> GuardReport {
             let mut options = ScanOptions::default();
             options.profile = args.profile.into();
             options.evidence_commands = evidence_commands_from_scan_args(&args);
-            let report = guard::scan::scan_path_with_options(&args.path, options);
+            let report = crate::scan::scan_path_with_options(&args.path, options);
             if !no_persist {
                 report.persist(std::path::Path::new("."));
             }
@@ -274,7 +276,7 @@ fn stable_rust_path() -> String {
     )
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
+/// @spec apps/guard/tech-design/src/cli.py
 pub fn print_report(report: &GuardReport, out: &OutputOpts) {
     let json = if out.compact {
         serde_json::to_string(report)
@@ -290,4 +292,21 @@ pub fn print_report(report: &GuardReport, out: &OutputOpts) {
         );
     }
 }
-// CODEGEN-END
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn standalone_command_tree_exposes_every_public_verb() {
+        let command = GuardCommand::command();
+        assert_eq!(command.get_name(), "guard");
+        let verbs: Vec<_> = command
+            .get_subcommands()
+            .map(|subcommand| subcommand.get_name())
+            .collect();
+        assert_eq!(verbs, ["scan", "report", "spec", "llm"]);
+    }
+}
+// HANDWRITE-END

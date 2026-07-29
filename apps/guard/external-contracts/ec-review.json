@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "guard",
-  "source_digest": "sha256:801558dfdffd5efc1dc864e636d5d4c600700a9ebb619340e536a0ddf3579772",
+  "source_digest": "sha256:3c1b82944e9a19b3551094bb1046d87934aae706a944dcf754cafbb0302944c6",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:codex-cli:external-guard-ec-review-v6",
-  "reviewed_at": "2026-07-28T16:11:56.102337+00:00",
-  "summary": "Accepted after independent semantic review. All 16 EC unit tests, 7 TD unit tests, 17 declared EC commands, TD check, and EC check passed. Direct execution confirmed distinct non-clean exit-zero journeys with two and zero findings, public fail-closed status/exit, exactly-once adapter invocation, digest-bound current-worktree Guard binary, and exact preservation of adapter exit, report.clean, finding_count, and findings_preview.",
+  "reviewed_by": "agent:codex-cli:019fabd7-f3cd-7143-a93c-c6ee4075d4da",
+  "reviewed_at": "2026-07-29T03:11:51.038121+00:00",
+  "summary": "The standalone distribution EC closes stale build reuse and GUARD_BIN bypasses, then exercises help, scan persistence, report replay, spec, and llm through the independently built binary.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

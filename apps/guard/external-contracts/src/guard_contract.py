@@ -18,6 +18,8 @@ ADAPTER_STUB = Path(__file__).resolve().with_name("adapter_stub.py")
 DYNAMIC_TMP_ROOT = REPOSITORY_ROOT / "target/guard-python-ec"
 WORKSPACE_GUARD = REPOSITORY_ROOT / "target/debug/guard"
 WORKSPACE_GUARD_RECEIPT = DYNAMIC_TMP_ROOT / "workspace-guard-build.json"
+STANDALONE_TARGET = DYNAMIC_TMP_ROOT / "standalone-build"
+STANDALONE_GUARD = STANDALONE_TARGET / "debug/guard"
 _BUILT_WORKSPACE_GUARD: Path | None = None
 
 
@@ -92,7 +94,7 @@ def guard_binary() -> Path:
             _BUILT_WORKSPACE_GUARD = WORKSPACE_GUARD.resolve()
             return _BUILT_WORKSPACE_GUARD
     completed = subprocess.run(
-        ["cargo", "build", "-p", "guard-cli", "--bin", "guard"],
+        ["cargo", "build", "-p", "guard", "--bin", "guard"],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
@@ -121,6 +123,28 @@ def guard_binary() -> Path:
     return _BUILT_WORKSPACE_GUARD
 
 
+def build_standalone_guard() -> Path:
+    """Build the exact public package/binary pair without an override or cache receipt."""
+    environment = os.environ.copy()
+    environment.pop("GUARD_BIN", None)
+    environment.pop("GUARD_BIN_SHA256", None)
+    environment["CARGO_TARGET_DIR"] = str(STANDALONE_TARGET)
+    completed = subprocess.run(
+        ["cargo", "build", "-p", "guard", "--bin", "guard"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not STANDALONE_GUARD.is_file():
+        raise AssertionError(
+            "standalone Guard package/binary build failed; "
+            f"exit={completed.returncode}; stderr={completed.stderr!r}"
+        )
+    return STANDALONE_GUARD.resolve()
+
+
 def parse_json_stdout(stdout: str) -> dict[str, object]:
     stripped = stdout.strip()
     if not stripped:
@@ -140,12 +164,13 @@ def run_guard(
     arguments: list[str],
     *,
     binary: Path | None = None,
+    cwd: Path = REPOSITORY_ROOT,
     expected_exit_codes: set[int] = frozenset({0}),
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     executable = binary or guard_binary()
     completed = subprocess.run(
         [str(executable), *arguments],
-        cwd=REPOSITORY_ROOT,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,

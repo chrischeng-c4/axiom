@@ -1,0 +1,35 @@
+{
+  "assertions": [
+    "schema_version is guard.report/1",
+    "verb is scan",
+    "required report fields have stable JSON types",
+    "summary.security_findings equals findings length",
+    "status, exit_code, and completion.clean agree",
+    "schema_version is guard.report/1",
+    "verb is scan",
+    "required report fields have stable JSON types",
+    "schema_version is guard.report/1",
+    "verb is spec",
+    "required report fields have stable JSON types",
+    "schema_version is guard.report/1",
+    "verb is llm",
+    "required report fields have stable JSON types",
+    "an override-free isolated cargo build succeeds for package guard and binary guard",
+    "public help exposes scan, report, spec, and llm from the built binary",
+    "scan persists a clean guard.report/1 report and report re-projects it exactly",
+    "offline spec identifies guard.report/1 and llm teaches guard scan"
+  ],
+  "attempts": [
+    {
+      "assertion_count": 18,
+      "assertions_digest": "sha256:1afa4909dc1bba074113f3db3a06a56d5c23e756bdaaf59c4c5ff4dbbe87d814",
+      "elapsed_ms": 802,
+      "exit_code": 0
+    }
+  ],
+  "case_id": "guard-standalone-cli-distribution",
+  "exit_code": 0,
+  "implementation": "apps/guard/external-contracts/src/cases/guard-standalone-cli-distribution.py",
+  "mode": "behavior",
+  "protocol": "aw.python-ec.evidence.v1"
+}

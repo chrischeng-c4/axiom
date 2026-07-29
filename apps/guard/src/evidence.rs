@@ -1,5 +1,5 @@
-// SPEC-MANAGED: apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+// SPEC-MANAGED: apps/guard/tech-design/src/evidence.py
+// HANDWRITE-BEGIN: gap=python-td-rust-body tracker=#2823
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::report::{Finding, Location, Severity};
 
 #[derive(Debug, Clone)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 pub struct EvidenceCommand {
     pub tool: String,
     pub label: String,
@@ -18,7 +18,7 @@ pub struct EvidenceCommand {
     pub env: BTreeMap<String, String>,
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 impl EvidenceCommand {
     pub fn argv(tool: impl Into<String>, label: impl Into<String>, command: Vec<String>) -> Self {
         Self {
@@ -60,7 +60,7 @@ impl EvidenceCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 pub enum EvidenceStatus {
     Clean,
     Findings,
@@ -68,7 +68,7 @@ pub enum EvidenceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 pub struct ExternalEvidence {
     pub tool: String,
     pub label: String,
@@ -88,7 +88,7 @@ pub struct ExternalEvidence {
     pub stderr_tail: String,
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 impl ExternalEvidence {
     pub fn to_guard_finding(&self, target: &str) -> Option<Finding> {
         if self.clean {
@@ -135,7 +135,7 @@ impl ExternalEvidence {
     }
 }
 
-/// @spec apps/guard/tech-design/semantic/source/projects-guard-src-evidence-rs.md#source
+/// @spec apps/guard/tech-design/src/evidence.py
 pub fn run_evidence_commands(commands: &[EvidenceCommand]) -> Vec<ExternalEvidence> {
     commands.iter().map(run_one).collect()
 }
@@ -339,4 +339,4 @@ mod tests {
         assert_eq!(finding.rule, "RIG-EVIDENCE");
     }
 }
-// CODEGEN-END
+// HANDWRITE-END

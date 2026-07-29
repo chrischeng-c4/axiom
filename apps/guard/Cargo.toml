@@ -6,12 +6,9 @@ authors.workspace = true
 license.workspace = true
 description = "Security posture gate for cclab — compass-backed static findings with agent-readable reports"
 
-[lib]
-name = "guard"
-crate-type = ["rlib"]
-
 [dependencies]
 cclab-compass = { path = "../../libs/compass" }
+clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

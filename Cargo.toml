@@ -16,7 +16,6 @@ members = [
     "apps/arena",
     "apps/arena/arena-cli",
     "apps/guard",
-    "apps/guard/guard-cli",
     "crates/cclab-core",
     "projects/mamba/mambalibs/queuekit",
     "crates/cclab-schema",

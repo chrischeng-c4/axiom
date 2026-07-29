@@ -2,83 +2,35 @@ version = 2
 project = "guard"
 ir_kind = "td"
 td_path = "apps/guard/tech-design"
-generated_at = "2026-07-28T16:40:53.558987+00:00"
-digest = "sha256:40ef6265206c9f298f1992731ae953d8e6f57bf22a52d2d1337cc4027eeedce6"
-source_digest = "sha256:40ef6265206c9f298f1992731ae953d8e6f57bf22a52d2d1337cc4027eeedce6"
-ir_digest = "sha256:7ff6f03c05e40f745950efb53185f24397b80a30fe4db794334d0fcfa2514121"
+generated_at = "2026-07-29T03:16:33.327421+00:00"
+digest = "sha256:376c2e28149e9a1a8121551c11e33a2e28a9cbafd740b2a3f83c813e58ec7423"
+source_digest = "sha256:376c2e28149e9a1a8121551c11e33a2e28a9cbafd740b2a3f83c813e58ec7423"
+ir_digest = "sha256:d681eed26be3821223d22b20e15ac9aed935ec78866224650259736ff0723c97"
 
 [[files]]
-path = "src/guard/design/build_script.py"
-digest = "sha256:bacce079c1559260467dd9bb87e7fb72ceaa91724d165809203042fe4084716c"
+path = "src/cli.py"
+digest = "sha256:1fc978ce5c901d28e3abfd05acc50228b852c8850cc5be25eabf91f726fcbdf1"
 
 [[files]]
-path = "src/guard/design/cli_api.py"
-digest = "sha256:be4c35156d295dd06f20c251b7e1d5a961b6996c29252a8925af69e26587d22e"
+path = "src/distribution.py"
+digest = "sha256:d6313a28c1278a42a05f71dd9d2f4c01033b76a85c48ebcc903e4a92cfb2a5ad"
 
 [[files]]
-path = "src/guard/design/cli_binary.py"
-digest = "sha256:d7aaa643f30d808902ec4a17da8984c3b89c40b0d193c1e70bd704f64c7132d8"
+path = "src/evidence.py"
+digest = "sha256:96ce619582709430b5c074c42eb60ad48060b43115c217b122e0cfc1755e030b"
 
 [[files]]
-path = "src/guard/design/cli_binary_api.py"
-digest = "sha256:54fa5a2a5b253818b31fe64916c979204e4a05ce97b43726fc84f938d16c02e6"
+path = "src/policy.py"
+digest = "sha256:3b87e5f1e7e064e46e2249337943dceb5fd6e545a2f6a7d56642d02cc04aa4d1"
 
 [[files]]
-path = "src/guard/design/cli_dispatch.py"
-digest = "sha256:1b6fb9337751bd353fc853ee165ea2d29fa32bd9c5294a5bb57fd333d2fed4ad"
+path = "src/report.py"
+digest = "sha256:8d0884e3d0bb1460d7157f3e02cc691444f7a9446ef51a62a88b8c860b9d8334"
 
 [[files]]
-path = "src/guard/design/cli_registry.py"
-digest = "sha256:3114cadf70e669e7894d4cd37afb1001d99860f7c310b0e9bc17531343268989"
-
-[[files]]
-path = "src/guard/design/external_evidence.py"
-digest = "sha256:516dab554341cdf09c65e52e6c50ed83626438c29e1a0c130db363a0aac8ec31"
-
-[[files]]
-path = "src/guard/design/external_security_contracts.py"
-digest = "sha256:a72a02db68590b4e6605422a75a7bb3242da6f55516b116619dcef1bbc412e05"
-
-[[files]]
-path = "src/guard/design/install_script.py"
-digest = "sha256:d4ae24bfbe26fd6efb5a314046811e35022e65c7e556c17f26d5c44eacbb30b0"
-
-[[files]]
-path = "src/guard/design/library_api.py"
-digest = "sha256:f134982868aab7a5037092fd6a2150cf4939f4322253668d81ab1f1ed6d64d9b"
-
-[[files]]
-path = "src/guard/design/library_module.py"
-digest = "sha256:041ce39772ea8edf7874b1a4ec98729d3b91ff9ce998d4ce9ba1ecca53e78dd3"
-
-[[files]]
-path = "src/guard/design/project_layout.py"
-digest = "sha256:2c81d3849b2e0663f879587cdace6657ad076e07eb6aac01d750f0586d53ca3c"
-
-[[files]]
-path = "src/guard/design/report_model.py"
-digest = "sha256:3bb7cff72294747f9d9885b935f1a600a7b25ac22334e0b652b75520190364a3"
-
-[[files]]
-path = "src/guard/design/scan_policy.py"
-digest = "sha256:0d2eb4ccea39402512a1a5bebd7bb504b46d3a9f3ba8580f21581ae897f1ca25"
-
-[[files]]
-path = "src/guard/public_contracts/dynamic_security_evidence.py"
-digest = "sha256:a70d14c002ac1c5a91ca2056701e6a78f4110863bf1a36c31956fe1f264fe61f"
-
-[[files]]
-path = "src/guard/public_contracts/security_ec_profile.py"
-digest = "sha256:c25dc74bdee1c5725a9b04f69af05fc2fec4a1568e92b9e46a752bc9eacc85fe"
-
-[[files]]
-path = "src/guard/public_contracts/security_policy_profile.py"
-digest = "sha256:f688b5271307876be122121dea62ed83d70e8563c3cac0319378a970aeb110c2"
-
-[[files]]
-path = "src/guard/public_contracts/static_security_scan.py"
-digest = "sha256:389af576500d37b3e22999d97f7cd28afa192ec1dae6fde2990581b24179cd67"
+path = "src/scan.py"
+digest = "sha256:c4ad08882f2d3f3f980228b9bc1d53ebb6247442a363b0927108fe3f3f69782b"
 
 [[files]]
 path = "tests/unit/test_guard_design.py"
-digest = "sha256:8fd7e7430fba0b284ecf2ac56b0be606ba954a95446c76c5d668cf78a7487e85"
+digest = "sha256:c4606c28496da38075bdd62a6164a6b4e58521e02d3ad70317fe0868c4ed1375"
