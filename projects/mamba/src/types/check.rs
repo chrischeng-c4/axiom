@@ -3444,12 +3444,12 @@ impl TypeChecker {
         value: &Spanned<Expr>,
         value_ty: TypeId,
         scope: BindingScope,
-    ) {
+    ) -> TypeId {
         let (prefix, scope_desc) = match scope {
             BindingScope::Local => ("local_binding", "local binding"),
             BindingScope::Global => ("global_binding", "global binding"),
             BindingScope::ClassAttribute => ("class_attribute", "class attribute"),
-            BindingScope::Other => return,
+            BindingScope::Other => return value_ty,
         };
         match &value.node {
             Expr::ListLit(elems) => {
@@ -3468,6 +3468,50 @@ impl TypeChecker {
                         self.record_declared_type(target_span, decl);
                     }
                 }
+                value_ty
+            }
+            Expr::IfExpr {
+                body,
+                condition: _,
+                else_body,
+            } if scope == BindingScope::Local => {
+                if let (Expr::ListLit(elems1), Expr::ListLit(elems2)) =
+                    (&body.node, &else_body.node)
+                {
+                    let mut walrus_targets = Vec::new();
+                    crate::resolve::pass::collect_walrus_targets(&value.node, &mut walrus_targets);
+                    if !walrus_targets.is_empty() {
+                        return value_ty;
+                    }
+                    if elems1.is_empty() && elems2.is_empty() {
+                        let path = "expression_join -> branch -> list_literal -> element";
+                        let decl = DeclaredType::from_implicit_unknown(path);
+                        self.record_declared_type(target_span, decl);
+                        self.error(
+                            target_span,
+                            format!("cannot infer expression join type for binding `{name}`: {path}"),
+                        );
+                        value_ty
+                    } else if (elems1.is_empty() && !elems2.is_empty())
+                        || (!elems1.is_empty() && elems2.is_empty())
+                    {
+                        let non_empty_branch = if !elems1.is_empty() { body } else { else_body };
+                        let branch_ty = self.check_expr(non_empty_branch);
+                        if let Ty::List(elem_ty) = self.tcx.get(branch_ty) {
+                            if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
+                                let path = "expression_join -> branch";
+                                let decl = DeclaredType::from_inferred(path, branch_ty);
+                                self.record_declared_type(target_span, decl);
+                                return branch_ty;
+                            }
+                        }
+                        value_ty
+                    } else {
+                        value_ty
+                    }
+                } else {
+                    value_ty
+                }
             }
             Expr::ListComp { generators, .. } if scope == BindingScope::Local => {
                 if generators.len() == 1 {
@@ -3480,7 +3524,7 @@ impl TypeChecker {
                         let mut walrus_targets = Vec::new();
                         crate::resolve::pass::collect_walrus_targets(&value.node, &mut walrus_targets);
                         if !walrus_targets.is_empty() {
-                            return;
+                            return value_ty;
                         }
                         if let Expr::ListLit(elems) = &gen.iter.node {
                             if elems.is_empty() {
@@ -3491,7 +3535,7 @@ impl TypeChecker {
                                     target_span,
                                     format!("cannot infer comprehension type for binding `{name}`: {path}"),
                                 );
-                                return;
+                                return value_ty;
                             }
                         }
                         if let Ty::List(elem_ty) = self.tcx.get(value_ty) {
@@ -3503,8 +3547,9 @@ impl TypeChecker {
                         }
                     }
                 }
+                value_ty
             }
-            _ => {}
+            _ => value_ty,
         }
     }
 
@@ -6739,5 +6784,195 @@ mod tests {
         let Stmt::AsyncFnDef { body, .. } = &module10.stmts[0].node else { panic!() };
         let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
         assert!(checker10.get_declared_type(target.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_j1_negative_conditional_empty_list_join_failure() {
+        use crate::source::span::FileId;
+        let src = "def exercise_conditional_binding(flag: bool) -> None:\n    items = [] if flag else []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer expression join type for binding `items`: expression_join -> branch -> list_literal -> element"));
+
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "expression_join -> branch -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_j1_explicit_local_any_acceptance() {
+        use crate::source::span::FileId;
+        let src = "from typing import Any\ndef exercise_conditional_binding(flag: bool) -> None:\n    items: Any = [] if flag else []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::VarDecl { ty, .. } = &body[0].node else { panic!() };
+        let decl = checker
+            .get_declared_type(ty.span)
+            .expect("explicit annotation aggregate recorded");
+        assert!(matches!(decl.source(), SourceAnnotation::Authored(_)));
+        assert_eq!(decl.normalized(), Some(checker.tcx.any()));
+        assert_eq!(*decl.provenance(), TypeProvenance::ExplicitAny);
+    }
+
+    #[test]
+    fn test_n3_j1_non_empty_homogeneous_conditional_list_join_forward_and_reversed() {
+        use crate::source::span::FileId;
+
+        // 1. Forward order: [1, 2] if flag else []
+        let src1 = "def f(flag: bool) -> None:\n    items = [1, 2] if flag else []\n";
+        let module1 = crate::parser::parse(src1, FileId(0)).unwrap();
+        let mut checker1 = TypeChecker::new();
+        let errors1 = checker1.check_module(&module1);
+        assert!(errors1.is_empty());
+        let Stmt::FnDef { body: body1, .. } = &module1.stmts[0].node else { panic!() };
+        let Stmt::Assign { target: target1, .. } = &body1[0].node else { panic!() };
+        let int_ty1 = checker1.tcx.int();
+        let expected_list1 = checker1.tcx.intern(Ty::List(int_ty1));
+        let decl1 = checker1.get_declared_type(target1.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl1.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl1.normalized(), Some(expected_list1));
+        assert_eq!(
+            *decl1.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "expression_join -> branch".to_string()
+            }
+        );
+        let sym1 = checker1.symbols.lookup_in_scope(1, "items").expect("items defined in function scope 1");
+        assert_eq!(checker1.get_sym_type(sym1.0), expected_list1);
+
+        // 2. Reversed order: [] if flag else [1, 2]
+        let src2 = "def f(flag: bool) -> None:\n    items = [] if flag else [1, 2]\n";
+        let module2 = crate::parser::parse(src2, FileId(0)).unwrap();
+        let mut checker2 = TypeChecker::new();
+        let errors2 = checker2.check_module(&module2);
+        assert!(errors2.is_empty());
+        let Stmt::FnDef { body: body2, .. } = &module2.stmts[0].node else { panic!() };
+        let Stmt::Assign { target: target2, .. } = &body2[0].node else { panic!() };
+        let int_ty2 = checker2.tcx.int();
+        let expected_list2 = checker2.tcx.intern(Ty::List(int_ty2));
+        let decl2 = checker2.get_declared_type(target2.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl2.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl2.normalized(), Some(expected_list2));
+        assert_eq!(
+            *decl2.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "expression_join -> branch".to_string()
+            }
+        );
+        let sym2 = checker2.symbols.lookup_in_scope(1, "items").expect("items defined in function scope 1");
+        assert_eq!(checker2.get_sym_type(sym2.0), expected_list2);
+    }
+
+    #[test]
+    fn test_n3_j1_negative_controls_excluded_forms() {
+        use crate::source::span::FileId;
+
+        // 1. Module-level conditional join
+        let src1 = "items = [] if True else []\n";
+        let module1 = crate::parser::parse(src1, FileId(0)).unwrap();
+        let mut checker1 = TypeChecker::new();
+        let errors1 = checker1.check_module(&module1);
+        assert!(errors1.is_empty(), "module conditional join should remain unchanged");
+        let Stmt::Assign { target, .. } = &module1.stmts[0].node else { panic!() };
+        assert!(checker1.get_declared_type(target.span).is_none());
+
+        // 2. Class attribute conditional join
+        let src2 = "class C:\n    items = [] if True else []\n";
+        let module2 = crate::parser::parse(src2, FileId(0)).unwrap();
+        let mut checker2 = TypeChecker::new();
+        let errors2 = checker2.check_module(&module2);
+        assert!(errors2.is_empty(), "class conditional join should remain unchanged");
+        let Stmt::ClassDef { body, .. } = &module2.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker2.get_declared_type(target.span).is_none());
+
+        // 3. Scalar/container join
+        let src3 = "def f(flag: bool):\n    items = 1 if flag else []\n";
+        let module3 = crate::parser::parse(src3, FileId(0)).unwrap();
+        let mut checker3 = TypeChecker::new();
+        let errors3 = checker3.check_module(&module3);
+        assert!(errors3.is_empty(), "scalar/container join should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module3.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker3.get_declared_type(target.span).is_none());
+
+        // 4. Two non-empty heterogeneous branches
+        let src4 = "def f(flag: bool):\n    items = [1] if flag else [\"a\"]\n";
+        let module4 = crate::parser::parse(src4, FileId(0)).unwrap();
+        let mut checker4 = TypeChecker::new();
+        let errors4 = checker4.check_module(&module4);
+        assert!(errors4.is_empty(), "heterogeneous conditional branch should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module4.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker4.get_declared_type(target.span).is_none());
+
+        // 5. Nested conditional
+        let src5 = "def f(flag1: bool, flag2: bool):\n    items = [1] if flag1 else ([] if flag2 else [])\n";
+        let module5 = crate::parser::parse(src5, FileId(0)).unwrap();
+        let mut checker5 = TypeChecker::new();
+        let errors5 = checker5.check_module(&module5);
+        assert!(errors5.is_empty(), "nested conditional join should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module5.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker5.get_declared_type(target.span).is_none());
+
+        // 6. Walrus target in conditional expression
+        let src6 = "def f():\n    items = [1] if (x := True) else []\n";
+        let module6 = crate::parser::parse(src6, FileId(0)).unwrap();
+        let mut checker6 = TypeChecker::new();
+        let errors6 = checker6.check_module(&module6);
+        assert!(errors6.is_empty(), "walrus target in conditional join should remain unchanged");
+        let Stmt::FnDef { body, .. } = &module6.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        assert!(checker6.get_declared_type(target.span).is_none());
+
+        // 7. Statement control flow
+        let src7 = "def f(flag: bool):\n    if flag:\n        items = []\n    else:\n        items = []\n";
+        let module7 = crate::parser::parse(src7, FileId(0)).unwrap();
+        let mut checker7 = TypeChecker::new();
+        let errors7 = checker7.check_module(&module7);
+        assert!(
+            !errors7.iter().any(|e| e.to_string().contains("cannot infer expression join type")),
+            "statement control flow should remain without N3-J1 diagnostic"
+        );
+
+        // 8. Comprehension
+        let src8 = "def f():\n    items = [x for x in [] if True]\n";
+        let module8 = crate::parser::parse(src8, FileId(0)).unwrap();
+        let mut checker8 = TypeChecker::new();
+        let _ = checker8.check_module(&module8);
+        let Stmt::FnDef { body, .. } = &module8.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        if let Some(decl) = checker8.get_declared_type(target.span) {
+            assert_ne!(
+                *decl.provenance(),
+                TypeProvenance::ImplicitUnknown {
+                    inference_path: "expression_join -> branch -> list_literal -> element".to_string()
+                }
+            );
+        }
+
+        // 9. Return statement
+        let src9 = "def f(flag: bool) -> list:\n    return [] if flag else []\n";
+        let module9 = crate::parser::parse(src9, FileId(0)).unwrap();
+        let mut checker9 = TypeChecker::new();
+        let errors9 = checker9.check_module(&module9);
+        assert!(
+            !errors9.iter().any(|e| e.to_string().contains("cannot infer expression join type")),
+            "conditional return should remain without N3-J1 diagnostic"
+        );
     }
 }

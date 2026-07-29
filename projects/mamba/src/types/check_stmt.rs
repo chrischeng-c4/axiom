@@ -290,7 +290,7 @@ impl TypeChecker {
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
-                        self.check_n3_list_binding_inference(
+                        let selected_ty = self.check_n3_list_binding_inference(
                             name,
                             target.span,
                             value,
@@ -298,7 +298,7 @@ impl TypeChecker {
                             binding_scope,
                         );
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, value_ty);
+                        self.set_sym_type(sym.0, selected_ty);
                         self.set_builtin_class_alias(sym, builtin_class_alias);
                         self.set_binding_origins(
                             sym,
@@ -412,14 +412,14 @@ impl TypeChecker {
                         self.set_builtin_class_alias(symbol, builtin_class_alias);
                         if self.inferred_local_placeholders.remove(&symbol) {
                             let binding_scope = self.current_binding_scope();
-                            self.check_n3_list_binding_inference(
+                            let selected_ty = self.check_n3_list_binding_inference(
                                 name,
                                 target.span,
                                 value,
                                 value_ty,
                                 binding_scope,
                             );
-                            self.set_sym_type(symbol.0, value_ty);
+                            self.set_sym_type(symbol.0, selected_ty);
                             return;
                         }
                     }
