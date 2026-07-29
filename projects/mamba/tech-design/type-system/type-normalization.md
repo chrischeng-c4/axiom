@@ -155,6 +155,8 @@ Completed by #2918 (`65f4929cdf`).
 
 #### N2b — canonical checker annotation cache
 
+Completed by #2920 (`ffac18bf37`).
+
 - Replace the parallel bare `Span -> TypeId` semantic-annotation cache and
   parameter-only declaration map with one checker-local
   `Span -> DeclaredType` aggregate store.
