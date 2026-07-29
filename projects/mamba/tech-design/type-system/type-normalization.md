@@ -440,6 +440,45 @@ the enclosing scope.
 
 Completed by #2964 (`841571e948`).
 
+#### N3-J1 — two-branch list conditional join
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/expression_join.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/expression_join.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to the first simple-name assignment in an active function-local
+  scope whose initializer is one non-nested conditional expression with two
+  direct list-literal branches and no walrus target;
+- classify two empty list branches as
+  `ImplicitUnknown { inference_path:
+  "expression_join -> branch -> list_literal -> element" }`;
+- store the failed omitted declaration at the assignment target span with
+  `normalized = None`;
+- emit one stable compile error at that span naming binding `items` and the
+  exact inference path;
+- join one non-empty homogeneous list branch with one empty list branch to the
+  concrete homogeneous list type, record `Inferred` with path
+  `expression_join -> branch`, and publish that type to the local binding;
+- let `items: Any = [] if flag else []` remain authored `ExplicitAny` without
+  a second declaration;
+- leave module/class joins, scalar/container joins, two non-empty heterogeneous
+  branches, nested conditionals, walrus targets, statement control flow,
+  comprehensions, returns, lowering, runtime ABI selection, and N4 unchanged.
+
+J1 must decide failure from omitted target syntax plus the exact two-branch AST
+shape, never from a joined recovery `Ty::Any`. A concrete branch may refine the
+other branch only when the empty branch contributes no contradictory element
+evidence.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
