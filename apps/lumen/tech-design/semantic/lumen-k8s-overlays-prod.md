@@ -99,15 +99,11 @@ deployment:
               - op: add
                 path: /data/LUMEN_AUTH
                 value: "required"
+          # Strict auth: project LUMEN_AUTH from the ConfigMap into the serving process.
           - target:
               kind: Deployment
               name: lumen
             patch: |-
-              # Strict auth: a Secret named `lumen-tokens` with key
-              # `token-registry.json` must be supplied out-of-band, commonly from GCP
-              # Secret Manager via External Secrets Operator / Secret Store CSI. Lumen
-              # watches its mounted registry and atomically adopts a valid replacement
-              # without a pod restart.
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
@@ -116,26 +112,6 @@ deployment:
                     configMapKeyRef:
                       name: lumen-config
                       key: LUMEN_AUTH
-              - op: add
-                path: /spec/template/spec/containers/0/env/-
-                value:
-                  name: LUMEN_TOKEN_REGISTRY_FILE
-                  value: /var/run/secrets/lumen/token-registry.json
-              - op: add
-                path: /spec/template/spec/containers/0/volumeMounts/-
-                value:
-                  name: lumen-token-registry
-                  mountPath: /var/run/secrets/lumen
-                  readOnly: true
-              - op: add
-                path: /spec/template/spec/volumes/-
-                value:
-                  name: lumen-token-registry
-                  secret:
-                    secretName: lumen-tokens
-                    items:
-                      - key: token-registry.json
-                        path: token-registry.json
         # CODEGEN-END
 ```
 

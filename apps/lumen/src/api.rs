@@ -670,7 +670,14 @@ impl Modify for SecurityAddon {
                         .scheme(HttpAuthScheme::Bearer)
                         .bearer_format("opaque")
                         .description(Some(
-                            "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`.",
+                            "A short-lived, audience-bound Kubernetes ServiceAccount token, \
+                             obtained from the TokenRequest API. There is no configurable \
+                             credential source and no static token to issue: the verifier that \
+                             resolves this header through TokenReview/SubjectAccessReview has not \
+                             landed yet, so `auth: required` currently refuses to start and \
+                             `auth: disabled` ignores the header entirely. A Google access token, \
+                             ID token, ADC credential, or metadata-server token is never accepted \
+                             here.",
                         ))
                         .build(),
                 ),

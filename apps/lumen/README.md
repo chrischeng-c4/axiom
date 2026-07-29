@@ -661,6 +661,13 @@ KSA. `lumen query` keeps the token in memory. `lumen connect` gives its child
 only a loopback URL and injects the header in a local proxy; it does not expose
 the token through environment, argv, files, clipboard, or stdout.
 
+Today the CLI is at the "no credential" half of that: the token flag, the token
+environment variable, and the Kubernetes Secret lookup behind them are removed,
+and nothing has replaced them yet. `lumen connect` is a port-forward that hands
+its child a URL; `lumen query` sends no `Authorization` header. Against a
+serving instance with `auth: disabled` that works, and `auth: required` does
+not start at all.
+
 Serving, operator/reshard, backup, and external-client ServiceAccounts are
 separate identities with least-privilege bindings. TokenRequest permission is
 restricted to one named client KSA and is never a namespace-wide wildcard.
@@ -682,7 +689,7 @@ the Security & Access capability.
 | `GET /docs`           | Interactive Swagger UI ("Try it out")                        |
 | `lumen spec`          | Offline OpenAPI JSON from the installed binary               |
 | `lumen spec --format openapi-yaml` | Offline OpenAPI YAML for agent review         |
-| `lumen spec --format json-schema` | Component schemas plus operational schemas such as `TokenRegistry` |
+| `lumen spec --format json-schema` | Component schemas for the request/response types |
 | `lumen spec gen --lang ts\|py\|rust [--target <profile>] --out <dir>` | In-tree typed client generation with a pinned target contract |
 
 `lumen spec` and the live endpoint generate from the same Rust code

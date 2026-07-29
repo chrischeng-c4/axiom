@@ -28,7 +28,7 @@ spec:
 
 ---
 # Production: 6 shards x 3 replicas per shard, Lumen-owned raft WAL,
-# bearer-token auth (token registry from Secret key `token-registry.json`),
+# Kubernetes-native request identity (no credential field to set),
 # json logs, and Prometheus ServiceMonitor + alerts.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen

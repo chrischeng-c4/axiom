@@ -106,9 +106,9 @@ enum Command {
     /// Manage a `kubectl port-forward` for the duration of a wrapped command
     /// against a k8s-deployed Lumen instance — no manually tracked
     /// port-forward process (`lumen llm --topic recipes` has a worked
-    /// example). Resolves a bearer token from the deployment's
-    /// token-registry Secret when `--secret`/`--cr` is given (see `lumen llm
-    /// --topic auth`).
+    /// example). Reachability only: the child is handed a URL and nothing
+    /// else. Obtaining a Kubernetes ServiceAccount token for it is #2878's
+    /// job, and until then there is no credential to obtain.
     // @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
     Connect(ConnectArgs),
     /// One-shot query wrappers against a reachable lumen node: `index`,
@@ -454,9 +454,6 @@ struct BackupArgs {
     /// GCE/GKE metadata-server Workload Identity token.
     #[arg(long)]
     dest: String,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
-    #[arg(long)]
-    token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
     /// put. Omit to keep everything.
     #[arg(long)]
@@ -479,8 +476,7 @@ struct ConnectArgs {
     #[arg(long)]
     service: Option<String>,
     /// `Lumen` CR name. When set (and `--service` is omitted) the Service
-    /// name defaults to this CR's own name, and its `spec.tokensSecret` (if
-    /// any) auto-resolves `--secret`.
+    /// name defaults to this CR's own name.
     #[arg(long)]
     cr: Option<String>,
     /// Local port to forward to. Omit to pick a free ephemeral port.
@@ -489,53 +485,19 @@ struct ConnectArgs {
     /// Remote (Service) port.
     #[arg(long, default_value_t = 7373)]
     remote_port: u16,
-    /// Secret name holding a `token-registry.json` key (see `lumen llm
-    /// --topic auth`). Auto-resolved from `--cr`'s `spec.tokensSecret` when
-    /// omitted and `--cr` is set.
-    #[arg(long)]
-    secret: Option<String>,
-    /// Minimum role the resolved token must cover.
-    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
-    role: TokenRole,
-    /// Collection id the resolved token must be authorized against. Omit for
-    /// the wildcard `*` grant.
-    #[arg(long)]
-    collection: Option<String>,
-    /// The command to run with `LUMEN_URL` (and `LUMEN_TOKEN`, when
-    /// resolved) set to the local end of the port-forward. Everything after
-    /// `--`, e.g. `lumen connect --namespace prod --cr search -- lumen query
-    /// collections list`.
+    /// The command to run with `LUMEN_URL` set to the local end of the
+    /// port-forward — and nothing else. Everything after `--`, e.g. `lumen
+    /// connect --namespace prod --cr search -- lumen query collections list`.
     #[arg(last = true, required = true)]
     command: Vec<String>,
 }
 
-/// Bearer-token role required for `lumen connect`/`lumen query`'s Secret
-/// token resolution (R2). Mirrors `service_auth::Role`; lumen's own role
-/// mapping into `cli_std::connect::Role` (#1376) — every k8s-native service
-/// CLI adopting `cli_std::connect` supplies its own such mapping.
-#[derive(Clone, Copy, ValueEnum)]
-enum TokenRole {
-    Read,
-    Write,
-    Admin,
-}
-
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-impl From<TokenRole> for cli_std::connect::Role {
-    fn from(role: TokenRole) -> Self {
-        match role {
-            TokenRole::Read => cli_std::connect::Role::Read,
-            TokenRole::Write => cli_std::connect::Role::Write,
-            TokenRole::Admin => cli_std::connect::Role::Admin,
-        }
-    }
-}
-
-/// Shared k8s-aware token/target resolution for `lumen connect` and `lumen
-/// query *` (R2): an explicit `--token`/`LUMEN_TOKEN` wins; otherwise, when
-/// `--namespace`/`--secret` are set, resolve one bearer token from the
-/// deployment's token-registry Secret (see `lumen llm --topic auth`) whose
-/// role covers `--role` for the query's collection (or the wildcard `*`).
+/// Where `lumen query *` sends its request. Reachability, and only
+/// reachability: #2873 removed the bearer flag, the environment variable
+/// behind it, and the kubectl Secret lookup behind that, so this struct no
+/// longer carries a credential — or the `--context`/`--namespace`/`--secret`
+/// triple whose only purpose was to find one. The Kubernetes TokenRequest
+/// call that replaces them is #2878's.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[derive(clap::Args, Clone)]
 struct QueryTarget {
@@ -543,22 +505,6 @@ struct QueryTarget {
     /// — what `lumen connect` sets for the wrapped command.
     #[arg(long, env = "LUMEN_URL")]
     url: Option<String>,
-    /// Explicit bearer token. Falls back to `LUMEN_TOKEN`, then to the
-    /// token-registry Secret named by `--namespace`/`--secret`.
-    #[arg(long, env = "LUMEN_TOKEN")]
-    token: Option<String>,
-    /// kubectl context for Secret resolution.
-    #[arg(long)]
-    context: Option<String>,
-    /// Namespace holding the token-registry Secret.
-    #[arg(long)]
-    namespace: Option<String>,
-    /// Secret name holding a `token-registry.json` key.
-    #[arg(long)]
-    secret: Option<String>,
-    /// Minimum role the resolved token must cover.
-    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
-    role: TokenRole,
 }
 
 /// `lumen query <index|search|duplicates|collections>` flags (#1321): thin
@@ -649,7 +595,7 @@ struct QueryCollectionsArgs {
 
 #[derive(Subcommand)]
 enum QueryCollectionsCommand {
-    /// `GET /collections` — list collection ids visible to the resolved token.
+    /// `GET /collections` — list collection ids the serving node exposes.
     List(QueryCollectionsListArgs),
 }
 
@@ -669,9 +615,6 @@ struct SnapshotExportArgs {
     /// Write the SnapshotV1 JSON bytes to this path instead of stdout.
     #[arg(long)]
     out: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
-    #[arg(long)]
-    token: Option<String>,
 }
 
 /// `lumen load|import` flags (#1095): reads SnapshotV1 JSON and posts it to
@@ -684,9 +627,6 @@ struct SnapshotImportArgs {
     /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
     #[arg(long)]
     file: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
-    #[arg(long)]
-    token: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -701,7 +641,9 @@ enum LlmTopic {
     SelectQuery,
     /// Connect a source database, CDC stream, or outbox to Lumen.
     IntegrateSourceDb,
-    /// Configure or inspect bearer-token authentication.
+    /// Inspect the request-authentication contract: the Kubernetes
+    /// ServiceAccount identity Lumen accepts, and the credential kinds it
+    /// refuses.
     Authenticate,
     /// Use a bounded Kubernetes port-forward connection.
     ConnectKubernetes,
@@ -1302,18 +1244,16 @@ fn crd_yaml() -> String {
     cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
-/// The one credential `lumen backup` may present is the one its caller
-/// handed it. The metadata-server ID token this used to mint as a fallback
-/// is gone (#2871): a Google ID token is not something the replacement
-/// verifier can ever accept — submitted to `TokenReview` it comes back
-/// `{"user": {}, "error": "invalid bearer token"}` — so falling back to it
-/// only produced a request that failed later and less clearly. With no
-/// token, the request goes out with no `Authorization` header.
-#[cfg(feature = "backup")]
-fn resolve_admin_token(token: Option<String>) -> Option<String> {
-    token.filter(|t| !t.trim().is_empty())
-}
-
+/// Whatever eventually authenticates `lumen backup` to the admin API, it will
+/// not be a string on the command line. #2871 took away the metadata-server
+/// fallback; #2873 takes away the bearer flag that was left, because a
+/// credential passed as an argument is a credential in `ps`, in shell history,
+/// and in the CronJob's own `kubectl describe` — the exact exposure R5 rules
+/// out. The `token` parameter on the `lumen::backup` calls below is the seam
+/// #2877 fills with a projected, audience-bound ServiceAccount token read from
+/// a file; until then it is `None` and the request carries no `Authorization`
+/// header at all.
+///
 /// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
 /// `dest` via `libs/service-backup`, printing the resulting
 /// `BackupRunResult` as JSON. This is what the operator's optional backup
@@ -1326,8 +1266,7 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
-    let token = resolve_admin_token(args.token.clone());
-    let result = lumen::backup::run_backup(&args.url, token.as_deref(), &dest, &retention).await?;
+    let result = lumen::backup::run_backup(&args.url, None, &dest, &retention).await?;
     // Chainable output (#963): `lumen backup` always emits a single JSON
     // object, so the contract's "next" is a top-level field, not a text tail
     // line. `service_backup::BackupRunResult` stays untouched (shared type) —
@@ -1336,7 +1275,7 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
     if let serde_json::Value::Object(ref mut map) = out {
         map.insert(
             "next".to_string(),
-            serde_json::Value::String(restore_next_command(&args, &result, token.is_some())),
+            serde_json::Value::String(restore_next_command(&args, &result)),
         );
     }
     println!("{}", serde_json::to_string_pretty(&out)?);
@@ -1348,28 +1287,20 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
 /// Only `file://` destinations resolve to a concrete local path for a copyable
 /// restore command; cloud sinks remain shared `service-backup` behavior and
 /// fall back to a generic note here instead of guessing a wrong object-fetch
-/// command. The token, when set, is never echoed — the command references the
-/// same env var the flag reads.
+/// command. The command carries no `Authorization` header: there is no
+/// credential for it to carry (#2873), and a placeholder one would read as an
+/// instruction to go find a token that does not exist.
 #[cfg(feature = "backup")]
-fn restore_next_command(
-    args: &BackupArgs,
-    result: &service_backup::BackupRunResult,
-    has_token: bool,
-) -> String {
+fn restore_next_command(args: &BackupArgs, result: &service_backup::BackupRunResult) -> String {
     let url = args.url.trim_end_matches('/');
-    let auth = if has_token {
-        " -H \"Authorization: Bearer <token>\""
-    } else {
-        ""
-    };
     match result.object.sink.strip_prefix("local:") {
         Some(root) => format!(
-            "curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @{}/{}",
+            "curl -sS -X POST {url}/admin/restore -H 'Content-Type: application/json' --data-binary @{}/{}",
             root.trim_end_matches('/'),
             result.object.key
         ),
         None => format!(
-            "fetch {} from {} then: curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @<downloaded-file>",
+            "fetch {} from {} then: curl -sS -X POST {url}/admin/restore -H 'Content-Type: application/json' --data-binary @<downloaded-file>",
             result.object.key, result.object.sink
         ),
     }
@@ -1388,15 +1319,14 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
 /// SnapshotV1 JSON bytes to stdout or `--out`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
-    let token = resolve_admin_token(args.token);
-    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, token.as_deref()).await?;
+    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, None).await?;
     if let Some(out) = args.out {
         if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create {}", parent.display()))?;
         }
         std::fs::write(&out, &payload).with_context(|| format!("write {}", out.display()))?;
-        let next = restore_file_next_command(args.url.trim_end_matches('/'), &out, token.is_some());
+        let next = restore_file_next_command(args.url.trim_end_matches('/'), &out);
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -1427,7 +1357,6 @@ async fn dispatch_snapshot_export(_args: SnapshotExportArgs) -> Result<()> {
 /// stdin and POST them to `{url}/admin/restore`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
-    let token = resolve_admin_token(args.token);
     let payload = match &args.file {
         Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
         None => {
@@ -1437,7 +1366,7 @@ async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
             buf
         }
     };
-    lumen::backup::restore_snapshot_bytes(&args.url, token.as_deref(), &payload).await?;
+    lumen::backup::restore_snapshot_bytes(&args.url, None, &payload).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -1460,42 +1389,28 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
 }
 
 #[cfg(feature = "backup")]
-fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String {
-    let auth = if has_token { " --token <token>" } else { "" };
-    format!("lumen import --url {url}{auth} --file {}", path.display())
+fn restore_file_next_command(url: &str, path: &Path) -> String {
+    format!("lumen import --url {url} --file {}", path.display())
 }
 
 // ---------------------------------------------------------------------------
 // `lumen connect` / `lumen query` (#1321) — thin adapter over
 // `cli_std::connect` (#1376): the `kubectl port-forward` process lifecycle
-// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) and the
-// token-registry Secret resolution chain (`kubectl_get_json`,
-// `resolve_cr_tokens_secret`, `resolve_token`) now live in
+// (`ChildGuard`, `free_local_port`, `wait_for_local_port_ready`) lives in
 // `libs/cli-std/src/connect.rs`, reusable by any k8s-native service CLI.
-// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`),
+// This file keeps only its own flag surface (`ConnectArgs`/`QueryTarget`) and
 // the `Lumen` CRD-name lookup convention (`"lumen"` passed as
-// `resource_kind`), and the `TokenRole` -> `cli_std::connect::Role` mapping.
+// `resource_kind`).
+//
+// #2873 cut the credential half away entirely. The shared module's resolver
+// chain — kubectl-get the Secret named by the CR, base64-decode the registry
+// key inside it, pick an entry whose role covers the request — is still there
+// for the services that have not migrated, but lumen no longer calls any of
+// it: the registry it decoded stopped existing in #2871, and the CR field
+// naming the Secret stopped existing in #2872. What remains here is a
+// port-forward, and nothing that reads, derives, prints, or passes on a
+// credential.
 // ---------------------------------------------------------------------------
-
-/// R2: resolve a usable bearer token without the caller decoding the
-/// Secret/JSON by hand. Precedence: `target.token` (explicit flag or
-/// `LUMEN_TOKEN`) wins; otherwise, when `--namespace`/`--secret` are both
-/// set, fetch the Secret via kubectl, decode its `token-registry.json` key
-/// (the same schema `lumen llm --topic auth` documents), and pick a token
-/// whose role covers `target.role` for `collection` (or `*`). Returns `None`
-/// when no token can be resolved (e.g. `spec.auth: disabled`). Thin
-/// wrapper over `cli_std::connect::resolve_token` (#1376).
-/// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
-fn resolve_token(target: &QueryTarget, collection: Option<&str>) -> Result<Option<String>> {
-    cli_std::connect::resolve_token(
-        target.token.as_deref(),
-        target.context.as_deref(),
-        target.namespace.as_deref(),
-        target.secret.as_deref(),
-        target.role.into(),
-        collection,
-    )
-}
 
 // The body-builder / URL-resolution helpers below are exercised directly by
 // `dispatch_query`'s `backup`-gated real implementation and by this file's
@@ -1511,10 +1426,19 @@ fn resolve_base_url(target: &QueryTarget) -> Result<String> {
 }
 
 /// `lumen connect` (#1321, R1): spawn `kubectl port-forward`, wait until the
-/// local end is reachable, run the wrapped command with `LUMEN_URL` (and
-/// `LUMEN_TOKEN`, when resolved) set, then tear the port-forward down
-/// (`ChildGuard::drop`) once the wrapped command exits — regardless of its
-/// exit status — so no port-forward process is left for the caller to track.
+/// local end is reachable, run the wrapped command with `LUMEN_URL` set, then
+/// tear the port-forward down (`ChildGuard::drop`) once the wrapped command
+/// exits — regardless of its exit status — so no port-forward process is left
+/// for the caller to track.
+///
+/// Reachability is the whole contract in phase 1 (#2873). The child's
+/// environment gains exactly one variable, and it is a URL. It used to also
+/// gain a bearer token, which meant every descendant of the wrapped command —
+/// and anything that could read `/proc/<pid>/environ` — inherited a bearer
+/// nobody had scoped to them. #2878 replaces that with a loopback proxy: the
+/// token is minted by `TokenRequest`, kept in this process's memory, and
+/// attached to the child's requests as they pass through, so the child never
+/// holds it.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 async fn connect(args: ConnectArgs) -> Result<()> {
     let service = args
@@ -1522,21 +1446,6 @@ async fn connect(args: ConnectArgs) -> Result<()> {
         .clone()
         .or_else(|| args.cr.clone())
         .context("--service or --cr is required")?;
-
-    let secret = match args.secret.clone() {
-        Some(secret) => Some(secret),
-        None => match &args.cr {
-            // "lumen" is the `Lumen` CRD's kubectl resource name — lumen's
-            // own CR-kind lookup convention (R2).
-            Some(cr) => cli_std::connect::resolve_cr_tokens_secret(
-                args.context.as_deref(),
-                &args.namespace,
-                "lumen",
-                cr,
-            )?,
-            None => None,
-        },
-    };
 
     let local_port = match args.local_port {
         Some(port) => port,
@@ -1561,17 +1470,18 @@ async fn connect(args: ConnectArgs) -> Result<()> {
 
     cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
 
-    let target = QueryTarget {
-        url: None,
-        token: None,
-        context: args.context.clone(),
-        namespace: Some(args.namespace.clone()),
-        secret,
-        role: args.role,
-    };
-    let token = resolve_token(&target, args.collection.as_deref())?;
-
     let base_url = format!("http://127.0.0.1:{local_port}");
+    // R4: say out loud that this connection is unauthenticated, on stderr so
+    // the wrapped command's own stdout stays machine-readable. A caller who
+    // used to get a working token and now gets a 401 deserves to be told why
+    // here, not left to infer it from the server's response.
+    eprintln!(
+        "lumen connect: forwarding {base_url} -> svc/{service}:{} in {} with no credential. \
+         Kubernetes ServiceAccount TokenRequest support arrives in phase 2 (#2878); until then a \
+         serving instance with `auth: required` refuses every request, and `auth: disabled` \
+         accepts them all.",
+        args.remote_port, args.namespace
+    );
     let (program, rest) = args
         .command
         .split_first()
@@ -1579,9 +1489,6 @@ async fn connect(args: ConnectArgs) -> Result<()> {
     let mut child_cmd = std::process::Command::new(program);
     child_cmd.args(rest);
     child_cmd.env("LUMEN_URL", &base_url);
-    if let Some(token) = &token {
-        child_cmd.env("LUMEN_TOKEN", token);
-    }
     let status = child_cmd.status().context("run wrapped command")?;
     // `_forward` drops here (end of scope), tearing the port-forward down
     // whether the wrapped command succeeded or not (AC1).
@@ -1700,19 +1607,19 @@ fn build_duplicates_body(args: &QueryDuplicatesArgs) -> Result<(String, serde_js
     Ok((format!("/collections/{}/duplicates", args.collection), body))
 }
 
+/// No `token` parameter, by construction (#2873). A parameter that is always
+/// `None` is an invitation to find something to put in it; leaving it out
+/// means `lumen query` cannot grow an `Authorization` header back without the
+/// change being visible in this signature.
 #[cfg(feature = "backup")]
 async fn http_post_json(
     base_url: &str,
-    token: Option<&str>,
     path: &str,
     body: serde_json::Value,
 ) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let mut req = client.post(&url).json(&body);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
+    let req = client.post(&url).json(&body);
     let resp = req.send().await.with_context(|| format!("POST {url}"))?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -1723,17 +1630,10 @@ async fn http_post_json(
 }
 
 #[cfg(feature = "backup")]
-async fn http_get_json(
-    base_url: &str,
-    token: Option<&str>,
-    path: &str,
-) -> Result<serde_json::Value> {
+async fn http_get_json(base_url: &str, path: &str) -> Result<serde_json::Value> {
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let mut req = client.get(&url);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
+    let req = client.get(&url);
     let resp = req.send().await.with_context(|| format!("GET {url}"))?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -1743,42 +1643,42 @@ async fn http_get_json(
     Ok(payload)
 }
 
-/// `lumen query` dispatch (#1321, R3): resolves `--url`/token via
-/// `QueryTarget` (R2, shared with `lumen connect`), assembles the exact wire
-/// body, and POSTs/GETs it. No REPL, no new HTTP endpoint.
+/// `lumen query` dispatch (#1321, R3): resolves `--url` via `QueryTarget`,
+/// assembles the exact wire body, and POSTs/GETs it. No REPL, no new HTTP
+/// endpoint — and, since #2873, no credential resolution: the request goes out
+/// as whoever the network says it is, and a serving instance under `auth:
+/// required` answers 401. That failure is the honest one (AC4). The silent
+/// alternative — quietly reaching into a Secret for a shared token — is what
+/// was removed.
 /// @spec apps/lumen/tech-design/interfaces/cli/cli-connect-query-k8s-agent-workflow.md
 #[cfg(feature = "backup")]
 async fn dispatch_query(args: QueryArgs) -> Result<()> {
     match args.command {
         QueryCommand::Index(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
             let (path, body) = build_index_body(&args.collection, &args.items)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Search(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
             let (path, body) = build_search_body(&args)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Duplicates(args) => {
             let base = resolve_base_url(&args.target)?;
-            let token = resolve_token(&args.target, Some(&args.collection))?;
             let (path, body) = build_duplicates_body(&args)?;
-            let resp = http_post_json(&base, token.as_deref(), &path, body).await?;
+            let resp = http_post_json(&base, &path, body).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
             Ok(())
         }
         QueryCommand::Collections(args) => match args.command {
             QueryCollectionsCommand::List(args) => {
                 let base = resolve_base_url(&args.target)?;
-                let token = resolve_token(&args.target, None)?;
-                let resp = http_get_json(&base, token.as_deref(), "/collections").await?;
+                let resp = http_get_json(&base, "/collections").await?;
                 println!("{}", serde_json::to_string_pretty(&resp)?);
                 Ok(())
             }
@@ -3223,8 +3123,9 @@ mod tests {
     /// Every handed-out `LumenFleet` must actually materialize. A rendered
     /// template is the first thing a deployer applies, so a duplicated
     /// `serving:` key (last wins, the CPU/memory request silently gone) or a
-    /// `defaults`/`instances` pair that merges into two token sources would
-    /// ship as a cluster that comes up wrong — or not at all — with the
+    /// `defaults`/`instances` pair that merges into two conflicting shard
+    /// topologies would ship as a cluster that comes up wrong — or not at all —
+    /// with the
     /// mistake in our YAML rather than theirs.
     #[cfg(feature = "operator")]
     #[test]
@@ -3246,7 +3147,7 @@ mod tests {
             // required-decision placeholders are filled in here rather than
             // pretending an unedited skeleton is deployable. Everything else
             // about it — key structure, the defaults/instances merge, the
-            // token-source pairing — is exactly what ships.
+            // per-instance topology pairing — is exactly what ships.
             let yaml = yaml
                 .replace("REPLACE_ME__SHARD_COUNT", "1")
                 .replace("REPLACE_ME__REPLICAS_PER_SHARD", "1")
@@ -3374,14 +3275,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     fn test_query_target() -> QueryTarget {
-        QueryTarget {
-            url: None,
-            token: None,
-            context: None,
-            namespace: None,
-            secret: None,
-            role: TokenRole::Admin,
-        }
+        QueryTarget { url: None }
     }
 
     #[test]
@@ -3527,12 +3421,15 @@ mod tests {
         assert_eq!(body["offset"], 0);
     }
 
-    // `select_token`/`cr_tokens_secret`/`secret_data_bytes`/
     // `wait_for_local_port_ready`/`ChildGuard` unit tests moved to
     // `libs/cli-std/src/connect.rs` (#1376) along with the primitives
     // themselves; lumen's own coverage is the thin-adapter tests above
     // (`resolve_base_url_requires_explicit_url`, `build_*_body_*`) plus
-    // `cargo test -p cli-std --features k8s`.
+    // `cargo test -p cli-std --features k8s`. The credential half of that
+    // shared module (`select_token`, `cr_tokens_secret`, `secret_data_bytes`)
+    // keeps its own tests there and is simply no longer called from here
+    // (#2873) — the integration gate for that is
+    // `tests/cli_credential_paths_retired.rs`.
 
     // -----------------------------------------------------------------
     // `spawn_cluster_state_poller` (#1349)

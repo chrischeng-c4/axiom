@@ -102,22 +102,34 @@ fn help_ships_snapshot_data_movement_verbs() {
 
     for command in ["dump", "export"] {
         let help = run_lumen(&[command, "--help"]);
-        for expected in ["--url", "--out", "--token", "SnapshotV1"] {
+        for expected in ["--url", "--out", "SnapshotV1"] {
             assert!(
                 help.contains(expected),
                 "missing `{expected}` in `lumen {command} --help`:\n{help}"
             );
         }
+        // #2873: the credential these verbs used to take on the command line
+        // is gone. Asserted here as well as in the residue gate because help
+        // text is what a caller copies, and a flag that still appears in
+        // `--help` is a flag someone will keep passing.
+        assert!(
+            !help.contains("--token"),
+            "`lumen {command} --help` still advertises a credential flag:\n{help}"
+        );
     }
 
     for command in ["load", "import"] {
         let help = run_lumen(&[command, "--help"]);
-        for expected in ["--url", "--file", "--token", "/admin/restore"] {
+        for expected in ["--url", "--file", "/admin/restore"] {
             assert!(
                 help.contains(expected),
                 "missing `{expected}` in `lumen {command} --help`:\n{help}"
             );
         }
+        assert!(
+            !help.contains("--token"),
+            "`lumen {command} --help` still advertises a credential flag:\n{help}"
+        );
     }
 }
 
@@ -348,7 +360,12 @@ fn k8s_instance_render_every_profile_states_its_auth_posture() {
         // from the schema (#2872), so a rendered CR that still carried one
         // would be rejected by the API server at `kubectl apply` — the check
         // that used to demand one now proves the opposite.
-        for retired in ["tokensSecret", "tokensSecretProviderClass", "identities", "identityAudiences"] {
+        for retired in [
+            "tokensSecret",
+            "tokensSecretProviderClass",
+            "identities",
+            "identityAudiences",
+        ] {
             assert!(
                 !rendered.contains(&format!("\n  {retired}:")),
                 "profile `{profile}` renders retired field `{retired}`:\n{rendered}"

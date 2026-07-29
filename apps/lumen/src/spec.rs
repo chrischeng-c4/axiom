@@ -182,11 +182,11 @@ Use the smallest topic that answers the task:
   vector metric catalogs.
 - `lumen connect` — manage a `kubectl port-forward` for the duration of a
   wrapped command against a k8s-deployed Lumen instance (`--cr`/`--service` +
-  `--namespace`); resolves a bearer token from the deployment's
-  token-registry Secret and tears the port-forward down when the command exits.
+  `--namespace`); hands the child a URL and nothing else, and tears the
+  port-forward down when the command exits.
 - `lumen query index|search|duplicates|collections list` — one-shot query
-  wrappers against a reachable node (`--url`/`LUMEN_URL`,
-  `--token`/`LUMEN_TOKEN`); request bodies match `lumen spec --shapes`.
+  wrappers against a reachable node (`--url`/`LUMEN_URL`); request bodies match
+  `lumen spec --shapes`. No credential flag: see `--topic auth`.
 "#
     .to_string()
 }
@@ -391,6 +391,33 @@ Until that verifier lands, none of the above is enforced by lumen. The two
 halves were deliberately not shipped together: the bearer and Google-token
 paths were deleted first (#2871) so neither can survive as a silent fallback
 underneath the replacement.
+
+## The CLI: kubeconfig authenticates you to Kubernetes, not to Lumen
+Two boundaries, two credentials, and they are never the same string.
+
+- **To the cluster:** your kubeconfig — a Google user, a GSA, or the GKE
+  credential plugin. This is what `kubectl` and `lumen connect` already use.
+- **To Lumen:** a short-lived, audience-bound ServiceAccount token that the
+  cluster mints. Never a Google access token, a Google ID token, an ADC
+  credential, a GSA key, or a metadata-server token. Those authenticate to
+  kube-apiserver and stop there; sent to Lumen they are rejected, and submitted
+  to `TokenReview` a Google ID token comes back `{"user": {}, "error":
+  "invalid bearer token"}`.
+
+The bridge between the two is the TokenRequest API: your kubeconfig identity is
+RBAC-authorized to request a token for one explicitly named client
+ServiceAccount, and that token — not your own credential — is what reaches
+Lumen.
+
+None of that is wired yet. In this build the CLI has **no** credential path at
+all (#2873): there is no token flag, no token environment variable, and no
+lookup of a Kubernetes Secret standing behind either. `lumen connect` is a
+port-forward and a process wrapper — its child is handed `LUMEN_URL` and
+nothing else — and `lumen query *` sends no `Authorization` header. Against
+`auth: disabled` that works; against `auth: required` there is nothing to work
+against, because the server refuses to start. The TokenRequest call, and a
+loopback proxy that attaches the header so the child never holds the token,
+arrive in #2878.
 
 ## Generated clients
 Generated Python clients still accept `auth_token="<token>"` and
@@ -756,9 +783,10 @@ lumen query duplicates --collection products --field email
 lumen query collections list
 ```
 
-`lumen connect` manages the `kubectl port-forward` and sets
-`LUMEN_URL`/`LUMEN_TOKEN` for the wrapped command; `lumen query *` assembles
-the exact wire body (same shapes as `lumen spec --shapes`).
+`lumen connect` manages the `kubectl port-forward` and sets `LUMEN_URL` — and
+only `LUMEN_URL` — for the wrapped command; `lumen query *` assembles the exact
+wire body (same shapes as `lumen spec --shapes`). Neither carries a credential:
+see `lumen llm --topic auth`.
 "#
     .to_string()
 }
@@ -1126,14 +1154,17 @@ The CronJob (and any ad hoc invocation) drives the same verb:
 ```
 lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
   --dest s3://my-bucket/lumen-backups \
-  [--token <admin-bearer-token>] \
   [--retention-secs 604800]
 ```
 
-`--url` points at the serving Service (not a specific pod); `--token` is
-omitted in the CronJob, and the verb no longer mints a metadata-server ID
-token to fill the gap (#2871) — with no `--token` the request simply carries
-no `Authorization` header. The verb GETs `/admin/backup`, hands the
+`--url` points at the serving Service (not a specific pod). There is no
+credential flag: #2871 removed the metadata-server ID token this used to mint,
+and #2873 removed the bearer flag that was left, because a credential passed as
+an argument is a credential in `ps` and in `kubectl describe`. The request
+carries no `Authorization` header, which is correct against today's only
+startable mode (`auth: disabled`); the projected, audience-bound ServiceAccount
+token the backup runner will present instead is #2877. The verb GETs
+`/admin/backup`, hands the
 bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by

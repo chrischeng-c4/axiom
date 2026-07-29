@@ -145,36 +145,37 @@ kubectl apply -f /tmp/lumen-k8s/lumen.yaml             # 3. CR last
 | Sharding/storage | `SHARD_COUNT`, `LUMEN_DATA_DIR`, `LUMEN_PERSISTENCE` (cbor\|segment), `LUMEN_SNAPSHOT_SECS` | `1`, unset, `cbor`, `300` |
 | Shutdown | `LUMEN_GRACE_SECS` | `30` |
 | Tracing | `LUMEN_OTLP_ENDPOINT` (OTLP/gRPC; traces off when unset) | unset |
-| **Auth** | `LUMEN_AUTH` (`off`\|`required`), `LUMEN_TOKEN_REGISTRY_FILE` (path to the credential registry JSON) | `off`, unset |
+| **Auth** | `LUMEN_AUTH` (`disabled`\|`required`) — the only value a server starts with is `disabled` | `disabled` |
 
-The registry file holds two disjoint namespaces — `tokens` keys **are** bearer
-secrets, `identities` keys are provider-verified emails, and a presented string
-is only ever matched against `tokens` (#2678):
+There is no credential env var, no registry file, and no CRD field that names
+a credential source. The two-namespace registry this section used to document
+(`tokens` keys were bearer secrets, `identities` keys were provider-verified
+emails) was deleted in #2871 along with the code that read it, and the CR
+fields that projected it (`spec.tokensSecret`, `spec.identities`,
+`spec.identityAudiences`) were deleted from the schema in #2872 — a CR that
+still sets one is rejected by the API server rather than applied and ignored.
 
-```json
-{
-  "tokens":     { "s3cret": { "subject": "ingest", "roles": { "*": "write" } } },
-  "identities": { "dev@example.com": { "subject": "dev", "roles": { "products": "read" } } }
-}
-```
-
-A flat `{secret: {subject, roles}}` document is still read as bearer secrets only.
-
-> **Production:** set `LUMEN_AUTH=required` + `LUMEN_TOKEN_REGISTRY_FILE`,
-> `LUMEN_LOG_FORMAT=json`, and an OTLP endpoint. There is no inline-credential
-> env var: a credential passed in the environment is a credential in
-> `kubectl describe pod`.
+> **What a deployer configures today: nothing, and that is the honest state.**
+> `LUMEN_AUTH=required` (`spec.auth: required`, the CRD default) does not
+> start — the process exits at startup naming the missing
+> TokenReview/SubjectAccessReview verifier rather than serve an API that
+> accepts everyone while claiming to require identity. A Lumen you can reach
+> on the network is open; keep it behind a NetworkPolicy.
 >
-> **Under the operator there is no credential field to set at all.** `spec.auth:
-> required` is the CRD default and names no source: the CR carried
-> `spec.tokensSecret`, `spec.identities` and `spec.identityAudiences` until
-> #2872 removed them from the schema, and a CR that still sets one is now
-> rejected by the API server rather than applied and ignored. Client identity
-> comes from the cluster — a short-lived, audience-bound ServiceAccount token
-> that lumen resolves through TokenReview and SubjectAccessReview — so nothing
-> mounts a registry into the serving pod (#2870). The `LUMEN_TOKEN_REGISTRY_FILE`
-> path above is the standalone-process contract only, and it goes with the
-> runtime bearer path in #2871.
+> **Clients need a URL and nothing else.** The Lumen CLI has no credential
+> path: no token flag, no token environment variable, and no Kubernetes Secret
+> lookup behind either (#2873). `lumen connect` hands its child `LUMEN_URL`
+> and nothing more.
+>
+> **Where identity comes back.** Client identity will come from the cluster —
+> your kubeconfig authenticates you to kube-apiserver, an RBAC-authorized
+> `TokenRequest` mints a short-lived, audience-bound token for one explicitly
+> named client ServiceAccount, and Lumen resolves *that* through TokenReview
+> and SubjectAccessReview. A Google access token, ID token, ADC credential,
+> GSA key, or metadata-server token is never a Lumen credential. Serving-side
+> verification is #2869; the CLI's TokenRequest call is #2878.
+>
+> Still set `LUMEN_LOG_FORMAT=json` and an OTLP endpoint in production.
 
 ---
 

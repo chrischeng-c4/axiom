@@ -110,31 +110,31 @@ llm_protocol:
       command_template: "lumen spec gen --lang {lang} --out {out}"
       verification: ["Confirm generated client source is produced from the canonical OpenAPI document."]
     - id: authenticate
-      use_when: "configure bearer-token access or inspect the token registry shape"
+      use_when: "check which request identity a Lumen server accepts before wiring a client"
       requires: []
-      reads: ["lumen spec --format json-schema"]
-      produces: ["auth configuration"]
+      reads: ["lumen spec --format openapi"]
+      produces: ["request-identity decision"]
       risk: inspect
-      purpose: "Read the operational token-registry schema before creating secrets or client headers."
-      preconditions: ["Know the intended collection and minimum role."]
+      purpose: "Read the canonical security scheme: Lumen accepts a short-lived, audience-bound Kubernetes ServiceAccount identity and nothing else."
+      preconditions: ["Know which serving instance's auth mode you are targeting."]
       inputs: []
-      constraints: ["Never put a bearer token in a generated runbook or committed client source."]
-      instruction: "Read the token-registry schema."
-      command: "lumen spec --format json-schema"
-      verification: ["Confirm the selected role covers only the intended collection scope."]
+      constraints: ["The CLI carries no credential — no flag, no environment variable, no Secret lookup — and a Google user, service-account, or metadata credential is refused outright."]
+      instruction: "Read the canonical security scheme from the OpenAPI document."
+      command: "lumen spec --format openapi"
+      verification: ["Confirm the security scheme names a Kubernetes ServiceAccount identity and no other credential type."]
     - id: connect-kubernetes
       use_when: "run a command through a temporary Kubernetes port-forward"
       requires: ["kubectl access to the target namespace and service."]
       reads: ["lumen connect --help"]
-      produces: ["authenticated local connection"]
+      produces: ["local connection"]
       risk: remote_write
-      purpose: "Use lumen connect so port-forward lifecycle and bearer-token lookup are bounded to one command."
+      purpose: "Use lumen connect so the port-forward lifecycle is bounded to one command; the wrapped command is handed a URL and nothing else."
       preconditions: ["Resolve the target namespace and service name."]
       inputs:
         - { name: namespace, type: string, description: "Kubernetes namespace", required: true }
         - { name: service, type: string, description: "Lumen service name", required: true }
         - { name: command, type: command, description: "wrapped local command", required: true }
-      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically."]
+      constraints: ["The wrapped command is explicit; LLM navigation does not execute it automatically.", "The forwarded connection carries no credential; the wrapped command receives LUMEN_URL and no identity."]
       instruction: "Run an explicit client command through the temporary port-forward."
       command_template: "lumen connect --namespace {namespace} --service {service} -- {command}"
       verification: ["Confirm the wrapped command observes LUMEN_URL and terminates with the port-forward."]
@@ -155,11 +155,11 @@ llm_protocol:
       verification: ["Confirm the rendered artifact corresponds to exactly one deployment layer."]
     - id: backup-restore
       use_when: "create or restore an administrative Lumen snapshot"
-      requires: ["Admin authorization and a supported backup destination."]
+      requires: ["An admin-reachable Lumen URL and a supported backup destination."]
       reads: ["lumen backup --help"]
       produces: ["backup or restore evidence"]
       risk: remote_write
-      purpose: "Use the admin backup surface with an admin bearer token; a local snapshot is not a replacement for scheduled object storage backups."
+      purpose: "Use the admin backup surface; a local snapshot is not a replacement for scheduled object storage backups."
       preconditions: ["Confirm the destination URI and retention policy."]
       inputs:
         - { name: url, type: url, description: "Lumen base URL", required: true }
@@ -190,7 +190,7 @@ llm_protocol:
       produces: ["diagnostic evidence"]
       risk: inspect
       purpose: "Start with the standard operational surface; do not infer liveness from a data-plane request."
-      preconditions: ["Identify whether a bearer token is required for the collection listing."]
+      preconditions: ["Identify the serving instance's auth mode; the CLI has no credential to add if it refuses anonymous reads."]
       inputs:
         - { name: url, type: url, description: "Lumen base URL", required: true }
       constraints: ["Readiness and liveness are separate signals; do not treat a 200 healthz as write readiness."]

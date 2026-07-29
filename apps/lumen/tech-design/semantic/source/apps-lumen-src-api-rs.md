@@ -753,7 +753,14 @@ impl Modify for SecurityAddon {
                         .scheme(HttpAuthScheme::Bearer)
                         .bearer_format("opaque")
                         .description(Some(
-                            "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`.",
+                            "A short-lived, audience-bound Kubernetes ServiceAccount token, \
+                             obtained from the TokenRequest API. There is no configurable \
+                             credential source and no static token to issue: the verifier that \
+                             resolves this header through TokenReview/SubjectAccessReview has not \
+                             landed yet, so `auth: required` currently refuses to start and \
+                             `auth: disabled` ignores the header entirely. A Google access token, \
+                             ID token, ADC credential, or metadata-server token is never accepted \
+                             here.",
                         ))
                         .build(),
                 ),
@@ -780,10 +787,7 @@ impl MetricsProvider for Engine {
 /// This is used by the access log to include subject information in per-request logs.
 /// Called after auth_middleware, so AuthContext is already in the extensions.
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
-async fn record_subject_to_span(
-    req: Request,
-    next: Next,
-) -> axum::response::Response {
+async fn record_subject_to_span(req: Request, next: Next) -> axum::response::Response {
     // Record subject to the current span for inclusion in access logs.
     // If AuthContext exists in extensions, use its subject; otherwise use "anonymous".
     let subject = req
