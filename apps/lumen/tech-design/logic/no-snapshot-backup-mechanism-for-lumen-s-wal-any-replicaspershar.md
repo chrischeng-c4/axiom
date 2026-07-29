@@ -36,8 +36,7 @@ nodes:
   has_backup:   { kind: decision, label: "spec.serving.backup set?" }
   no_cronjob:   { kind: process,  label: "no CronJob rendered — lumen llm storage documents the manual /admin/backup procedure" }
   build_cronjob: { kind: process, label: "backup_cron_job(): batch/v1 CronJob '<name>-backup' via shared service_k8s::render::cron_job, schedule=policy.schedule, args=[backup, --url, http://<name>.<ns>.svc.cluster.local:7373, --dest, policy.destination, --retention-secs?]" }
-  token_env:    { kind: decision, label: "adminTokenSecret set?" }
-  with_token:   { kind: process,  label: "add container env LUMEN_BACKUP_TOKEN <- secretKeyRef(adminTokenSecret, key=token)" }
+  id_audiences: { kind: process,  label: "container env LUMEN_AUTH_GOOGLE_AUDIENCES = spec.identityAudiences (when set; #2764 retired adminTokenSecret)" }
   render_emit:  { kind: terminal, label: "render() returns full object set (+ optional backup CronJob)" }
   cron_fire:    { kind: process,  label: "Kubernetes CronJob fires a Job on schedule" }
   cli_start:    { kind: start,    label: "lumen backup --url <base> --dest <uri> [--token] [--retention-secs]" }
@@ -48,10 +47,8 @@ edges:
   - { from: render_start,  to: has_backup }
   - { from: has_backup,    to: no_cronjob,    label: "no" }
   - { from: has_backup,    to: build_cronjob, label: "yes" }
-  - { from: build_cronjob, to: token_env }
-  - { from: token_env,     to: with_token,    label: "yes" }
-  - { from: token_env,     to: render_emit,   label: "no" }
-  - { from: with_token,    to: render_emit }
+  - { from: build_cronjob, to: id_audiences }
+  - { from: id_audiences,  to: render_emit }
   - { from: no_cronjob,    to: render_emit }
   - { from: render_emit,   to: cron_fire,     label: "only when the CronJob was rendered" }
   - { from: cron_fire,     to: cli_start }
@@ -63,10 +60,8 @@ flowchart TD
     render_start([render lumen serving fleet, post-#812]) --> has_backup{spec.serving.backup set?}
     has_backup -->|no| no_cronjob[no CronJob; lumen llm storage documents manual /admin/backup procedure]
     has_backup -->|yes| build_cronjob["backup_cron_job(): CronJob '<name>-backup' via service_k8s::render::cron_job(schedule, args=[backup --url http://<name>.<ns>.svc:7373 --dest <destination> [--retention-secs]])"]
-    build_cronjob --> token_env{adminTokenSecret set?}
-    token_env -->|yes| with_token[env LUMEN_BACKUP_TOKEN <- secretKeyRef]
-    token_env -->|no| render_emit([render emits full object set + optional CronJob])
-    with_token --> render_emit
+    build_cronjob --> id_audiences["env LUMEN_AUTH_GOOGLE_AUDIENCES = spec.identityAudiences (when set; #2764 retired adminTokenSecret)"]
+    id_audiences --> render_emit([render emits full object set + optional CronJob])
     no_cronjob --> render_emit
     render_emit --> cron_fire[k8s CronJob fires a Job on schedule]
     cron_fire --> cli_start([lumen backup --url --dest --token? --retention-secs?])
@@ -100,9 +95,9 @@ requirements:
     kind: behavior
     risk: medium
     verify: test
-  retention_and_token_wired_on_cronjob:
+  identity_audiences_wired_on_cronjob:
     id: R4
-    text: "retentionSecs (when set) appears as --retention-secs on the CronJob container args, and adminTokenSecret (when set) appears as a LUMEN_BACKUP_TOKEN env var sourced via secretKeyRef."
+    text: "retentionSecs (when set) appears as --retention-secs on the CronJob container args, and spec.identityAudiences (when set) appears as a LUMEN_AUTH_GOOGLE_AUDIENCES env var. The deprecated adminTokenSecret field is no-op for backward compatibility (#2764)."
     kind: behavior
     risk: medium
     verify: test
@@ -208,7 +203,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add a backup_cron_job(lumen) -> Option<Value> function using the shared service_k8s::render::cron_job helper; when spec.serving.backup is set it renders a batch/v1 CronJob named '<name>-backup' on the configured schedule with a container invoking `lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 --dest <destination> [--retention-secs <n>]`, adding a LUMEN_BACKUP_TOKEN env sourced via secretKeyRef when admin_token_secret is set; render() pushes this object (via .into_iter().chain / conditional push) only when Some."
+    description: "Add a backup_cron_job(lumen) -> Option<Value> function using the shared service_k8s::render::cron_job helper; when spec.serving.backup is set it renders a batch/v1 CronJob named '<name>-backup' on the configured schedule with a container invoking `lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 --dest <destination> [--retention-secs <n>]`, setting LUMEN_AUTH_GOOGLE_AUDIENCES env from spec.identityAudiences when configured (enabling GKE Workload Identity token fetch); the deprecated admin_token_secret field is no-op for backward compatibility (#2764); render() pushes this object (via .into_iter().chain / conditional push) only when Some."
   - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md
     action: modify
     section: source
@@ -253,7 +248,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add Command::Backup(BackupArgs) with --url, --dest, --token (env LUMEN_BACKUP_TOKEN), --retention-secs; add a dispatch_backup twin-impl (#[cfg(feature = \"backup\")] real impl calling lumen::backup::run_backup and printing the BackupRunResult as JSON; #[cfg(not(feature = \"backup\"))] fallback that bails with a message to rebuild with --features backup, matching the run_operator/crd_yaml pattern); wire a new match arm in main()."
+    description: "Add Command::Backup(BackupArgs) with --url, --dest, --token (optional bearer token, fallback to LUMEN_AUTH_GOOGLE_AUDIENCES for GKE Workload Identity), --retention-secs; add a dispatch_backup twin-impl (#[cfg(feature = \"backup\")] real impl calling lumen::backup::run_backup and printing the BackupRunResult as JSON; #[cfg(not(feature = \"backup\"))] fallback that bails with a message to rebuild with --features backup, matching the run_operator/crd_yaml pattern); wire a new match arm in main()."
   - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md
     action: modify
     section: source
@@ -263,7 +258,7 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Add tests asserting no CronJob is rendered when serving.backup is None (existing fixtures), and that setting serving.backup renders exactly one batch/v1 CronJob named '<name>-backup' with the configured schedule, --dest/--retention-secs args, and a LUMEN_BACKUP_TOKEN env from secretKeyRef when adminTokenSecret is set."
+    description: "Add tests asserting no CronJob is rendered when serving.backup is None (existing fixtures), and that setting serving.backup renders exactly one batch/v1 CronJob named '<name>-backup' with the configured schedule, --dest/--retention-secs args, and LUMEN_AUTH_GOOGLE_AUDIENCES env when spec.identityAudiences is set (Workload Identity identity token fetch; #2764)."
   - path: apps/lumen/tests/spec_cli.rs
     action: modify
     section: unit-test

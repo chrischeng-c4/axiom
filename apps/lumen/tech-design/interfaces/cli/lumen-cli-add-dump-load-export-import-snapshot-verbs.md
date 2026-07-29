@@ -54,7 +54,7 @@ id: lumen-cli-snapshot-data-movement-contract
 entry: start
 nodes:
   start: { kind: start, label: "lumen <dump|export|load|import>" }
-  token: { kind: process, label: "token = --token or LUMEN_BACKUP_TOKEN; omitted when auth off" }
+  token: { kind: process, label: "token = --token, else metadata identity token when LUMEN_AUTH_GOOGLE_AUDIENCES is set; omitted when auth off" }
   verb: { kind: decision, label: "verb class" }
   dump: { kind: process, label: "dump/export: GET {url}/admin/backup with optional Bearer token" }
   dump_ok: { kind: decision, label: "2xx?" }
@@ -88,7 +88,7 @@ edges:
   - { from: restore_ok, to: restored, label: "yes" }
 ---
 flowchart TD
-    start([lumen dump/export/load/import]) --> token[token = --token or LUMEN_BACKUP_TOKEN]
+    start([lumen dump/export/load/import]) --> token[token = --token, else metadata token via LUMEN_AUTH_GOOGLE_AUDIENCES]
     token --> verb{verb class}
     verb -->|dump/export| dump[GET /admin/backup]
     dump --> dump_ok{2xx?}
@@ -138,7 +138,7 @@ requirements:
     verify: test
   token_fallback:
     id: R5
-    text: "The new verbs expose `--token` with `LUMEN_BACKUP_TOKEN` fallback like `backup`."
+    text: "The new verbs expose `--token`; when it is omitted they share `backup`'s `resolve_admin_token`, which fetches a metadata-server identity token whenever `LUMEN_AUTH_GOOGLE_AUDIENCES` is set (GKE Workload Identity) and otherwise sends no Authorization header (see lumen llm --topic authenticate). `LUMEN_TOKEN` is the env fallback for the query/connect verbs only."
     kind: functional
     risk: medium
     verify: test
