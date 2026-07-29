@@ -285,10 +285,22 @@ impl TypeChecker {
                 // inferred type of val.
                 if let Expr::Ident(name) = &target.node {
                     let current_scope = self.symbols.current_scope_idx();
+                    let is_active_local = self
+                        .function_scope_stack
+                        .last()
+                        .copied()
+                        == Some(current_scope);
                     if self.symbols.lookup_in_scope(current_scope, name).is_none()
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
+                        self.check_n3_l1_local_binding_inference(
+                            name,
+                            target.span,
+                            value,
+                            value_ty,
+                            is_active_local,
+                        );
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, value_ty);
                         self.set_builtin_class_alias(sym, builtin_class_alias);
@@ -403,6 +415,18 @@ impl TypeChecker {
                         );
                         self.set_builtin_class_alias(symbol, builtin_class_alias);
                         if self.inferred_local_placeholders.remove(&symbol) {
+                            let is_active_local = self
+                                .function_scope_stack
+                                .last()
+                                .copied()
+                                == Some(self.symbols.current_scope_idx());
+                            self.check_n3_l1_local_binding_inference(
+                                name,
+                                target.span,
+                                value,
+                                value_ty,
+                                is_active_local,
+                            );
                             self.set_sym_type(symbol.0, value_ty);
                             return;
                         }

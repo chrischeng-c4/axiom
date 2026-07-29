@@ -45,6 +45,28 @@ impl DeclaredType {
         }
     }
 
+    /// Construct a `DeclaredType` for an omitted annotation with successful inference.
+    pub(crate) fn from_inferred(inference_path: impl Into<String>, normalized: TypeId) -> Self {
+        Self {
+            source: SourceAnnotation::Omitted,
+            normalized: Some(normalized),
+            provenance: TypeProvenance::Inferred {
+                inference_path: inference_path.into(),
+            },
+        }
+    }
+
+    /// Construct a `DeclaredType` for an omitted annotation with failed inference.
+    pub(crate) fn from_implicit_unknown(inference_path: impl Into<String>) -> Self {
+        Self {
+            source: SourceAnnotation::Omitted,
+            normalized: None,
+            provenance: TypeProvenance::ImplicitUnknown {
+                inference_path: inference_path.into(),
+            },
+        }
+    }
+
     pub fn source(&self) -> &SourceAnnotation {
         &self.source
     }
@@ -114,5 +136,31 @@ mod tests {
         let int_syntax = Spanned::new(TypeExpr::Named("int".to_string()), dummy_span);
         let decl_int = DeclaredType::from_authored(int_syntax, Some(TypeId(2)));
         assert_eq!(*decl_int.provenance(), TypeProvenance::Explicit);
+    }
+
+    #[test]
+    fn test_declared_type_inferred_invariants() {
+        let decl = DeclaredType::from_inferred("local_binding -> list_literal", TypeId(42));
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), Some(TypeId(42)));
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "local_binding -> list_literal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_declared_type_implicit_unknown_invariants() {
+        let decl = DeclaredType::from_implicit_unknown("local_binding -> list_literal -> element");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "local_binding -> list_literal -> element".to_string()
+            }
+        );
     }
 }
