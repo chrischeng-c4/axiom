@@ -307,6 +307,46 @@ not merely from `current_class` or normalized `list[Any]`. Method bodies are
 active function-local scopes even though a class scope remains on the outer
 stack.
 
+#### N3-P1 — empty-collection regular-parameter default
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/parameter.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/parameter.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to a regular parameter whose source annotation is omitted and
+  whose authored default expression is an empty list literal;
+- classify that parameter as
+  `ImplicitUnknown { inference_path:
+  "parameter -> default -> list_literal -> element" }`;
+- store the failed omitted declaration at the parameter source span with
+  `normalized = None`;
+- emit one stable compile error naming parameter `items`, its source span, and
+  the exact inference path;
+- retain the existing entry ABI recovery type only after the required error;
+- infer a non-empty homogeneous list default as `Inferred` with path
+  `parameter -> default -> list_literal` and its concrete normalized list
+  element type;
+- let `items: Any = []` continue through the N2 authored path as
+  `ExplicitAny`;
+- preserve completed local/global/class binding behavior while leaving
+  parameters without defaults, positional-only and keyword-only parameter
+  variants, `*args`, `**kwargs`, lambdas, returns, comprehensions, expression
+  joins, and N4 propagation unchanged.
+
+This first parameter slice must derive the decision from source annotation
+presence, regular-parameter kind, and default syntax. It must not reject every
+omitted parameter, inspect normalized `Ty::Any` as authorization evidence, or
+infer a caller-specific type from one call site.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
