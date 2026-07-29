@@ -1,0 +1,178 @@
+# Type normalization
+
+Status: approved domain direction for WI #2011.
+
+This design separates two facts that the current compiler representation
+conflates:
+
+1. the normalized type used by checking and lowering; and
+2. the source provenance that licensed that type.
+
+`Any` is a normalized type. It is not evidence that the author requested a
+dynamic boundary.
+
+## Bounded context
+
+The **Type Normalization** bounded context begins at parsed source type syntax
+and ends at a `DeclaredType` that the checker and lowering layers may consume.
+It does not decide whether two types are compatible and it does not implement
+runtime dynamic-boundary enforcement.
+
+Upstream:
+
+- the parser supplies source annotation presence and syntax;
+- inference supplies an inferred type only when a declaration is absent.
+
+Downstream:
+
+- the type checker consumes the normalized type plus provenance;
+- HIR signature metadata preserves authored annotations for introspection;
+- ABI selection consumes the normalized type, never reconstructing provenance
+  from `Ty::Any`;
+- dynamic-boundary work in #2007 consumes explicit-Any provenance after #2011.
+
+## Ubiquitous language
+
+| Term | Meaning |
+|---|---|
+| `SourceAnnotation` | The exact source fact: omitted or authored syntax with its span. |
+| `NormalizedType` | A checker-local `TypeId` produced from authored syntax or valid inference. |
+| `TypeProvenance` | Why the normalized type exists; never inferred from the normalized type itself. |
+| `DeclaredType` | Aggregate containing source annotation, normalized type, and provenance. |
+| `ExplicitAny` | The author wrote `Any` or an accepted qualified spelling that normalizes to `Any`. |
+| `ImplicitUnknown` | No valid authored or inferred type exists. This is a compile error under #2011. |
+| `DynamicBoundary` | A boundary explicitly licensed by `ExplicitAny`; tracked downstream by #2007. |
+
+## Aggregate and value objects
+
+`DeclaredType` is the aggregate root:
+
+```text
+DeclaredType
+├── source: SourceAnnotation
+│   ├── Omitted
+│   └── Authored { syntax, span }
+├── normalized: Option<TypeId>
+└── provenance: TypeProvenance
+    ├── Explicit
+    ├── ExplicitAny
+    ├── Inferred { inference_path }
+    └── ImplicitUnknown { inference_path }
+```
+
+The concrete Rust shape may differ, but it must make these states
+unrepresentable or reject them at construction:
+
+- `Omitted + ExplicitAny`;
+- `Authored(Any) + Inferred`;
+- `ImplicitUnknown + Some(TypeId)`;
+- a dynamic-boundary license derived only from `normalized == Ty::Any`.
+
+`TypeId` remains checker-local as required by
+[ARCHITECTURE.md](./ARCHITECTURE.md). Provenance is semantic data, not a
+persisted `TypeId`.
+
+## Normalization rules
+
+| Source fact | Normalized result | Provenance | Terminal rule |
+|---|---|---|---|
+| authored concrete annotation | resolved `TypeId` | `Explicit` | checker consumes normally |
+| authored `Any` or accepted qualified `typing.Any` | `Ty::Any` | `ExplicitAny` | dynamic behavior is licensed |
+| omitted annotation with successful inference | inferred `TypeId` | `Inferred` | checker consumes normally |
+| omitted annotation with failed inference | none | `ImplicitUnknown` | stable compile error |
+| unresolved authored type | none or error type | `Explicit` | stable compile error; never becomes explicit Any |
+
+Normalization may canonicalize spelling, aliases, union ordering, or equivalent
+type syntax. It must not erase source presence or manufacture authorization.
+
+## Domain invariants
+
+1. **Presence is parsed, not reconstructed.** The parser records whether an
+   annotation token existed. No downstream layer may compare rendered text to
+   `"Any"` to decide whether the annotation was omitted.
+2. **Normalization is many-to-one; provenance is not.** `Any` and
+   `typing.Any` may share one normalized `TypeId`, while both retain
+   `ExplicitAny`. Omitted syntax never joins that provenance class.
+3. **Inference never licenses a dynamic boundary.** Even if an internal
+   recovery type is `Ty::Any`, its provenance remains inferred or unknown.
+4. **Unknown fails closed.** When a required type cannot be inferred or
+   resolved, #2011 produces a compile diagnostic naming the binding, source
+   span, and inference path.
+5. **ABI and introspection are separate consumers.** Entry representation may
+   be boxed for ABI reasons without becoming explicit Any. Introspection emits
+   an annotation only when source syntax was authored.
+6. **No process-global registry.** Provenance lives in parser/checker/HIR data
+   owned by one compilation/execution context.
+
+## Current representation defect
+
+`parser::ast::Param` currently claims a mandatory `ty` and parser paths insert
+`TypeExpr::Named("Any")` when a parameter has no annotation. Authored
+`x: Any` produces the same node. `lower::ast_to_hir::annotation_repr_opt` then
+turns every textual `"Any"` into `None`, and ABI selection uses the same bare
+node as a proxy for “truly unannotated”.
+
+That destroys the fact #2011 needs before checking begins. Fixing checker rules
+without first preserving presence would turn policy into string heuristics and
+would make #2007 provenance unsound.
+
+## Ordered implementation slices
+
+### N1 — preserve function annotation presence
+
+Owner: AGY for all `projects/mamba/src/**` edits.
+
+- Give parsed function parameters an explicit annotation-presence
+  representation; do not use an `Any` filler to represent omission.
+- Preserve authored `Any` through HIR signature metadata while omitted
+  annotations remain absent.
+- Make lowering/ABI decisions query presence explicitly, not rendered text.
+- Cover regular, positional-only, keyword-only, `*args`, `**kwargs`, lambda,
+  decorated, method, and generator parameter shapes.
+- Preserve current entry ABI and runtime behavior in this slice.
+
+N1 is structural provenance only. It must not globally reject unannotated
+parameters and must not implement the later seven-family Force Typed wall.
+
+### N2 — normalize authored type syntax
+
+- Construct `DeclaredType` from authored syntax.
+- Canonicalize accepted `Any` spellings to `ExplicitAny`.
+- Keep unresolved authored types distinct from `ExplicitAny`.
+- Add checker-local construction and invariant tests.
+
+### N3 — infer or reject omitted binding types
+
+- Run inference only for `SourceAnnotation::Omitted`.
+- Emit stable `ImplicitUnknown` diagnostics when inference fails.
+- Split implementation tickets by the #2011 ingress families:
+  local binding, global binding, class attribute, parameter, return,
+  comprehension, and expression join.
+
+### N4 — propagate explicit Any to dynamic walls
+
+- Expose provenance to the boundary model owned by #2007.
+- Prove that explicit Any stays usable and implicit unknown cannot cross the
+  same boundary.
+
+## N1 acceptance contract
+
+N1 is green only when all of the following hold:
+
+- parser-level tests distinguish `def f(x): ...` from
+  `def f(x: Any): ...` without consulting rendered type text;
+- the distinction covers regular, positional-only, keyword-only, `*args`,
+  `**kwargs`, lambda, method, decorated, and generator parameters;
+- HIR signature metadata reports `None` for omitted annotations and `"Any"`
+  for authored Any;
+- no N1 production branch decides annotation presence with
+  `type_expr_repr(...) == "Any"`, `Named("Any")`, or normalized
+  `TypeId == tcx.any()`;
+- focused parser/lowering/driver tests pass;
+- the existing unannotated-function runtime probes selected by AGY remain
+  byte-identical, proving this structural slice did not change entry ABI;
+- no global lock or process-global provenance map is introduced.
+
+The controller independently reviews the complete diff and re-runs the focused
+gates before accepting the ticket. AGY reports evidence but never closes the
+issue.
