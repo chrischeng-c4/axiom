@@ -23,7 +23,7 @@
     {
       "assertion_count": 18,
       "assertions_digest": "sha256:1afa4909dc1bba074113f3db3a06a56d5c23e756bdaaf59c4c5ff4dbbe87d814",
-      "elapsed_ms": 2904,
+      "elapsed_ms": 1884,
       "exit_code": 0
     }
   ],

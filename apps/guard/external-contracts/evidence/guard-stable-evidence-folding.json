@@ -26,13 +26,13 @@
     {
       "assertion_count": 21,
       "assertions_digest": "sha256:92343b543524ca1c3a8faad9aeb61f6daaf0bbf3f83722da2b635231f02134fb",
-      "elapsed_ms": 1766,
+      "elapsed_ms": 3561,
       "exit_code": 0
     }
   ],
   "case_id": "guard-stable-evidence-folding",
   "exit_code": 0,
-  "implementation": "apps/guard/external-contracts/src/cases/guard-stable-evidence-folding.py",
+  "implementation": "apps/guard/external-contracts/src/evidence/stable-evidence-folding.py",
   "mode": "stability",
   "protocol": "aw.python-ec.evidence.v1"
 }
