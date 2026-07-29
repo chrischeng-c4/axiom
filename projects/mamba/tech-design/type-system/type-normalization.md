@@ -191,6 +191,8 @@ independent; no ticket may claim the whole family from a generic
 
 #### N3-L1 — empty-collection local binding
 
+Completed by #2923 (`b5011e0abc`).
+
 Authoritative pair:
 
 - negative:
