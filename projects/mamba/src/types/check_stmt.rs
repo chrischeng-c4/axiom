@@ -1,4 +1,4 @@
-use super::check::{BindingScope, ClassPatternTarget, TypeChecker};
+use super::check::{ClassPatternTarget, TypeChecker};
 use super::generic::{check_bounds, infer_type_args, GenericParams};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
@@ -285,21 +285,7 @@ impl TypeChecker {
                 // inferred type of val.
                 if let Expr::Ident(name) = &target.node {
                     let current_scope = self.symbols.current_scope_idx();
-                    let is_active_local = self
-                        .function_scope_stack
-                        .last()
-                        .copied()
-                        == Some(current_scope);
-                    let is_module_scope = current_scope == 0
-                        && self.class_scope_stack.is_empty()
-                        && self.function_scope_stack.is_empty();
-                    let binding_scope = if is_active_local {
-                        BindingScope::Local
-                    } else if is_module_scope {
-                        BindingScope::Global
-                    } else {
-                        BindingScope::Other
-                    };
+                    let binding_scope = self.current_binding_scope();
                     if self.symbols.lookup_in_scope(current_scope, name).is_none()
                         || self.is_unshadowed_builtin(name)
                     {
@@ -425,16 +411,7 @@ impl TypeChecker {
                         );
                         self.set_builtin_class_alias(symbol, builtin_class_alias);
                         if self.inferred_local_placeholders.remove(&symbol) {
-                            let is_active_local = self
-                                .function_scope_stack
-                                .last()
-                                .copied()
-                                == Some(self.symbols.current_scope_idx());
-                            let binding_scope = if is_active_local {
-                                BindingScope::Local
-                            } else {
-                                BindingScope::Other
-                            };
+                            let binding_scope = self.current_binding_scope();
                             self.check_n3_list_binding_inference(
                                 name,
                                 target.span,

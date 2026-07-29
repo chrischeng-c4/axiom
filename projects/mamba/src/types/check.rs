@@ -154,6 +154,7 @@ pub(crate) enum ClassPatternTarget {
 pub(crate) enum BindingScope {
     Local,
     Global,
+    ClassAttribute,
     Other,
 }
 
@@ -3420,6 +3421,22 @@ impl TypeChecker {
         self.declared_types.insert(span, decl);
     }
 
+    pub(crate) fn current_binding_scope(&self) -> BindingScope {
+        let current_scope = self.symbols.current_scope_idx();
+        if self.function_scope_stack.last().copied() == Some(current_scope) {
+            BindingScope::Local
+        } else if self.class_scope_stack.last().copied() == Some(current_scope) {
+            BindingScope::ClassAttribute
+        } else if current_scope == 0
+            && self.class_scope_stack.is_empty()
+            && self.function_scope_stack.is_empty()
+        {
+            BindingScope::Global
+        } else {
+            BindingScope::Other
+        }
+    }
+
     pub(crate) fn check_n3_list_binding_inference(
         &mut self,
         name: &str,
@@ -3428,9 +3445,10 @@ impl TypeChecker {
         value_ty: TypeId,
         scope: BindingScope,
     ) {
-        let (prefix, scope_name) = match scope {
-            BindingScope::Local => ("local_binding", "local"),
-            BindingScope::Global => ("global_binding", "global"),
+        let (prefix, scope_desc) = match scope {
+            BindingScope::Local => ("local_binding", "local binding"),
+            BindingScope::Global => ("global_binding", "global binding"),
+            BindingScope::ClassAttribute => ("class_attribute", "class attribute"),
             BindingScope::Other => return,
         };
         if let Expr::ListLit(elems) = &value.node {
@@ -3440,7 +3458,7 @@ impl TypeChecker {
                 self.record_declared_type(target_span, decl);
                 self.error(
                     target_span,
-                    format!("cannot infer type for {scope_name} binding `{name}`: {path}"),
+                    format!("cannot infer type for {scope_desc} `{name}`: {path}"),
                 );
             } else if let Ty::List(elem_ty) = self.tcx.get(value_ty) {
                 if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
@@ -5909,9 +5927,97 @@ mod tests {
     }
 
     #[test]
-    fn test_n3_g1_class_scope_negative_control() {
+    fn test_n3_c1_negative_class_empty_list_inference_failure() {
         use crate::source::span::FileId;
         let src = "class C:\n    items = []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for class attribute `items`: class_attribute -> list_literal -> element"));
+
+        let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "class_attribute -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_c1_explicit_class_any_acceptance() {
+        use crate::source::span::FileId;
+        let src = "from typing import Any\nclass C:\n    items: Any = []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::ClassDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::VarDecl { ty, .. } = &body[0].node else { panic!() };
+        let decl = checker
+            .get_declared_type(ty.span)
+            .expect("explicit annotation aggregate recorded");
+        assert!(matches!(decl.source(), SourceAnnotation::Authored(_)));
+        assert_eq!(decl.normalized(), Some(checker.tcx.any()));
+        assert_eq!(*decl.provenance(), TypeProvenance::ExplicitAny);
+    }
+
+    #[test]
+    fn test_n3_c1_non_empty_homogeneous_class_list_inference() {
+        use crate::source::span::FileId;
+        let src = "class C:\n    items = [1, 2]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &body[0].node else { panic!() };
+        let int_ty = checker.tcx.int();
+        let expected_list = checker.tcx.intern(Ty::List(int_ty));
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), Some(expected_list));
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "class_attribute -> list_literal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_c1_method_local_vs_class_scope() {
+        use crate::source::span::FileId;
+        let src = "class C:\n    def m(self) -> None:\n        items = []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for local binding `items`: local_binding -> list_literal -> element"));
+
+        let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::FnDef { body: method_body, .. } = &body[0].node else { panic!() };
+        let Stmt::Assign { target, .. } = &method_body[0].node else { panic!() };
+        let decl = checker.get_declared_type(target.span).expect("aggregate recorded at target span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "local_binding -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_c1_instance_attribute_negative_control() {
+        use crate::source::span::FileId;
+        let src = "class C:\n    def __init__(self) -> None:\n        self.items = []\n";
         let module = crate::parser::parse(src, FileId(0)).unwrap();
         let mut checker = TypeChecker::new();
         let errors = checker.check_module(&module);
