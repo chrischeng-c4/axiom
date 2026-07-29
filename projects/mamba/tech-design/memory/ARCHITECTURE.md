@@ -4,6 +4,8 @@ Scope: value representation, refcount contracts, cycle GC, escape analysis, and 
 JIT-emitted refcount protocol. Fix-family hazards in this directory
 (`object-lifetime.md` §Escape analysis licenses GC-tracking elision,
 §With-protocol refcount contract) are cross-referenced, not restated.
+Ownership-violation evidence and its four-part detector / control / balance /
+audit model live in `ownership-violation-evidence.md`.
 
 ## Responsibilities
 
@@ -59,6 +61,10 @@ JIT-emitted refcount protocol. Fix-family hazards in this directory
 - **`NEG_CANON_NAN == from_ptr(null)`** (value.rs:47-55). WHY: boxing a null pointer would create a value indistinguishable from a float NaN.
 - **Wrong `NonEscaping` is a delayed-symptom bug class** — untracked ctors don't crash at alloc; corruption surfaces as hang/SIGTRAP in unrelated fixtures. Bisect with repeated sampling (intermittency defeats single-sample bisects — 1627 lesson).
 - **rc is not a valid signal mid-dealloc** — both `mb_release` and GC sweep stamp IMMORTAL before cascading; code reading rc during teardown sees u32::MAX.
+- **A green crash reproducer is not ownership evidence by itself** — an extra
+  retain can convert a double-release into a leak. Consumer fixes use the
+  detector, positive control, leak balance, and site-count reconciliation in
+  `ownership-violation-evidence.md`.
 
 ## Extension points
 

@@ -1294,12 +1294,19 @@ static UAF_DETECTOR_ARMED: std::sync::atomic::AtomicBool =
 static UAF_DETECTOR_ENV_CHECKED: std::sync::Once = std::sync::Once::new();
 
 #[cfg(debug_assertions)]
+fn parse_uaf_detector_env(val: Option<&str>) -> bool {
+    match val {
+        Some(v) => v != "0" && !v.is_empty(),
+        None => false,
+    }
+}
+
+#[cfg(debug_assertions)]
 fn uaf_detector_armed() -> bool {
     UAF_DETECTOR_ENV_CHECKED.call_once(|| {
-        if let Ok(v) = std::env::var("MAMBA_UAF_DETECTOR") {
-            if v != "0" && !v.is_empty() {
-                UAF_DETECTOR_ARMED.store(true, Ordering::Relaxed);
-            }
+        let env_val = std::env::var("MAMBA_UAF_DETECTOR").ok();
+        if parse_uaf_detector_env(env_val.as_deref()) {
+            UAF_DETECTOR_ARMED.store(true, Ordering::Relaxed);
         }
     });
     UAF_DETECTOR_ARMED.load(Ordering::Relaxed)
@@ -1810,6 +1817,57 @@ mod tests {
             let bad_ptr = (obj as *mut u8).add(1) as *mut MbObject;
             mb_release(bad_ptr); // must panic via debug_validate_obj, not silently proceed
         }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_env_decision() {
+        assert!(!parse_uaf_detector_env(None));
+        assert!(!parse_uaf_detector_env(Some("")));
+        assert!(!parse_uaf_detector_env(Some("0")));
+        assert!(parse_uaf_detector_env(Some("1")));
+        assert!(parse_uaf_detector_env(Some("false")));
+        assert!(parse_uaf_detector_env(Some("enabled")));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_monotonic_force_arm() {
+        force_arm_uaf_detector();
+        assert!(uaf_detector_armed());
+        force_arm_uaf_detector();
+        assert!(uaf_detector_armed());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_uaf_detector_caught_panic_attribution() {
+        force_arm_uaf_detector();
+        set_current_test_name("test_uaf_detector_caught_panic_attribution");
+        let res = std::panic::catch_unwind(|| unsafe {
+            let dummy = 0x12345677 as *mut MbObject;
+            mb_retain(dummy);
+        });
+        assert!(
+            res.is_err(),
+            "expected panic from misaligned pointer in mb_retain"
+        );
+        let err = res.unwrap_err();
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&'static str>().map(|s| s.to_string()))
+            .expect("panic payload should be a string");
+        assert!(
+            msg.contains("mb_retain"),
+            "expected 'mb_retain' in panic msg, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("[test=test_uaf_detector_caught_panic_attribution]"),
+            "expected test identity in panic msg, got: {}",
+            msg
+        );
     }
 
     #[test]
