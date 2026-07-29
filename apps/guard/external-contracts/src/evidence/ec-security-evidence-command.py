@@ -4,6 +4,8 @@ from guard_contract import (
     AdapterOutcome,
     assert_dynamic_evidence,
     assert_finding,
+    fixture,
+    run_guard,
     run_dynamic_adapters,
 )
 
@@ -119,5 +121,45 @@ def verify() -> list[str]:
             "a non-clean zero-finding report fails closed while preserving zero findings",
             "process exit, report clean state, and finding count remain independent",
         ]
+    )
+    malformed_commands = {
+        "empty": "true",
+        "object": "printf '%s' '{}'",
+        "findings-only": (
+            "printf '%s' '{\"schema_version\":\"rig.report/1\","
+            "\"findings\":[{\"id\":\"x\"}]}'"
+        ),
+        "contradictory": (
+            "printf '%s' '{\"schema_version\":\"rig.report/1\","
+            "\"clean\":true,\"summary\":{\"total\":0},"
+            "\"findings\":[{\"id\":\"x\"}]}'"
+        ),
+        "countless-clean": (
+            "printf '%s' '{\"schema_version\":\"rig.report/1\",\"clean\":true}'"
+        ),
+    }
+    for label, command in malformed_commands.items():
+        with fixture({"safe.js": "const answer = 42;\n"}) as root:
+            _, malformed = run_guard(
+                [
+                    "scan",
+                    str(root),
+                    "--rig-command",
+                    command,
+                    "--compact",
+                    "--no-persist",
+                ],
+                expected_exit_codes={1},
+            )
+        assert_scan = malformed["summary"]
+        if (
+            malformed["status"].get("state") != "findings"
+            or malformed["exit_code"] != 1
+            or assert_scan.get("evidence_failed") != 1
+        ):
+            raise AssertionError(f"{label} evidence did not fail closed: {malformed!r}")
+        assert_finding(malformed, rule="RIG-EVIDENCE")
+    assertions.append(
+        "empty, verdict-free, findings-only, and contradictory adapter output all fail closed"
     )
     return assertions

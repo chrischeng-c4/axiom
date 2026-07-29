@@ -117,7 +117,7 @@ class DistributionDesign:
     @staticmethod
     def required_external_use_cases() -> tuple[ExternalUseCase, ...]:
         return (
-            ExternalUseCase("security-ec-profile", "aw-health-security-metric", "security"),
+            ExternalUseCase("security-ec-profile", "lifecycle-security-metric", "security"),
             ExternalUseCase("security-policy-profile", "baseline-static-policy", "security"),
             ExternalUseCase(
                 "security-policy-profile",

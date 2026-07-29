@@ -57,13 +57,14 @@
     "a nonzero adapter exit fails closed even when its report says clean",
     "a non-clean adapter report fails closed even when its process exits zero",
     "a non-clean zero-finding report fails closed while preserving zero findings",
-    "process exit, report clean state, and finding count remain independent"
+    "process exit, report clean state, and finding count remain independent",
+    "empty, verdict-free, findings-only, and contradictory adapter output all fail closed"
   ],
   "attempts": [
     {
-      "assertion_count": 58,
-      "assertions_digest": "sha256:ed4dbf7580b33f571880a84db22407f677d2f14ad34b47b2c86a4d5338abb9a7",
-      "elapsed_ms": 3652,
+      "assertion_count": 59,
+      "assertions_digest": "sha256:aaa421b11901e71b5b1b92bc7aa64b0471994c25480ac54f3ce4b98fbb19f0df",
+      "elapsed_ms": 1111,
       "exit_code": 0
     }
   ],

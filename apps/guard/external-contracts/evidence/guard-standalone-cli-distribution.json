@@ -14,16 +14,17 @@
     "schema_version is guard.report/1",
     "verb is llm",
     "required report fields have stable JSON types",
-    "an override-free isolated cargo build succeeds for package guard and binary guard",
+    "the Python TD runs as a standalone reference CLI",
     "public help exposes scan, report, spec, and llm from the built binary",
     "scan persists a clean guard.report/1 report and report re-projects it exactly",
+    "strict is a real CLI policy and promotes DK002 from medium to high",
     "offline spec identifies guard.report/1 and llm teaches guard scan"
   ],
   "attempts": [
     {
-      "assertion_count": 18,
-      "assertions_digest": "sha256:1afa4909dc1bba074113f3db3a06a56d5c23e756bdaaf59c4c5ff4dbbe87d814",
-      "elapsed_ms": 1192,
+      "assertion_count": 19,
+      "assertions_digest": "sha256:592c0e4ed50c1c40946d5f2fb4d04b2a916ebfea0dd236a2b9663a7b335fb8db",
+      "elapsed_ms": 654,
       "exit_code": 0
     }
   ],

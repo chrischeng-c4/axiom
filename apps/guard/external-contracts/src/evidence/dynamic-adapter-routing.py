@@ -1,6 +1,10 @@
-"""Behavior contract for exact Guard adapter routing and evidence folding."""
+"""Behavior contract for every public Guard adapter route and evidence fold."""
 
-from guard_contract import assert_dynamic_evidence, run_dynamic_adapters
+from guard_contract import (
+    assert_dynamic_evidence,
+    run_dynamic_adapters,
+    verify_adapter_route,
+)
 
 DIMENSION = "behavior"
 
@@ -24,5 +28,16 @@ def verify() -> list[str]:
             raise AssertionError(
                 f"{tool} routing prefix diverged: {argv!r}"
             )
-    assertions.append("all public adapter inputs map to their exact command grammar")
+    for route in (
+        "vat-command",
+        "rig-dir",
+        "rig-command",
+        "meter-command",
+        "arena-spec",
+        "arena-command",
+    ):
+        assertions.extend(verify_adapter_route(route))
+    assertions.append(
+        "all nine public adapter flags map to their exact command grammar"
+    )
     return assertions

@@ -7,13 +7,13 @@
     "status, exit_code, and completion.clean agree",
     "scan projects the exact requested filesystem target",
     "scan projects guard-baseline-static/1 by default",
-    "scan projects Compass as the static engine"
+    "scan projects guard-python-reference as the static engine"
   ],
   "attempts": [
     {
       "assertion_count": 8,
-      "assertions_digest": "sha256:a141e17f1243d8844d77bdf47f2727dc1cd62702de6b204b2a88be0e8d6fba04",
-      "elapsed_ms": 1446,
+      "assertions_digest": "sha256:3f3c26009ad78b96493b35ad69de349755350cf79e23dd3717fe3605cf4b2f2c",
+      "elapsed_ms": 85,
       "exit_code": 0
     }
   ],

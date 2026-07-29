@@ -188,9 +188,9 @@ fn run_one(command: &EvidenceCommand) -> ExternalEvidence {
     let parsed = parse_json_payload(&stdout);
     let exit_code = output.status.code();
     let process_clean = output.status.success();
-    let report_clean = parsed.as_ref().and_then(report_clean);
-    let clean = process_clean && report_clean.unwrap_or(process_clean);
     let finding_count = parsed.as_ref().map(finding_count).unwrap_or(0);
+    let report_clean = parsed.as_ref().is_some_and(report_clean);
+    let clean = process_clean && report_clean && finding_count == 0;
     let status = if clean {
         EvidenceStatus::Clean
     } else if parsed.is_some() || exit_code.is_some() {
@@ -228,8 +228,15 @@ fn parse_json_payload(stdout: &str) -> Option<serde_json::Value> {
         .find_map(|line| serde_json::from_str(line.trim()).ok())
 }
 
-fn report_clean(value: &serde_json::Value) -> Option<bool> {
-    value
+fn report_clean(value: &serde_json::Value) -> bool {
+    if value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return false;
+    }
+    let projected = value
         .get("clean")
         .and_then(|v| v.as_bool())
         .or_else(|| {
@@ -245,11 +252,20 @@ fn report_clean(value: &serde_json::Value) -> Option<bool> {
                 .and_then(|v| v.as_str())
                 .map(|state| state == "clean")
         })
-        .or_else(|| value.get("ok").and_then(|v| v.as_bool()))
+        .or_else(|| value.get("ok").and_then(|v| v.as_bool()));
+    let counts = finding_counts(value);
+    let counts_are_consistent =
+        !counts.is_empty() && counts.iter().all(|count| *count == counts[0]);
+    projected == Some(true) && counts_are_consistent && counts[0] == 0
 }
 
 fn finding_count(value: &serde_json::Value) -> u32 {
-    value
+    finding_counts(value).into_iter().max().unwrap_or(0)
+}
+
+fn finding_counts(value: &serde_json::Value) -> Vec<u32> {
+    let mut counts = Vec::new();
+    let summary_count = value
         .get("summary")
         .and_then(|v| v.get("security_findings"))
         .and_then(|v| v.as_u64())
@@ -258,14 +274,14 @@ fn finding_count(value: &serde_json::Value) -> u32 {
                 .get("summary")
                 .and_then(|v| v.get("total"))
                 .and_then(|v| v.as_u64())
-        })
-        .or_else(|| {
-            value
-                .get("findings")
-                .and_then(|v| v.as_array())
-                .map(|items| items.len() as u64)
-        })
-        .unwrap_or(0) as u32
+        });
+    if let Some(count) = summary_count {
+        counts.push(count as u32);
+    }
+    if let Some(findings) = value.get("findings").and_then(|v| v.as_array()) {
+        counts.push(findings.len() as u32);
+    }
+    counts
 }
 
 fn compact_report(value: &serde_json::Value) -> serde_json::Value {
@@ -337,6 +353,30 @@ mod tests {
         assert_eq!(evidence[0].finding_count, 2);
         let finding = evidence[0].to_guard_finding("demo").unwrap();
         assert_eq!(finding.rule, "RIG-EVIDENCE");
+    }
+
+    #[test]
+    fn malformed_or_verdict_free_json_fails_closed() {
+        for (label, command) in [
+            ("empty", "true"),
+            ("object", "printf '%s' '{}'"),
+            (
+                "findings-only",
+                "printf '%s' '{\"schema_version\":\"rig.report/1\",\"findings\":[{\"id\":\"x\"}]}'",
+            ),
+            (
+                "contradiction",
+                "printf '%s' '{\"schema_version\":\"rig.report/1\",\"clean\":true,\"summary\":{\"total\":0},\"findings\":[{\"id\":\"x\"}]}'",
+            ),
+            (
+                "countless-clean",
+                "printf '%s' '{\"schema_version\":\"rig.report/1\",\"clean\":true}'",
+            ),
+        ] {
+            let evidence =
+                run_evidence_commands(&[EvidenceCommand::shell("rig", label, command)]);
+            assert!(!evidence[0].clean, "{label} unexpectedly passed");
+        }
     }
 }
 // HANDWRITE-END

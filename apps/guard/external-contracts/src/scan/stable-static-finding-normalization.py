@@ -1,4 +1,4 @@
-"""Stability contract for Compass-to-Guard diagnostic normalization."""
+"""Stability contract for stage-specific diagnostic normalization."""
 
 from guard_contract import assert_finding, assert_scan_consistency, run_fixture_scan
 
@@ -35,5 +35,5 @@ def verify() -> list[str]:
     assertions.extend(assert_scan_consistency(second))
     if _projection(first) != _projection(second):
         raise AssertionError("equivalent diagnostics changed normalized public fields")
-    assertions.append("Compass diagnostic normalization is stable across fresh fixtures")
+    assertions.append("stage-specific diagnostic normalization is stable across fresh fixtures")
     return assertions

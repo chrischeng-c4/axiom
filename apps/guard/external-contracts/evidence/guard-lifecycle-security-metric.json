@@ -18,13 +18,13 @@
     {
       "assertion_count": 13,
       "assertions_digest": "sha256:1847bc29bd240da0d4973fb93f7ce3681d8bcdb79d71831dc2bdc4893dc663ac",
-      "elapsed_ms": 2885,
+      "elapsed_ms": 164,
       "exit_code": 0
     }
   ],
-  "case_id": "guard-aw-health-security-metric",
+  "case_id": "guard-lifecycle-security-metric",
   "exit_code": 0,
-  "implementation": "apps/guard/external-contracts/src/report/aw-health-security-metric.py",
+  "implementation": "apps/guard/external-contracts/src/report/lifecycle-security-metric.py",
   "mode": "security",
   "protocol": "aw.python-ec.evidence.v1"
 }

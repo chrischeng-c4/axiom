@@ -5,15 +5,15 @@
     "required report fields have stable JSON types",
     "summary.security_findings equals findings length",
     "status, exit_code, and completion.clean agree",
-    "one JS004 diagnostic becomes one Guard finding",
-    "finding identity preserves Compass and JS004",
-    "finding location points to line one of unsafe.js"
+    "exactly eval, multiline shell=True, and latest-tag diagnostics become Guard findings",
+    "all three finding identities honestly preserve guard-python-reference and their rule",
+    "all three findings preserve exact file, line, and severity projections"
   ],
   "attempts": [
     {
       "assertion_count": 8,
-      "assertions_digest": "sha256:6e6d18c15258c0780837951bd95c6ade001c8da7b371054493595076f749ca9a",
-      "elapsed_ms": 2759,
+      "assertions_digest": "sha256:025a33e23e8cd59bccb3e1825642e84a9b629b5c7b36f9d72ada031a9e5d9873",
+      "elapsed_ms": 90,
       "exit_code": 0
     }
   ],

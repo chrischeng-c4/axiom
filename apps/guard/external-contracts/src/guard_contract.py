@@ -14,6 +14,8 @@ from typing import Iterator
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+TECH_DESIGN_ROOT = REPOSITORY_ROOT / "apps/guard/tech-design"
+TECH_DESIGN_ENTRYPOINT = TECH_DESIGN_ROOT / "src/cli.py"
 ADAPTER_STUB = Path(__file__).resolve().with_name("adapter_stub.py")
 DYNAMIC_TMP_ROOT = REPOSITORY_ROOT / "target/guard-python-ec"
 WORKSPACE_GUARD = REPOSITORY_ROOT / "target/debug/guard"
@@ -166,11 +168,13 @@ def run_guard(
     binary: Path | None = None,
     cwd: Path = REPOSITORY_ROOT,
     expected_exit_codes: set[int] = frozenset({0}),
+    environment: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
-    executable = binary or guard_binary()
+    command = guard_process_command(binary)
     completed = subprocess.run(
-        [str(executable), *arguments],
+        [*command, *arguments],
         cwd=cwd,
+        env=environment,
         capture_output=True,
         text=True,
         check=False,
@@ -187,6 +191,44 @@ def run_guard(
             f"{completed.returncode!r} != {report.get('exit_code')!r}"
         )
     return completed, report
+
+
+def guard_process_command(binary: Path | None = None) -> list[str]:
+    if binary is not None:
+        return [str(binary)]
+    if os.environ.get("AW_EC_STAGE") == "td":
+        return [
+            "uv",
+            "run",
+            "--frozen",
+            "--offline",
+            "--project",
+            str(TECH_DESIGN_ROOT),
+            "python",
+            str(TECH_DESIGN_ENTRYPOINT),
+        ]
+    return [str(guard_binary())]
+
+
+def expected_static_engine() -> str:
+    return (
+        "guard-python-reference"
+        if os.environ.get("AW_EC_STAGE") == "td"
+        else "compass"
+    )
+
+
+def expected_finding_source() -> str:
+    return expected_static_engine()
+
+
+def expected_finding_id_prefix(rule: str) -> str:
+    namespace = (
+        "guard-reference"
+        if os.environ.get("AW_EC_STAGE") == "td"
+        else "compass"
+    )
+    return f"{namespace}:{rule}:"
 
 
 def assert_report_shape(report: dict[str, object], *, verb: str) -> list[str]:
@@ -373,7 +415,9 @@ def run_dynamic_adapters(
         binary_dir = root / "bin"
         binary_dir.mkdir()
         copied_guard = binary_dir / "guard"
-        os.link(guard_binary(), copied_guard)
+        td_stage = os.environ.get("AW_EC_STAGE") == "td"
+        if not td_stage:
+            os.link(guard_binary(), copied_guard)
         labels = {
             "vat": "guard-security-smoke",
             "rig": str(scenario),
@@ -436,8 +480,12 @@ def run_dynamic_adapters(
         )
         _, report = run_guard(
             arguments,
-            binary=copied_guard,
+            binary=None if td_stage else copied_guard,
             expected_exit_codes=expected_guard_exit,
+            environment={
+                **os.environ,
+                "PATH": f"{binary_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            },
         )
         traces = {
             tool: [
@@ -448,6 +496,130 @@ def run_dynamic_adapters(
             for tool, path in trace_paths.items()
         }
         return report, traces, expectations
+
+
+def verify_adapter_route(route: str) -> list[str]:
+    """Exercise one public adapter flag through a real Guard process."""
+    route_tools = {
+        "vat-command": "vat",
+        "rig-dir": "rig",
+        "rig-command": "rig",
+        "meter-command": "meter",
+        "arena-spec": "arena",
+        "arena-command": "arena",
+    }
+    tool = route_tools.get(route)
+    if tool is None:
+        raise AssertionError(f"unsupported adapter route: {route}")
+
+    DYNAMIC_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f"{route}-",
+        dir=DYNAMIC_TMP_ROOT,
+    ) as temp_dir:
+        root = Path(temp_dir)
+        source = root / "fixture"
+        source.mkdir()
+        (source / "safe.js").write_text("const answer = 42;\n", encoding="utf-8")
+        rig_dir = root / "rig-cases"
+        rig_dir.mkdir()
+        arena_spec = root / "arena.toml"
+        arena_spec.write_text("name = 'guard-python-ec'\n", encoding="utf-8")
+        binary_dir = root / "bin"
+        binary_dir.mkdir()
+        trace_path = _write_stub(binary_dir, tool)
+        copied_guard = binary_dir / "guard"
+        td_stage = os.environ.get("AW_EC_STAGE") == "td"
+        if not td_stage:
+            os.link(guard_binary(), copied_guard)
+
+        if route == "vat-command":
+            value = "vat command-route"
+            expected_trace = ["command-route"]
+            expected_command = ["sh", "-c", value]
+        elif route == "rig-dir":
+            value = str(rig_dir)
+            expected_trace = ["run", "--dir", value, "--compact"]
+            expected_command = [str(binary_dir / tool), *expected_trace]
+        elif route == "rig-command":
+            value = "rig command-route"
+            expected_trace = ["command-route"]
+            expected_command = ["sh", "-c", value]
+        elif route == "meter-command":
+            value = "meter command-route"
+            expected_trace = ["command-route"]
+            expected_command = ["sh", "-c", value]
+        elif route == "arena-spec":
+            value = str(arena_spec)
+            expected_trace = ["run", "--spec", value, "--compact"]
+            expected_command = [str(binary_dir / tool), *expected_trace]
+        else:
+            value = "arena command-route"
+            expected_trace = ["command-route"]
+            expected_command = ["sh", "-c", value]
+
+        _, report = run_guard(
+            [
+                "scan",
+                str(source),
+                f"--{route}",
+                value,
+                "--compact",
+                "--no-persist",
+            ],
+            binary=None if td_stage else copied_guard,
+            environment={
+                **os.environ,
+                "PATH": f"{binary_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            },
+        )
+        assertions = assert_scan_consistency(report)
+        traces = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        if traces != [expected_trace]:
+            raise AssertionError(
+                f"{route} executed argv diverged: {traces!r} != {[expected_trace]!r}"
+            )
+        evidence = report.get("evidence")
+        if not isinstance(evidence, list) or len(evidence) != 1:
+            raise AssertionError(
+                f"{route} must produce exactly one evidence record: {evidence!r}"
+            )
+        item = evidence[0]
+        if not isinstance(item, dict):
+            raise AssertionError(f"{route} evidence record must be an object")
+        command = item.get("command")
+        if (
+            not isinstance(command, list)
+            or command[1:] != expected_command[1:]
+            or Path(str(command[0])).name != Path(expected_command[0]).name
+        ):
+            raise AssertionError(
+                f"{route} folded command diverged: {command!r} != {expected_command!r}"
+            )
+        if (
+            item.get("tool") != tool
+            or item.get("label") != value
+            or item.get("status") != "clean"
+            or item.get("clean") is not True
+            or item.get("exit_code") != 0
+            or item.get("finding_count") != 0
+        ):
+            raise AssertionError(f"{route} folded evidence diverged: {item!r}")
+        folded_report = item.get("report")
+        if (
+            not isinstance(folded_report, dict)
+            or folded_report.get("schema_version") != f"{tool}.report/1"
+            or folded_report.get("clean") is not True
+        ):
+            raise AssertionError(f"{route} folded report is invalid: {folded_report!r}")
+        assertions.append(
+            f"--{route} executes exactly once and preserves its public value"
+        )
+        return assertions
 
 
 def assert_dynamic_evidence(

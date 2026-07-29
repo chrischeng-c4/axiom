@@ -6,14 +6,14 @@
     "summary.security_findings equals findings length",
     "status, exit_code, and completion.clean agree",
     "baseline-static selects guard-baseline-static/1",
-    "JS004 is actionable and names dynamic-code remediation",
-    "JS004 evidence source is Compass"
+    "JS004 is exactly high severity and names dynamic-code remediation",
+    "JS004 evidence source is honestly guard-python-reference"
   ],
   "attempts": [
     {
       "assertion_count": 8,
-      "assertions_digest": "sha256:5703affbfba10e63ccfb76c5d2c0e6abf9741ceb25e5eb43d2850be973379549",
-      "elapsed_ms": 2752,
+      "assertions_digest": "sha256:d293370149f21a0ad60bb367916c6d6dacfa460924784583f6af7033d80c4f62",
+      "elapsed_ms": 94,
       "exit_code": 0
     }
   ],

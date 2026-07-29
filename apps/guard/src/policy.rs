@@ -41,8 +41,10 @@ fn security_lint_rule(code: &str) -> bool {
 /// @spec apps/guard/tech-design/src/policy.py
 pub(crate) fn map_severity(profile: PolicyProfile, severity: DiagnosticSeverity) -> Severity {
     match (profile, severity) {
-        (PolicyProfile::Strict, DiagnosticSeverity::Information)
-        | (PolicyProfile::Strict, DiagnosticSeverity::Hint) => Severity::Low,
+        (PolicyProfile::Strict, DiagnosticSeverity::Error)
+        | (PolicyProfile::Strict, DiagnosticSeverity::Warning) => Severity::High,
+        (PolicyProfile::Strict, DiagnosticSeverity::Information) => Severity::Medium,
+        (PolicyProfile::Strict, DiagnosticSeverity::Hint) => Severity::Low,
         (_, severity) => match severity {
             DiagnosticSeverity::Error => Severity::High,
             DiagnosticSeverity::Warning => Severity::Medium,
@@ -94,6 +96,10 @@ mod tests {
         assert_eq!(
             map_severity(PolicyProfile::Strict, DiagnosticSeverity::Hint),
             Severity::Low,
+        );
+        assert_eq!(
+            map_severity(PolicyProfile::Strict, DiagnosticSeverity::Warning),
+            Severity::High,
         );
     }
 }

@@ -2,35 +2,43 @@ version = 2
 project = "guard"
 ir_kind = "td"
 td_path = "apps/guard/tech-design"
-generated_at = "2026-07-29T03:51:13.911673+00:00"
-digest = "sha256:8fa2c67721190fcc7fe5c2342353ac571a0624d87c40c677f2eaf13a7f18e956"
-source_digest = "sha256:8fa2c67721190fcc7fe5c2342353ac571a0624d87c40c677f2eaf13a7f18e956"
-ir_digest = "sha256:01282267cd8d1cfaa24fcb4eded7285142ad8cd8472b39da7e2f51ada0339cfa"
+generated_at = "2026-07-29T14:05:16.477669+00:00"
+digest = "sha256:c1fe78142978810bb08d0f1ba854aae59b9e040542a4072ab7d7c2d1374edbc2"
+source_digest = "sha256:c1fe78142978810bb08d0f1ba854aae59b9e040542a4072ab7d7c2d1374edbc2"
+ir_digest = "sha256:c6325d56e43571a1732ded4b54bc36c0438e5f4390f19033fde01fe90bff520d"
+
+[[files]]
+path = "pyproject.toml"
+digest = "sha256:3e47db1ea1cfb3691a755b4ef6fd1a7f00845ef8e234a60e720321b8e320046c"
 
 [[files]]
 path = "src/cli.py"
-digest = "sha256:1fc978ce5c901d28e3abfd05acc50228b852c8850cc5be25eabf91f726fcbdf1"
+digest = "sha256:5db025b62e7b4fb1636a5b4c1cf0253f0b30921a8ead91a4dc865c9c185e4203"
 
 [[files]]
 path = "src/distribution.py"
-digest = "sha256:4c250a95464e743ddd03463141cecc5a5a53597f3296b92e72057ef02079ad95"
+digest = "sha256:7eee4268800bfe50d8c6b4a6f8294a631f5b2ab5f2e84e898882e1aeacea9a87"
 
 [[files]]
 path = "src/evidence.py"
-digest = "sha256:96ce619582709430b5c074c42eb60ad48060b43115c217b122e0cfc1755e030b"
+digest = "sha256:11dd346019cc5a153756b62a0b0e272e8f7716e1a353e51520d85eaf8ba87555"
 
 [[files]]
 path = "src/policy.py"
-digest = "sha256:3b87e5f1e7e064e46e2249337943dceb5fd6e545a2f6a7d56642d02cc04aa4d1"
+digest = "sha256:a2e5247d088bcee9ff762678a7c9814ca595b0e6ddd68ed97b2f6cacc40c5ece"
 
 [[files]]
 path = "src/report.py"
-digest = "sha256:8d0884e3d0bb1460d7157f3e02cc691444f7a9446ef51a62a88b8c860b9d8334"
+digest = "sha256:4a05df204d8878f8fe88b83a79d4db6d4d73142565b28fdc3a2d5319286a71ef"
 
 [[files]]
 path = "src/scan.py"
-digest = "sha256:c4ad08882f2d3f3f980228b9bc1d53ebb6247442a363b0927108fe3f3f69782b"
+digest = "sha256:deff4b7c57b28b493bab47340aa12baa7ab498dae3b29b1836562f577c1ddcb4"
 
 [[files]]
 path = "tests/unit/test_guard_design.py"
-digest = "sha256:55c58b3d6178a4ad739508f38117e788707aab80f854d7a92872bd762c970d42"
+digest = "sha256:8aa391447cd50ddcbf1bd230fb51143d885d140dc3c2e468435f8af948c83524"
+
+[[files]]
+path = "uv.lock"
+digest = "sha256:8d240924f2bc381e998c048fafcdb7956d668bf5ba4b54faebcffe52a8304e2b"

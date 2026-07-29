@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "guard",
-  "source_digest": "sha256:45843ad0c29fb30c560718bfb0f3df05cc0ce0f534d280eabf7870787ce5cb30",
+  "source_digest": "sha256:710e81e71105ac517f03bb5040593085c1ac1db2dc3dfd1d8659ee1ba0d42ce6",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:codex-cli:019fabfa-3efb-7e00-86c5-d3dc593cf30d",
-  "reviewed_at": "2026-07-29T03:49:47.148057+00:00",
-  "summary": "The 17 EC cases have unique declared paths under five shallow domain directories; traversal and undeclared cases fail closed, and all moved verifier oracles remain byte-identical.",
+  "reviewed_by": "sol:/root/guard_ec_sol_review",
+  "reviewed_at": "2026-07-29T17:45:54.830727+00:00",
+  "summary": "Both prior semantic gaps are closed: JS004/PY304/DK002 now require exact fixture paths and independently derived complete stage-specific finding IDs, while strict requires guard-strict/1 and exactly one high-severity DK002 finding. The focused hunks expose no remaining false-green path.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
