@@ -184,6 +184,50 @@ license. Those belong to N3 and N4.
   local binding, global binding, class attribute, parameter, return,
   comprehension, and expression join.
 
+N3 starts with one source-owned paired witness per ingress family. A family may
+use more than one implementation ticket when its inference paths are
+independent; no ticket may claim the whole family from a generic
+`normalized == Any` check.
+
+#### N3-L1 — empty-collection local binding
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/local_binding.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/local_binding.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to the first simple-name assignment in an active function-local
+  scope;
+- classify an empty list initializer as
+  `ImplicitUnknown { inference_path: "local_binding -> list_literal -> element" }`;
+- store the failed omitted declaration at the target span with
+  `normalized = None`;
+- emit one stable compile error naming binding `items`, the target span, and
+  the exact inference path;
+- let `items: Any = []` continue through the N2 authored path as
+  `ExplicitAny`;
+- leave module/global/class bindings, parameters, returns, comprehensions,
+  joins, unpacking, reassignments, and transitive dynamic-boundary propagation
+  unchanged.
+
+`DeclaredType` construction must reject:
+
+- `ImplicitUnknown + Some(TypeId)`;
+- `Inferred + None`;
+- any inferred local whose `SourceAnnotation` is `Authored`.
+
+This first local slice classifies the failure from initializer syntax plus the
+inference path. It must not reject an arbitrary `Ty::Any` solely from normalized
+identity; explicit-boundary flow remains an N4 concern.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
