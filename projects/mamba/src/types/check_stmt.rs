@@ -1,4 +1,4 @@
-use super::check::{ClassPatternTarget, TypeChecker};
+use super::check::{BindingScope, ClassPatternTarget, TypeChecker};
 use super::generic::{check_bounds, infer_type_args, GenericParams};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
@@ -290,16 +290,26 @@ impl TypeChecker {
                         .last()
                         .copied()
                         == Some(current_scope);
+                    let is_module_scope = current_scope == 0
+                        && self.class_scope_stack.is_empty()
+                        && self.function_scope_stack.is_empty();
+                    let binding_scope = if is_active_local {
+                        BindingScope::Local
+                    } else if is_module_scope {
+                        BindingScope::Global
+                    } else {
+                        BindingScope::Other
+                    };
                     if self.symbols.lookup_in_scope(current_scope, name).is_none()
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
-                        self.check_n3_l1_local_binding_inference(
+                        self.check_n3_list_binding_inference(
                             name,
                             target.span,
                             value,
                             value_ty,
-                            is_active_local,
+                            binding_scope,
                         );
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, value_ty);
@@ -420,12 +430,17 @@ impl TypeChecker {
                                 .last()
                                 .copied()
                                 == Some(self.symbols.current_scope_idx());
-                            self.check_n3_l1_local_binding_inference(
+                            let binding_scope = if is_active_local {
+                                BindingScope::Local
+                            } else {
+                                BindingScope::Other
+                            };
+                            self.check_n3_list_binding_inference(
                                 name,
                                 target.span,
                                 value,
                                 value_ty,
-                                is_active_local,
+                                binding_scope,
                             );
                             self.set_sym_type(symbol.0, value_ty);
                             return;
