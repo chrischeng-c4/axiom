@@ -536,7 +536,7 @@ async fn run_brief(mut args: CbFillArgs) -> Result<()> {
             })
     });
     if python_project.is_some() && enumerate_worktree_markers(&worktree_abs).is_empty() {
-        crate::cli::ec::persist_ec_first_next_action(
+        crate::cli::ec::persist_python_native_fill(
             &project_root,
             &slug,
             format!("aw cb check {slug}"),

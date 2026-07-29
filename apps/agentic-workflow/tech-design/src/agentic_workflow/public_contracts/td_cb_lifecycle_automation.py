@@ -16,6 +16,18 @@ def td_existing_workspace_dirty_persistent_branch() -> str:
     return "TD and CB workspace verbs preserve dirty work areas"
 
 
+def python_td_bounded_native_handwrite() -> str:
+    return (
+        "Python EC and TD may drive a bounded native HANDWRITE implementation; "
+        "TD identity resolves from the configured project TD root; "
+        "generator-owned targets retain cold parity while HANDWRITE targets "
+        "classify every native source in every configured workspace root and "
+        "fail closed on escaped paths or symlinks; Cb-Gen evidence binds the "
+        "target and workspace root and commits only emitted files; HANDWRITE "
+        "targets must pass committed implementation-evidence plus workspace-test gates"
+    )
+
+
 def td_cb_lifecycle_automation_operational_efficiency() -> str:
     return "TD-to-CB automation stays within its efficiency threshold"
 

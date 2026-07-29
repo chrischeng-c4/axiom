@@ -2863,7 +2863,22 @@ pub(crate) fn resolve_issue_td_spec_paths(
     fallback_slug: &str,
 ) -> Result<Vec<String>> {
     let mut paths = Vec::new();
-    for raw in issue.implements.iter().filter(|path| path.ends_with(".md")) {
+    let configured_td_root = project_label_for_issue(issue)
+        .and_then(|project| {
+            crate::services::project_registry::resolve_td_root_from_config(project_root, &project)
+                .ok()
+        })
+        .map(|resolved| std::path::PathBuf::from(resolved.root))
+        .and_then(|root| {
+            root.strip_prefix(project_root)
+                .ok()
+                .map(std::path::Path::to_path_buf)
+        });
+    for raw in issue
+        .implements
+        .iter()
+        .filter(|path| path.ends_with(".md") || path.ends_with(".py"))
+    {
         let normalized = normalize_checkout_rel_path(raw);
         let rel = std::path::Path::new(&normalized);
         if normalized.is_empty()
@@ -2876,16 +2891,36 @@ pub(crate) fn resolve_issue_td_spec_paths(
                 "issue '{fallback_slug}' has a non-normalized TD reference in implements: `{raw}`"
             );
         }
+        let belongs_to_td_root = configured_td_root
+            .as_deref()
+            .is_some_and(|root| rel.starts_with(root))
+            || configured_td_root.is_none()
+                && (normalized.starts_with("tech-design/") || normalized.contains("/tech-design/"));
+        if !belongs_to_td_root {
+            continue;
+        }
         if !paths.contains(&normalized) {
             paths.push(normalized);
         }
     }
     if paths.is_empty() {
-        paths.push(default_spec_path_for_issue_in_project(
-            project_root,
-            issue,
-            fallback_slug,
-        )?);
+        let python_project = project_label_for_issue(issue)
+            .and_then(|project| {
+                crate::services::project_registry::resolve_project_config_row(
+                    project_root,
+                    &project,
+                )
+                .ok()
+            })
+            .is_some_and(|row| {
+                row.effective_artifact_model()
+                    == crate::models::project::ProjectArtifactModel::PythonV1
+            });
+        paths.push(if python_project {
+            default_python_td_path_for_issue_in_project(project_root, issue, fallback_slug)?
+        } else {
+            default_spec_path_for_issue_in_project(project_root, issue, fallback_slug)?
+        });
     }
     Ok(paths)
 }
@@ -3993,7 +4028,7 @@ async fn run_create_python_brief(
             &project_root,
             &slug,
             "Python TD source initialized",
-            "Td-Python-Source",
+            crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
             &[spec_path.as_str(), issue_path.as_str()],
             &[
                 ("Lifecycle-Phase", "td_inited"),
@@ -6669,6 +6704,35 @@ label = "app:agentic-workflow"
     }
 
     #[test]
+    fn issue_td_scope_accepts_exact_reference_under_nonstandard_configured_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "todo-app"
+path = "examples/todo-app"
+td_path = "examples/todo-app/td"
+label = "app:todo-app"
+artifact_model = "python-v1"
+"#,
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Keep exact configured TD reference");
+        issue.slug = "2874".to_string();
+        issue.labels = vec!["app:todo-app".to_string()];
+        issue.implements = vec![
+            "examples/todo-app/td/src/todo/work_items/exact.py".to_string(),
+            "examples/todo-app/src/not_a_td.py".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_issue_td_spec_paths(tmp.path(), &issue, "2874").unwrap(),
+            vec!["examples/todo-app/td/src/todo/work_items/exact.py"]
+        );
+    }
+
+    #[test]
     fn python_td_create_initializes_only_wi_bound_python_source() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -9178,7 +9242,7 @@ fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Opti
 
 /// Like `commit_lifecycle` but appends extra trailers (e.g. `Claim-Source:`,
 /// `Claim-Type:`) below `Lifecycle-Stage:`.
-fn commit_lifecycle_with_extra(
+pub(crate) fn commit_lifecycle_with_extra(
     worktree_path: &std::path::Path,
     slug: &str,
     detail: &str,

@@ -1009,6 +1009,70 @@ pub(crate) fn persist_ec_first_next_action(
     })
 }
 
+pub(crate) fn persist_python_native_generation(
+    project_root: &Path,
+    wi: &str,
+    next_action: String,
+) -> Result<()> {
+    persist_python_native_phase(
+        project_root,
+        wi,
+        crate::issues::types::td_phase::CB_GENNED,
+        next_action,
+    )
+}
+
+pub(crate) fn persist_python_native_fill(
+    project_root: &Path,
+    wi: &str,
+    next_action: String,
+) -> Result<()> {
+    persist_python_native_phase(
+        project_root,
+        wi,
+        crate::issues::types::td_phase::CB_FILLED,
+        next_action,
+    )
+}
+
+fn persist_python_native_phase(
+    project_root: &Path,
+    wi: &str,
+    phase: &str,
+    next_action: String,
+) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    let wi = wi.trim();
+    if wi.is_empty() {
+        bail!("Python native lifecycle WI id cannot be empty");
+    }
+    let backend = crate::issues::local_backend(project_root);
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let mut issue =
+                load_or_hydrate_local_lifecycle_issue(project_root, &backend, wi).await?;
+            issue.phase = Some(phase.to_string());
+            let mut state =
+                crate::cli::loop_state::parse_loop_state(&issue.body).unwrap_or_default();
+            state.version = 1;
+            if state.issue_id.trim().is_empty() {
+                state.issue_id = wi.to_string();
+            }
+            if state.goal.is_none() {
+                state.goal = Some(format!("ec-first:{wi}"));
+            }
+            state.verifier = Some("ec".to_string());
+            state.status = crate::cli::loop_state::LoopStatus::Iterating;
+            state.next_action = Some(next_action);
+            state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+            issue.body = crate::cli::loop_state::upsert_loop_state(&issue.body, &state)?;
+            backend.write(&issue).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })
+}
+
 /// `ec gen --wi` is used at two different points in the linear lifecycle. A
 /// fresh EC-first WI hands off to TD authoring, while a post-implementation
 /// review/regeneration at `cb_filled` must execute the newly current EC
