@@ -10,7 +10,7 @@ use super::ty::{
     ExternalCallableAccess, ExternalCallableRuntimeKind, ExternalClass, ExternalValue,
     TypeParamDefault, TypeVarId, TypeVarKind, UserClass,
 };
-use super::{Ty, TypeContext, TypeId};
+use super::{DeclaredType, Ty, TypeContext, TypeId, TypeProvenance};
 use crate::error::MambaError;
 use crate::parser::ast::*;
 use crate::resolve::{SymbolId, SymbolKind, SymbolTable};
@@ -934,6 +934,8 @@ pub struct TypeChecker {
     /// or targets committed by another member of the failed alias cycle.
     pub(crate) stdlib_spec_materialization_depth: usize,
     pub(crate) stdlib_spec_materialization_nodes: Vec<TypeSpecId>,
+    /// Map from parameter annotation span to declared type.
+    pub(crate) param_declarations: HashMap<Span, DeclaredType>,
 }
 
 impl TypeChecker {
@@ -1003,6 +1005,7 @@ impl TypeChecker {
             stdlib_spec_type_param_failed: HashSet::new(),
             stdlib_spec_materialization_depth: 0,
             stdlib_spec_materialization_nodes: Vec::new(),
+            param_declarations: HashMap::new(),
         };
         tc.register_builtins();
         tc
@@ -3382,7 +3385,27 @@ impl TypeChecker {
             ParamKind::DoubleStar => TypeExprResolutionContext::TypedDictKwargs,
             ParamKind::Regular => TypeExprResolutionContext::Value,
         };
-        self.resolve_type_expr_in_context(&param.ty, context)
+        let resolved = self.resolve_type_expr_in_context(&param.ty, context);
+        self.record_param_declaration(param, resolved);
+        resolved
+    }
+
+    pub(crate) fn record_param_declaration(
+        &mut self,
+        param: &Param,
+        resolved: TypeId,
+    ) -> Option<DeclaredType> {
+        if let ParamAnnotation::Authored(ref spanned_ty) = param.annotation {
+            let decl = DeclaredType::from_authored(spanned_ty.clone(), Some(resolved));
+            self.param_declarations.insert(spanned_ty.span, decl.clone());
+            Some(decl)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_param_declaration(&self, span: Span) -> Option<&DeclaredType> {
+        self.param_declarations.get(&span)
     }
 
     fn resolve_type_expr_in_context(
@@ -5536,5 +5559,123 @@ mod tests {
         assert_eq!(DiagLevel::Warning, DiagLevel::Warning);
         assert_eq!(DiagLevel::Error, DiagLevel::Error);
         assert_ne!(DiagLevel::Warning, DiagLevel::Error);
+    }
+
+    #[test]
+    fn test_type_normalization_authored_boundary() {
+        use crate::source::span::FileId;
+        let mut tc = TypeChecker::new();
+        let span_any = Span::new(FileId(0), 100, 110);
+
+        // 1. Bare Any: x: Any
+        let any_param = Param {
+            name: Name::from("x"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("Any")), span_any),
+            annotation: ParamAnnotation::Authored(Spanned::new(TypeExpr::Named(Name::from("Any")), span_any)),
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_any,
+        };
+        let any_type_id = tc.resolve_param_type_expr(&any_param);
+        assert_eq!(any_type_id, tc.tcx.any());
+        let decl_any = tc.get_param_declaration(span_any).expect("declaration recorded");
+        assert_eq!(decl_any.normalized(), Some(tc.tcx.any()));
+        assert_eq!(*decl_any.provenance(), TypeProvenance::ExplicitAny);
+
+        // 2. Qualified typing.Any: y: typing.Any
+        let span_typing_any = Span::new(FileId(0), 110, 120);
+        let typing_any_param = Param {
+            name: Name::from("y"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("typing.Any")), span_typing_any),
+            annotation: ParamAnnotation::Authored(Spanned::new(TypeExpr::Named(Name::from("typing.Any")), span_typing_any)),
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_typing_any,
+        };
+        let typing_any_type_id = tc.resolve_param_type_expr(&typing_any_param);
+        assert_eq!(typing_any_type_id, tc.tcx.any());
+        let decl_typing_any = tc.get_param_declaration(span_typing_any).expect("declaration recorded");
+        assert_eq!(decl_typing_any.normalized(), Some(tc.tcx.any()));
+        assert_eq!(*decl_typing_any.provenance(), TypeProvenance::ExplicitAny);
+
+        // 3. Authored int: z: int
+        let span_int = Span::new(FileId(0), 120, 130);
+        let int_param = Param {
+            name: Name::from("z"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("int")), span_int),
+            annotation: ParamAnnotation::Authored(Spanned::new(TypeExpr::Named(Name::from("int")), span_int)),
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_int,
+        };
+        let int_type_id = tc.resolve_param_type_expr(&int_param);
+        assert_eq!(int_type_id, tc.tcx.int());
+        let decl_int = tc.get_param_declaration(span_int).expect("declaration recorded");
+        assert_eq!(decl_int.normalized(), Some(tc.tcx.int()));
+        assert_eq!(*decl_int.provenance(), TypeProvenance::Explicit);
+
+        // 4. Authored object: w: object (negative control: normalizes to Any, but provenance is Explicit, NOT ExplicitAny)
+        let span_obj = Span::new(FileId(0), 130, 140);
+        let obj_param = Param {
+            name: Name::from("w"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("object")), span_obj),
+            annotation: ParamAnnotation::Authored(Spanned::new(TypeExpr::Named(Name::from("object")), span_obj)),
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_obj,
+        };
+        let obj_type_id = tc.resolve_param_type_expr(&obj_param);
+        assert_eq!(obj_type_id, tc.tcx.any());
+        let decl_obj = tc.get_param_declaration(span_obj).expect("declaration recorded");
+        assert_eq!(decl_obj.normalized(), Some(tc.tcx.any()));
+        assert_ne!(*decl_obj.provenance(), TypeProvenance::ExplicitAny);
+        assert_eq!(*decl_obj.provenance(), TypeProvenance::Explicit);
+
+        // 5. Unresolved authored name: u: NonExistentType
+        let span_unresolved = Span::new(FileId(0), 140, 150);
+        let unresolved_param = Param {
+            name: Name::from("u"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("NonExistentType")), span_unresolved),
+            annotation: ParamAnnotation::Authored(Spanned::new(TypeExpr::Named(Name::from("NonExistentType")), span_unresolved)),
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_unresolved,
+        };
+        let unresolved_type_id = tc.resolve_param_type_expr(&unresolved_param);
+        assert!(tc.errors_mark() > 0);
+        let decl_unresolved = tc.get_param_declaration(span_unresolved).expect("declaration recorded");
+        assert_eq!(decl_unresolved.normalized(), Some(unresolved_type_id));
+        assert_eq!(*decl_unresolved.provenance(), TypeProvenance::Explicit);
+
+        // 6. Omitted parameter: v (no annotation)
+        let span_omitted = Span::new(FileId(0), 150, 160);
+        let omitted_param = Param {
+            name: Name::from("v"),
+            ty: Spanned::new(TypeExpr::Named(Name::from("Any")), span_omitted),
+            annotation: ParamAnnotation::Omitted,
+            default: None,
+            kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
+            span: span_omitted,
+        };
+        let omitted_type_id = tc.resolve_param_type_expr(&omitted_param);
+        assert_eq!(omitted_type_id, tc.tcx.any());
+        assert!(tc.get_param_declaration(span_omitted).is_none());
+
+        // 7. Isolation check: two checker instances cannot observe one another's declarations
+        let tc2 = TypeChecker::new();
+        assert!(tc2.get_param_declaration(span_any).is_none());
+        assert!(tc2.param_declarations.is_empty());
     }
 }
