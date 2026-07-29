@@ -232,6 +232,8 @@ identity; explicit-boundary flow remains an N4 concern.
 
 #### N3-G1 — empty-collection global binding
 
+Completed by #2924 (`4b58b149a6`).
+
 Authoritative pair:
 
 - negative:
