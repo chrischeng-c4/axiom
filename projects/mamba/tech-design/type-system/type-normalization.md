@@ -271,6 +271,8 @@ reuse the local-binding path merely because the normalized recovery type is
 
 #### N3-C1 — empty-collection class attribute
 
+Completed by #2932 (`df3242dddc`).
+
 Authoritative pair:
 
 - negative:
