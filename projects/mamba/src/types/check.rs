@@ -3501,6 +3501,57 @@ impl TypeChecker {
         }
     }
 
+    pub(crate) fn check_n3_return_inference(
+        &mut self,
+        declaration_symbol: SymbolId,
+        name: &str,
+        ret_expr: &Spanned<Expr>,
+    ) {
+        if let Expr::ListLit(elems) = &ret_expr.node {
+            if elems.is_empty() {
+                let path = "return -> list_literal -> element";
+                let decl = DeclaredType::from_implicit_unknown(path);
+                self.record_declared_type(ret_expr.span, decl);
+                self.error(
+                    ret_expr.span,
+                    format!("cannot infer return type for function `{name}`: {path}"),
+                );
+            } else {
+                let ret_expr_ty = self.check_expr(ret_expr);
+                if let Ty::List(elem_ty) = self.tcx.get(ret_expr_ty).clone() {
+                    if !matches!(self.tcx.get(elem_ty), Ty::Any | Ty::Error) {
+                        let path = "return -> list_literal";
+                        let decl = DeclaredType::from_inferred(path, ret_expr_ty);
+                        self.record_declared_type(ret_expr.span, decl);
+                        if let Some(&old_fn_ty) =
+                            self.function_declaration_types.get(&declaration_symbol)
+                        {
+                            if let Ty::Fn {
+                                params,
+                                variadic,
+                                signature,
+                                param_spec,
+                                ..
+                            } = self.tcx.get(old_fn_ty).clone()
+                            {
+                                let updated_fn_ty = self.tcx.intern(Ty::Fn {
+                                    params,
+                                    ret: ret_expr_ty,
+                                    variadic,
+                                    signature,
+                                    param_spec,
+                                });
+                                self.function_declaration_types
+                                    .insert(declaration_symbol, updated_fn_ty);
+                                self.set_sym_type(declaration_symbol.0, updated_fn_ty);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get_declared_type(&self, span: Span) -> Option<&DeclaredType> {
         self.declared_types.get(&span)
     }
@@ -6224,5 +6275,230 @@ mod tests {
         let errors = checker.check_module(&module);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].to_string().contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
+    }
+
+    #[test]
+    fn test_n3_r1_negative_empty_list_return_inference_failure() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer return type for function `collect`: return -> list_literal -> element"));
+
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        let decl = checker.get_declared_type(ret_expr.span).expect("aggregate recorded at return expr span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "return -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_r1_explicit_return_any_acceptance() {
+        use crate::source::span::FileId;
+        let src = "from typing import Any\ndef collect() -> Any:\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { return_ty, body, .. } = &module.stmts[1].node else { panic!() };
+        let return_ty_expr = return_ty.as_ref().unwrap();
+        let decl = checker
+            .get_declared_type(return_ty_expr.span)
+            .expect("explicit annotation aggregate recorded");
+        assert!(matches!(decl.source(), SourceAnnotation::Authored(_)));
+        assert_eq!(decl.normalized(), Some(checker.tcx.any()));
+        assert_eq!(*decl.provenance(), TypeProvenance::ExplicitAny);
+
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        assert!(
+            checker.get_declared_type(ret_expr.span).is_none(),
+            "explicit -> Any return must NOT record aggregate at return expression span"
+        );
+    }
+
+    #[test]
+    fn test_n3_r1_non_empty_homogeneous_return_list_inference() {
+        use crate::source::span::FileId;
+        let src = "def collect(x: int, *args):\n    return [1, 2]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        let int_ty = checker.tcx.int();
+        let expected_list = checker.tcx.intern(Ty::List(int_ty));
+        let decl = checker.get_declared_type(ret_expr.span).expect("aggregate recorded at return expr span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), Some(expected_list));
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "return -> list_literal".to_string()
+            }
+        );
+
+        let fn_sym = checker.symbols.lookup_in_scope(0, "collect").expect("symbol exists");
+        let fn_ty = checker.get_sym_type(fn_sym.0);
+        let expected_sig = checker.function_callable_signature(fn_sym);
+        if let Ty::Fn {
+            params,
+            ret,
+            variadic,
+            signature,
+            param_spec,
+        } = checker.tcx.get(fn_ty)
+        {
+            assert_eq!(*params, vec![int_ty], "params preserved");
+            assert_eq!(*ret, expected_list, "return type updated to concrete list[int]");
+            assert_eq!(*variadic, true, "variadic flag preserved");
+            assert_eq!(*signature, expected_sig, "callable signature preserved");
+            assert_eq!(*param_spec, None, "param_spec preserved");
+        } else {
+            panic!("expected Ty::Fn");
+        }
+    }
+
+    #[test]
+    fn test_n3_r1_method_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "class C:\n    def collect(self):\n        return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::FnDef { body: method_body, .. } = &body[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &method_body[0].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_decorated_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def dec(f): return f\n@dec\ndef collect():\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[1].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_generator_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    yield 1\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[1].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_async_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "async def collect():\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::AsyncFnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_scalar_return_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    return 42\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[0].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_bare_return_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    return\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_n3_r1_multiple_return_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    return []\n    return [1]\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr1)) = &body[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr2)) = &body[1].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr1.span).is_none());
+        assert!(checker.get_declared_type(ret_expr2.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_nested_return_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    if True:\n        return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::If { body: if_body, .. } = &body[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &if_body[0].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_conditional_return_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect(cond):\n    if cond:\n        return [1]\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[1].node else { panic!() };
+        assert!(checker.get_declared_type(ret_expr.span).is_none());
+    }
+
+    #[test]
+    fn test_n3_r1_preceding_statement_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def collect():\n    x = 1\n    return []\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::Return(Some(ret_expr)) = &body[1].node else { panic!() };
+        assert!(
+            checker.get_declared_type(ret_expr.span).is_none(),
+            "preceding non-return statement before return [] must NOT trigger N3-R1"
+        );
     }
 }

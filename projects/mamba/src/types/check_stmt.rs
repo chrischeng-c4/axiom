@@ -486,6 +486,7 @@ impl TypeChecker {
                     .declaration_symbol(stmt)
                     .expect("function declarations must be preregistered");
                 let is_decorated = !decorators.is_empty();
+                let is_async = matches!(&stmt.node, Stmt::AsyncFnDef { .. });
                 self.check_fn_body(
                     declaration_symbol,
                     name,
@@ -495,6 +496,7 @@ impl TypeChecker {
                     body,
                     overload_decorated,
                     is_decorated,
+                    is_async,
                 );
                 self.unregister_type_params(type_params);
             }
@@ -1094,11 +1096,18 @@ impl TypeChecker {
         body: &[Spanned<Stmt>],
         overload_decorated: bool,
         is_decorated: bool,
+        is_async: bool,
     ) {
         let is_method = self
             .class_scope_stack
             .contains(&self.symbols.current_scope_idx());
         let is_generator = body_has_yield(body);
+        let is_module_level = self.function_scope_stack.is_empty() && !is_method;
+        let is_n3_r1_eligible = is_module_level
+            && !is_async
+            && !is_decorated
+            && !is_generator
+            && return_ty.is_none();
 
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
@@ -1216,6 +1225,11 @@ impl TypeChecker {
         let prev_ret = self.current_return_ty.replace(ret_ty);
         self.check_stmt_seq(body);
         self.current_return_ty = prev_ret;
+        if is_n3_r1_eligible && body.len() == 1 {
+            if let Stmt::Return(Some(ret_expr)) = &body[0].node {
+                self.check_n3_return_inference(declaration_symbol, name, ret_expr);
+            }
+        }
         for symbol in inferred_local_placeholders {
             self.inferred_local_placeholders.remove(&symbol);
             self.builtin_class_aliases.remove(&symbol);
