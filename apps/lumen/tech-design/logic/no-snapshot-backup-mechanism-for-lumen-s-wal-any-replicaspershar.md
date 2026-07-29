@@ -248,7 +248,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add Command::Backup(BackupArgs) with --url, --dest, --token (optional bearer token, fallback to LUMEN_AUTH_GOOGLE_AUDIENCES for GKE Workload Identity), --retention-secs; add a dispatch_backup twin-impl (#[cfg(feature = \"backup\")] real impl calling lumen::backup::run_backup and printing the BackupRunResult as JSON; #[cfg(not(feature = \"backup\"))] fallback that bails with a message to rebuild with --features backup, matching the run_operator/crd_yaml pattern); wire a new match arm in main()."
+    description: "Add Command::Backup(BackupArgs) with --url, --dest, --retention-secs. The credential arguments this step originally specified (a --token bearer flag falling back to a GKE Workload Identity audience env var) were retired with the rest of the registry model in #2872/#2873 and are not part of the surface any more; the runner gets a projected ServiceAccount token in #2877. Add a dispatch_backup twin-impl (#[cfg(feature = \"backup\")] real impl calling lumen::backup::run_backup and printing the BackupRunResult as JSON; #[cfg(not(feature = \"backup\"))] fallback that bails with a message to rebuild with --features backup, matching the run_operator/crd_yaml pattern); wire a new match arm in main()."
   - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md
     action: modify
     section: source
