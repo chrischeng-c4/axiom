@@ -479,6 +479,13 @@ shape, never from a joined recovery `Ty::Any`. A concrete branch may refine the
 other branch only when the empty branch contributes no contradictory element
 evidence.
 
+The binding classifier runs before a first implicit symbol is defined and also
+serves preregistered local placeholders. Therefore J1's classifier must return
+the selected concrete binding type to both assignment callers; each caller
+publishes that returned type instead of blindly restoring the original
+order-sensitive conditional recovery type. Recording `Inferred` without
+publishing the same selected type is not completion.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
