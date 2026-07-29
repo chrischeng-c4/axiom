@@ -1,10 +1,11 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/cli.py
-// HANDWRITE-BEGIN: gap=existing-project-patch tracker=#2823
+// HANDWRITE-BEGIN gap="existing-project-patch" tracker="#2823" reason="Guard CLI parsing and dispatch remain native Rust"
 use std::path::PathBuf;
 
 use crate::evidence::EvidenceCommand;
+use crate::policy::PolicyProfile;
 use crate::report::GuardReport;
-use crate::scan::{PolicyProfile, ScanOptions};
+use crate::scan::ScanOptions;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]

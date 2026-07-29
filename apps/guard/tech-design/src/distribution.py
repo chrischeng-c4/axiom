@@ -34,6 +34,16 @@ class ExternalUseCase:
     dimension: str
 
 
+@dataclass(frozen=True)
+class DomainArtifactSlice:
+    """One shallow domain projected across EC, TD, and codebase artifacts."""
+
+    domain: str
+    external_contract_root: str
+    tech_design_modules: tuple[str, ...]
+    codebase_artifacts: tuple[str, ...]
+
+
 class DistributionDesign:
     """One independently built Cargo package; no CLI registry adapter."""
 
@@ -60,6 +70,49 @@ class DistributionDesign:
     @staticmethod
     def install_transaction() -> InstallTransaction:
         return InstallTransaction("guard@", True, True)
+
+    @staticmethod
+    def domain_artifact_slices() -> tuple[DomainArtifactSlice, ...]:
+        """Keep DDD boundaries visible without repeating the Guard root."""
+
+        return (
+            DomainArtifactSlice(
+                "scan",
+                "src/scan",
+                ("src/scan.py",),
+                ("src/scan.rs",),
+            ),
+            DomainArtifactSlice(
+                "policy",
+                "src/policy",
+                ("src/policy.py",),
+                ("src/policy.rs",),
+            ),
+            DomainArtifactSlice(
+                "report",
+                "src/report",
+                ("src/report.py",),
+                ("src/report.rs",),
+            ),
+            DomainArtifactSlice(
+                "evidence",
+                "src/evidence",
+                ("src/evidence.py",),
+                ("src/evidence.rs",),
+            ),
+            DomainArtifactSlice(
+                "distribution",
+                "src/distribution",
+                ("src/distribution.py", "src/cli.py"),
+                (
+                    "Cargo.toml",
+                    "src/main.rs",
+                    "src/cli.rs",
+                    "build.sh",
+                    "install.sh",
+                ),
+            ),
+        )
 
     @staticmethod
     def required_external_use_cases() -> tuple[ExternalUseCase, ...]:
@@ -92,7 +145,11 @@ class DistributionDesign:
                 "security",
             ),
             ExternalUseCase("security-policy-profile", "security-lint-policy", "security"),
-            ExternalUseCase("static-security-scan", "json-report-envelope", "security"),
+            ExternalUseCase(
+                "static-security-scan",
+                "static-scan-clean-report",
+                "security",
+            ),
             ExternalUseCase(
                 "dynamic-security-evidence",
                 "vat-isolated-security-runner",

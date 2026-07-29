@@ -113,6 +113,44 @@ class GuardDesignTest(unittest.TestCase):
             self.assertNotIn("guard-cli", profile.cargo_arguments)
             self.assertIn("guard", profile.cargo_arguments)
 
+    def test_ec_td_and_codebase_share_one_shallow_domain_map(self) -> None:
+        slices = DistributionDesign.domain_artifact_slices()
+        self.assertEqual(
+            tuple(slice_.domain for slice_ in slices),
+            ("scan", "policy", "report", "evidence", "distribution"),
+        )
+        self.assertTrue(
+            all(
+                Path(slice_.external_contract_root).parts
+                == ("src", slice_.domain)
+                for slice_ in slices
+            )
+        )
+        self.assertTrue(
+            all(
+                Path(module).parent == Path("src")
+                for slice_ in slices
+                for module in slice_.tech_design_modules
+            )
+        )
+        self.assertEqual(
+            next(
+                slice_.codebase_artifacts
+                for slice_ in slices
+                if slice_.domain == "policy"
+            ),
+            ("src/policy.rs",),
+        )
+        distribution = next(
+            slice_ for slice_ in slices if slice_.domain == "distribution"
+        )
+        self.assertEqual(
+            distribution.tech_design_modules,
+            ("src/distribution.py", "src/cli.py"),
+        )
+        self.assertIn("src/main.rs", distribution.codebase_artifacts)
+        self.assertIn("src/cli.rs", distribution.codebase_artifacts)
+
 
 if __name__ == "__main__":
     unittest.main()

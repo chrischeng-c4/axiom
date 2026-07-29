@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/report.py
-// HANDWRITE-BEGIN: gap=python-td-rust-body tracker=#2823
+// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard report behavior remains native Rust"
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

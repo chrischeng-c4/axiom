@@ -2,10 +2,10 @@ version = 2
 project = "guard"
 ir_kind = "td"
 td_path = "apps/guard/tech-design"
-generated_at = "2026-07-29T03:16:33.327421+00:00"
-digest = "sha256:376c2e28149e9a1a8121551c11e33a2e28a9cbafd740b2a3f83c813e58ec7423"
-source_digest = "sha256:376c2e28149e9a1a8121551c11e33a2e28a9cbafd740b2a3f83c813e58ec7423"
-ir_digest = "sha256:d681eed26be3821223d22b20e15ac9aed935ec78866224650259736ff0723c97"
+generated_at = "2026-07-29T03:51:13.911673+00:00"
+digest = "sha256:8fa2c67721190fcc7fe5c2342353ac571a0624d87c40c677f2eaf13a7f18e956"
+source_digest = "sha256:8fa2c67721190fcc7fe5c2342353ac571a0624d87c40c677f2eaf13a7f18e956"
+ir_digest = "sha256:01282267cd8d1cfaa24fcb4eded7285142ad8cd8472b39da7e2f51ada0339cfa"
 
 [[files]]
 path = "src/cli.py"
@@ -13,7 +13,7 @@ digest = "sha256:1fc978ce5c901d28e3abfd05acc50228b852c8850cc5be25eabf91f726fcbdf
 
 [[files]]
 path = "src/distribution.py"
-digest = "sha256:d6313a28c1278a42a05f71dd9d2f4c01033b76a85c48ebcc903e4a92cfb2a5ad"
+digest = "sha256:4c250a95464e743ddd03463141cecc5a5a53597f3296b92e72057ef02079ad95"
 
 [[files]]
 path = "src/evidence.py"
@@ -33,4 +33,4 @@ digest = "sha256:c4ad08882f2d3f3f980228b9bc1d53ebb6247442a363b0927108fe3f3f69782
 
 [[files]]
 path = "tests/unit/test_guard_design.py"
-digest = "sha256:c4606c28496da38075bdd62a6164a6b4e58521e02d3ad70317fe0868c4ed1375"
+digest = "sha256:55c58b3d6178a4ad739508f38117e788707aab80f854d7a92872bd762c970d42"

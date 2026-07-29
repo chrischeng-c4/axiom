@@ -1,36 +1,18 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/scan.py
-// HANDWRITE-BEGIN: gap=python-td-rust-body tracker=#2823
+// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard scan behavior remains native Rust"
 use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
 
 use cclab_compass::checker::{check_paths, LintConfig};
-use cclab_compass::diagnostic::{DiagnosticCategory, DiagnosticSeverity};
+use cclab_compass::diagnostic::DiagnosticSeverity;
 use cclab_compass::lint::detect_sql_injection;
 use cclab_compass::syntax::Language;
 
 use crate::evidence::{run_evidence_commands, EvidenceCommand};
-use crate::report::{finding_id, Finding, GuardReport, Location, Severity};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec apps/guard/tech-design/src/scan.py
-pub enum PolicyProfile {
-    BaselineStatic,
-    SecurityLint,
-    Strict,
-}
-
-/// @spec apps/guard/tech-design/src/scan.py
-impl PolicyProfile {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PolicyProfile::BaselineStatic => "guard-baseline-static/1",
-            PolicyProfile::SecurityLint => "guard-security-lint/1",
-            PolicyProfile::Strict => "guard-strict/1",
-        }
-    }
-}
+use crate::policy::{include_diagnostic, map_severity, PolicyProfile};
+use crate::report::{finding_id, Finding, GuardReport, Location};
 
 #[derive(Debug, Clone)]
 /// @spec apps/guard/tech-design/src/scan.py
@@ -229,29 +211,6 @@ pub fn scan_path_with_options(path: impl AsRef<Path>, options: ScanOptions) -> G
 
 fn one_based(value: u32) -> u32 {
     value.saturating_add(1)
-}
-
-fn include_diagnostic(profile: PolicyProfile, category: DiagnosticCategory, code: &str) -> bool {
-    category == DiagnosticCategory::Security
-        || matches!(profile, PolicyProfile::SecurityLint | PolicyProfile::Strict)
-            && security_lint_rule(code)
-}
-
-fn security_lint_rule(code: &str) -> bool {
-    matches!(code, "DK002" | "JS007" | "JS008" | "SQL-INJ" | "TS102")
-}
-
-fn map_severity(profile: PolicyProfile, severity: DiagnosticSeverity) -> Severity {
-    match (profile, severity) {
-        (PolicyProfile::Strict, DiagnosticSeverity::Information)
-        | (PolicyProfile::Strict, DiagnosticSeverity::Hint) => Severity::Low,
-        (_, severity) => match severity {
-            DiagnosticSeverity::Error => Severity::High,
-            DiagnosticSeverity::Warning => Severity::Medium,
-            DiagnosticSeverity::Information => Severity::Low,
-            DiagnosticSeverity::Hint => Severity::Info,
-        },
-    }
 }
 
 fn sql_injection_language(language: Language) -> Option<&'static str> {

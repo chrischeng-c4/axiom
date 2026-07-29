@@ -63,13 +63,13 @@
     {
       "assertion_count": 58,
       "assertions_digest": "sha256:ed4dbf7580b33f571880a84db22407f677d2f14ad34b47b2c86a4d5338abb9a7",
-      "elapsed_ms": 1818,
+      "elapsed_ms": 1945,
       "exit_code": 0
     }
   ],
   "case_id": "guard-ec-security-evidence-command",
   "exit_code": 0,
-  "implementation": "apps/guard/external-contracts/src/cases/guard-ec-security-evidence-command.py",
+  "implementation": "apps/guard/external-contracts/src/evidence/ec-security-evidence-command.py",
   "mode": "security",
   "protocol": "aw.python-ec.evidence.v1"
 }

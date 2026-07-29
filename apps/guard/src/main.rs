@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/distribution.py
-// HANDWRITE-BEGIN: gap=existing-project-patch tracker=#2823
+// HANDWRITE-BEGIN gap="existing-project-patch" tracker="#2823" reason="Guard distribution entrypoint remains native Rust"
 //! Standalone Guard CLI. This package owns both the command surface and its
 //! security policy implementation; it has no registry adapter crate.
 
@@ -9,6 +9,7 @@ use clap::Parser;
 
 mod cli;
 mod evidence;
+mod policy;
 mod report;
 mod scan;
 

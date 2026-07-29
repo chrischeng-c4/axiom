@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "guard",
-  "source_digest": "sha256:3c1b82944e9a19b3551094bb1046d87934aae706a944dcf754cafbb0302944c6",
+  "source_digest": "sha256:45843ad0c29fb30c560718bfb0f3df05cc0ce0f534d280eabf7870787ce5cb30",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:codex-cli:019fabd7-f3cd-7143-a93c-c6ee4075d4da",
-  "reviewed_at": "2026-07-29T03:11:51.038121+00:00",
-  "summary": "The standalone distribution EC closes stale build reuse and GUARD_BIN bypasses, then exercises help, scan persistence, report replay, spec, and llm through the independently built binary.",
+  "reviewed_by": "agent:codex-cli:019fabfa-3efb-7e00-86c5-d3dc593cf30d",
+  "reviewed_at": "2026-07-29T03:49:47.148057+00:00",
+  "summary": "The 17 EC cases have unique declared paths under five shallow domain directories; traversal and undeclared cases fail closed, and all moved verifier oracles remain byte-identical.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,

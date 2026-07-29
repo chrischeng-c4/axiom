@@ -13,13 +13,13 @@
     {
       "assertion_count": 8,
       "assertions_digest": "sha256:321e4ed7df4c495a3e8c8212fef84e442c23b962b406f85a899944991934918d",
-      "elapsed_ms": 1450,
+      "elapsed_ms": 1434,
       "exit_code": 0
     }
   ],
   "case_id": "guard-static-scan-clean-report",
   "exit_code": 0,
-  "implementation": "apps/guard/external-contracts/src/cases/guard-static-scan-clean-report.py",
+  "implementation": "apps/guard/external-contracts/src/scan/static-scan-clean-report.py",
   "mode": "security",
   "protocol": "aw.python-ec.evidence.v1"
 }

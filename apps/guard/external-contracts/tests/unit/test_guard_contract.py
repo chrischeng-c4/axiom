@@ -21,6 +21,7 @@ from guard_contract import (  # noqa: E402
     assert_scan_consistency,
     parse_json_stdout,
 )
+from runner import _declared_source_path, _declared_test_paths  # noqa: E402
 
 
 def clean_report() -> dict[str, object]:
@@ -111,6 +112,27 @@ def dynamic_report(
 
 
 class GuardContractTest(unittest.TestCase):
+    def test_inventory_declares_five_shallow_domain_directories(self) -> None:
+        paths = _declared_test_paths()
+        self.assertEqual(len(paths), 17)
+        domains = {
+            path.relative_to(SRC_ROOT.parent).parts[1]
+            for path in paths.values()
+        }
+        self.assertEqual(
+            domains,
+            {"scan", "policy", "report", "evidence", "distribution"},
+        )
+        self.assertTrue(
+            all(len(path.relative_to(SRC_ROOT.parent).parts) == 3 for path in paths.values())
+        )
+
+    def test_runner_resolves_declared_path_and_rejects_unknown_case(self) -> None:
+        source = _declared_source_path("guard-baseline-static-policy")
+        self.assertEqual(source.parent.name, "policy")
+        with self.assertRaises(SystemExit):
+            _declared_source_path("guard-not-declared")
+
     def test_accepts_canonical_clean_report(self) -> None:
         assertions = assert_scan_consistency(clean_report())
         self.assertIn("status, exit_code, and completion.clean agree", assertions)

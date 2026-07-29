@@ -14,6 +14,7 @@ from pathlib import Path
 EC_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 SRC_ROOT = EC_ROOT / "src"
+INVENTORY_PATH = EC_ROOT / "pyproject.toml"
 
 
 def _digest(value: object) -> str:
@@ -21,10 +22,53 @@ def _digest(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _load_verifier(case_id: str):
-    source_path = SRC_ROOT / "cases" / f"{case_id}.py"
-    if not source_path.is_file():
+def _declared_test_paths() -> dict[str, Path]:
+    """Read the exact id/test_path pairs from the Python EC inventory."""
+    paths: dict[str, Path] = {}
+    current: dict[str, str] | None = None
+    for raw_line in INVENTORY_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "[[tool.aw.python-ec.cases]]":
+            if current is not None and {"id", "test_path"} <= current.keys():
+                paths[current["id"]] = EC_ROOT / current["test_path"]
+            current = {}
+            continue
+        if line.startswith("[") and current is not None:
+            if {"id", "test_path"} <= current.keys():
+                paths[current["id"]] = EC_ROOT / current["test_path"]
+            current = None
+            continue
+        if current is None or "=" not in line:
+            continue
+        key, raw_value = (part.strip() for part in line.split("=", 1))
+        if key in {"id", "test_path"}:
+            value = json.loads(raw_value)
+            if not isinstance(value, str):
+                raise RuntimeError(f"Guard EC inventory {key} must be a string")
+            current[key] = value
+    if current is not None and {"id", "test_path"} <= current.keys():
+        paths[current["id"]] = EC_ROOT / current["test_path"]
+    return paths
+
+
+def _declared_source_path(case_id: str) -> Path:
+    source_path = _declared_test_paths().get(case_id)
+    if source_path is None or not source_path.is_file():
         raise SystemExit(f"unknown Guard EC case: {case_id}")
+    resolved = source_path.resolve()
+    try:
+        resolved.relative_to(SRC_ROOT.resolve())
+    except ValueError as error:
+        raise RuntimeError(
+            f"Guard EC test_path escapes src/: {source_path}"
+        ) from error
+    if resolved.suffix != ".py":
+        raise RuntimeError(f"Guard EC test_path must be Python: {source_path}")
+    return resolved
+
+
+def _load_verifier(case_id: str):
+    source_path = _declared_source_path(case_id)
     sys.path.insert(0, str(SRC_ROOT))
     spec = importlib.util.spec_from_file_location(
         f"guard_external_contract_{case_id.replace('-', '_')}",
