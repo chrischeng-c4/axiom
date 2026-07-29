@@ -3003,6 +3003,11 @@ fn func_sig_meta(
         } else {
             Option::None
         };
+        let dynamic_boundary_license = p
+            .authored_type()
+            .and_then(|ty| lowerer.checker.get_declared_type(ty.span))
+            .and_then(|decl| decl.dynamic_boundary_license());
+
         out.push(HirParamSig {
             name: p.name.clone(),
             kind,
@@ -3015,6 +3020,7 @@ fn func_sig_meta(
             declared_ty: Some(lowerer.resolve_type_expr_ro(&p.ty)),
             entry_ty: None,
             boxed_primitive_entry: false,
+            dynamic_boundary_license,
         });
     }
     HirFuncSig {
@@ -15233,6 +15239,9 @@ def f_reg_omitted(x):
 def f_reg_authored_any(x: Any):
     pass
 
+def f_reg_authored_typing_any(x: typing.Any):
+    pass
+
 def f_reg_authored_int(x: int):
     pass
 
@@ -15302,37 +15311,95 @@ def gen_authored_any(x: Any):
                 .unwrap_or_else(|| panic!("missing function signature for {}", name))
         };
 
+        use crate::types::DynamicBoundaryLicense;
+
         // Regular parameter
         assert_eq!(find_sig("f_reg_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_reg_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("f_reg_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_reg_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
+        assert_eq!(find_sig("f_reg_authored_typing_any").params[0].annotation, Some("typing.Any".to_string()));
+        assert_eq!(
+            find_sig("f_reg_authored_typing_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+
         assert_eq!(find_sig("f_reg_authored_int").params[0].annotation, Some("int".to_string()));
+        assert_eq!(find_sig("f_reg_authored_int").params[0].dynamic_boundary_license, None);
 
         // Positional-only parameter
         assert_eq!(find_sig("f_pos_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_pos_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("f_pos_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_pos_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Keyword-only parameter
         assert_eq!(find_sig("f_kw_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_kw_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("f_kw_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_kw_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Star args parameter
         assert_eq!(find_sig("f_star_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_star_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("f_star_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_star_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Double star kwargs parameter
         assert_eq!(find_sig("f_dstar_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("f_dstar_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("f_dstar_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("f_dstar_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Method self parameter
         assert_eq!(find_sig("m_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("m_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("m_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("m_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Decorated function parameter
         assert_eq!(find_sig("fn_dec_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("fn_dec_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("fn_dec_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("fn_dec_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
 
         // Generator function parameter
         assert_eq!(find_sig("gen_omitted").params[0].annotation, None);
+        assert_eq!(find_sig("gen_omitted").params[0].dynamic_boundary_license, None);
+
         assert_eq!(find_sig("gen_authored_any").params[0].annotation, Some("Any".to_string()));
+        assert_eq!(
+            find_sig("gen_authored_any").params[0].dynamic_boundary_license,
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
     }
 }

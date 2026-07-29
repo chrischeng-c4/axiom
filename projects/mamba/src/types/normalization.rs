@@ -78,6 +78,28 @@ impl DeclaredType {
     pub fn provenance(&self) -> &TypeProvenance {
         &self.provenance
     }
+
+    pub fn dynamic_boundary_license(&self) -> Option<DynamicBoundaryLicense> {
+        DynamicBoundaryLicense::from_provenance(&self.provenance)
+    }
+}
+
+/// Closed value object representing a dynamic boundary license granted by explicit `Any`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DynamicBoundaryLicense {
+    ExplicitAny,
+}
+
+impl DynamicBoundaryLicense {
+    /// Derive a boundary license from stored type provenance.
+    pub fn from_provenance(provenance: &TypeProvenance) -> Option<Self> {
+        match provenance {
+            TypeProvenance::ExplicitAny => Some(DynamicBoundaryLicense::ExplicitAny),
+            TypeProvenance::Explicit
+            | TypeProvenance::Inferred { .. }
+            | TypeProvenance::ImplicitUnknown { .. } => None,
+        }
+    }
 }
 
 /// Classify whether syntax is explicit `Any` or `typing.Any`.
@@ -162,5 +184,52 @@ mod tests {
                 inference_path: "local_binding -> list_literal -> element".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_dynamic_boundary_license_exhaustive_derivation() {
+        assert_eq!(
+            DynamicBoundaryLicense::from_provenance(&TypeProvenance::ExplicitAny),
+            Some(DynamicBoundaryLicense::ExplicitAny)
+        );
+        assert_eq!(
+            DynamicBoundaryLicense::from_provenance(&TypeProvenance::Explicit),
+            None
+        );
+        assert_eq!(
+            DynamicBoundaryLicense::from_provenance(&TypeProvenance::Inferred {
+                inference_path: "test".to_string()
+            }),
+            None
+        );
+        assert_eq!(
+            DynamicBoundaryLicense::from_provenance(&TypeProvenance::ImplicitUnknown {
+                inference_path: "test".to_string()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn test_declared_type_dynamic_boundary_license() {
+        let dummy_span = Span::new(FileId(0), 0, 5);
+
+        let any_syntax = Spanned::new(TypeExpr::Named("Any".to_string()), dummy_span);
+        let decl_any = DeclaredType::from_authored(any_syntax, Some(TypeId(1)));
+        assert_eq!(decl_any.dynamic_boundary_license(), Some(DynamicBoundaryLicense::ExplicitAny));
+
+        let typing_any_syntax = Spanned::new(TypeExpr::Named("typing.Any".to_string()), dummy_span);
+        let decl_typing_any = DeclaredType::from_authored(typing_any_syntax, Some(TypeId(1)));
+        assert_eq!(decl_typing_any.dynamic_boundary_license(), Some(DynamicBoundaryLicense::ExplicitAny));
+
+        let int_syntax = Spanned::new(TypeExpr::Named("int".to_string()), dummy_span);
+        let decl_int = DeclaredType::from_authored(int_syntax, Some(TypeId(2)));
+        assert_eq!(decl_int.dynamic_boundary_license(), None);
+
+        let decl_inferred = DeclaredType::from_inferred("inferred_path", TypeId(42));
+        assert_eq!(decl_inferred.dynamic_boundary_license(), None);
+
+        let decl_unknown = DeclaredType::from_implicit_unknown("unknown_path");
+        assert_eq!(decl_unknown.dynamic_boundary_license(), None);
     }
 }

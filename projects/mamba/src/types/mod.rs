@@ -14,7 +14,7 @@ pub mod ty;
 
 pub use check::TypeChecker;
 pub use context::TypeContext;
-pub use normalization::{DeclaredType, TypeProvenance};
+pub use normalization::{DeclaredType, DynamicBoundaryLicense, TypeProvenance};
 pub use ty::{Ty, TypeId};
 
 #[cfg(test)]

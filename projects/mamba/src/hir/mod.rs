@@ -1,6 +1,6 @@
 use crate::resolve::SymbolId;
 use crate::source::span::Span;
-use crate::types::TypeId;
+use crate::types::{DynamicBoundaryLicense, TypeId};
 use std::collections::{HashMap, HashSet};
 
 /// HIR Module — desugared, all names resolved to SymbolId, types resolved to TypeId.
@@ -74,6 +74,8 @@ pub struct HirParamSig {
     /// Whether a primitive `entry_ty` is received boxed and unboxed by the
     /// function prologue (the synchronous decorated/nested-function path).
     pub boxed_primitive_entry: bool,
+    /// Dynamic boundary license derived from explicit `Any` provenance.
+    pub dynamic_boundary_license: Option<DynamicBoundaryLicense>,
 }
 
 /// Literal default values representable without evaluating module code.
