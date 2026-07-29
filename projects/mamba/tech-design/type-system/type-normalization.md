@@ -438,6 +438,8 @@ its current recovery type is `Ty::Any`. The successful result must be derived
 from the checked element type and must not leak the comprehension target into
 the enclosing scope.
 
+Completed by #2964 (`841571e948`).
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
