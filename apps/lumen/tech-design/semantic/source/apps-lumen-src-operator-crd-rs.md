@@ -143,50 +143,14 @@ pub struct LumenSpec {
     #[serde(default)]
     pub auth: AuthMode,
 
-    /// Name of a Secret whose `token-registry.json` key is mounted at
-    /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
-    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object with two disjoint namespaces —
-    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
-    /// each claims object being
-    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
-    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
-    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
-    /// for a Secret-free alternative; setting **both** is rejected by the CRD
-    /// schema (#2678, R7), because silently preferring one leaves an operator
-    /// reading credentials that are not the ones being served.
+    /// Retired (#2870). The operator no longer mounts this Secret into the
+    /// serving pod, so setting it has no effect on any rendered object.
+    ///
+    /// The field is still accepted so an existing CR keeps applying while
+    /// authorization moves to the cluster's own TokenReview/SubjectAccessReview;
+    /// #2872 removes it from the schema.
     #[serde(default)]
     pub tokens_secret: Option<String>,
-
-    /// Name of an existing `SecretProviderClass` (same namespace as this
-    /// object) mounted via the Secrets Store CSI driver
-    /// (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret`
-    /// (`/var/run/secrets/lumen/token-registry.json`, env
-    /// `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry's content never
-    /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
-    /// referenced `SecretProviderClass` must project a file named
-    /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
-    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
-    /// both is rejected at `kubectl apply` rather than resolved by a
-    /// precedence rule nothing surfaces (#2678, R7). Rotation
-    /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
-    /// the live verifier on change — no rolling restart needed on lumen's
-    /// side. The remaining caveat is entirely at the CSI layer: a
-    /// CSI-mounted file only refreshes on the underlying value's rotation if
-    /// the cluster's CSI driver has secret rotation enabled (e.g. GKE's
-    /// managed add-on defaults it off); with rotation disabled, the mounted
-    /// file itself never changes, so there is nothing for lumen's watcher to
-    /// pick up.
-    #[serde(default)]
-    pub tokens_secret_provider_class: Option<String>,
-
-    /// CSI driver name for the `tokensSecretProviderClass` projection.
-    /// Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed
-    /// Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE
-    /// instances must set that value (#2456).
-    #[serde(default)]
-    pub tokens_secret_csi_driver: Option<String>,
 
     /// Name of a pre-existing, externally-managed ServiceAccount for the
     /// workload pods. When set, the operator uses this SA and never creates,

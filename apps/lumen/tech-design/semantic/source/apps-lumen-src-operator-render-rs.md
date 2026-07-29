@@ -98,10 +98,6 @@ const CLIENT_PORT: i32 = 7373;
 const RAFT_PORT: i32 = 7374;
 const BACKUP_COMPONENT: &str = "backup";
 const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
-const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
-const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
-const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
-const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
 // #1387: embedded-mode persistence subtree, disjoint from the raft backend's
 // `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
 // both can coexist on the one `raft` PVC mount across a `replicasPerShard`
@@ -147,33 +143,6 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     let uid = lumen.metadata.uid.clone()?;
     let name = lumen.metadata.name.clone()?;
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
-}
-
-/// Which shared projection source (if any) supplies the token registry file.
-///
-/// The two are mutually exclusive by schema and by
-/// [`LumenSpec::validate`](super::crd::LumenSpec::validate), so at most one is
-/// ever set on a spec that reaches here (#2678, R7). The order below is not a
-/// precedence rule to rely on — it is what a spec that slipped past both gates
-/// happens to render, and that spec's reconcile has already failed.
-fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
-    if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
-        return None;
-    }
-    if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
-        return Some(render::TokenRegistrySource::Secret {
-            name: secret,
-            key: TOKEN_REGISTRY_KEY,
-        });
-    }
-    lumen
-        .spec
-        .tokens_secret_provider_class
-        .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
-            provider_class,
-            driver: lumen.spec.tokens_secret_csi_driver.as_deref(),
-        })
 }
 
 /// Stateful data pods are never a direct HPA target. A vanilla HPA changes
@@ -236,9 +205,6 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     attach_service_account_annotations(&mut bsa, &lumen.spec.service_account_annotations);
     out.push(bsa);
     out.push(serving_configmap(lumen, &cx));
-    if let Some(cm) = identity_registry_configmap(lumen, &cx) {
-        out.push(cm);
-    }
     out.extend([
         serving_statefulset(lumen, &cx, &headless),
         render::headless_service_with_ports(
@@ -432,17 +398,8 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
     let res = render::requested_resources(&s.cpu, &s.memory);
-    let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
-    let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
-    if let Some(source) = token_registry_source(lumen) {
-        let projection = render::TokenRegistryProjection {
-            volume_name: TOKEN_REGISTRY_VOLUME,
-            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
-            source,
-        };
-        volume_mounts.push(render::token_registry_mount(&projection));
-        volumes.push(render::token_registry_volume(&projection));
-    }
+    let volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
+    let volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     let spread = |key: &str| {
         json!({
             "maxSkew": 1,
@@ -611,11 +568,12 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if !lumen.spec.shard_map.assignments.is_empty() {
         env.push(from_cfg("SHARD_MAP_ASSIGNMENTS"));
     }
-    // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
-    if token_registry_source(lumen).is_some() {
+    if matches!(lumen.spec.auth, super::crd::AuthMode::Required)
+        && !lumen.spec.identity_audiences.is_empty()
+    {
         env.push(json!({
-            "name": "LUMEN_TOKEN_REGISTRY_FILE",
-            "value": TOKEN_REGISTRY_FILE,
+            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
+            "value": lumen.spec.identity_audiences.join(","),
         }));
     }
     if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
@@ -854,7 +812,7 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
                         "labels": { "severity": "warning" },
                         "annotations": {
                             "summary": "lumen bearer-token registry hot-reload is failing in {{ $labels.namespace }} -- serving the last known-good registry, not the latest rotation",
-                            "runbook": "kubectl logs -n {{ $labels.namespace }} <serving-pod> | grep credential_registry_reload; validate the mounted LUMEN_TOKEN_REGISTRY_FILE Secret/CSI projection is well-formed JSON.",
+                            "runbook": "kubectl logs -n {{ $labels.namespace }} <serving-pod> | grep credential_registry_reload; check logs for details about the reload failure.",
                         },
                     },
                     {

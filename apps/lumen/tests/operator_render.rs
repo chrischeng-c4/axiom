@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use kube::api::ObjectMeta;
 use lumen::operator::crd::{
-    AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
-    ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
+    AuthMode, Autoscaling, GrantRole, IdentityGrant, LogFormat, PlacementSpec, ReshardPhase,
+    ReshardPolicy, ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
 use lumen::operator::render::{prunes, render};
 use lumen::operator::{Lumen, LumenSpec};
@@ -96,6 +96,28 @@ fn prod_spec() -> LumenSpec {
         admission: None,
         service_account_name: None,
         service_account_annotations: BTreeMap::new(),
+    }
+}
+
+/// A spec that actually *populates* the retired identity surface.
+///
+/// `dev_spec` and `prod_spec` both leave `identities` empty, and the renderer
+/// being retired here was already conditional on `!identities.is_empty()` — so
+/// an absence assertion run against those two fixtures alone passes on the
+/// unmodified tree and proves nothing. This fixture is the one that makes
+/// `no_retired_credential_registry_projections` fail if the projection comes
+/// back. It is deleted along with `spec.identities` itself in #2872.
+fn identity_spec() -> LumenSpec {
+    LumenSpec {
+        identities: BTreeMap::from([(
+            "dev@example.com".to_string(),
+            IdentityGrant {
+                subject: "dev".into(),
+                roles: BTreeMap::from([("orders".to_string(), GrantRole::Read)]),
+            },
+        )]),
+        identity_audiences: vec!["https://lumen.example.com".into()],
+        ..prod_spec()
     }
 }
 
@@ -518,40 +540,11 @@ fn prod_wires_auth_and_observability() {
     let l = lumen("lumen", prod_spec());
     let objs = render(&l);
 
-    // auth=required + tokensSecret → registry file env + Secret volume mount.
+    // auth=required without registry projection (retired phase 1).
     let dep = find(&objs, "StatefulSet", "lumen");
     let c = &dep["spec"]["template"]["spec"]["containers"][0];
     assert_eq!(c["image"], "registry.example.com/lumen:1.2.3");
     assert_eq!(c["imagePullPolicy"], "Always");
-    let registry_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
-        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
-    assert_eq!(
-        registry_env["value"],
-        "/var/run/secrets/lumen/token-registry.json"
-    );
-    let registry_mount = c["volumeMounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["name"] == "lumen-token-registry")
-        .expect("token registry mount");
-    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
-    assert_eq!(registry_mount["readOnly"], true);
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
-    assert_eq!(
-        registry_volume["secret"]["items"][0]["key"],
-        "token-registry.json"
-    );
     // log level set → present.
     assert!(env_names(c).contains(&"LUMEN_LOG_LEVEL".to_string()));
 
@@ -598,6 +591,49 @@ fn prod_wires_auth_and_observability() {
             o["kind"]
         );
         assert_eq!(o["metadata"]["ownerReferences"][0]["kind"], "Lumen");
+    }
+}
+
+/// #2870 AC1: the token and identity registry projections (retired phase 1) are
+/// no longer rendered. Asserted for auth=off, auth=required, and auth=required
+/// *with* identity grants — the last one is the only fixture under which the
+/// retired code would have rendered anything, so without it the identity half
+/// of this test passes on the unmodified tree.
+#[test]
+fn no_retired_credential_registry_projections() {
+    // Substring residue, not a structural walk: the retired projections reached
+    // pod specs, CronJob pod templates, and container env alike, and each of
+    // those sits at a different JSON path. Serializing the whole object is the
+    // only check that cannot miss a path we forgot to enumerate.
+    const RETIRED: [&str; 5] = [
+        "lumen-token-registry",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "lumen-identity-registry",
+        "LUMEN_IDENTITY_REGISTRY_FILE",
+        "search-identities",
+    ];
+
+    for spec_fn in [dev_spec, prod_spec, identity_spec] {
+        let auth = spec_fn().auth;
+        let objs = render(&lumen("search", spec_fn()));
+
+        for obj in &objs {
+            let text = serde_json::to_string(obj).expect("rendered object serializes");
+            for needle in RETIRED {
+                assert!(
+                    !text.contains(needle),
+                    "{needle} must not be rendered (auth={auth:?}) in {} {}",
+                    obj["kind"],
+                    obj["metadata"]["name"],
+                );
+            }
+        }
+
+        assert!(
+            !has(&objs, "ConfigMap", "search-identities"),
+            "search-identities ConfigMap must not be rendered (auth={auth:?}); got {:?}",
+            kinds(&objs)
+        );
     }
 }
 
@@ -1086,18 +1122,25 @@ fn crd_yaml_emits_lumen_definition() {
         !yaml.contains("format: uint32") && !yaml.contains("format: uint64"),
         "Kubernetes OpenAPI does not recognize unsigned integer formats: {yaml}"
     );
+    for needle in ["shardMap", "reshardPolicy", "PrepareSplit"] {
+        assert!(
+            yaml.contains(needle),
+            "CRD should publish the reshard surface; missing `{needle}`: {yaml}"
+        );
+    }
+    // #2870: the CRD no longer teaches the retired registry. `tokensSecret` and
+    // `identities` survive as no-op fields until #2872 drops them from the
+    // schema, but their docs must not describe a mount the operator stopped
+    // rendering — that is the ambiguity phase 1 exists to remove.
     for needle in [
         "token-registry.json",
         "/var/run/secrets/lumen/token-registry.json",
         "LUMEN_TOKEN_REGISTRY_FILE",
-        "read|write|admin",
-        "shardMap",
-        "reshardPolicy",
-        "PrepareSplit",
+        "LUMEN_IDENTITY_REGISTRY_FILE",
     ] {
         assert!(
-            yaml.contains(needle),
-            "CRD should publish token registry shape in tokensSecret docs; missing `{needle}`: {yaml}"
+            !yaml.contains(needle),
+            "CRD must not publish the retired registry shape; found `{needle}`: {yaml}"
         );
     }
 }

@@ -95,20 +95,12 @@ pub struct LumenSpec {
     #[serde(default)]
     pub auth: AuthMode,
 
-    /// Name of a Secret whose `token-registry.json` key is mounted at
-    /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
-    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
-    /// `token-registry.json` is a JSON object with two disjoint namespaces —
-    /// `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`,
-    /// each claims object being
-    /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
-    /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
-    /// Ignored when `auth: disabled`.
+    /// Retired (#2870). The operator no longer mounts this Secret into the
+    /// serving pod, so setting it has no effect on any rendered object.
     ///
-    /// This Secret carries bearer secrets only. A caller who authenticates as a
-    /// Google service account is granted through [`identities`](Self::identities)
-    /// instead, which holds no secret material and therefore needs no Secret,
-    /// no Secret Manager, and no CSI driver (#2764).
+    /// The field is still accepted so an existing CR keeps applying while
+    /// authorization moves to the cluster's own TokenReview/SubjectAccessReview;
+    /// #2872 removes it from the schema.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -120,11 +112,10 @@ pub struct LumenSpec {
     /// bearer secret; a permission table keyed by a public email is ordinary
     /// configuration and needs none of it.
     ///
-    /// The operator projects these as `identities.json` in an instance-owned
-    /// ConfigMap, mounted beside `token-registry.json`. lumen unions the two at
-    /// load and on every reload, so bearer secrets and identity grants coexist
-    /// without either file inheriting the other's confidentiality class — one
-    /// mount path cannot carry two Kubernetes objects, so they are two files.
+    /// Retired (#2870). The operator no longer projects these grants into any
+    /// rendered object, so setting them has no effect. The field is still
+    /// accepted so an existing CR keeps applying; #2872 removes it from the
+    /// schema.
     ///
     /// Ignored when `auth: disabled`. Requires at least one
     /// [`identity_audiences`](Self::identity_audiences) entry.
