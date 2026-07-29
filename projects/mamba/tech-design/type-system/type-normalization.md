@@ -269,6 +269,42 @@ syntax, and the inference path. It must not reject an arbitrary `Ty::Any` or
 reuse the local-binding path merely because the normalized recovery type is
 `list[Any]`.
 
+#### N3-C1 — empty-collection class attribute
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/class_attribute.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/class_attribute.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to the first simple-name assignment whose binding scope is the
+  active class namespace;
+- classify an empty list initializer as
+  `ImplicitUnknown { inference_path: "class_attribute -> list_literal -> element" }`;
+- store the failed omitted declaration at the target span with
+  `normalized = None`;
+- emit one stable compile error naming class attribute `items`, the target
+  span, and the exact inference path;
+- record a non-empty homogeneous class list as `Inferred` with path
+  `class_attribute -> list_literal` and its concrete normalized list type;
+- let class-level `items: Any = []` continue through the N2 authored path as
+  `ExplicitAny`;
+- preserve completed local/global binding behavior while leaving instance
+  attribute assignment, function `global` rebinding, unpacking, reassignments,
+  and the other N3 ingress families unchanged.
+
+This slice must derive class-attribute ownership from the active class scope,
+not merely from `current_class` or normalized `list[Any]`. Method bodies are
+active function-local scopes even though a class scope remains on the outer
+stack.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
