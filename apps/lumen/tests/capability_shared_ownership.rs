@@ -5,6 +5,12 @@ use std::collections::BTreeSet;
 
 const AW_TOML: &str = include_str!("../aw.toml");
 const README: &str = include_str!("../README.md");
+/// The canonical capability contract. It used to be README — capability
+/// headings, claims, and verification all lived there. #2887 moved the contract
+/// here and left README a human-readable summary that links to it, so a gate
+/// that still read README would be asserting on prose whose job is now to be
+/// readable rather than to be exact.
+const CAPABILITIES: &str = include_str!("../CAPABILITIES.md");
 const CARGO_TOML: &str = include_str!("../Cargo.toml");
 const CLI: &str = include_str!("../src/bin/lumen.rs");
 const API: &str = include_str!("../src/api.rs");
@@ -47,25 +53,44 @@ fn trait_profile_requires_shared_service_baselines() {
         );
     }
 
-    for capability in [
-        "### CLI Interface",
-        "### Long-Running Stability",
-        "### Security Hardening",
-        "### Standard Operational Endpoints",
-        "### Observability",
-        "### Kubernetes-Native Deployment",
-        "### Stateful Service Workload",
-        "### Developer & Agent Experience",
+    // Each trait's baseline still has to land somewhere nameable. Under the
+    // two-root contract that place is a capability heading plus its stable ID
+    // — the ID is what claims and gates reference, so a heading renamed
+    // without its ID is a doc edit, and an ID that disappears is a broken
+    // contract.
+    for (heading, id) in [
+        ("#### Indexing", "`indexing`"),
+        ("#### Querying", "`querying`"),
+        ("#### Kubernetes-Native Deployment", "`kubernetes-native-deployment`"),
+        ("#### Security & Access", "`security-hardening`"),
+        ("#### Scaling & Availability", "`scaling-availability`"),
+        ("#### Durability & Recovery", "`durability-recovery`"),
+        ("#### Operations & Observability", "`operations-observability`"),
+        ("#### API, CLI & Agent Integration", "`api-cli-agent-integration`"),
     ] {
         assert!(
-            README.contains(capability),
-            "trait-derived baseline is missing {capability}"
+            CAPABILITIES.contains(heading),
+            "trait-derived baseline is missing {heading}"
+        );
+        assert!(
+            CAPABILITIES.contains(&format!("ID: {id}")),
+            "{heading} must keep its stable capability ID {id}"
+        );
+        assert!(
+            CAPABILITIES.contains(&format!("| {id} |")),
+            "{heading} must stay listed in the Capability Index as {id}"
         );
     }
 
+    // The two roots are the whole taxonomy; a third root would put a capability
+    // somewhere neither `aw capability` nor a reader looks.
+    for root in ["### Core Features", "### Non-Core Features"] {
+        assert!(CAPABILITIES.contains(root), "capability root {root} is missing");
+    }
+
     assert!(
-        README.contains("without a duplicate\nservice implementation"),
-        "the stateful baseline must explicitly reject an app-local duplicate service stack"
+        README.contains("[`CAPABILITIES.md`](CAPABILITIES.md)"),
+        "README must point at the canonical contract rather than restate it"
     );
 }
 
@@ -150,12 +175,18 @@ fn shared_and_domain_ownership_are_total_and_disjoint() {
         "ownership classification must be total"
     );
 
-    assert!(README.contains("### Search Core"));
-    assert!(README.contains("### Dynamic Shard Topology"));
+    // The domain half of the table has to be visible in the contract, not just
+    // in this array: search planning and shard/CRD policy are the two places a
+    // reviewer would otherwise be tempted to push into a shared library.
+    assert!(CAPABILITIES.contains("#### Querying"));
+    assert!(CAPABILITIES.contains("#### Scaling & Availability"));
     assert!(
-        README
-            .contains("operator watches one namespace and owns\nstorage topology, reshard phases"),
-        "Lumen-specific search and CRD reshard policy must remain app-owned"
+        CAPABILITIES.contains("Lumen owns its CRD\npolicy and app wiring"),
+        "the Kubernetes capability must state that CRD policy stays app-owned"
+    );
+    assert!(
+        CAPABILITIES.contains("Lumen owns domain policy and wiring"),
+        "the security capability must state that only mechanics move to shared libraries"
     );
 }
 
