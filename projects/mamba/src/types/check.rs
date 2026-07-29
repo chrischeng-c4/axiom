@@ -779,9 +779,8 @@ pub struct TypeChecker {
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
     /// `register_type_params` call pushes one frame and cleanup restores it.
     type_param_alias_scopes: Vec<Vec<(String, TypeVarId, Option<TypeId>)>>,
-    /// Semantic annotation results keyed by source span. Lowering consumes
-    /// these instead of independently re-resolving class/generic annotations.
-    resolved_type_exprs: HashMap<Span, TypeId>,
+    /// Single checker-local semantic annotation map storing `DeclaredType` aggregates keyed by source span.
+    declared_types: HashMap<Span, DeclaredType>,
     /// Declaration lookup retained while call sites migrate to intrinsic
     /// `Ty::Fn::signature` metadata.
     pub(crate) function_param_sigs: HashMap<SymbolId, Vec<FunctionParamSig>>,
@@ -934,8 +933,6 @@ pub struct TypeChecker {
     /// or targets committed by another member of the failed alias cycle.
     pub(crate) stdlib_spec_materialization_depth: usize,
     pub(crate) stdlib_spec_materialization_nodes: Vec<TypeSpecId>,
-    /// Map from parameter annotation span to declared type.
-    pub(crate) param_declarations: HashMap<Span, DeclaredType>,
 }
 
 impl TypeChecker {
@@ -961,7 +958,7 @@ impl TypeChecker {
             preregister_loop_reassign_counts: HashMap::new(),
             preregister_declared_bindings: HashSet::new(),
             type_param_alias_scopes: Vec::new(),
-            resolved_type_exprs: HashMap::new(),
+            declared_types: HashMap::new(),
             function_param_sigs: HashMap::new(),
             function_declaration_types: HashMap::new(),
             declaration_symbols: HashMap::new(),
@@ -1005,7 +1002,6 @@ impl TypeChecker {
             stdlib_spec_type_param_failed: HashSet::new(),
             stdlib_spec_materialization_depth: 0,
             stdlib_spec_materialization_nodes: Vec::new(),
-            param_declarations: HashMap::new(),
         };
         tc.register_builtins();
         tc
@@ -1481,7 +1477,7 @@ impl TypeChecker {
     fn resolve_type_param_metadata_expr(&mut self, expr: &Spanned<Expr>) -> Option<TypeId> {
         let type_expr = expr_to_type_expr(expr)?;
         let error_mark = self.errors_mark();
-        let resolved = self.resolve_type_expr(&type_expr);
+        let resolved = self.resolve_authored_annotation(&type_expr);
         if self.errors.len() != error_mark || resolved == self.tcx.error() {
             self.truncate_errors(error_mark);
             None
@@ -1620,7 +1616,7 @@ impl TypeChecker {
                 .map(|param| self.resolve_param_type_expr(param))
                 .collect();
             let ret = return_ty
-                .map(|return_ty| self.resolve_type_expr(return_ty))
+                .map(|return_ty| self.resolve_authored_annotation(return_ty))
                 .unwrap_or(self.tcx.any());
             (param_types, ret, variadic)
         };
@@ -2079,7 +2075,7 @@ impl TypeChecker {
             .collect();
         self.register_type_param_aliases(&aliases);
         let error_mark = self.errors_mark();
-        let mut template = self.resolve_type_expr(&definition.value);
+        let mut template = self.resolve_authored_annotation(&definition.value);
         let alias_names: Vec<_> = aliases.into_iter().map(|(name, _)| name).collect();
         self.unregister_type_param_aliases(&alias_names);
         if self.preregister_depth > 0 && self.errors.len() != error_mark {
@@ -2433,7 +2429,7 @@ impl TypeChecker {
                             .collect();
                         let ret = return_ty
                             .as_ref()
-                            .map(|t| self.resolve_type_expr(t))
+                            .map(|t| self.resolve_authored_annotation(t))
                             .unwrap_or(self.tcx.any());
                         (param_types, ret, is_variadic)
                     };
@@ -3375,8 +3371,17 @@ impl TypeChecker {
         }
     }
 
+    /// Pure type-expression resolution: resolves a `TypeExpr` without recording authored provenance.
     pub(crate) fn resolve_type_expr(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
         self.resolve_type_expr_in_context(ty, TypeExprResolutionContext::Value)
+    }
+
+    /// Authored annotation entrypoint: resolves a top-level authored `TypeExpr` and records its `DeclaredType`.
+    pub(crate) fn resolve_authored_annotation(&mut self, ty: &Spanned<TypeExpr>) -> TypeId {
+        let resolved = self.resolve_type_expr(ty);
+        let decl = DeclaredType::from_authored(ty.clone(), Some(resolved));
+        self.declared_types.insert(ty.span, decl);
+        resolved
     }
 
     pub(crate) fn resolve_param_type_expr(&mut self, param: &Param) -> TypeId {
@@ -3397,15 +3402,15 @@ impl TypeChecker {
     ) -> Option<DeclaredType> {
         if let ParamAnnotation::Authored(ref spanned_ty) = param.annotation {
             let decl = DeclaredType::from_authored(spanned_ty.clone(), Some(resolved));
-            self.param_declarations.insert(spanned_ty.span, decl.clone());
+            self.declared_types.insert(spanned_ty.span, decl.clone());
             Some(decl)
         } else {
             None
         }
     }
 
-    pub fn get_param_declaration(&self, span: Span) -> Option<&DeclaredType> {
-        self.param_declarations.get(&span)
+    pub fn get_declared_type(&self, span: Span) -> Option<&DeclaredType> {
+        self.declared_types.get(&span)
     }
 
     fn resolve_type_expr_in_context(
@@ -3413,13 +3418,11 @@ impl TypeChecker {
         ty: &Spanned<TypeExpr>,
         context: TypeExprResolutionContext,
     ) -> TypeId {
-        let resolved = self.resolve_type_expr_inner(ty, context);
-        self.resolved_type_exprs.insert(ty.span, resolved);
-        resolved
+        self.resolve_type_expr_inner(ty, context)
     }
 
     pub(crate) fn resolved_type_expr(&self, span: Span) -> Option<TypeId> {
-        self.resolved_type_exprs.get(&span).copied()
+        self.declared_types.get(&span).and_then(|decl| decl.normalized())
     }
 
     fn resolve_type_expr_inner(
@@ -4606,7 +4609,7 @@ impl TypeChecker {
                         .collect();
                     let ret = return_ty
                         .as_ref()
-                        .map(|t| self.resolve_type_expr(t))
+                        .map(|t| self.resolve_authored_annotation(t))
                         .unwrap_or(self.tcx.any());
                     methods.insert(
                         method_name.clone(),
@@ -4621,7 +4624,7 @@ impl TypeChecker {
                     ty,
                     ..
                 } => {
-                    let ty_id = self.resolve_type_expr(ty);
+                    let ty_id = self.resolve_authored_annotation(ty);
                     attrs.insert(attr_name.clone(), ty_id);
                 }
                 _ => {}
@@ -4729,7 +4732,7 @@ impl TypeChecker {
                 let param_types = param_sigs.iter().map(|p| p.ty).collect();
                 let ret = return_ty
                     .as_ref()
-                    .map(|t| self.resolve_type_expr(t))
+                    .map(|t| self.resolve_authored_annotation(t))
                     .unwrap_or(self.tcx.any());
                 let unbound_param_types = if decorators.is_empty() && !params.is_empty() {
                     let mut unbound_param_types = Vec::with_capacity(params.len());
@@ -5580,7 +5583,7 @@ mod tests {
         };
         let any_type_id = tc.resolve_param_type_expr(&any_param);
         assert_eq!(any_type_id, tc.tcx.any());
-        let decl_any = tc.get_param_declaration(span_any).expect("declaration recorded");
+        let decl_any = tc.get_declared_type(span_any).expect("declaration recorded");
         assert_eq!(decl_any.normalized(), Some(tc.tcx.any()));
         assert_eq!(*decl_any.provenance(), TypeProvenance::ExplicitAny);
 
@@ -5598,7 +5601,7 @@ mod tests {
         };
         let typing_any_type_id = tc.resolve_param_type_expr(&typing_any_param);
         assert_eq!(typing_any_type_id, tc.tcx.any());
-        let decl_typing_any = tc.get_param_declaration(span_typing_any).expect("declaration recorded");
+        let decl_typing_any = tc.get_declared_type(span_typing_any).expect("declaration recorded");
         assert_eq!(decl_typing_any.normalized(), Some(tc.tcx.any()));
         assert_eq!(*decl_typing_any.provenance(), TypeProvenance::ExplicitAny);
 
@@ -5616,7 +5619,7 @@ mod tests {
         };
         let int_type_id = tc.resolve_param_type_expr(&int_param);
         assert_eq!(int_type_id, tc.tcx.int());
-        let decl_int = tc.get_param_declaration(span_int).expect("declaration recorded");
+        let decl_int = tc.get_declared_type(span_int).expect("declaration recorded");
         assert_eq!(decl_int.normalized(), Some(tc.tcx.int()));
         assert_eq!(*decl_int.provenance(), TypeProvenance::Explicit);
 
@@ -5634,7 +5637,7 @@ mod tests {
         };
         let obj_type_id = tc.resolve_param_type_expr(&obj_param);
         assert_eq!(obj_type_id, tc.tcx.any());
-        let decl_obj = tc.get_param_declaration(span_obj).expect("declaration recorded");
+        let decl_obj = tc.get_declared_type(span_obj).expect("declaration recorded");
         assert_eq!(decl_obj.normalized(), Some(tc.tcx.any()));
         assert_ne!(*decl_obj.provenance(), TypeProvenance::ExplicitAny);
         assert_eq!(*decl_obj.provenance(), TypeProvenance::Explicit);
@@ -5651,9 +5654,10 @@ mod tests {
             kw_only: false,
             span: span_unresolved,
         };
+        let err_mark_pre = tc.errors_mark();
         let unresolved_type_id = tc.resolve_param_type_expr(&unresolved_param);
-        assert!(tc.errors_mark() > 0);
-        let decl_unresolved = tc.get_param_declaration(span_unresolved).expect("declaration recorded");
+        assert!(tc.errors_mark() > err_mark_pre);
+        let decl_unresolved = tc.get_declared_type(span_unresolved).expect("declaration recorded");
         assert_eq!(decl_unresolved.normalized(), Some(unresolved_type_id));
         assert_eq!(*decl_unresolved.provenance(), TypeProvenance::Explicit);
 
@@ -5671,11 +5675,91 @@ mod tests {
         };
         let omitted_type_id = tc.resolve_param_type_expr(&omitted_param);
         assert_eq!(omitted_type_id, tc.tcx.any());
-        assert!(tc.get_param_declaration(span_omitted).is_none());
+        assert!(tc.get_declared_type(span_omitted).is_none());
 
         // 7. Isolation check: two checker instances cannot observe one another's declarations
         let tc2 = TypeChecker::new();
-        assert!(tc2.get_param_declaration(span_any).is_none());
-        assert!(tc2.param_declarations.is_empty());
+        assert!(tc2.get_declared_type(span_any).is_none());
+
+        // 8. Non-parameter top-level authored entrypoints (resolve_authored_annotation)
+        let span_np_any = Span::new(FileId(0), 200, 210);
+        let expr_np_any = Spanned::new(TypeExpr::Named(Name::from("Any")), span_np_any);
+        let res_np_any = tc.resolve_authored_annotation(&expr_np_any);
+        assert_eq!(res_np_any, tc.tcx.any());
+        let decl_np_any = tc.get_declared_type(span_np_any).expect("declaration recorded");
+        assert_eq!(decl_np_any.normalized(), Some(tc.tcx.any()));
+        assert_eq!(*decl_np_any.provenance(), TypeProvenance::ExplicitAny);
+        assert_eq!(tc.resolved_type_expr(span_np_any), Some(tc.tcx.any()));
+
+        let span_np_typing_any = Span::new(FileId(0), 210, 220);
+        let expr_np_typing_any = Spanned::new(TypeExpr::Named(Name::from("typing.Any")), span_np_typing_any);
+        let res_np_typing_any = tc.resolve_authored_annotation(&expr_np_typing_any);
+        assert_eq!(res_np_typing_any, tc.tcx.any());
+        let decl_np_typing_any = tc.get_declared_type(span_np_typing_any).expect("declaration recorded");
+        assert_eq!(decl_np_typing_any.normalized(), Some(tc.tcx.any()));
+        assert_eq!(*decl_np_typing_any.provenance(), TypeProvenance::ExplicitAny);
+
+        let span_np_int = Span::new(FileId(0), 220, 230);
+        let expr_np_int = Spanned::new(TypeExpr::Named(Name::from("int")), span_np_int);
+        let res_np_int = tc.resolve_authored_annotation(&expr_np_int);
+        assert_eq!(res_np_int, tc.tcx.int());
+        let decl_np_int = tc.get_declared_type(span_np_int).expect("declaration recorded");
+        assert_eq!(decl_np_int.normalized(), Some(tc.tcx.int()));
+        assert_eq!(*decl_np_int.provenance(), TypeProvenance::Explicit);
+
+        let span_np_obj = Span::new(FileId(0), 230, 240);
+        let expr_np_obj = Spanned::new(TypeExpr::Named(Name::from("object")), span_np_obj);
+        let res_np_obj = tc.resolve_authored_annotation(&expr_np_obj);
+        assert_eq!(res_np_obj, tc.tcx.any());
+        let decl_np_obj = tc.get_declared_type(span_np_obj).expect("declaration recorded");
+        assert_eq!(decl_np_obj.normalized(), Some(tc.tcx.any()));
+        assert_eq!(*decl_np_obj.provenance(), TypeProvenance::Explicit);
+
+        let span_np_unres = Span::new(FileId(0), 240, 250);
+        let expr_np_unres = Spanned::new(TypeExpr::Named(Name::from("NonExistentTypeNP")), span_np_unres);
+        let err_mark_pre_unres = tc.errors_mark();
+        let res_np_unres = tc.resolve_authored_annotation(&expr_np_unres);
+        assert!(tc.errors_mark() > err_mark_pre_unres);
+        let decl_np_unres = tc.get_declared_type(span_np_unres).expect("declaration recorded");
+        assert_eq!(decl_np_unres.normalized(), Some(res_np_unres));
+        assert_eq!(*decl_np_unres.provenance(), TypeProvenance::Explicit);
+
+        // 9. Pure resolver vs Authored-recording entrypoint distinction
+        let span_pure = Span::new(FileId(0), 280, 290);
+        let expr_pure = Spanned::new(TypeExpr::Named(Name::from("int")), span_pure);
+        let res_pure = tc.resolve_type_expr(&expr_pure);
+        assert_eq!(res_pure, tc.tcx.int());
+        assert!(tc.get_declared_type(span_pure).is_none(), "pure resolver must NOT record aggregate store");
+
+        // 10. PEP 695 metadata TypeExpr (bounds, constraints, defaults) records DeclaredType at authored source span
+        let span_synth = Span::new(FileId(0), 300, 310);
+        let expr_synth = Spanned::new(Expr::Ident(Name::from("int")), span_synth);
+        let res_synth = tc.resolve_type_param_metadata_expr(&expr_synth);
+        assert_eq!(res_synth, Some(tc.tcx.int()));
+        let decl_synth = tc.get_declared_type(span_synth).expect("PEP 695 metadata annotation recorded");
+        assert_eq!(decl_synth.normalized(), Some(tc.tcx.int()));
+        assert_eq!(*decl_synth.provenance(), TypeProvenance::Explicit);
+
+        // 11. Value-position class alias interpretation (builtin_class_alias_value) remains pure/non-recording
+        let span_val = Span::new(FileId(0), 320, 330);
+        let expr_val = Spanned::new(Expr::Ident(Name::from("int")), span_val);
+        let alias_res = tc.builtin_class_alias_value(&expr_val);
+        assert_eq!(alias_res, Some(tc.tcx.int()));
+        assert!(tc.get_declared_type(span_val).is_none(), "value-position interpretation must NOT record aggregate store");
+
+        // 12. Recursive resolution does not manufacture authored provenance for inner spans
+        let span_inner = Span::new(FileId(0), 260, 265);
+        let span_outer = Span::new(FileId(0), 255, 270);
+        let expr_inner = Spanned::new(TypeExpr::Named(Name::from("int")), span_inner);
+        let expr_outer = Spanned::new(
+            TypeExpr::Generic {
+                name: Name::from("list"),
+                args: vec![expr_inner],
+            },
+            span_outer,
+        );
+        let list_res = tc.resolve_authored_annotation(&expr_outer);
+        assert_eq!(tc.get_declared_type(span_outer).unwrap().normalized(), Some(list_res));
+        assert!(tc.get_declared_type(span_inner).is_none(), "recursive sub-expression span must NOT manufacture aggregate");
     }
 }

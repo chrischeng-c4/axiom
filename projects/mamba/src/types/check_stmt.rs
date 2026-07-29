@@ -234,7 +234,7 @@ impl TypeChecker {
                 let import_origin = self.stdlib_import_origin(value);
                 let instance_origin = self.stdlib_instance_class(value);
                 let class_ref_origin = self.native_ctor_class_call(value);
-                let declared_ty = self.resolve_type_expr(ty);
+                let declared_ty = self.resolve_authored_annotation(ty);
                 let value_ty = self.check_expr(value);
                 let value_ty = self.refine_class_object_actual(declared_ty, value_ty, value);
                 if !self.types_compatible(declared_ty, value_ty) {
@@ -553,7 +553,7 @@ impl TypeChecker {
                 // handled separately in `check_expr` and stays scoped.
                 let ty = var_ty
                     .as_ref()
-                    .map(|t| self.resolve_type_expr(t))
+                    .map(|t| self.resolve_authored_annotation(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
                 if targets.len() > 1 {
                     // Tuple-destructuring targets: `for a, b in [(17, 5)]`
@@ -1058,7 +1058,7 @@ impl TypeChecker {
                 }
             }
             Stmt::BareAnnotation { name, ty } => {
-                let declared_ty = self.resolve_type_expr(ty);
+                let declared_ty = self.resolve_authored_annotation(ty);
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.set_sym_type(sym.0, declared_ty);
                 self.set_binding_origins(sym, None, None, None);
@@ -1127,7 +1127,7 @@ impl TypeChecker {
             .map(|param| self.resolve_param_type_expr(param))
             .collect();
         let body_return_ty = return_ty
-            .map(|ty| self.resolve_type_expr(ty))
+            .map(|ty| self.resolve_authored_annotation(ty))
             .unwrap_or_else(|| self.tcx.any());
         if let Some(canonical) = self
             .function_declaration_types
@@ -1447,7 +1447,7 @@ impl TypeChecker {
         let mut fields = Vec::new();
         for stmt in body {
             if let Stmt::VarDecl { name, ty, .. } = &stmt.node {
-                let ty_id = self.resolve_type_expr(ty);
+                let ty_id = self.resolve_authored_annotation(ty);
                 fields.push((name.clone(), ty_id));
             }
         }
