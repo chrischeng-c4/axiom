@@ -553,6 +553,8 @@ roll-up gates remain green. #2007 then consumes the typed handoff; it must not
 reopen Type Normalization by deriving authorization from a string or
 `Ty::Any`.
 
+Completed by #2967 (`396ff0e8de`).
+
 ## N1 acceptance contract
 
 N1 is green only when all of the following hold:
