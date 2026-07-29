@@ -3431,18 +3431,11 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
         } else if ctx.artifact_model == crate::models::project::ProjectArtifactModel::PythonV1 {
             let next = if summary.clean {
                 match args.stage.as_deref() {
-                    Some("td") => {
-                        let target = crate::cli::run::python_artifact_codegen_target(
-                            &project_root,
-                            &ctx.project,
-                        )?;
-                        crate::cli::run::python_target_gen_command(
-                            &project_root,
-                            &ctx.project,
-                            target,
-                            wi,
-                        )?
-                    }
+                    Some("td") => crate::cli::run::python_cb_materialize_command(
+                        &project_root,
+                        &ctx.project,
+                        wi,
+                    )?,
                     Some("cb") | None => format!("aw wi close {wi} --push"),
                     Some("core") | Some("operational") => format!(
                         "aw ec verify --project {} --required-only --stage cb --wi {wi}",

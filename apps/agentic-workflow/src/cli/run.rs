@@ -572,6 +572,25 @@ pub(crate) fn python_target_gen_command(
     ))
 }
 
+pub(crate) fn python_cb_materialize_command(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+) -> Result<String> {
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    let target = python_artifact_codegen_target(project_root, &row.name)?;
+    if !is_self_hosting_project(&row.name)
+        && crate::services::python_artifact_code_check::project_has_bounded_native_handwrite(
+            project_root,
+            &row.name,
+            target,
+        )?
+    {
+        return Ok(format!("aw cb fill {wi}"));
+    }
+    python_target_gen_command(project_root, &row.name, target, wi)
+}
+
 pub(crate) fn python_artifact_codegen_target(
     project_root: &Path,
     project: &str,
@@ -673,19 +692,6 @@ pub(crate) fn python_artifact_lifecycle_step(
         Some(_) => PythonArtifactPhase::EcAuthoring,
     };
 
-    let target_gen = || {
-        let target = python_artifact_codegen_target(project_root, &row.name)?;
-        if !is_self_hosting_project(&row.name)
-            && crate::services::python_artifact_code_check::project_has_bounded_native_handwrite(
-                project_root,
-                &row.name,
-                target,
-            )?
-        {
-            return Ok(format!("aw cb fill {wi}"));
-        }
-        python_target_gen_command(project_root, &row.name, target, wi)
-    };
     let step = match phase {
         PythonArtifactPhase::EcAuthoring => PythonArtifactLifecycleStep {
             phase,
@@ -716,7 +722,7 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::CbGenerate => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "TD behavior and security are green; materialize a generated native target or preserve an explicitly bounded whole-project HANDWRITE target before native verification".to_string(),
             requires_hitl: false,
         },
@@ -749,19 +755,19 @@ pub(crate) fn python_artifact_lifecycle_step(
         },
         PythonArtifactPhase::BehaviorOrSecurityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "behavior/security EC is red; adapt TD or generated source, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::StabilityRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "stability EC is red; adapt runtime/deployment/source behavior, then regenerate the configured native target".to_string(),
             requires_hitl: false,
         },
         PythonArtifactPhase::EfficiencyRed => PythonArtifactLifecycleStep {
             phase,
-            command: target_gen()?,
+            command: python_cb_materialize_command(project_root, &row.name, wi)?,
             reason: "efficiency EC is red; route remediation to the configured native production target".to_string(),
             requires_hitl: false,
         },
@@ -4410,6 +4416,10 @@ target = "rust"
             .unwrap();
         assert_eq!(step.phase, PythonArtifactPhase::CbGenerate);
         assert_eq!(step.command, "aw cb fill 42");
+        assert_eq!(
+            python_cb_materialize_command(root.path(), "demo", "42").unwrap(),
+            "aw cb fill 42"
+        );
     }
 
     #[test]
