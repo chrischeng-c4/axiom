@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/evidence.py
-// @spec WI #2931: executable Python TD parity baseline.
 // HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard evidence domain behavior remains native Rust"
+// @spec WI #2931: executable Python TD parity baseline.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;

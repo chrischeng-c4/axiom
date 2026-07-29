@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/scan.py
-// @spec WI #2931: executable Python TD parity baseline.
 // HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard scan domain behavior remains native Rust"
+// @spec WI #2931: executable Python TD parity baseline.
 use std::fs;
 use std::path::Path;
 
