@@ -396,6 +396,48 @@ parameter list, variadic flag, callable signature, and parameter specification.
 
 Completed by #2963 (`91e87348b5`).
 
+#### N3-CM1 — single-generator list-comprehension binding
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/comprehension.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/comprehension.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to the first simple-name assignment in an active function-local
+  scope whose initializer is a list comprehension with exactly one generator,
+  one simple target, no target unpacking, and no filter conditions;
+- classify an empty list generator iterable as
+  `ImplicitUnknown { inference_path:
+  "comprehension -> generator -> iterable -> list_literal -> element" }`;
+- store the failed omitted declaration at the assignment target span with
+  `normalized = None`;
+- emit one stable compile error at that span naming binding `items` and the
+  exact inference path;
+- infer `[item for item in [1, 2]]` as `list[int]`, record `Inferred` with path
+  `comprehension -> element`, and publish the concrete list type to the local
+  binding;
+- let `items: Any = [item for item in []]` continue through the N2 authored
+  path as `ExplicitAny` without adding a second declaration at the target;
+- preserve completed literal-binding, parameter, and return behavior while
+  leaving module/class comprehension bindings, set/dict comprehensions,
+  generator expressions, multiple generators, unpacking, filters, walrus
+  targets, async comprehensions, expression joins, lowering, runtime ABI
+  selection, and N4 propagation unchanged.
+
+CM1 must decide eligibility from omitted target syntax plus the frozen
+list-comprehension shape. It must never reject a comprehension merely because
+its current recovery type is `Ty::Any`. The successful result must be derived
+from the checked element type and must not leak the comprehension target into
+the enclosing scope.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
