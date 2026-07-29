@@ -349,6 +349,51 @@ presence, regular-parameter kind, and default syntax. It must not reject every
 omitted parameter, inspect normalized `Ty::Any` as authorization evidence, or
 infer a caller-specific type from one call site.
 
+#### N3-R1 — direct empty-list function return
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/return.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/return.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single ` -> Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to a module-level synchronous function with no decorators, no
+  authored return annotation, and a body consisting of one direct
+  `return <value>` statement;
+- classify a direct empty list return as
+  `ImplicitUnknown { inference_path:
+  "return -> list_literal -> element" }`;
+- store the failed omitted return declaration at the returned expression span
+  with `normalized = None`;
+- emit one stable compile error at that span naming function `collect` and the
+  exact inference path;
+- retain the existing checker and entry-ABI recovery type only after the
+  required error;
+- infer a direct non-empty homogeneous list return as `Inferred` with path
+  `return -> list_literal` and its concrete normalized list type;
+- publish that successful inferred type to the checker-local canonical
+  callable signature so recursive and later calls do not silently retain an
+  `Any` return;
+- let `def collect() -> Any: return []` continue through the N2 authored path
+  as `ExplicitAny` without adding a second return-expression declaration;
+- preserve completed binding and parameter behavior while leaving async,
+  method, decorated, generator, bare/scalar/multiple/nested/conditional
+  returns, comprehensions, expression joins, lowering, runtime ABI selection,
+  and N4 propagation unchanged.
+
+R1 must decide eligibility before recording a declaration or emitting a
+diagnostic. It must derive failure from omitted return syntax plus the direct
+empty-list expression, never from the preregistered callable's recovery
+`Ty::Any`. Its successful-signature update must preserve the callable's
+parameter list, variadic flag, callable signature, and parameter specification.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
