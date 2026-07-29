@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-k8s-single-member-persistence
 // @capability kubernetes-native-deployment
-// @claim single-member-durable-persistence-render
+// @claim layered-deployment-artifacts
 // @contract k8s-single-member-persistence
 // @category behavior
 // @required_for_production true

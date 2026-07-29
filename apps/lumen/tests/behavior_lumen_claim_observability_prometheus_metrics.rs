@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-observability-prometheus-metrics
-// @capability observability
-// @claim prometheus-metrics-endpoint
+// @capability operations-observability
+// @claim standard-operational-surfaces
 // @contract observability-prometheus-metrics
 // @category behavior
 // @required_for_production true

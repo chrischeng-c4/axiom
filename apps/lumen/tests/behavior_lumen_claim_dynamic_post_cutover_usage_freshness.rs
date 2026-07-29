@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-post-cutover-usage-freshness
-// @capability dynamic-shard-topology
-// @claim post-cutover-usage-freshness-split-gate
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-post-cutover-usage-freshness
 // @category behavior
 // @required_for_production true

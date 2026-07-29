@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-standard-offline-openapi
-// @capability standard-operational-endpoints
-// @claim offline-openapi-matches-operational-surface
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract standard-offline-openapi
 // @category behavior
 // @required_for_production true

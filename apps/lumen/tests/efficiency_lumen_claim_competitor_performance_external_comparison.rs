@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-competitor-performance-external-comparison
-// @capability competitor-performance
-// @claim external-pg-and-opensearch-arena-comparison
+// @capability querying
+// @claim query-quality
 // @contract competitor-performance-external-comparison
 // @category efficiency
 // @required_for_production true

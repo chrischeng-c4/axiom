@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-long-running-shared-foundations
-// @capability long-running-stability
-// @claim shared-stateful-foundation-adoption
+// @capability operations-observability
+// @claim long-running-stability
 // @contract long-running-shared-stateful-foundations
 // @category stability
 // @required_for_production true

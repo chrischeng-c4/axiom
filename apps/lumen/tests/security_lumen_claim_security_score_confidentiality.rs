@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-security-score-confidentiality
-// @capability security-hardening
-// @claim score-confidentiality
+// @capability querying
+// @claim query-quality
 // @contract security-score-confidentiality
 // @category security
 // @required_for_production true

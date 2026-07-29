@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-stale-hpa-handoff
-// @capability dynamic-shard-topology
-// @claim stale-single-member-hpa-handoff-deletion
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-stale-hpa-handoff
 // @category behavior
 // @required_for_production true

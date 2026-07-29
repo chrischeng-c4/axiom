@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-schema-stats-metadata
-// @capability schema-ops-lifecycle
-// @claim stats-metadata
+// @capability indexing
+// @claim schema-and-index-lifecycle
 // @contract schema-stats-metadata
 // @category behavior
 // @required_for_production true

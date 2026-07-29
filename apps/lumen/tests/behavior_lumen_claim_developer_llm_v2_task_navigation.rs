@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-developer-llm-v2-task-navigation
-// @capability developer-agent-experience
-// @claim lumen-llm-v2-task-navigation
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract developer-llm-v2-task-navigation
 // @category behavior
 // @required_for_production true

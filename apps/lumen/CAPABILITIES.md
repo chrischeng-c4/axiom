@@ -121,7 +121,8 @@ ID: `security-hardening`
 Status: not ready
 
 Promise: Use Kubernetes as the client request identity and authorization
-boundary, and a separate X.509 identity plane for replicated Raft traffic.
+boundary, a separate X.509 identity plane for replicated Raft traffic, and
+rustls for serving transport confidentiality.
 
 Request path:
 
@@ -168,6 +169,8 @@ Claims:
   requests pass TokenReview/SAR and invalid or denied requests fail closed.
 - `instance-scoped-raft-peer-identity` — only valid instance peers can use the
   Raft transport, including through rotation and failover.
+- `serving-transport-tls` — the rustls-backed serving transport passes its
+  runtime gate.
 
 Verification:
 

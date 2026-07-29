@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-schema-reindex-replay
-// @capability schema-ops-lifecycle
-// @claim reindex-replay-stream
+// @capability indexing
+// @claim schema-and-index-lifecycle
 // @contract schema-reindex-replay
 // @category behavior
 // @required_for_production true

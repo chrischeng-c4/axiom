@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-security-rbac-matrix
 // @capability security-hardening
-// @claim role-based-authz-matrix-per-route
+// @claim kubernetes-native-request-identity-and-authorization
 // @contract security-rbac-matrix
 // @category security
 // @required_for_production true

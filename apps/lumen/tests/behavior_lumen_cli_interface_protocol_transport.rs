@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-cli-interface-protocol-transport
-// @capability cli-interface
-// @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
+// @capability api-cli-agent-integration
+// @claim http2-openapi-and-client-interface
 // @contract service-listener-http1-and-h2c
 // @category behavior
 // @required_for_production true

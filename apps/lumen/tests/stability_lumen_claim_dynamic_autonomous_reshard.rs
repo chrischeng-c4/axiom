@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-autonomous-reshard
-// @capability dynamic-shard-topology
-// @claim autonomous-reshard-workflow
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-autonomous-reshard
 // @category stability
 // @required_for_production true

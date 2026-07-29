@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-agent-query-catalog
-// @capability developer-agent-experience
-// @claim query-shape-cookbook-field-analyzer-catalog
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract agent-query-catalog
 // @category behavior
 // @required_for_production true

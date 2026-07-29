@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-standard-upgrade-check
-// @capability cli-standard-surface
-// @claim shared-upgrade-check-surface
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-standard-upgrade-check
 // @category behavior
 // @required_for_production true

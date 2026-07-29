@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-storage-pressure-split-policy
-// @capability dynamic-shard-topology
-// @claim storage-pressure-operator-split-policy
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-storage-pressure-split-policy
 // @category behavior
 // @required_for_production true

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-long-running-kustomize-base
-// @capability long-running-stability
-// @claim kustomize-base-overlays-hpa
+// @capability operations-observability
+// @claim long-running-stability
 // @contract long-running-kustomize-base-overlays
 // @category behavior
 // @required_for_production true

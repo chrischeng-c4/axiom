@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-standard-issue-surface
-// @capability cli-standard-surface
-// @claim shared-issue-search-view-create-comment-surface
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-standard-issue-surface
 // @category behavior
 // @required_for_production true

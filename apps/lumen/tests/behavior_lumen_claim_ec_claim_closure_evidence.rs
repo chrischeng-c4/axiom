@@ -7,7 +7,7 @@
 // @contract ec-claim-closure-evidence
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture
+// @command cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_capability_contract_claims -- --exact --nocapture
 // AW-EC-END
 
 // Contract: The production claim-closure document maps every authored case to an existing README capability and work-root claim without recursively dispatching generated claim suites.
@@ -15,7 +15,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_ec_claim_closure_evidence() {
     let command =
-        "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_readme_capability_claims -- --exact --nocapture";
+        "cargo test -p lumen --test ec_claim_closure_consistency claim_closure_document_maps_to_capability_contract_claims -- --exact --nocapture";
     let id = "lumen-claim-ec-claim-closure-evidence";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-checkpointed-phase-driver
-// @capability dynamic-shard-topology
-// @claim checkpointed-reshard-phase-driver
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-checkpointed-phase-driver
 // @category stability
 // @required_for_production true

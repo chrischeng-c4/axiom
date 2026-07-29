@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-standard-llm-entrypoint
-// @capability cli-standard-surface
-// @claim shared-llm-entrypoint-surface
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-standard-llm-entrypoint
 // @category behavior
 // @required_for_production true

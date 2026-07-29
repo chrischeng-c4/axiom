@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-exact-keyword-lexicographic-range
-// @capability exact-filter-search
-// @claim keyword-byte-lexicographic-range-query
+// @capability querying
+// @claim lexical-and-structured-query
 // @contract exact-keyword-lexicographic-range
 // @category behavior
 // @required_for_production true

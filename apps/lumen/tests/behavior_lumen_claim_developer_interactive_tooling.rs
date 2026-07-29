@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-developer-interactive-tooling
-// @capability developer-agent-experience
-// @claim interactive-tooling
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract developer-interactive-tooling
 // @category behavior
 // @required_for_production true

@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-security-bearer-auth
 // @capability security-hardening
-// @claim bearer-token-auth-lumen-auth
+// @claim kubernetes-native-request-identity-and-authorization
 // @contract security-bearer-auth
 // @category security
 // @required_for_production true

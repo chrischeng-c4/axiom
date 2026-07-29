@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-cli-deployment-operator-command-surface
-// @capability cli-interface
-// @claim deployment-operator-command-surface
+// @capability api-cli-agent-integration
+// @claim standard-cli-and-agent-interface
 // @contract cli-deployment-operator-command-surface
 // @category behavior
 // @required_for_production true

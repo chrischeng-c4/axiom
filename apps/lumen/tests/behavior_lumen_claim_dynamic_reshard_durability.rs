@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-reshard-durability
-// @capability dynamic-shard-topology
-// @claim reshard-apply-evict-synchronous-checkpoint
+// @capability scaling-availability
+// @claim dynamic-shard-topology
 // @contract dynamic-reshard-durability
 // @category behavior
 // @required_for_production true

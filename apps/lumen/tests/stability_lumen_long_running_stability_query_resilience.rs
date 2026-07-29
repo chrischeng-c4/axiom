@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-long-running-stability-query-resilience
-// @capability long-running-stability
-// @claim search-p99-survives-fault-and-recovers
+// @capability operations-observability
+// @claim long-running-stability
 // @contract search-stability-fault-resilience
 // @category stability
 // @required_for_production true

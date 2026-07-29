@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-security-hardening-query-injection
-// @capability security-hardening
-// @claim adversarial-query-safety
+// @capability querying
+// @claim query-quality
 // @contract search-security-injection
 // @category security
 // @required_for_production true

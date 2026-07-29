@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-topology-empty-pvc-bootstrap-seed
-// @capability replica-sync-bootstrap
-// @claim empty-pvc-object-store-seed-before-raft-catch-up
+// @capability scaling-availability
+// @claim primary-replica-failover-and-bootstrap
 // @contract topology-empty-pvc-bootstrap-seed
 // @category behavior
 // @required_for_production true

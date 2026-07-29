@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-backup-rdb-store
-// @capability backup-restore
-// @claim rdb-snapshot-restore-localfsrdbstore
+// @capability durability-recovery
+// @claim backup-restore-and-cold-seed
 // @contract backup-rdb-store
 // @category behavior
 // @required_for_production true
