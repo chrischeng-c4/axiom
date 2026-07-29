@@ -24,7 +24,9 @@ def python_td_bounded_native_handwrite() -> str:
         "classify every native source in every configured workspace root and "
         "fail closed on escaped paths or symlinks; Cb-Gen evidence binds the "
         "target and workspace root and commits only emitted files; HANDWRITE "
-        "targets must pass committed implementation-evidence plus workspace-test gates"
+        "targets must pass committed implementation-evidence plus workspace-test gates; "
+        "terminal touched-scope ownership is bounded to those native sources rather than "
+        "the persistent branch's historical EC, TD, or build-artifact diff"
     )
 
 

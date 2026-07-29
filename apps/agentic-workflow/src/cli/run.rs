@@ -4410,6 +4410,15 @@ target = "rust"
              // HANDWRITE-END\n",
         )
         .unwrap();
+        assert_eq!(
+            crate::services::python_artifact_code_check::project_bounded_native_handwrite_paths(
+                root.path(),
+                "demo",
+                "rust",
+            )
+            .unwrap(),
+            Some(vec!["projects/demo/backend-rust/src/policy.rs".to_string()])
+        );
 
         let step = python_artifact_lifecycle_step(root.path(), "demo", "42", Some("ec_td_green"))
             .unwrap()

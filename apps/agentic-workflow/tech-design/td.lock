@@ -2,9 +2,9 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-29T06:48:25.417988+00:00"
-digest = "sha256:73387c0b9c8fa5bbe72b69496b79f8ace3aacde532ea7da44dd2021196ac31da"
-source_digest = "sha256:73387c0b9c8fa5bbe72b69496b79f8ace3aacde532ea7da44dd2021196ac31da"
+generated_at = "2026-07-29T08:21:23.433211+00:00"
+digest = "sha256:8b0767d917429f82d9af5726998587176c7eed13f7edaac63efdf7a1012467cd"
+source_digest = "sha256:8b0767d917429f82d9af5726998587176c7eed13f7edaac63efdf7a1012467cd"
 ir_digest = "sha256:1e50766c9c6badcd8976c92ae2fa9cd92ecaec4956429f3a6fb6943fcc7183ac"
 
 [[files]]
@@ -3957,7 +3957,7 @@ digest = "sha256:239b3754c0b6e327f701f127def5347c69e70363f87abd3d051964f5b109da0
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/td_cb_lifecycle_automation.py"
-digest = "sha256:9704db9b89002ab34e7a8ac27c13e12600028e34d3325b43abc4f11e2740039f"
+digest = "sha256:01bb5b85973f32813b9c09958849a5c81f8860dd4c2bdfb192f618089e4fdf2c"
 
 [[files]]
 path = "src/agentic_workflow/public_contracts/work_item_planning.py"

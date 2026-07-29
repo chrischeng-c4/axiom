@@ -576,6 +576,14 @@ pub(crate) fn project_has_bounded_native_handwrite(
     project: &str,
     target: &str,
 ) -> Result<bool> {
+    Ok(project_bounded_native_handwrite_paths(project_root, project, target)?.is_some())
+}
+
+pub(crate) fn project_bounded_native_handwrite_paths(
+    project_root: &Path,
+    project: &str,
+    target: &str,
+) -> Result<Option<Vec<String>>> {
     let row = project_registry::resolve_project_config_row(project_root, project)?;
     let artifact_root = project_root.join(&row.path);
     let td_root = configured_td_root(project_root, &row.name)?;
@@ -590,13 +598,28 @@ pub(crate) fn project_has_bounded_native_handwrite(
         .find(|configured| configured.name == row.name)
         .ok_or_else(|| anyhow::anyhow!("project `{}` has no workspace config", row.name))?;
     let workspace_roots = configured_workspace_roots(project_root, &artifact_root, &configured);
-    Ok(workspace_roots.get(target).is_some_and(|roots| {
-        !roots.is_empty()
-            && roots.iter().all(|root| {
-                bounded_handwrite_paths(&td_root, std::slice::from_ref(root), target, &td_modules)
-                    .is_some()
-            })
-    }))
+    let Some(roots) = workspace_roots
+        .get(target)
+        .filter(|roots| !roots.is_empty())
+    else {
+        return Ok(None);
+    };
+    let mut paths = Vec::new();
+    for root in roots {
+        let Some(root_paths) =
+            bounded_handwrite_paths(&td_root, std::slice::from_ref(root), target, &td_modules)
+        else {
+            return Ok(None);
+        };
+        paths.extend(
+            root_paths
+                .iter()
+                .map(|path| repo_relative_path(project_root, path)),
+        );
+    }
+    paths.sort();
+    paths.dedup();
+    Ok((!paths.is_empty()).then_some(paths))
 }
 
 fn repo_relative_path(project_root: &Path, path: &Path) -> String {

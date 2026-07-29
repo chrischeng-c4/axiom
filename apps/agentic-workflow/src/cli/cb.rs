@@ -5623,8 +5623,33 @@ async fn run_check_lifecycle_terminal(
         // further down — both need this WI's own touched-file set (branch
         // diff ∪ spec Changes paths) and previously each called
         // `cb_fill::resolve_touched_scope` independently.
-        let touched_scope =
-            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope);
+        // A Python-v1 bounded HANDWRITE target has an explicit native source
+        // denominator. Use that denominator instead of the persistent
+        // app/lib branch's whole diff: EC and TD Python sources are verifier
+        // artifacts, while unrelated historical branch changes must not
+        // become this WI's CB ownership scope.
+        let python_native_scope = project_label_for_wi(&issue).and_then(|project| {
+            let row = crate::services::project_registry::resolve_project_config_row(
+                project_root,
+                project,
+            )
+            .ok()?;
+            (row.effective_artifact_model()
+                == crate::models::project::ProjectArtifactModel::PythonV1)
+                .then_some(())?;
+            let target =
+                crate::cli::run::python_artifact_codegen_target(project_root, project).ok()?;
+            crate::services::python_artifact_code_check::project_bounded_native_handwrite_paths(
+                project_root,
+                project,
+                target,
+            )
+            .ok()
+            .flatten()
+        });
+        let touched_scope = python_native_scope.unwrap_or_else(|| {
+            crate::cli::cb_fill::resolve_touched_scope(project_root, &marker_gate_scope)
+        });
 
         // Clean-touched-scope precondition (issue #807 / #1275): refuse to
         // perform ANY mutation below (the phase-advancing `backend.update`
