@@ -124,16 +124,6 @@ present "the cluster-name check went back to a mute bare test" \
 absent "the cluster-name check is back to inspecting only line 1" \
   "test \"\$(sed -n '1p' \"\$EVIDENCE_DIR/persistent-cluster-name.txt\")\"" "$RUN_SCRIPT"
 
-# --- cluster facts live in cluster/main.tf, not in the cluster ---------------
-# The GKE Secret Manager add-on was enabled by hand, never written down, and
-# died with the cluster it lived on. The next run's #2457 auth+CSI leg then
-# reported "skipped_no_addon" -- coverage shrank with zero failures. Both the
-# declaration and the cheap early warning are asserted, because the warning is
-# what turns a 40-minute-late skip into a 10-second one.
-present "the GKE Secret Manager add-on is undeclared again (#2457 will skip)" \
-  "secret_manager_config" "$ACCEPTANCE_ROOT/cluster/main.tf"
-present "the reuse branch stopped warning about add-on drift" \
-  "has no GKE Secret Manager add-on" "$BOOTSTRAP_SCRIPT"
 present "the reuse branch stopped warning about data-plane pool drift" \
   "node pool; the spec.placement leg will fail" "$BOOTSTRAP_SCRIPT"
 

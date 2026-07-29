@@ -29,8 +29,3 @@ output "tagged_images" {
 output "artifact_registry_repository" {
   value = data.google_artifact_registry_repository.existing.name
 }
-
-output "lumen_authcsi_secret_id" {
-  # Empty in tape mode — the secret is lumen-mode-only (count-gated).
-  value = var.acceptance_apps == "tape" ? "" : google_secret_manager_secret.lumen_authcsi_tokens[0].secret_id
-}

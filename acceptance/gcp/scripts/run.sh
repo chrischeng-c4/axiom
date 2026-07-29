@@ -187,7 +187,6 @@ required_apis=(
   container.googleapis.com
   iam.googleapis.com
   iamcredentials.googleapis.com
-  secretmanager.googleapis.com
   storage.googleapis.com
 )
 : > "$EVIDENCE_DIR/preexisting-apis.txt"
@@ -440,10 +439,6 @@ BACKUP_GSA_EMAIL="axo-${RUN_ID}-backup@${PROJECT_ID}.iam.gserviceaccount.com"
 # a cluster that is not there. Line 491 already asserts the Terraform output
 # equals PERSISTENT_CLUSTER_NAME, so this is the same value, named once.
 GKE_CLUSTER_NAME="$PERSISTENT_CLUSTER_NAME"
-# #2457 auth+CSI regression leg (verify-lumen.sh): the token itself is never
-# plumbed through Terraform outputs — verify-lumen.sh recomputes the exact
-# same deterministic string from RUN_ID (see environment/secretmanager.tf).
-LUMEN_AUTHCSI_SECRET_ID="axo-${RUN_ID}-lumen-tokens"
 export BACKUP_BUCKET BACKUP_GSA_EMAIL
 export GKE_CLUSTER_NAME GKE_ZONE PROJECT_ID REGION
 export RUN_ID MANIFEST_DIR ACCEPTANCE_APPS
@@ -452,7 +447,6 @@ if [[ "$acceptance_mode" == "tape" ]]; then
   export TAPE_CLI TAPE_IMAGE
 else
   export LUMEN_CLI LUMEN_IMAGE SIFT_CLI SIFT_IMAGE
-  export LUMEN_AUTHCSI_SECRET_ID
 fi
 "$SCRIPT_DIR/render-manifests.sh" || {
   echo "manifest rendering failed" >&2
@@ -497,9 +491,6 @@ test "$(jq -r '.gke_zone.value' "$EVIDENCE_DIR/terraform-output.json")" = "$GKE_
 test "$(jq -r '.cluster_name.value' "$EVIDENCE_DIR/terraform-output.json")" = "$PERSISTENT_CLUSTER_NAME"
 test "$(jq -r '.backup_bucket.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_BUCKET"
 test "$(jq -r '.backup_gsa_email.value' "$EVIDENCE_DIR/terraform-output.json")" = "$BACKUP_GSA_EMAIL"
-if [[ "$ACCEPTANCE_APPS" != "tape" ]]; then
-  test "$(jq -r '.lumen_authcsi_secret_id.value' "$EVIDENCE_DIR/terraform-output.json")" = "$LUMEN_AUTHCSI_SECRET_ID"
-fi
 gcloud container clusters get-credentials "$cluster" \
   --project="$PROJECT_ID" --zone="$GKE_ZONE"
 
