@@ -1,4 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/cli.py
+// @spec WI #2931: executable Python TD parity baseline.
 // HANDWRITE-BEGIN gap="existing-project-patch" tracker="#2823" reason="Guard distribution CLI boundary remains native Rust"
 use std::path::PathBuf;
 

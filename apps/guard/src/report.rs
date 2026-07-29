@@ -1,4 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/report.py
+// @spec WI #2931: executable Python TD parity baseline.
 // HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard report domain behavior remains native Rust"
 use serde::{Deserialize, Serialize};
 use std::path::Path;
