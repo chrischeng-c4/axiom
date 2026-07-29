@@ -309,6 +309,8 @@ stack.
 
 #### N3-P1 — empty-collection regular-parameter default
 
+Completed by #2958 (`0d9cc9cf84`).
+
 Authoritative pair:
 
 - negative:
