@@ -150,6 +150,33 @@ mod delegation_tests {
 pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> {
     TraceLayer::new_for_http().make_span_with(PropagatingMakeSpan)
 }
+
+/// Request span maker that always records canonical correlation fields and,
+/// when an OpenTelemetry layer is installed, attaches the same valid W3C
+/// parent context to the exported span. Initializes `subject = "anonymous"` by default,
+/// which is recorded by `record_subject_to_span` middleware when authenticated.
+#[derive(Debug, Clone, Copy)]
+pub struct CorrelatingMakeSpan;
+
+impl<B> MakeSpan<B> for CorrelatingMakeSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> tracing::Span {
+        let context = request_trace_context(request.headers());
+        let span = tracing::span!(
+            tracing::Level::INFO,
+            "request",
+            method = %request.method(),
+            uri = %request.uri(),
+            version = ?request.version(),
+            trace_id = %context.trace_id(),
+            span_id = %context.span_id(),
+            parent_span_id = tracing::field::Empty,
+            trace_flags = %context.trace_flags(),
+            subject = "anonymous",  // Default subject; overridden by auth middleware if authenticated
+        );
+        // ... OpenTelemetry setup follows ...
+        span
+    }
+}
 ````
 
 ## Changes

@@ -38,6 +38,7 @@ use utoipa::{
 };
 
 use axum::http::HeaderMap;
+use axum::middleware::{from_fn, Next};
 
 use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
@@ -698,6 +699,25 @@ impl MetricsProvider for Engine {
     }
 }
 
+/// Middleware that records the authenticated subject to the request span.
+/// This is used by the access log to include subject information in per-request logs.
+/// Called after auth_middleware, so AuthContext is already in the extensions.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
+async fn record_subject_to_span(
+    req: Request,
+    next: Next,
+) -> axum::response::Response {
+    // Record subject to the current span for inclusion in access logs.
+    // If AuthContext exists in extensions, use its subject; otherwise use "anonymous".
+    let subject = req
+        .extensions()
+        .get::<AuthContext>()
+        .and_then(|auth| auth.subject())
+        .unwrap_or("anonymous");
+    tracing::Span::current().record("subject", subject);
+    next.run(req).await
+}
+
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
@@ -781,6 +801,7 @@ pub fn router_with_admission(
         .route("/admin/reshard:evict", post(reshard_evict))
         .route("/admin/reshard:fence", post(reshard_fence))
         .route("/admin/checkpoint", post(admin_checkpoint))
+        .layer(from_fn(record_subject_to_span))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
         // guard); 8MiB is the broker payload budget. Enforces the cap at the HTTP

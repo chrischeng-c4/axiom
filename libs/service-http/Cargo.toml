@@ -42,4 +42,4 @@ service-observability = { path = "../service-observability" }
 tokio = { workspace = true, features = ["full"] }
 tower = { workspace = true, features = ["util"] }
 futures-util = "0.3"
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "registry"] }
