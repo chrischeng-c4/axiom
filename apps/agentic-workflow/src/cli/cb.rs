@@ -5863,12 +5863,26 @@ async fn run_check_lifecycle_terminal(
                             slug,
                             &native_handwrite_paths,
                         ) {
+                            let baseline_exists = crate::cli::td::lifecycle_stage_for_slug_exists(
+                                project_root,
+                                slug,
+                                crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
+                            )?;
+                            let next = if baseline_exists {
+                                format!("aw cb fill {slug}")
+                            } else {
+                                crate::cli::run::python_td_check_command(
+                                    project_root,
+                                    &report.project,
+                                    slug,
+                                )?
+                            };
                             let env = serde_json::json!({
                                 "action": "error",
                                 "error_kind": "python_native_handwrite_evidence_missing",
                                 "slug": slug,
                                 "message": message,
-                                "next": { "command": format!("aw cb fill {slug}") },
+                                "next": { "command": next },
                             });
                             println!("{}", serde_json::to_string(&env)?);
                             return Ok(true);

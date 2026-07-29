@@ -627,7 +627,11 @@ pub(crate) fn python_artifact_codegen_target(
     }
 }
 
-fn python_td_check_command(project_root: &Path, project: &str, wi: &str) -> Result<String> {
+pub(crate) fn python_td_check_command(
+    project_root: &Path,
+    project: &str,
+    wi: &str,
+) -> Result<String> {
     let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
     let source_root =
         crate::services::project_registry::resolve_td_root_from_config(project_root, &row.name)

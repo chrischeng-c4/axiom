@@ -3678,14 +3678,12 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
                 project,
             )?;
             crate::cli::td_lock::write_project_td_lock_snapshot_at_root(&project_root, &row.name)?;
-            crate::cli::ec::persist_ec_first_next_action(
-                &project_root,
-                wi,
-                format!(
-                    "aw ec verify --project {} --required-only --stage td --wi {wi}",
-                    row.name,
-                ),
-            )?;
+            let next = format!(
+                "aw ec verify --project {} --required-only --stage td --wi {wi}",
+                row.name,
+            );
+            ensure_python_td_source_baseline(&project_root, wi, &candidate, &next)?;
+            crate::cli::ec::persist_ec_first_next_action(&project_root, wi, next)?;
         }
         return Ok(());
     }
@@ -3773,6 +3771,70 @@ pub fn run_check(args: CheckArgs, configured_project: Option<&str>) -> Result<()
 
     // Slug mode: resolve to the current checkout spec dir.
     run_slug_check(target, None, args.json)
+}
+
+fn ensure_python_td_source_baseline(
+    project_root: &std::path::Path,
+    wi: &str,
+    td_root: &std::path::Path,
+    next_command: &str,
+) -> Result<()> {
+    use crate::issues::types::lifecycle_trailer;
+
+    if lifecycle_stage_for_slug_exists(project_root, wi, lifecycle_trailer::TD_PYTHON_SOURCE)? {
+        return Ok(());
+    }
+    crate::git::ensure_no_staged_changes(project_root)?;
+    let td_root_arg = td_root.to_string_lossy().into_owned();
+    commit_lifecycle_with_extra(
+        project_root,
+        wi,
+        "Python TD source checked",
+        lifecycle_trailer::TD_PYTHON_SOURCE,
+        &[td_root_arg.as_str()],
+        &[
+            ("Lifecycle-Phase", "td_compiled"),
+            ("TD-Root", td_root_arg.as_str()),
+            ("Next-Command", next_command),
+        ],
+    )
+}
+
+pub(crate) fn lifecycle_stage_for_slug_exists(
+    project_root: &std::path::Path,
+    slug: &str,
+    stage: &str,
+) -> Result<bool> {
+    use crate::issues::types::lifecycle_trailer;
+
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let slug_line = format!("Lifecycle-Slug: {slug}");
+    let output = std::process::Command::new(git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "log",
+            "--format=%B%x1e",
+            "--fixed-strings",
+            "--grep",
+            slug_line.as_str(),
+            "HEAD",
+        ])
+        .output()
+        .context("git log failed while locating Python TD source baseline")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git log failed while locating Python TD source baseline: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\x1e')
+        .any(|body| {
+            lifecycle_trailer::body_has_slug_trailer(body, slug)
+                && lifecycle_trailer::body_has_stage_trailer(body, stage)
+        }))
 }
 
 fn canonical_python_td_root(
@@ -6339,6 +6401,53 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn python_td_check_baseline_is_exact_idempotent_and_path_scoped() {
+        if !git_available() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        init_git_repo(root.path());
+        let td_root = root.path().join("apps/demo/tech-design");
+        std::fs::create_dir_all(td_root.join("src")).unwrap();
+        std::fs::write(td_root.join("src/demo.py"), "value = 1\n").unwrap();
+        std::fs::write(root.path().join("unrelated.txt"), "seed\n").unwrap();
+        git_stdout(root.path(), &["add", "."]);
+        git_stdout(root.path(), &["commit", "-q", "-m", "seed"]);
+
+        std::fs::write(td_root.join("src/demo.py"), "value = 2\n").unwrap();
+        std::fs::write(root.path().join("unrelated.txt"), "user change\n").unwrap();
+        ensure_python_td_source_baseline(
+            root.path(),
+            "42",
+            &td_root,
+            "aw ec verify --project demo --required-only --stage td --wi 42",
+        )
+        .unwrap();
+        assert!(lifecycle_stage_for_slug_exists(
+            root.path(),
+            "42",
+            crate::issues::types::lifecycle_trailer::TD_PYTHON_SOURCE,
+        )
+        .unwrap());
+        assert_eq!(
+            git_stdout(root.path(), &["status", "--short"]),
+            "M unrelated.txt"
+        );
+        let count_before = git_stdout(root.path(), &["rev-list", "--count", "HEAD"]);
+        ensure_python_td_source_baseline(
+            root.path(),
+            "42",
+            &td_root,
+            "aw ec verify --project demo --required-only --stage td --wi 42",
+        )
+        .unwrap();
+        assert_eq!(
+            git_stdout(root.path(), &["rev-list", "--count", "HEAD"]),
+            count_before
+        );
     }
 
     #[test]

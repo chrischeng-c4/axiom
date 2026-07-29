@@ -20,6 +20,7 @@ def python_td_bounded_native_handwrite() -> str:
     return (
         "Python EC and TD may drive a bounded native HANDWRITE implementation; "
         "TD identity resolves from the configured project TD root; "
+        "a WI-scoped TD check records an exact idempotent Td-Python-Source baseline; "
         "generator-owned targets retain cold parity while HANDWRITE targets "
         "classify every native source in every configured workspace root and "
         "fail closed on escaped paths or symlinks; Cb-Gen evidence binds the "
