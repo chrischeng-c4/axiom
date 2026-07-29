@@ -10,13 +10,13 @@
     "required report fields have stable JSON types",
     "summary.security_findings equals findings length",
     "status, exit_code, and completion.clean agree",
-    "Compass diagnostic normalization is stable across fresh fixtures"
+    "stage-specific diagnostic normalization is stable across fresh fixtures"
   ],
   "attempts": [
     {
       "assertion_count": 11,
-      "assertions_digest": "sha256:6d4c791150bd3a8063da6ccb4077d6de62a41c6cded4a9898784c3a8ce2c5807",
-      "elapsed_ms": 1826,
+      "assertions_digest": "sha256:fa7f28d83823a3d6508cb74334a6791660c9a8abd83f30541fbe4ab0f808db80",
+      "elapsed_ms": 1505,
       "exit_code": 0
     }
   ],

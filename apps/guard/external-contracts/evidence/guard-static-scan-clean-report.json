@@ -6,14 +6,14 @@
     "summary.security_findings equals findings length",
     "status, exit_code, and completion.clean agree",
     "safe static scan exits zero with no findings",
-    "static integration identity is honestly guard-python-reference",
+    "static integration identity is honestly compass",
     "clean report marks completion clean"
   ],
   "attempts": [
     {
       "assertion_count": 8,
-      "assertions_digest": "sha256:b0e99a5ce4e95ddc771449edaa39870d0c507a0f563dc568106a25344a1ff955",
-      "elapsed_ms": 81,
+      "assertions_digest": "sha256:019b58dce929a3bf64d4cf437e1df8e93682b99541b5fef25d9df1d9df2e5a8e",
+      "elapsed_ms": 1941,
       "exit_code": 0
     }
   ],

@@ -16,7 +16,7 @@
     {
       "assertion_count": 11,
       "assertions_digest": "sha256:9d009f39881d8115e8acb6da581d70926bd98bd1350b10ff79392a5e1bdafc3a",
-      "elapsed_ms": 3780,
+      "elapsed_ms": 1494,
       "exit_code": 0
     }
   ],
