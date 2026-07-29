@@ -17,8 +17,10 @@
 //!   secrets in `tokens`, provider-verified identities (Google emails) in
 //!   `identities`. Kept disjoint so a bearer secret shaped like an email can
 //!   never match an identity entry.
-//! - [`load_registry_file`]: parse a [`Registry`] from a registry-file path,
-//!   for a service that can resolve both namespaces.
+//! - [`load_registry_files`]: load a [`Registry`] from several projected
+//!   files ([`RegistrySource`]), unioning them for a service that resolves both
+//!   namespaces.
+//! - [`load_registry_file`]: parse a [`Registry`] from a single registry-file path.
 //! - [`load_registry`]: the bearer-only loader — a registry-file path
 //!   (production, mounted from a Secret) or legacy inline JSON, failing fast
 //!   when auth is required but the resolved registry ends up empty, and
@@ -175,6 +177,73 @@ impl Registry {
             identities: section(IDENTITIES_SECTION, "each verified identity to its claims")?,
         })
     }
+
+    /// Union another registry into this one, per namespace.
+    ///
+    /// The two namespaces have different confidentiality classes, so a
+    /// deployment may well project them from different places — an
+    /// `identities` map from a ConfigMap and a `tokens` map from a Secret
+    /// (#2764). Merging is how those reunite into the one registry a request
+    /// is resolved against.
+    ///
+    /// A key present in both inputs' *same* namespace is an error rather than
+    /// a last-writer-wins overwrite: two sources disagreeing about one
+    /// principal's grants leaves nobody able to say which grants are actually
+    /// being served, which is the failure mode the split was meant to avoid.
+    /// The same key appearing in *different* namespaces is not a collision —
+    /// they are disjoint by construction (#2678, R1).
+    pub fn try_merge(&mut self, other: Registry) -> Result<()> {
+        merge_namespace(&mut self.tokens, other.tokens, TOKENS_SECTION)?;
+        merge_namespace(&mut self.identities, other.identities, IDENTITIES_SECTION)
+    }
+
+    /// The first entry whose `subject` is one a service has reserved for its
+    /// own use, as `(namespace, key, subject)`.
+    ///
+    /// A reserved subject is one the service itself presents — lumen's control
+    /// plane names itself in every admin call it makes (#2679). A tenant
+    /// registry that claims the same subject would make the operator's calls
+    /// and a tenant's calls indistinguishable in audit output, so a registry
+    /// carrying one is rejected rather than merged.
+    pub fn reserved_subject_violation(
+        &self,
+        reserved: &[String],
+    ) -> Option<(&'static str, String, String)> {
+        let hit = |section: &'static str, entries: &HashMap<String, TokenClaims>| {
+            entries
+                .iter()
+                .filter(|(_, claims)| reserved.iter().any(|r| r == &claims.subject))
+                .map(|(key, claims)| (section, key.clone(), claims.subject.clone()))
+                .min()
+        };
+        hit(TOKENS_SECTION, &self.tokens).or_else(|| hit(IDENTITIES_SECTION, &self.identities))
+    }
+}
+
+fn merge_namespace(
+    into: &mut HashMap<String, TokenClaims>,
+    from: HashMap<String, TokenClaims>,
+    section: &str,
+) -> Result<()> {
+    for (key, claims) in from {
+        if let Some(previous) = into.get(&key) {
+            // An `identities` key is a public email, and naming it is the
+            // difference between a fixable message and a scavenger hunt. A
+            // `tokens` key IS the bearer secret, so it is named by the subject
+            // it grants instead — never by the key.
+            let culprit = if section == IDENTITIES_SECTION {
+                format!("`{key}`")
+            } else {
+                format!("the entry granting `{}`", previous.subject)
+            };
+            bail!(
+                "credential registry sources disagree: `{section}` defines {culprit} more than \
+                 once, so there is no way to say which grants are being served"
+            );
+        }
+        into.insert(key, claims);
+    }
+    Ok(())
 }
 
 /// Load a credential registry from a registry-file path, for a service that
@@ -205,6 +274,60 @@ pub fn load_registry_file(
         bail!(
             "auth required but the credential registry is empty: point {registry_file_env} at a \
              file holding at least one `tokens` or `identities` entry"
+        );
+    }
+    Ok(registry)
+}
+
+/// One place a registry may be projected from, and the env var that names it.
+///
+/// `env` only words the error messages; reading the variable stays the
+/// caller's job so the message matches whatever the service calls it.
+#[derive(Debug, Clone, Copy)]
+pub struct RegistrySource<'a> {
+    pub env: &'a str,
+    pub path: Option<&'a str>,
+}
+
+/// Load a credential registry from several projected files at once, unioning
+/// them.
+///
+/// The single-file [`load_registry_file`] assumes one Kubernetes object
+/// carries the whole registry. That stops being true once the two namespaces
+/// have different confidentiality classes: an `identities` map is ordinary
+/// configuration (a ConfigMap), while a `tokens` map is a credential (a
+/// Secret), and a deployment can reasonably have both (#2764). Each source is
+/// parsed independently and [`Registry::try_merge`]d, so one malformed file
+/// fails the load naming *that* file rather than silently serving a partial
+/// registry.
+///
+/// Fails fast when `required` is true but every source is absent or empty: a
+/// server told to mandate auth that can never authenticate anyone is a startup
+/// misconfiguration, not a per-request 401.
+/// @spec libs/service-auth/tech-design/semantic/source/libs-service-auth-src-role-map-rs.md#source
+pub fn load_registry_files(required: bool, sources: &[RegistrySource<'_>]) -> Result<Registry> {
+    let mut registry = Registry::default();
+    for source in sources {
+        let Some(path) = source.path.map(str::trim).filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        let env = source.env;
+        let json = std::fs::read_to_string(path)
+            .with_context(|| format!("read {env} `{path}`"))?;
+        let parsed = Registry::parse(&json).with_context(|| format!("{env} must contain JSON"))?;
+        registry
+            .try_merge(parsed)
+            .with_context(|| format!("merging {env} `{path}`"))?;
+    }
+    if required && registry.is_empty() {
+        let names = sources
+            .iter()
+            .map(|source| source.env)
+            .collect::<Vec<_>>()
+            .join(" or ");
+        bail!(
+            "auth required but the credential registry is empty: point {names} at a file holding \
+             at least one `tokens` or `identities` entry"
         );
     }
     Ok(registry)
@@ -641,6 +764,211 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("REGISTRY_FILE"), "{message}");
         assert!(message.contains("identities"), "{message}");
+    }
+
+    // -- #2764: two sources, two confidentiality classes -------------------
+
+    /// A scratch directory per test. Sharing one would let a parallel test's
+    /// cleanup delete a file this one is mid-read on.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("service-auth-2764-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &std::path::Path, file: &str, body: &str) -> String {
+        let path = dir.join(file);
+        std::fs::write(&path, body).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+
+    /// #2764's structural claim. The identity map is a ConfigMap and the
+    /// bearer secrets are a Secret; two Kubernetes objects cannot share one
+    /// mount path, so the loader must union two files. If it could not, the
+    /// only way to serve both classes would be to put the plaintext identity
+    /// map back inside the Secret — exactly the coupling this work removes.
+    #[test]
+    fn two_files_union_into_one_registry_each_keeping_its_own_namespace() {
+        let dir = scratch("union");
+        let identities = write(
+            &dir,
+            "identities.json",
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"products":"read"}}}}"#,
+        );
+        let tokens = write(
+            &dir,
+            "token-registry.json",
+            r#"{"tokens":{"s3cret":{"subject":"svc","roles":{"products":"write"}}}}"#,
+        );
+
+        let registry = load_registry_files(
+            true,
+            &[
+                RegistrySource {
+                    env: "IDENTITY_FILE",
+                    path: Some(&identities),
+                },
+                RegistrySource {
+                    env: "TOKEN_FILE",
+                    path: Some(&tokens),
+                },
+            ],
+        )
+        .expect("two sources union");
+
+        assert_eq!(registry.identities["a@b.com"].subject, "dev");
+        assert_eq!(registry.tokens["s3cret"].subject, "svc");
+        // Still disjoint after the merge — the union is per namespace.
+        assert!(!registry.identities.contains_key("s3cret"));
+        assert!(!registry.tokens.contains_key("a@b.com"));
+    }
+
+    /// Last-writer-wins would reproduce the failure #2764 quotes as the reason
+    /// to delete the mutual-exclusion CEL rule: no way to tell which registry
+    /// is actually being served. Two sources disagreeing about one principal's
+    /// grants is a deployment mistake, and it fails loudly.
+    #[test]
+    fn a_key_claimed_by_two_sources_is_an_error_not_a_silent_overwrite() {
+        let dir = scratch("collision");
+        let first = write(
+            &dir,
+            "a.json",
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"products":"read"}}}}"#,
+        );
+        let second = write(
+            &dir,
+            "b.json",
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"products":"admin"}}}}"#,
+        );
+
+        let err = load_registry_files(
+            true,
+            &[
+                RegistrySource {
+                    env: "FIRST",
+                    path: Some(&first),
+                },
+                RegistrySource {
+                    env: "SECOND",
+                    path: Some(&second),
+                },
+            ],
+        )
+        .unwrap_err();
+
+        let message = format!("{err:#}");
+        assert!(message.contains("a@b.com"), "{message}");
+        assert!(message.contains("SECOND"), "{message}");
+    }
+
+    /// The collision message is read by whoever is debugging the deployment,
+    /// which usually means it lands in a log aggregator. A `tokens` key is the
+    /// bearer secret itself, so it is named by the subject it grants.
+    #[test]
+    fn a_token_collision_names_the_subject_and_never_the_secret() {
+        let mut registry =
+            Registry::parse(r#"{"tokens":{"s3cret":{"subject":"svc","roles":{}}}}"#).unwrap();
+        let other =
+            Registry::parse(r#"{"tokens":{"s3cret":{"subject":"svc","roles":{}}}}"#).unwrap();
+
+        let message = registry.try_merge(other).unwrap_err().to_string();
+        assert!(message.contains("svc"), "{message}");
+        assert!(
+            !message.contains("s3cret"),
+            "the collision message leaked a bearer secret: {message}"
+        );
+    }
+
+    /// The same key in *different* namespaces is not a collision: one is a
+    /// secret and one is an email, and they are resolved by different lookups.
+    #[test]
+    fn the_same_key_in_two_namespaces_is_not_a_collision() {
+        let mut registry =
+            Registry::parse(r#"{"tokens":{"shared":{"subject":"svc","roles":{}}}}"#).unwrap();
+        let other =
+            Registry::parse(r#"{"identities":{"shared":{"subject":"dev","roles":{}}}}"#).unwrap();
+        registry.try_merge(other).expect("different namespaces");
+        assert_eq!(registry.tokens["shared"].subject, "svc");
+        assert_eq!(registry.identities["shared"].subject, "dev");
+    }
+
+    /// An absent source is absent, not empty. A service configured with only
+    /// an identity map must not be told its registry file failed to read.
+    #[test]
+    fn unset_and_blank_sources_are_skipped() {
+        let dir = scratch("skip");
+        let identities = write(
+            &dir,
+            "identities.json",
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{}}}}"#,
+        );
+
+        let registry = load_registry_files(
+            true,
+            &[
+                RegistrySource {
+                    env: "IDENTITY_FILE",
+                    path: Some(&identities),
+                },
+                RegistrySource {
+                    env: "TOKEN_FILE",
+                    path: None,
+                },
+                RegistrySource {
+                    env: "LEGACY_FILE",
+                    path: Some("   "),
+                },
+            ],
+        )
+        .expect("one configured source is enough");
+        assert_eq!(registry.len(), 1);
+    }
+
+    /// Fail-fast names every source the operator could have set, because the
+    /// mistake is usually "I set the other one".
+    #[test]
+    fn required_with_no_source_at_all_names_every_env_var() {
+        let err = load_registry_files(
+            true,
+            &[
+                RegistrySource {
+                    env: "IDENTITY_FILE",
+                    path: None,
+                },
+                RegistrySource {
+                    env: "TOKEN_FILE",
+                    path: None,
+                },
+            ],
+        )
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("IDENTITY_FILE"), "{message}");
+        assert!(message.contains("TOKEN_FILE"), "{message}");
+    }
+
+    /// #2679's half of the invariant. The control plane presents an identity
+    /// of its own; a tenant who could grant that same subject to a credential
+    /// they hold would be impersonating the operator, and every audit line
+    /// would name the operator rather than them.
+    #[test]
+    fn a_registry_claiming_a_reserved_subject_is_reported_with_its_section_and_key() {
+        let registry = Registry::parse(
+            r#"{"identities":{"tenant@b.com":{"subject":"lumen-control-plane","roles":{}}}}"#,
+        )
+        .unwrap();
+
+        let (section, key, subject) = registry
+            .reserved_subject_violation(&["lumen-control-plane".to_owned()])
+            .expect("the reserved subject is claimed");
+        assert_eq!(section, "identities");
+        assert_eq!(key, "tenant@b.com");
+        assert_eq!(subject, "lumen-control-plane");
+
+        assert!(registry
+            .reserved_subject_violation(&["someone-else".to_owned()])
+            .is_none());
+        assert!(registry.reserved_subject_violation(&[]).is_none());
     }
 }
 // CODEGEN-END

@@ -15,11 +15,16 @@
 //!
 //! - `LUMEN_AUTH=off|required` — default `off` (dev). `required` rejects
 //!   requests without a bearer token.
-//! - `LUMEN_TOKEN_REGISTRY_FILE` — the registry file, mounted from a
-//!   Kubernetes Secret or a Secret Manager CSI projection. The operator sets
-//!   it from `spec.tokensSecret` or `spec.tokensSecretProviderClass`; it is
-//!   the *only* way to supply credentials, because a credential passed inline
-//!   in the environment is a credential in `kubectl describe pod`. JSON, with
+//! - `LUMEN_TOKEN_REGISTRY_FILE` — the bearer registry file, mounted from a
+//!   Kubernetes Secret. The operator sets it from `spec.tokensSecret`.
+//! - `LUMEN_IDENTITY_REGISTRY_FILE` — the identity registry file, mounted from
+//!   a ConfigMap. The operator sets it from `spec.identities`.
+//! - `LUMEN_AUTH_GOOGLE_AUDIENCES` — comma-separated list of expected audiences,
+//!   set by the operator from `spec.identityAudiences`. Required when identity
+//!   grants are configured.
+//!
+//! Credentials are supplied via files because a credential passed inline in the
+//! environment is a credential in `kubectl describe pod`. JSON, with two
 //!   two disjoint namespaces (#2678):
 //!
 //!   ```json
@@ -51,8 +56,9 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use service_auth::{
-    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink, Registry,
-    ReloadableRoleMapVerifier, RoleMapDenied, TracingAuthEventSink, Verifier,
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, AuthEvent, AuthEventSink,
+    load_registry_files, Registry, RegistrySource, ReloadableRoleMapVerifier, RoleMapDenied,
+    TracingAuthEventSink, Verifier,
 };
 
 pub use service_auth::{Role, TokenClaims};
@@ -64,12 +70,15 @@ use crate::types::ApiError;
 /// The serving adapter watches this exact file after successful startup so a
 /// validated replacement updates the live request verifier without a restart.
 pub const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
+pub const IDENTITY_REGISTRY_FILE_ENV: &str = "LUMEN_IDENTITY_REGISTRY_FILE";
+pub const GOOGLE_AUDIENCES_ENV: &str = "LUMEN_AUTH_GOOGLE_AUDIENCES";
 
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     pub required: bool,
     pub registry: Registry,
+    pub google_audiences: Vec<String>,
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
@@ -78,6 +87,7 @@ impl AuthConfig {
         Self {
             required: false,
             registry: Registry::default(),
+            google_audiences: Vec::new(),
         }
     }
 
@@ -86,6 +96,7 @@ impl AuthConfig {
         Self {
             required,
             registry: Registry::from_tokens(tokens),
+            google_audiences: Vec::new(),
         }
     }
 
@@ -101,24 +112,47 @@ impl AuthConfig {
             Err(std::env::VarError::NotPresent) => false,
             Err(e) => bail!("LUMEN_AUTH must be valid UTF-8: {e}"),
         };
-        // The env var is what this process reads, but it is not what the
-        // operator set — naming only `LUMEN_TOKEN_REGISTRY_FILE` sends whoever
-        // reads this line looking for an env var they cannot edit. The two CR
-        // fields that produce it are named here so the message points at
-        // something actionable (#2678, R5).
-        let registry = service_auth::load_registry_file(
-            required,
-            TOKEN_REGISTRY_FILE_ENV,
-            std::env::var(TOKEN_REGISTRY_FILE_ENV).ok().as_deref(),
-        )
-        .with_context(|| {
+
+        let token_path = std::env::var(TOKEN_REGISTRY_FILE_ENV).ok();
+        let identity_path = std::env::var(IDENTITY_REGISTRY_FILE_ENV).ok();
+
+        let sources = [
+            RegistrySource {
+                env: TOKEN_REGISTRY_FILE_ENV,
+                path: token_path.as_deref(),
+            },
+            RegistrySource {
+                env: IDENTITY_REGISTRY_FILE_ENV,
+                path: identity_path.as_deref(),
+            },
+        ];
+
+        let registry = load_registry_files(required, &sources).with_context(|| {
             format!(
-                "{TOKEN_REGISTRY_FILE_ENV} comes from the Lumen resource's `spec.tokensSecret` \
-                 (a Kubernetes Secret) or `spec.tokensSecretProviderClass` (a Secret Manager CSI \
-                 projection); set exactly one of them when `spec.auth: required`"
+                "{TOKEN_REGISTRY_FILE_ENV} comes from `spec.tokensSecret` (a bearer Secret) and \
+                 {IDENTITY_REGISTRY_FILE_ENV} comes from `spec.identities` with `spec.identityAudiences`"
             )
         })?;
-        Ok(Self { required, registry })
+
+        let google_audiences = match std::env::var(GOOGLE_AUDIENCES_ENV) {
+            Ok(val) => val
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        if !registry.identities.is_empty() && google_audiences.is_empty() {
+            bail!("{GOOGLE_AUDIENCES_ENV} must be set when identity grants are configured");
+        }
+
+        Ok(Self {
+            required,
+            registry,
+            google_audiences,
+        })
     }
 }
 
@@ -316,6 +350,8 @@ mod tests {
         unsafe {
             std::env::remove_var("LUMEN_AUTH");
             std::env::remove_var(TOKEN_REGISTRY_FILE_ENV);
+            std::env::remove_var(IDENTITY_REGISTRY_FILE_ENV);
+            std::env::remove_var(GOOGLE_AUDIENCES_ENV);
         }
     }
 
@@ -484,6 +520,7 @@ mod tests {
         unsafe {
             std::env::set_var("LUMEN_AUTH", "required");
             std::env::set_var(TOKEN_REGISTRY_FILE_ENV, &path);
+            std::env::set_var(GOOGLE_AUDIENCES_ENV, "https://lumen.acme.internal");
         }
         let cfg = AuthConfig::from_env().unwrap();
         assert_eq!(cfg.registry.tokens.len(), 1);
@@ -507,10 +544,8 @@ mod tests {
         let message = format!("{err:#}");
         assert!(message.contains(TOKEN_REGISTRY_FILE_ENV), "{message}");
         assert!(message.contains("spec.tokensSecret"), "{message}");
-        assert!(
-            message.contains("spec.tokensSecretProviderClass"),
-            "{message}"
-        );
+        assert!(message.contains("spec.identities"), "{message}");
+        assert!(message.contains("spec.identityAudiences"), "{message}");
         clear_auth_env();
     }
 

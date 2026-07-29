@@ -76,7 +76,7 @@ use serde::{Deserialize, Deserializer};
 use crate::async_verifier::AsyncVerifier;
 use crate::error::AuthError;
 use crate::middleware::bearer_token;
-use crate::reload::ReloadableRoleMapVerifier;
+use crate::reload::{AuditedRoleMapPrincipal, ReloadableRoleMapVerifier};
 use crate::role_map::RoleMapPrincipal;
 
 /// Both issuer spellings Google emits for ID tokens. Pinned, not configurable:
@@ -88,6 +88,9 @@ pub const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 
 /// Google's access-token introspection endpoint.
 pub const GOOGLE_TOKENINFO_URL: &str = "https://oauth2.googleapis.com/tokeninfo";
+
+/// Default base URL for GCE/GKE Metadata Server ID-token fetching.
+pub const DEFAULT_METADATA_BASE_URL: &str = "http://metadata.google.internal";
 
 /// Floor between JWKS refetches. A caller presenting fabricated `kid` values
 /// gets at most one upstream fetch per window, not one per request.
@@ -398,6 +401,95 @@ impl AccessTokenIntrospection for HttpAccessTokenIntrospection {
     }
 }
 
+/// Typed error when fetching an ID token from the GCE/GKE metadata server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataTokenError {
+    /// Non-2xx HTTP status from metadata server.
+    HttpStatus {
+        status: reqwest::StatusCode,
+        base_url: String,
+        message: String,
+    },
+    /// Network connection or transport failure contacting metadata server.
+    ConnectionFailed {
+        base_url: String,
+        message: String,
+    },
+}
+
+impl fmt::Display for MetadataTokenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HttpStatus { status, base_url, message } => {
+                write!(f, "metadata server at {base_url} returned status {status}: {message}")
+            }
+            Self::ConnectionFailed { base_url, message } => {
+                write!(f, "could not connect to metadata server at {base_url}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MetadataTokenError {}
+
+/// Source for ID tokens fetched from the GCE/GKE metadata server.
+#[derive(Debug, Clone)]
+pub struct MetadataTokenSource {
+    client: reqwest::Client,
+    base_url: String,
+}
+
+impl MetadataTokenSource {
+    pub fn new(client: reqwest::Client, base_url: impl Into<String>) -> Self {
+        Self {
+            client,
+            base_url: base_url.into(),
+        }
+    }
+
+    pub fn default_gcp(client: reqwest::Client) -> Self {
+        Self::new(client, DEFAULT_METADATA_BASE_URL)
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub async fn fetch_id_token(&self, audience: &str) -> Result<String, MetadataTokenError> {
+        let url = format!(
+            "{}/computeMetadata/v1/instance/service-accounts/default/identity",
+            self.base_url.trim_end_matches('/')
+        );
+        let response = self
+            .client
+            .get(&url)
+            .header("Metadata-Flavor", "Google")
+            .query(&[("audience", audience), ("format", "full")])
+            .send()
+            .await
+            .map_err(|e| MetadataTokenError::ConnectionFailed {
+                base_url: self.base_url.clone(),
+                message: e.without_url().to_string(),
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.map_err(|e| MetadataTokenError::ConnectionFailed {
+            base_url: self.base_url.clone(),
+            message: e.without_url().to_string(),
+        })?;
+
+        if !status.is_success() {
+            return Err(MetadataTokenError::HttpStatus {
+                status,
+                base_url: self.base_url.clone(),
+                message: text,
+            });
+        }
+
+        Ok(text.trim().to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // JWKS cache
 // ---------------------------------------------------------------------------
@@ -595,19 +687,25 @@ impl GoogleVerifier {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
-        Ok(Self::with_sources(
+        Self::with_sources(
             required,
             registry,
             config,
             Arc::new(HttpJwksSource::google(client.clone())),
             Some(Arc::new(HttpAccessTokenIntrospection::google(client))),
             Arc::new(SystemClock),
-        ))
+        )
     }
 
     /// Build a verifier over injected sources — the constructor tests use, and
     /// the one a service uses to disable the introspection path by passing
     /// `None`.
+    ///
+    /// Fails on an empty audience list. `jsonwebtoken` treats an empty
+    /// `set_audience` as "do not check the audience", so the one mistake this
+    /// rejects — omitting the audience — would otherwise turn every ID token
+    /// minted for any other Google-fronted service into a valid credential
+    /// here, and it would do so silently.
     pub fn with_sources(
         required: bool,
         registry: Arc<ReloadableRoleMapVerifier>,
@@ -615,14 +713,20 @@ impl GoogleVerifier {
         jwks: Arc<dyn JwksSource>,
         introspection: Option<Arc<dyn AccessTokenIntrospection>>,
         clock: Arc<dyn Clock>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
+        if config.audiences.iter().all(|a| a.trim().is_empty()) {
+            anyhow::bail!(
+                "Google identity verification needs at least one audience: an ID-token \
+                 verifier with no audience accepts tokens minted for someone else's service"
+            );
+        }
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&config.audiences);
         validation.set_issuer(&GOOGLE_ISSUERS);
         // Validated by default; stated so the intent survives a refactor.
         validation.validate_exp = true;
 
-        Self {
+        Ok(Self {
             required,
             registry,
             validation,
@@ -631,7 +735,7 @@ impl GoogleVerifier {
             introspection_ttl_ceiling: config.introspection_ttl_ceiling,
             introspection_cache: RwLock::new(HashMap::new()),
             clock,
-        }
+        })
     }
 
     /// Verify a Google ID token offline and return its verified email.
@@ -766,11 +870,20 @@ fn verified_email(email: Option<String>, verified: bool) -> Result<String, Googl
 
 #[async_trait]
 impl AsyncVerifier for GoogleVerifier {
-    type Principal = RoleMapPrincipal;
+    /// The same audited principal the bearer-only path produces.
+    ///
+    /// The wrapper is not decoration: `ensure` is what emits the
+    /// allow/deny audit event, so a Google-authenticated caller whose
+    /// principal skipped it would authorize invisibly while an identical
+    /// bearer-authenticated caller stayed on the record.
+    type Principal = AuditedRoleMapPrincipal;
 
-    async fn authenticate_async(&self, headers: &HeaderMap) -> Result<RoleMapPrincipal, AuthError> {
-        match (self.required, bearer_token(headers)) {
-            (false, None) => Ok(RoleMapPrincipal::Open),
+    async fn authenticate_async(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<AuditedRoleMapPrincipal, AuthError> {
+        let principal = match (self.required, bearer_token(headers)) {
+            (false, None) => RoleMapPrincipal::Open,
             (_, Some(token)) => self.authenticate_credential(token).await.map_err(|error| {
                 if error.is_upstream_failure() {
                     tracing::warn!(
@@ -780,9 +893,10 @@ impl AsyncVerifier for GoogleVerifier {
                     );
                 }
                 AuthError::from(error)
-            }),
-            (true, None) => Err(AuthError::Unauthenticated),
-        }
+            })?,
+            (true, None) => return Err(AuthError::Unauthenticated),
+        };
+        Ok(self.registry.audited(principal))
     }
 
     fn required(&self) -> bool {
@@ -974,10 +1088,43 @@ mod tests {
             introspection,
             clock,
         )
+        .expect("one audience is configured")
     }
 
     fn offline_verifier() -> GoogleVerifier {
         verifier_with(CountingJwks::serving(), None, FakeClock::new(1_700_000_000))
+    }
+
+    // -- Construction refuses the one configuration that fails open --------
+
+    /// `jsonwebtoken` reads an empty `set_audience` as "do not check the
+    /// audience". A verifier built that way accepts any ID token Google ever
+    /// minted, for any service, and reports nothing — so the check has to
+    /// happen where the mistake is still visible: at construction.
+    #[test]
+    fn a_verifier_with_no_audience_is_refused_at_construction() {
+        let err = GoogleVerifier::with_sources(
+            true,
+            registry(),
+            GoogleAuthConfig::new(Vec::<String>::new()),
+            CountingJwks::serving(),
+            None,
+            FakeClock::new(1_700_000_000),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("audience"), "{err}");
+
+        // A list of blanks is the same mistake wearing a costume: an unset
+        // env var read straight into the config produces exactly this.
+        assert!(GoogleVerifier::with_sources(
+            true,
+            registry(),
+            GoogleAuthConfig::new(["", "  "]),
+            CountingJwks::serving(),
+            None,
+            FakeClock::new(1_700_000_000),
+        )
+        .is_err());
     }
 
     // -- AC1: the positive offline path -----------------------------------
@@ -1358,7 +1505,8 @@ mod tests {
             CountingJwks::serving(),
             Some(introspection.clone()),
             FakeClock::new(1_700_000_000),
-        );
+        )
+        .expect("one audience is configured");
 
         let principal = verifier
             .authenticate_credential("preshared-secret")
@@ -1397,7 +1545,8 @@ mod tests {
             CountingJwks::serving(),
             None,
             FakeClock::new(1_700_000_000),
-        );
+        )
+        .expect("one audience is configured");
 
         let from_identity = by_identity
             .authenticate_credential(&id_token())
@@ -1503,6 +1652,70 @@ mod tests {
         let rendered = format!("{verifier:?}");
         assert!(!rendered.contains("ya29"));
         assert!(!rendered.contains("cache"));
+    }
+
+    // -- MetadataTokenSource -----------------------------------------------
+
+    #[tokio::test]
+    async fn metadata_token_source_sends_header_and_query_and_returns_token() {
+        use axum::{extract::Query, http::HeaderMap, routing::get, Router};
+
+        let app = Router::new().route(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            get(|headers: HeaderMap, Query(params): Query<HashMap<String, String>>| async move {
+                assert_eq!(
+                    headers.get("Metadata-Flavor").and_then(|v| v.to_str().ok()),
+                    Some("Google")
+                );
+                assert_eq!(params.get("audience").map(String::as_str), Some("test-aud"));
+                assert_eq!(params.get("format").map(String::as_str), Some("full"));
+                "eyJhbGciOiJSUzI1NiJ9.test.jwt"
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let source = MetadataTokenSource::new(client, &base_url);
+        let token = source.fetch_id_token("test-aud").await.unwrap();
+        assert_eq!(token, "eyJhbGciOiJSUzI1NiJ9.test.jwt");
+    }
+
+    #[tokio::test]
+    async fn metadata_token_source_surfaces_typed_error_naming_base_url() {
+        use axum::{routing::get, Router};
+
+        let app = Router::new().route(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            get(|| async { (axum::http::StatusCode::NOT_FOUND, "not on GCP") }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let source = MetadataTokenSource::new(client, &base_url);
+        let err = source.fetch_id_token("test-aud").await.unwrap_err();
+        assert!(
+            err.to_string().contains(&base_url),
+            "error message {err} should name base_url {base_url}"
+        );
+        assert!(matches!(
+            err,
+            MetadataTokenError::HttpStatus {
+                status: axum::http::StatusCode::NOT_FOUND,
+                ..
+            }
+        ));
     }
 }
 // HANDWRITE-END

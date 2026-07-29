@@ -906,14 +906,15 @@ mod tests {
             log_level: None,
             auth: Default::default(),
             tokens_secret: None,
-            tokens_secret_provider_class: None,
-            tokens_secret_csi_driver: None,
+            identities: BTreeMap::new(),
+            identity_audiences: Vec::new(),
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
             network_policy: false,
             admission: None,
             service_account_name: None,
+            service_account_annotations: BTreeMap::new(),
         };
         let mut lumen = Lumen::new("search", spec);
         lumen.metadata.namespace = Some("acme".to_string());
@@ -1493,14 +1494,15 @@ mod tests {
             log_level: None,
             auth: Default::default(),
             tokens_secret: None,
-            tokens_secret_provider_class: None,
-            tokens_secret_csi_driver: None,
+            identities: std::collections::BTreeMap::new(),
+            identity_audiences: Vec::new(),
             serving: ServingSpec::default(),
             reshard_policy: Default::default(),
             observability: false,
             network_policy: false,
             admission: None,
             service_account_name: None,
+            service_account_annotations: std::collections::BTreeMap::new(),
         }
     }
 

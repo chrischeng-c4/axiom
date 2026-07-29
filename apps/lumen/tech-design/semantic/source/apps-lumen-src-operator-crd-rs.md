@@ -196,6 +196,11 @@ pub struct LumenSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_account_name: Option<String>,
 
+    /// Annotations applied verbatim to both rendered ServiceAccounts (the
+    /// workload SA when created, and the backup SA). Default empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_account_annotations: BTreeMap<String, String>,
+
     /// Stateless serving-fleet shape.
     #[serde(default)]
     pub serving: ServingSpec,
@@ -655,9 +660,8 @@ pub struct ServingBackupSpec {
     #[serde(flatten)]
     pub policy: service_backup::ScheduledBackupPolicy,
     /// Name of a Secret whose `token` key holds a bearer token with
-    /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
-    /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: disabled`.
+    /// `Role::Admin` on `*`. Deprecated; the CronJob uses Workload Identity
+    /// or metadata ID tokens when `spec.identityAudiences` is configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }

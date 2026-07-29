@@ -45,8 +45,8 @@ fn dev_spec() -> LumenSpec {
         log_level: None,
         auth: AuthMode::Off,
         tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
+        identities: BTreeMap::new(),
+        identity_audiences: Vec::new(),
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 1,
@@ -60,6 +60,7 @@ fn dev_spec() -> LumenSpec {
         network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: BTreeMap::new(),
     }
 }
 
@@ -76,8 +77,8 @@ fn prod_spec() -> LumenSpec {
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
         tokens_secret: Some("lumen-tokens".into()),
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
+        identities: BTreeMap::new(),
+        identity_audiences: Vec::new(),
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 6,
@@ -94,6 +95,7 @@ fn prod_spec() -> LumenSpec {
         network_policy: true,
         admission: None,
         service_account_name: None,
+        service_account_annotations: BTreeMap::new(),
     }
 }
 
@@ -778,100 +780,7 @@ fn prometheus_rule_covers_storage_degraded() {
     assert!(runbook.contains("LUMEN_STORAGE_FULL_REPROBE_SECS"));
 }
 
-#[test]
-fn prod_wires_auth_via_csi_secret_provider_class() {
-    let mut spec = prod_spec();
-    spec.tokens_secret = None;
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
 
-    // auth=required + tokensSecretProviderClass (no tokensSecret) → registry
-    // file env + CSI volume mount, same mount path/readOnly as the Secret path.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let c = &dep["spec"]["template"]["spec"]["containers"][0];
-    let registry_env = c["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
-        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
-    assert_eq!(
-        registry_env["value"],
-        "/var/run/secrets/lumen/token-registry.json"
-    );
-    let registry_mount = c["volumeMounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["name"] == "lumen-token-registry")
-        .expect("token registry mount");
-    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
-    assert_eq!(registry_mount["readOnly"], true);
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert!(
-        registry_volume["secret"].is_null(),
-        "CSI-sourced volume must not carry a secret key: {registry_volume}"
-    );
-    assert_eq!(registry_volume["csi"]["driver"], "secrets-store.csi.k8s.io");
-    assert_eq!(registry_volume["csi"]["readOnly"], true);
-    assert_eq!(
-        registry_volume["csi"]["volumeAttributes"]["secretProviderClass"],
-        "lumen-tokens-spc"
-    );
-}
-
-#[test]
-fn tokens_secret_csi_driver_overrides_the_default_csi_driver_name() {
-    let mut spec = prod_spec();
-    spec.tokens_secret = None;
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    spec.tokens_secret_csi_driver = Some("secrets-store-gke.csi.k8s.io".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
-
-    // GKE's managed Secrets Store add-on registers a different CSI driver
-    // name than the community default (#2456/#2457); an explicit
-    // `tokensSecretCsiDriver` must render that name on the pod volume.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(
-        registry_volume["csi"]["driver"],
-        "secrets-store-gke.csi.k8s.io"
-    );
-}
-
-#[test]
-fn tokens_secret_wins_over_provider_class_when_both_set() {
-    let mut spec = prod_spec();
-    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
-    let l = lumen("lumen", spec);
-    let objs = render(&l);
-
-    // Both set → tokensSecret wins (backward compatible); no csi key at all.
-    let dep = find(&objs, "StatefulSet", "lumen");
-    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["name"] == "lumen-token-registry")
-        .expect("token registry volume");
-    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
-    assert!(
-        registry_volume["csi"].is_null(),
-        "tokensSecret must win when both fields are set: {registry_volume}"
-    );
-}
 
 #[test]
 fn reshard_status_is_recommendation_only_without_capacity_ceiling() {
@@ -1185,9 +1094,6 @@ fn crd_yaml_emits_lumen_definition() {
         "shardMap",
         "reshardPolicy",
         "PrepareSplit",
-        "tokensSecretProviderClass",
-        "SecretProviderClass",
-        "secrets-store.csi.k8s.io",
     ] {
         assert!(
             yaml.contains(needle),
@@ -1432,18 +1338,16 @@ fn backup_cronjob_wires_schedule_and_destination() {
 }
 
 #[test]
-fn backup_cronjob_wires_retention_and_admin_token() {
-    // #808 R4: `retentionSecs` becomes `--retention-secs`, and
-    // `adminTokenSecret` becomes a `LUMEN_BACKUP_TOKEN` env var sourced from
-    // that Secret's `token` key.
+fn backup_cronjob_wires_retention_and_audiences_env() {
     let mut spec = dev_spec();
+    spec.identity_audiences = vec!["https://lumen.example.com".into()];
     spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {
             schedule: "@daily".into(),
             destination: "file:///backups/lumen".into(),
             retention_secs: Some(604800),
         },
-        admin_token_secret: Some("lumen-backup-token".into()),
+        admin_token_secret: None,
     });
     let l = lumen("search", spec);
     let objs = render(&l);
@@ -1464,20 +1368,43 @@ fn backup_cronjob_wires_retention_and_admin_token() {
 
     let env = env_names(c);
     assert!(
-        env.contains(&"LUMEN_BACKUP_TOKEN".to_string()),
-        "missing LUMEN_BACKUP_TOKEN in {env:?}"
+        !env.iter().any(|e| e.contains("BACKUP_TOKEN")),
+        "CronJob should carry no token env var: {env:?}"
     );
-    let token_env = c["env"]
+    assert!(
+        env.contains(&"LUMEN_AUTH_GOOGLE_AUDIENCES".to_string()),
+        "missing LUMEN_AUTH_GOOGLE_AUDIENCES in {env:?}"
+    );
+    let aud_env = c["env"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["name"] == "LUMEN_BACKUP_TOKEN")
+        .find(|e| e["name"] == "LUMEN_AUTH_GOOGLE_AUDIENCES")
         .unwrap();
-    assert_eq!(
-        token_env["valueFrom"]["secretKeyRef"]["name"],
-        "lumen-backup-token"
+    assert_eq!(aud_env["value"], "https://lumen.example.com");
+}
+
+#[test]
+fn service_account_annotations_pass_through_to_both_service_accounts() {
+    let mut spec = dev_spec();
+    spec.service_account_annotations.insert(
+        "iam.gke.io/gcp-service-account".to_string(),
+        "lumen-sa@project.iam.gserviceaccount.com".to_string(),
     );
-    assert_eq!(token_env["valueFrom"]["secretKeyRef"]["key"], "token");
+    let l = lumen("search", spec);
+    let objs = render(&l);
+
+    let sa = find(&objs, "ServiceAccount", "search");
+    assert_eq!(
+        sa["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
+        "lumen-sa@project.iam.gserviceaccount.com"
+    );
+
+    let bsa = find(&objs, "ServiceAccount", "search-backup");
+    assert_eq!(
+        bsa["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
+        "lumen-sa@project.iam.gserviceaccount.com"
+    );
 }
 
 #[test]

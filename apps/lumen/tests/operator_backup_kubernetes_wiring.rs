@@ -23,14 +23,15 @@ fn lumen_with_backup() -> Lumen {
         log_level: None,
         auth: AuthMode::Off,
         tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
+        identities: std::collections::BTreeMap::new(),
+        identity_audiences: Vec::new(),
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy::default(),
         observability: false,
         network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: std::collections::BTreeMap::new(),
     };
     spec.serving.backup = Some(ServingBackupSpec {
         policy: service_backup::ScheduledBackupPolicy {

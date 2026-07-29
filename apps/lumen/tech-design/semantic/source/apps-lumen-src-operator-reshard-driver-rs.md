@@ -793,39 +793,26 @@ impl ClusterControl for KubeClusterControl {
         Ok(())
     }
 
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>> {
+    async fn admin_token(&self, _namespace: &str, lumen: &Lumen) -> Result<Option<String>> {
         if !matches!(lumen.spec.auth, AuthMode::Required) {
             return Ok(None);
         }
-        let Some(secret_name) = lumen.spec.tokens_secret.as_deref() else {
-            // CSI-only (`tokensSecretProviderClass`) deployments have no
-            // Secret object for the driver to read here — a documented,
-            // not-yet-closed gap (#1381): every admin call this tick fails
-            // closed (401), which `run_migration_pass`/`evict_old_shards`
-            // surface as `DriveOutcome::Blocked`, leaving the workflow
-            // resumable rather than silently stuck.
+        let Some(audience) = lumen.spec.identity_audiences.first() else {
             bail!(
-                "tokensSecretProviderClass-only auth is not supported by the reshard driver yet; \
-                 set spec.tokensSecret so the driver can resolve an admin-role bearer token"
+                "auth is required but spec.identityAudiences is empty; \
+                 set spec.identityAudiences so the driver can resolve an admin-role bearer token"
             );
         };
-        let api: kube::Api<k8s_openapi::api::core::v1::Secret> =
-            kube::Api::namespaced(self.client.clone(), namespace);
-        let secret = api.get(secret_name).await.context("read tokens secret")?;
-        let bytes = secret
-            .data
-            .as_ref()
-            .and_then(|d| d.get("token-registry.json"))
-            .ok_or_else(|| {
-                anyhow!("tokens secret `{secret_name}` missing token-registry.json key")
-            })?;
-        let registry: BTreeMap<String, TokenClaims> =
-            serde_json::from_slice(&bytes.0).context("parse token-registry.json")?;
-        let token = registry
-            .into_iter()
-            .find(|(_, claims)| claims.roles.get("*") == Some(&Role::Admin))
-            .map(|(token, _)| token);
-        Ok(token)
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("build metadata client")?;
+        let token_source = service_auth::gcp::MetadataTokenSource::default_gcp(client);
+        let token = token_source
+            .fetch_id_token(audience)
+            .await
+            .context("fetch metadata identity token")?;
+        Ok(Some(token))
     }
 
     fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {

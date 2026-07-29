@@ -778,15 +778,17 @@ mod tests {
     /// The cross-field rule the `Lumen` CRD enforces with CEL has to hold for
     /// a spec the fleet composes too — otherwise the fleet is a way around it.
     #[test]
-    fn naming_two_token_sources_is_rejected_at_the_fleet_too() {
+    fn granting_an_identity_without_an_audience_is_rejected_at_the_fleet_too() {
         let planned = plan(&fleet(vec![instance(
             "team-g",
-            Some(json!({
-                "tokensSecret": "a",
-                "tokensSecretProviderClass": "b",
-            })),
+            Some(json!({ "identities": { "svc@proj.iam.gserviceaccount.com": { "subject": "team-g" } } })),
         )]));
-        assert!(rejection(&planned[0]).contains("tokensSecretProviderClass"));
+        assert!(rejection(&planned[0]).contains("identityAudiences"));
+        assert!(
+            !rejection(&planned[0]).contains("a Lumen does not have"),
+            "must be rejected by spec.validate(), not by unknown-key detection: {}",
+            rejection(&planned[0])
+        );
     }
 
     /// One tenant's bad edit must not stop every other tenant from converging.
@@ -880,7 +882,7 @@ mod tests {
         );
         // The defaults are fully schema-validated, so the platform team's own
         // typo is still caught at `kubectl apply`.
-        assert!(yaml.contains("tokensSecretProviderClass"), "{yaml}");
+        assert!(yaml.contains("tokensSecret"), "{yaml}");
     }
 }
 // CODEGEN-END

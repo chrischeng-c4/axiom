@@ -454,9 +454,8 @@ struct BackupArgs {
     /// GCE/GKE metadata-server Workload Identity token.
     #[arg(long)]
     dest: String,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
+    #[arg(long)]
     token: Option<String>,
     /// Drop backup objects older than this many seconds after a successful
     /// put. Omit to keep everything.
@@ -670,9 +669,8 @@ struct SnapshotExportArgs {
     /// Write the SnapshotV1 JSON bytes to this path instead of stdout.
     #[arg(long)]
     out: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
+    #[arg(long)]
     token: Option<String>,
 }
 
@@ -686,9 +684,8 @@ struct SnapshotImportArgs {
     /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
     #[arg(long)]
     file: Option<PathBuf>,
-    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
-    /// back to `LUMEN_BACKUP_TOKEN`; omit when `spec.auth: disabled`.
-    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Omit when `spec.auth: disabled`.
+    #[arg(long)]
     token: Option<String>,
 }
 
@@ -1311,14 +1308,42 @@ fn crd_yaml() -> String {
 /// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
 /// well ad hoc against any running serving node.
 #[cfg(feature = "backup")]
+async fn resolve_admin_token(token: Option<String>) -> Result<Option<String>> {
+    if let Some(t) = token {
+        if !t.trim().is_empty() {
+            return Ok(Some(t));
+        }
+    }
+    if let Ok(audiences) = std::env::var("LUMEN_AUTH_GOOGLE_AUDIENCES") {
+        if let Some(aud) = audiences.split(',').map(|s| s.trim()).find(|s| !s.is_empty()) {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .context("build metadata client")?;
+            let source = service_auth::gcp::MetadataTokenSource::default_gcp(client);
+            let token = source
+                .fetch_id_token(aud)
+                .await
+                .context("fetch metadata identity token")?;
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
+}
+
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
+/// well ad hoc against any running serving node.
+#[cfg(feature = "backup")]
 async fn dispatch_backup(args: BackupArgs) -> Result<()> {
     let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
     let retention = match args.retention_secs {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
+    let token = resolve_admin_token(args.token.clone()).await?;
     let result =
-        lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+        lumen::backup::run_backup(&args.url, token.as_deref(), &dest, &retention).await?;
     // Chainable output (#963): `lumen backup` always emits a single JSON
     // object, so the contract's "next" is a top-level field, not a text tail
     // line. `service_backup::BackupRunResult` stays untouched (shared type) —
@@ -1327,7 +1352,7 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
     if let serde_json::Value::Object(ref mut map) = out {
         map.insert(
             "next".to_string(),
-            serde_json::Value::String(restore_next_command(&args, &result)),
+            serde_json::Value::String(restore_next_command(&args, &result, token.is_some())),
         );
     }
     println!("{}", serde_json::to_string_pretty(&out)?);
@@ -1342,10 +1367,14 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
 /// command. The token, when set, is never echoed — the command references the
 /// same env var the flag reads.
 #[cfg(feature = "backup")]
-fn restore_next_command(args: &BackupArgs, result: &service_backup::BackupRunResult) -> String {
+fn restore_next_command(
+    args: &BackupArgs,
+    result: &service_backup::BackupRunResult,
+    has_token: bool,
+) -> String {
     let url = args.url.trim_end_matches('/');
-    let auth = if args.token.is_some() {
-        " -H \"Authorization: Bearer $LUMEN_BACKUP_TOKEN\""
+    let auth = if has_token {
+        " -H \"Authorization: Bearer <token>\""
     } else {
         ""
     };
@@ -1375,7 +1404,8 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
 /// SnapshotV1 JSON bytes to stdout or `--out`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
-    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, args.token.as_deref()).await?;
+    let token = resolve_admin_token(args.token).await?;
+    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, token.as_deref()).await?;
     if let Some(out) = args.out {
         if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
@@ -1383,7 +1413,7 @@ async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
         }
         std::fs::write(&out, &payload).with_context(|| format!("write {}", out.display()))?;
         let next =
-            restore_file_next_command(args.url.trim_end_matches('/'), &out, args.token.is_some());
+            restore_file_next_command(args.url.trim_end_matches('/'), &out, token.is_some());
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -1414,6 +1444,7 @@ async fn dispatch_snapshot_export(_args: SnapshotExportArgs) -> Result<()> {
 /// stdin and POST them to `{url}/admin/restore`.
 #[cfg(feature = "backup")]
 async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
+    let token = resolve_admin_token(args.token).await?;
     let payload = match &args.file {
         Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
         None => {
@@ -1423,7 +1454,7 @@ async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
             buf
         }
     };
-    lumen::backup::restore_snapshot_bytes(&args.url, args.token.as_deref(), &payload).await?;
+    lumen::backup::restore_snapshot_bytes(&args.url, token.as_deref(), &payload).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -1448,7 +1479,7 @@ async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
 #[cfg(feature = "backup")]
 fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String {
     let auth = if has_token {
-        " --token $LUMEN_BACKUP_TOKEN"
+        " --token <token>"
     } else {
         ""
     };
@@ -2135,9 +2166,9 @@ fn render_fleet_yaml(args: &K8sFleetRenderArgs) -> String {
                  \x20         cpu: REPLACE_ME__CPU\n\
                  \x20         memory: REPLACE_ME__MEMORY\n\
                  \x20         raftStorage: REPLACE_ME__DISK\n\
-                 \x20       # The tenant's token registry, projected from Secret\n\
-                 \x20       # Manager by the CSI driver.\n\
-                 \x20       tokensSecretProviderClass: REPLACE_ME__SECRET_PROVIDER_CLASS\n\
+                 \x20       # The tenant's bearer token registry, if using bearer\n\
+                 \x20       # authentication instead of Workload Identity.\n\
+                 \x20       tokensSecret: REPLACE_ME__TOKENS_SECRET\n\
                  \x20 # Retain (default) leaves an instance running when its entry\n\
                  \x20 # is removed; Delete removes it and its PVCs.\n\
                  \x20 prunePolicy: Retain\n",
@@ -3296,7 +3327,7 @@ mod tests {
             "nodeSelector",              // which node pool
             "raftStorageClass",          // SSD vs standard disk
             "serviceAccountName",        // Workload Identity
-            "tokensSecretProviderClass", // per-tenant Secret Manager entry
+            "tokensSecret",              // per-tenant bearer token registry (optional)
             "cpu:",                      // request — what triggers shard autoscaling
             "memory:",
             "raftStorage:", // per-tenant disk size

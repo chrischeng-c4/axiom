@@ -70,7 +70,7 @@ spec:
               auth:
                 default: required
                 description: |-
-                  Auth mode: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+                  Auth mode: `required` (the default — supply callers via `identities`, via `tokensSecret`, or both) or `disabled`.
 
                   `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2678, R4).
 
@@ -79,6 +79,48 @@ spec:
                 - disabled
                 - required
                 type: string
+              identities:
+                additionalProperties:
+                  description: |-
+                    One entry in [`LumenSpec::identities`]: what a verified Google principal may do, keyed in the parent map by the service-account email itself.
+
+                    This mirrors service-auth's `TokenClaims` rather than reusing it. That type is `Deserialize`-only on purpose — it is what a *secret* registry file parses into, and giving it a `Serialize` would make writing credentials back out a one-line mistake — whereas a CRD field must be `Serialize + JsonSchema`. The two shapes are held together by [`identities_json_round_trips_through_the_service_auth_loader`], not by sharing a type. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                  properties:
+                    roles:
+                      additionalProperties:
+                        description: |-
+                          The CRD spelling of service-auth's `Role`.
+
+                          Duplicated rather than re-exported because `Role` has no `JsonSchema` and adding one would put a `schemars` dependency in a library that tape and defer also link. The lowercase serde renaming is the actual contract between the two enums and is asserted, not assumed. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                        enum:
+                        - read
+                        - write
+                        - admin
+                        type: string
+                      default: {}
+                      description: Collection id → role. The literal key `*` is a wildcard grant, applied when no more specific entry matches.
+                      type: object
+                    subject:
+                      description: Audit subject recorded for this principal. A bearer entry cannot carry its key into an audit line, because the key is the secret; an identity entry's key is already public, so `subject` is here to give it a stable name that survives the email being changed.
+                      type: string
+                  required:
+                  - subject
+                  type: object
+                description: |-
+                  Role grants keyed by **verified Google principal** — the service-account email a caller's ID token was minted for. The key is an identifier, not a credential: it is safe in a ConfigMap, safe in `kubectl get -o yaml`, and safe here in the CR. That is the whole of #2764. The Secret Manager and CSI machinery existed because the old registry's map key *was* the bearer secret; a permission table keyed by a public email is ordinary configuration and needs none of it.
+
+                  The operator projects these as `identities.json` in an instance-owned ConfigMap, mounted beside `token-registry.json`. lumen unions the two at load and on every reload, so bearer secrets and identity grants coexist without either file inheriting the other's confidentiality class — one mount path cannot carry two Kubernetes objects, so they are two files.
+
+                  Ignored when `auth: disabled`. Requires at least one [`identity_audiences`](Self::identity_audiences) entry.
+                type: object
+              identityAudiences:
+                description: |-
+                  Audiences an ID token must name in `aud` to be accepted here.
+
+                  Google mints an ID token *for* an audience, so this is the check that keeps a token minted for someone else's Google-fronted service from authenticating against this instance. It is also the one check that cannot be recovered from afterwards: a verifier configured with an empty audience list does not fail, it accepts every such token silently. lumen therefore refuses to start with identity grants and no audience.
+                items:
+                  type: string
+                type: array
               image:
                 description: Serving container image, e.g. `lumen:latest`. Required.
                 type: string
@@ -236,6 +278,11 @@ spec:
                         nullable: true
                     type: object
                 type: object
+              serviceAccountAnnotations:
+                additionalProperties:
+                  type: string
+                description: Annotations applied verbatim to both rendered ServiceAccounts (the workload SA when created, and the backup SA). Default empty.
+                type: object
               serviceAccountName:
                 description: Name of a pre-existing, externally-managed ServiceAccount for the workload pods. When set, the operator uses this SA and never creates, owns, updates, or deletes a ServiceAccount for the instance (the deployer owns its lifecycle and any Workload Identity annotations). When unset, the operator creates and owns `<instance>` as before.
                 nullable: true
@@ -282,7 +329,7 @@ spec:
                     nullable: true
                     properties:
                       adminTokenSecret:
-                        description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: disabled`.'
+                        description: Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`. Deprecated; the CronJob uses Workload Identity or metadata ID tokens when `spec.identityAudiences` is configured.
                         nullable: true
                         type: string
                       destination:
@@ -364,15 +411,10 @@ spec:
                     minimum: 0.0
                 type: object
               tokensSecret:
-                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`. See also `tokensSecretProviderClass` for a Secret-free alternative; setting **both** is rejected by the CRD schema (#2678, R7), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
-                nullable: true
-                type: string
-              tokensSecretCsiDriver:
-                description: CSI driver name for the `tokensSecretProviderClass` projection. Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE instances must set that value (#2456).
-                nullable: true
-                type: string
-              tokensSecretProviderClass:
-                description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2678, R7). Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
+                description: |-
+                  Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`.
+
+                  This Secret carries bearer secrets only. A caller who authenticates as a Google service account is granted through [`identities`](Self::identities) instead, which holds no secret material and therefore needs no Secret, no Secret Manager, and no CSI driver (#2764).
                 nullable: true
                 type: string
               voterCount:
@@ -384,8 +426,8 @@ spec:
             - image
             type: object
             x-kubernetes-validations:
-            - rule: '!(has(self.tokensSecret) && has(self.tokensSecretProviderClass))'
-              message: set at most one of spec.tokensSecret (a Kubernetes Secret) or spec.tokensSecretProviderClass (a Secret Manager CSI projection); with both set there is no way to tell which registry is actually being served
+            - rule: '!(has(self.identities) && size(self.identities) > 0 && !has(self.identityAudiences))'
+              message: 'spec.identities requires at least one spec.identityAudiences entry: an ID-token verifier with no audience accepts a token minted for any other Google-fronted service, and reports it as a successful authentication'
           status:
             description: Status subresource, written back by the reconcile loop. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
             nullable: true
@@ -593,7 +635,7 @@ spec:
                   auth:
                     default: required
                     description: |-
-                      Auth mode: `required` (the default — supply a token registry via `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+                      Auth mode: `required` (the default — supply callers via `identities`, via `tokensSecret`, or both) or `disabled`.
 
                       `required` is the default because the other way round, forgetting this field ships an open cluster and nothing says so; forgetting it now fails startup with a message naming the field to set. `disabled` remains a one-word opt-out for local development (#2678, R4).
 
@@ -602,6 +644,48 @@ spec:
                     - disabled
                     - required
                     type: string
+                  identities:
+                    additionalProperties:
+                      description: |-
+                        One entry in [`LumenSpec::identities`]: what a verified Google principal may do, keyed in the parent map by the service-account email itself.
+
+                        This mirrors service-auth's `TokenClaims` rather than reusing it. That type is `Deserialize`-only on purpose — it is what a *secret* registry file parses into, and giving it a `Serialize` would make writing credentials back out a one-line mistake — whereas a CRD field must be `Serialize + JsonSchema`. The two shapes are held together by [`identities_json_round_trips_through_the_service_auth_loader`], not by sharing a type. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                      properties:
+                        roles:
+                          additionalProperties:
+                            description: |-
+                              The CRD spelling of service-auth's `Role`.
+
+                              Duplicated rather than re-exported because `Role` has no `JsonSchema` and adding one would put a `schemars` dependency in a library that tape and defer also link. The lowercase serde renaming is the actual contract between the two enums and is asserted, not assumed. @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+                            enum:
+                            - read
+                            - write
+                            - admin
+                            type: string
+                          default: {}
+                          description: Collection id → role. The literal key `*` is a wildcard grant, applied when no more specific entry matches.
+                          type: object
+                        subject:
+                          description: Audit subject recorded for this principal. A bearer entry cannot carry its key into an audit line, because the key is the secret; an identity entry's key is already public, so `subject` is here to give it a stable name that survives the email being changed.
+                          type: string
+                      required:
+                      - subject
+                      type: object
+                    description: |-
+                      Role grants keyed by **verified Google principal** — the service-account email a caller's ID token was minted for. The key is an identifier, not a credential: it is safe in a ConfigMap, safe in `kubectl get -o yaml`, and safe here in the CR. That is the whole of #2764. The Secret Manager and CSI machinery existed because the old registry's map key *was* the bearer secret; a permission table keyed by a public email is ordinary configuration and needs none of it.
+
+                      The operator projects these as `identities.json` in an instance-owned ConfigMap, mounted beside `token-registry.json`. lumen unions the two at load and on every reload, so bearer secrets and identity grants coexist without either file inheriting the other's confidentiality class — one mount path cannot carry two Kubernetes objects, so they are two files.
+
+                      Ignored when `auth: disabled`. Requires at least one [`identity_audiences`](Self::identity_audiences) entry.
+                    type: object
+                  identityAudiences:
+                    description: |-
+                      Audiences an ID token must name in `aud` to be accepted here.
+
+                      Google mints an ID token *for* an audience, so this is the check that keeps a token minted for someone else's Google-fronted service from authenticating against this instance. It is also the one check that cannot be recovered from afterwards: a verifier configured with an empty audience list does not fail, it accepts every such token silently. lumen therefore refuses to start with identity grants and no audience.
+                    items:
+                      type: string
+                    type: array
                   image:
                     description: Serving container image, e.g. `lumen:latest`. Required.
                     type: string
@@ -759,6 +843,11 @@ spec:
                             nullable: true
                         type: object
                     type: object
+                  serviceAccountAnnotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations applied verbatim to both rendered ServiceAccounts (the workload SA when created, and the backup SA). Default empty.
+                    type: object
                   serviceAccountName:
                     description: Name of a pre-existing, externally-managed ServiceAccount for the workload pods. When set, the operator uses this SA and never creates, owns, updates, or deletes a ServiceAccount for the instance (the deployer owns its lifecycle and any Workload Identity annotations). When unset, the operator creates and owns `<instance>` as before.
                     nullable: true
@@ -805,7 +894,7 @@ spec:
                         nullable: true
                         properties:
                           adminTokenSecret:
-                            description: 'Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`. Needed when `spec.auth: required`; ignored (the admin API needs no token) when `spec.auth: disabled`.'
+                            description: Name of a Secret whose `token` key holds a bearer token with `Role::Admin` on `*`. Deprecated; the CronJob uses Workload Identity or metadata ID tokens when `spec.identityAudiences` is configured.
                             nullable: true
                             type: string
                           destination:
@@ -887,15 +976,10 @@ spec:
                         minimum: 0.0
                     type: object
                   tokensSecret:
-                    description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`. See also `tokensSecretProviderClass` for a Secret-free alternative; setting **both** is rejected by the CRD schema (#2678, R7), because silently preferring one leaves an operator reading credentials that are not the ones being served.'
-                    nullable: true
-                    type: string
-                  tokensSecretCsiDriver:
-                    description: CSI driver name for the `tokensSecretProviderClass` projection. Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE instances must set that value (#2456).
-                    nullable: true
-                    type: string
-                  tokensSecretProviderClass:
-                    description: 'Name of an existing `SecretProviderClass` (same namespace as this object) mounted via the Secrets Store CSI driver (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret` (`/var/run/secrets/lumen/token-registry.json`, env `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry''s content never materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The referenced `SecretProviderClass` must project a file named `token-registry.json` (same schema as `tokensSecret`''s Secret key). Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is enforced by the CRD schema (`x-kubernetes-validations`), so setting both is rejected at `kubectl apply` rather than resolved by a precedence rule nothing surfaces (#2678, R7). Rotation caveat: lumen polls the mounted registry file every 15s and hot-swaps the live verifier on change — no rolling restart needed on lumen''s side. The remaining caveat is entirely at the CSI layer: a CSI-mounted file only refreshes on the underlying value''s rotation if the cluster''s CSI driver has secret rotation enabled (e.g. GKE''s managed add-on defaults it off); with rotation disabled, the mounted file itself never changes, so there is nothing for lumen''s watcher to pick up.'
+                    description: |-
+                      Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. `token-registry.json` is a JSON object with two disjoint namespaces — `{ "tokens": { "<secret>": {…} }, "identities": { "<email>": {…} } }`, each claims object being `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }` — and a flat `{ "<secret>": {…} }` document still reads as `tokens`. Ignored when `auth: disabled`.
+
+                      This Secret carries bearer secrets only. A caller who authenticates as a Google service account is granted through [`identities`](Self::identities) instead, which holds no secret material and therefore needs no Secret, no Secret Manager, and no CSI driver (#2764).
                     nullable: true
                     type: string
                   voterCount:

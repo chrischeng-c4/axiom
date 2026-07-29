@@ -1249,7 +1249,9 @@ lumen import --url http://localhost:7373 --file snapshot.json
 stdout; with no `--file`, load/import read SnapshotV1 JSON from stdin. These
 verbs do not add a new format, merge mode, or partial import semantics:
 load/import still replace all engine state via `/admin/restore`. `--token`
-uses the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`.
+uses the control plane's workload identity when `LUMEN_AUTH_GOOGLE_AUDIENCES`
+is configured; omit `--token` to use an implicit ID token minted by the
+metadata server for the first audience in the list.
 
 ### Required production scheduled backup: `spec.serving.backup`
 Production Lumen CRs set `spec.serving.backup` so the operator renders a
@@ -1265,7 +1267,7 @@ spec:
       schedule: "0 * * * *"        # CronJob.spec.schedule
       destination: "gs://my-bucket/lumen-backups"  # file:// | s3:// | gs://
       retentionSecs: 604800        # optional; drop objects older than this
-      adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
+      adminTokenSecret: lumen-backup-token  # deprecated no-op; kept so pre-#2764 CRs still apply
 ```
 
 Use `s3://` or `gs://` for production object-storage snapshots. GCS accepts an
@@ -1273,6 +1275,11 @@ explicit `GOOGLE_OAUTH_ACCESS_TOKEN`/`GCS_ACCESS_TOKEN` and otherwise resolves
 the GCE/GKE metadata-server token used by Workload Identity. `file://` remains
 a local-dev, migration, or break-glass sink and does not satisfy the production
 service archetype.
+
+`adminTokenSecret` (the Secret name above) is deprecated and has no effect as of
+#2764 — the CronJob now uses Workload Identity or metadata server ID tokens when
+`spec.identityAudiences` is configured; setting this field generates no error but
+no bearer token is injected.
 
 Omitting `spec.serving.backup` renders no CronJob. That is acceptable for local
 development or manual recovery exercises, but a production Lumen instance is not
@@ -1288,11 +1295,9 @@ lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
   [--retention-secs 604800]
 ```
 
-`--url` points at the serving Service (not a specific pod); `--token` falls
-back to the `LUMEN_BACKUP_TOKEN` env var, which is how the CronJob injects
-`spec.serving.backup.adminTokenSecret` (`secretKeyRef` into that env var —
-skip it when `spec.auth: disabled`). The verb GETs `/admin/backup`, hands
-the
+`--url` points at the serving Service (not a specific pod); `--token` omitted
+in the CronJob, which instead relies on the control plane's workload identity
+via `LUMEN_AUTH_GOOGLE_AUDIENCES`. The verb GETs `/admin/backup`, hands the
 bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by

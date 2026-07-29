@@ -81,8 +81,8 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `required` (the default — supply a token registry via
-    /// `tokensSecret` or `tokensSecretProviderClass`) or `disabled`.
+    /// Auth mode: `required` (the default — supply callers via `identities`,
+    /// via `tokensSecret`, or both) or `disabled`.
     ///
     /// `required` is the default because the other way round, forgetting this
     /// field ships an open cluster and nothing says so; forgetting it now
@@ -103,42 +103,44 @@ pub struct LumenSpec {
     /// each claims object being
     /// `{ "subject": "…", "roles": { "<collection_id>|*": "read|write|admin" } }`
     /// — and a flat `{ "<secret>": {…} }` document still reads as `tokens`.
-    /// Ignored when `auth: disabled`. See also `tokensSecretProviderClass`
-    /// for a Secret-free alternative; setting **both** is rejected by the CRD
-    /// schema (#2678, R7), because silently preferring one leaves an operator
-    /// reading credentials that are not the ones being served.
+    /// Ignored when `auth: disabled`.
+    ///
+    /// This Secret carries bearer secrets only. A caller who authenticates as a
+    /// Google service account is granted through [`identities`](Self::identities)
+    /// instead, which holds no secret material and therefore needs no Secret,
+    /// no Secret Manager, and no CSI driver (#2764).
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
-    /// Name of an existing `SecretProviderClass` (same namespace as this
-    /// object) mounted via the Secrets Store CSI driver
-    /// (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret`
-    /// (`/var/run/secrets/lumen/token-registry.json`, env
-    /// `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry's content never
-    /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
-    /// referenced `SecretProviderClass` must project a file named
-    /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
-    /// Ignored when `auth: disabled`. Mutual exclusion with `tokensSecret` is
-    /// enforced by the CRD schema (`x-kubernetes-validations`), so setting
-    /// both is rejected at `kubectl apply` rather than resolved by a
-    /// precedence rule nothing surfaces (#2678, R7). Rotation
-    /// caveat: lumen polls the mounted registry file every 15s and hot-swaps
-    /// the live verifier on change — no rolling restart needed on lumen's
-    /// side. The remaining caveat is entirely at the CSI layer: a
-    /// CSI-mounted file only refreshes on the underlying value's rotation if
-    /// the cluster's CSI driver has secret rotation enabled (e.g. GKE's
-    /// managed add-on defaults it off); with rotation disabled, the mounted
-    /// file itself never changes, so there is nothing for lumen's watcher to
-    /// pick up.
-    #[serde(default)]
-    pub tokens_secret_provider_class: Option<String>,
+    /// Role grants keyed by **verified Google principal** — the service-account
+    /// email a caller's ID token was minted for. The key is an identifier, not
+    /// a credential: it is safe in a ConfigMap, safe in `kubectl get -o yaml`,
+    /// and safe here in the CR. That is the whole of #2764. The Secret Manager
+    /// and CSI machinery existed because the old registry's map key *was* the
+    /// bearer secret; a permission table keyed by a public email is ordinary
+    /// configuration and needs none of it.
+    ///
+    /// The operator projects these as `identities.json` in an instance-owned
+    /// ConfigMap, mounted beside `token-registry.json`. lumen unions the two at
+    /// load and on every reload, so bearer secrets and identity grants coexist
+    /// without either file inheriting the other's confidentiality class — one
+    /// mount path cannot carry two Kubernetes objects, so they are two files.
+    ///
+    /// Ignored when `auth: disabled`. Requires at least one
+    /// [`identity_audiences`](Self::identity_audiences) entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub identities: BTreeMap<String, IdentityGrant>,
 
-    /// CSI driver name for the `tokensSecretProviderClass` projection.
-    /// Defaults to the community `secrets-store.csi.k8s.io`; GKE's managed
-    /// Secrets Store add-on registers `secrets-store-gke.csi.k8s.io`, so GKE
-    /// instances must set that value (#2456).
-    #[serde(default)]
-    pub tokens_secret_csi_driver: Option<String>,
+    /// Audiences an ID token must name in `aud` to be accepted here.
+    ///
+    /// Google mints an ID token *for* an audience, so this is the check that
+    /// keeps a token minted for someone else's Google-fronted service from
+    /// authenticating against this instance. It is also the one check that
+    /// cannot be recovered from afterwards: a verifier configured with an empty
+    /// audience list does not fail, it accepts every such token silently.
+    /// lumen therefore refuses to start with identity grants and no audience.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identity_audiences: Vec<String>,
 
     /// Name of a pre-existing, externally-managed ServiceAccount for the
     /// workload pods. When set, the operator uses this SA and never creates,
@@ -147,6 +149,11 @@ pub struct LumenSpec {
     /// When unset, the operator creates and owns `<instance>` as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_account_name: Option<String>,
+
+    /// Annotations applied verbatim to both rendered ServiceAccounts (the
+    /// workload SA when created, and the backup SA). Default empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_account_annotations: BTreeMap<String, String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]
@@ -488,8 +495,8 @@ pub enum AuthMode {
     /// the CRD enum/default.
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token or verified-identity required; the registry file comes
-    /// from `tokensSecret` or `tokensSecretProviderClass`. The default, so a
+    /// Bearer-token or verified-identity required; callers come from
+    /// `tokensSecret`, from `identities`, or from both. The default, so a
     /// `Lumen` that omits `spec.auth` fails startup asking for credentials
     /// instead of serving an open API silently.
     #[default]
@@ -594,6 +601,46 @@ pub struct ServingBootstrapSpec {
     pub max_bytes_per_sec: Option<u64>,
 }
 
+/// One entry in [`LumenSpec::identities`]: what a verified Google principal may
+/// do, keyed in the parent map by the service-account email itself.
+///
+/// This mirrors service-auth's `TokenClaims` rather than reusing it. That type
+/// is `Deserialize`-only on purpose — it is what a *secret* registry file parses
+/// into, and giving it a `Serialize` would make writing credentials back out a
+/// one-line mistake — whereas a CRD field must be `Serialize + JsonSchema`. The
+/// two shapes are held together by
+/// [`identities_json_round_trips_through_the_service_auth_loader`], not by
+/// sharing a type.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub struct IdentityGrant {
+    /// Audit subject recorded for this principal. A bearer entry cannot carry
+    /// its key into an audit line, because the key is the secret; an identity
+    /// entry's key is already public, so `subject` is here to give it a stable
+    /// name that survives the email being changed.
+    pub subject: String,
+    /// Collection id → role. The literal key `*` is a wildcard grant, applied
+    /// when no more specific entry matches.
+    #[serde(default)]
+    pub roles: BTreeMap<String, GrantRole>,
+}
+
+/// The CRD spelling of service-auth's `Role`.
+///
+/// Duplicated rather than re-exported because `Role` has no `JsonSchema` and
+/// adding one would put a `schemars` dependency in a library that tape and defer
+/// also link. The lowercase serde renaming is the actual contract between the
+/// two enums and is asserted, not assumed.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
+pub enum GrantRole {
+    Read,
+    Write,
+    Admin,
+}
+
 /// Declarative backup policy for the serving fleet (#808).
 ///
 /// Common CRD-safe fields come from
@@ -607,9 +654,8 @@ pub struct ServingBackupSpec {
     #[serde(flatten)]
     pub policy: service_backup::ScheduledBackupPolicy,
     /// Name of a Secret whose `token` key holds a bearer token with
-    /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
-    /// Needed when `spec.auth: required`; ignored (the admin API needs no
-    /// token) when `spec.auth: disabled`.
+    /// `Role::Admin` on `*`. Deprecated; the CronJob uses Workload Identity
+    /// or metadata ID tokens when `spec.identityAudiences` is configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_token_secret: Option<String>,
 }
@@ -747,22 +793,29 @@ pub struct LumenReshardStatus {
 
 /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl LumenSpec {
-    /// Cross-field invariants the structural schema cannot express (#2678, R7).
+    /// Cross-field invariants the structural schema cannot express (#2678 R7,
+    /// #2764).
     ///
     /// The CRD carries the same rule as CEL, so a fresh cluster rejects this at
     /// `kubectl apply`. This is the second line: a cluster still running an
     /// older CRD, or an object written before the rule existed, must not
-    /// silently serve one of two credential sets. Naming **both** fields
-    /// matters — an operator who set `tokensSecretProviderClass` and got a
-    /// message about `tokensSecret` has no idea what to remove.
+    /// silently serve a configuration this refuses.
+    ///
+    /// Identity grants with no audience is the one auth misconfiguration that
+    /// does not announce itself. Every other way of getting this wrong fails
+    /// closed — a missing Secret fails startup, a wrong role denies the call.
+    /// A verifier configured with an empty audience list does not fail: it
+    /// accepts every ID token Google ever minted, for any service, and logs a
+    /// successful authentication for each one. Nothing downstream can recover
+    /// the check afterwards, so it is refused here and at admission.
     pub fn validate(&self) -> Result<(), String> {
-        if self.tokens_secret.is_some() && self.tokens_secret_provider_class.is_some() {
+        if !self.identities.is_empty() && self.identity_audiences.is_empty() {
             return Err(format!(
-                "spec.tokensSecret (`{}`) and spec.tokensSecretProviderClass (`{}`) are both set; \
-                 remove one — with both present there is no way to tell which registry is \
-                 actually being served",
-                self.tokens_secret.as_deref().unwrap_or_default(),
-                self.tokens_secret_provider_class.as_deref().unwrap_or_default(),
+                "spec.identities grants {} principal(s) but spec.identityAudiences is empty; \
+                 an ID-token verifier with no audience accepts a token minted for any other \
+                 Google-fronted service — set identityAudiences to the audience callers \
+                 address this instance by",
+                self.identities.len(),
             ));
         }
         Ok(())

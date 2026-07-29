@@ -36,6 +36,10 @@ const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
 const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
+const IDENTITY_REGISTRY_VOLUME: &str = "lumen-identity-registry";
+const IDENTITY_REGISTRY_KEY: &str = "identities.json";
+const IDENTITY_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen-identities";
+const IDENTITY_REGISTRY_FILE: &str = "/var/run/secrets/lumen-identities/identities.json";
 // #1387: embedded-mode persistence subtree, disjoint from the raft backend's
 // `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
 // both can coexist on the one `raft` PVC mount across a `replicasPerShard`
@@ -85,28 +89,21 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
 
 /// Which shared projection source (if any) supplies the token registry file.
 ///
-/// The two are mutually exclusive by schema and by
-/// [`LumenSpec::validate`](super::crd::LumenSpec::validate), so at most one is
-/// ever set on a spec that reaches here (#2678, R7). The order below is not a
-/// precedence rule to rely on — it is what a spec that slipped past both gates
-/// happens to render, and that spec's reconcile has already failed.
+/// A plain Secret is the only source since #2764 retired the CSI transport.
+/// The shared [`render::TokenRegistrySource`] still carries a `Csi` variant
+/// because tape and defer project one; lumen no longer offers the field that
+/// would select it.
 fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;
     }
-    if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
-        return Some(render::TokenRegistrySource::Secret {
-            name: secret,
-            key: TOKEN_REGISTRY_KEY,
-        });
-    }
     lumen
         .spec
-        .tokens_secret_provider_class
+        .tokens_secret
         .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
-            provider_class,
-            driver: lumen.spec.tokens_secret_csi_driver.as_deref(),
+        .map(|name| render::TokenRegistrySource::Secret {
+            name,
+            key: TOKEN_REGISTRY_KEY,
         })
 }
 
@@ -162,11 +159,18 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     // points at a pre-existing, externally-managed one (#2497): the operator
     // must never create, own, or delete an SA it doesn't render.
     if lumen.spec.service_account_name.is_none() {
-        out.push(render::service_account(&cx, COMPONENT));
+        let mut sa = render::service_account(&cx, COMPONENT);
+        attach_service_account_annotations(&mut sa, &lumen.spec.service_account_annotations);
+        out.push(sa);
+    }
+    let mut bsa = backup_service_account(&cx);
+    attach_service_account_annotations(&mut bsa, &lumen.spec.service_account_annotations);
+    out.push(bsa);
+    out.push(serving_configmap(lumen, &cx));
+    if let Some(cm) = identity_registry_configmap(lumen, &cx) {
+        out.push(cm);
     }
     out.extend([
-        backup_service_account(&cx),
-        serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
         render::headless_service_with_ports(
             &cx,
@@ -247,6 +251,27 @@ fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
     })
 }
 
+fn attach_service_account_annotations(
+    sa: &mut Value,
+    annotations: &std::collections::BTreeMap<String, String>,
+) {
+    if annotations.is_empty() {
+        return;
+    }
+    if let Some(meta) = sa.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+        if let Some(existing) = meta.get_mut("annotations").and_then(|a| a.as_object_mut()) {
+            for (k, v) in annotations {
+                existing.insert(k.clone(), Value::String(v.clone()));
+            }
+        } else {
+            meta.insert(
+                "annotations".to_string(),
+                serde_json::to_value(annotations).unwrap(),
+            );
+        }
+    }
+}
+
 /// A stable, per-instance identity for scheduled backup jobs.
 ///
 /// It is rendered even when no backup schedule is currently configured. That
@@ -295,10 +320,10 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push(secs.to_string());
     }
     let mut env = Vec::new();
-    if let Some(secret) = &policy.admin_token_secret {
+    if !lumen.spec.identity_audiences.is_empty() {
         env.push(json!({
-            "name": "LUMEN_BACKUP_TOKEN",
-            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
+            "value": lumen.spec.identity_audiences.join(","),
         }));
     }
     let image_pull_policy = lumen
@@ -348,6 +373,20 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         };
         volume_mounts.push(render::token_registry_mount(&projection));
         volumes.push(render::token_registry_volume(&projection));
+    }
+    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) && !lumen.spec.identities.is_empty() {
+        let name = format!("{}-identities", cx.name);
+        volume_mounts.push(json!({
+            "name": IDENTITY_REGISTRY_VOLUME,
+            "mountPath": IDENTITY_REGISTRY_MOUNT_DIR,
+            "readOnly": true,
+        }));
+        volumes.push(json!({
+            "name": IDENTITY_REGISTRY_VOLUME,
+            "configMap": {
+                "name": name,
+            },
+        }));
     }
     let spread = |key: &str| {
         json!({
@@ -524,6 +563,20 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
             "value": TOKEN_REGISTRY_FILE,
         }));
     }
+    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
+        if !lumen.spec.identities.is_empty() {
+            env.push(json!({
+                "name": "LUMEN_IDENTITY_REGISTRY_FILE",
+                "value": IDENTITY_REGISTRY_FILE,
+            }));
+        }
+        if !lumen.spec.identity_audiences.is_empty() {
+            env.push(json!({
+                "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
+                "value": lumen.spec.identity_audiences.join(","),
+            }));
+        }
+    }
     if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
         env.push(json!({
             "name": "LUMEN_BOOTSTRAP_SEED_URI",
@@ -574,6 +627,25 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         }
     }
     env
+}
+
+fn identity_registry_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
+    if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) || lumen.spec.identities.is_empty() {
+        return None;
+    }
+    let name = format!("{}-identities", cx.name);
+    let data = json!({
+        "identities": lumen.spec.identities,
+    });
+    let data_str = serde_json::to_string(&data).ok()?;
+    Some(json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": cx.meta(&name, COMPONENT),
+        "data": {
+            IDENTITY_REGISTRY_KEY: data_str,
+        },
+    }))
 }
 
 fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {

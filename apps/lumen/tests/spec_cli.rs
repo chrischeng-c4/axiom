@@ -605,7 +605,7 @@ fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
         "retentionSecs",
         "adminTokenSecret",
         "lumen backup",
-        "LUMEN_BACKUP_TOKEN",
+        "LUMEN_AUTH_GOOGLE_AUDIENCES",
         "--retention-secs",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");

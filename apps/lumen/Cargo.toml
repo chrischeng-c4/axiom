@@ -164,6 +164,9 @@ rand = "0.8"
 rig = { path = "../rig" }
 serde_json.workspace = true
 tempfile = "3"
+# Shared observability layer: JSON formatter + service-identity for subscriber-capture tests.
+service-observability = { path = "../../libs/service-observability" }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter", "registry"] }
 # HTTP client for the perf-gate / write-qps harness (drives lumen + OpenSearch).
 # DEV-ONLY on purpose: the serving binary speaks REST/OpenAPI and ships no Rust
 # client SDK, so it never links an HTTP client → no openssl → clean cross-compile.

@@ -228,11 +228,18 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
     // points at a pre-existing, externally-managed one (#2497): the operator
     // must never create, own, or delete an SA it doesn't render.
     if lumen.spec.service_account_name.is_none() {
-        out.push(render::service_account(&cx, COMPONENT));
+        let mut sa = render::service_account(&cx, COMPONENT);
+        attach_service_account_annotations(&mut sa, &lumen.spec.service_account_annotations);
+        out.push(sa);
+    }
+    let mut bsa = backup_service_account(&cx);
+    attach_service_account_annotations(&mut bsa, &lumen.spec.service_account_annotations);
+    out.push(bsa);
+    out.push(serving_configmap(lumen, &cx));
+    if let Some(cm) = identity_registry_configmap(lumen, &cx) {
+        out.push(cm);
     }
     out.extend([
-        backup_service_account(&cx),
-        serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
         render::headless_service_with_ports(
             &cx,
@@ -313,6 +320,27 @@ fn serving_network_policy(cx: &RenderCtx<'_>, name: &str) -> Value {
     })
 }
 
+fn attach_service_account_annotations(
+    sa: &mut Value,
+    annotations: &std::collections::BTreeMap<String, String>,
+) {
+    if annotations.is_empty() {
+        return;
+    }
+    if let Some(meta) = sa.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+        if let Some(existing) = meta.get_mut("annotations").and_then(|a| a.as_object_mut()) {
+            for (k, v) in annotations {
+                existing.insert(k.clone(), Value::String(v.clone()));
+            }
+        } else {
+            meta.insert(
+                "annotations".to_string(),
+                serde_json::to_value(annotations).unwrap(),
+            );
+        }
+    }
+}
+
 /// A stable, per-instance identity for scheduled backup jobs.
 ///
 /// It is rendered even when no backup schedule is currently configured. That
@@ -361,10 +389,10 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
         args.push(secs.to_string());
     }
     let mut env = Vec::new();
-    if let Some(secret) = &policy.admin_token_secret {
+    if !lumen.spec.identity_audiences.is_empty() {
         env.push(json!({
-            "name": "LUMEN_BACKUP_TOKEN",
-            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+            "name": "LUMEN_AUTH_GOOGLE_AUDIENCES",
+            "value": lumen.spec.identity_audiences.join(","),
         }));
     }
     let image_pull_policy = lumen

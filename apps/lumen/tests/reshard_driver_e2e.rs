@@ -228,8 +228,8 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
         log_level: None,
         auth: Default::default(),
         tokens_secret: None,
-        tokens_secret_provider_class: None,
-        tokens_secret_csi_driver: None,
+        identities: std::collections::BTreeMap::new(),
+        identity_audiences: Vec::new(),
         serving: ServingSpec::default(),
         reshard_policy: ReshardPolicy {
             max_shard_bytes,
@@ -239,6 +239,7 @@ fn initial_lumen(max_shard_bytes: Option<u64>, blocking_condition: Option<&str>)
         network_policy: false,
         admission: None,
         service_account_name: None,
+        service_account_annotations: std::collections::BTreeMap::new(),
     };
     let mut lumen = Lumen::new(NAME, spec);
     lumen.metadata.namespace = Some(NAMESPACE.to_string());

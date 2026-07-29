@@ -8135,6 +8135,7 @@ dependencies = [
  "service-backup",
  "service-http",
  "service-k8s",
+ "service-observability",
  "smallvec",
  "storage-durable",
  "tempfile",

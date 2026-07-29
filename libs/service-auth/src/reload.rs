@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -57,13 +57,44 @@ pub fn spawn_registry_file_watcher_with_interval(
     path: impl AsRef<Path>,
     poll_interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
-    let path = path.as_ref().to_owned();
+    spawn_registry_files_watcher_with_interval(verifier, &[path.as_ref().to_owned()], poll_interval)
+}
+
+/// Spawn a watcher over every file a service's registry is projected from,
+/// using the production cadence.
+///
+/// The multi-path form exists because the two namespaces can arrive from
+/// different Kubernetes objects — an `identities` ConfigMap and a `tokens`
+/// Secret (#2764). Reloading only the file that changed would drop the other
+/// half of the registry, so a change to *any* watched file re-reads and
+/// re-merges *all* of them, and the merged result is adopted as one snapshot.
+pub fn spawn_registry_files_watcher(
+    verifier: Arc<ReloadableRoleMapVerifier>,
+    paths: &[PathBuf],
+) -> tokio::task::JoinHandle<()> {
+    spawn_registry_files_watcher_with_interval(
+        verifier,
+        paths,
+        DEFAULT_REGISTRY_FILE_WATCH_INTERVAL,
+    )
+}
+
+/// [`spawn_registry_files_watcher`] with an explicit polling cadence.
+pub fn spawn_registry_files_watcher_with_interval(
+    verifier: Arc<ReloadableRoleMapVerifier>,
+    paths: &[PathBuf],
+    poll_interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    let paths: Vec<PathBuf> = paths.to_vec();
     let poll_interval = if poll_interval.is_zero() {
         Duration::from_secs(1)
     } else {
         poll_interval
     };
-    let initial = read_registry_file_state(&path);
+    fn read_all(paths: &[PathBuf]) -> Vec<RegistryFileState> {
+        paths.iter().map(|p| read_registry_file_state(p)).collect()
+    }
+    let initial = read_all(&paths);
 
     tokio::spawn(async move {
         let mut observed = initial;
@@ -71,15 +102,20 @@ pub fn spawn_registry_file_watcher_with_interval(
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            let current = read_registry_file_state(&path);
+            let current = read_all(&paths);
             if current == observed {
                 continue;
             }
             observed = current;
-            if verifier.reload_file(&path).is_err() {
+            if verifier.reload_files(&paths).is_err() {
+                let named = paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 tracing::warn!(
                     target: "service_auth.audit",
-                    path = %path.display(),
+                    paths = %named,
                     "credential registry update rejected; retaining last known-good snapshot"
                 );
             }
@@ -281,6 +317,9 @@ pub struct ReloadableRoleMapVerifier {
     required: bool,
     snapshot: Arc<RwLock<RegistrySnapshot>>,
     sink: Arc<dyn AuthEventSink>,
+    /// Subjects this service presents on its own behalf, which a tenant
+    /// registry may therefore not claim (#2679, R4).
+    reserved_subjects: Arc<Vec<String>>,
 }
 
 impl fmt::Debug for ReloadableRoleMapVerifier {
@@ -324,11 +363,46 @@ impl ReloadableRoleMapVerifier {
                 registry,
             })),
             sink,
+            reserved_subjects: Arc::new(Vec::new()),
         }
+    }
+
+    /// Reserve subjects the service presents on its own behalf, so no adopted
+    /// registry may claim them (#2679, R4).
+    ///
+    /// lumen's control plane names itself in every admin call it makes. If a
+    /// tenant registry could grant that same subject, the operator's calls and
+    /// a tenant's calls would be indistinguishable in audit output — the one
+    /// thing an attributable control-plane identity exists to prevent. This is
+    /// a builder rather than a constructor argument so the reservation is
+    /// visible at the call site that makes it.
+    #[must_use]
+    pub fn reserving_subjects(mut self, subjects: impl IntoIterator<Item = String>) -> Self {
+        self.reserved_subjects = Arc::new(subjects.into_iter().collect());
+        self
+    }
+
+    /// The subjects reserved by [`Self::reserving_subjects`].
+    pub fn reserved_subjects(&self) -> &[String] {
+        &self.reserved_subjects
     }
 
     pub fn open() -> Self {
         Self::new(false, HashMap::new())
+    }
+
+    /// Wrap an already-resolved principal in this verifier's audit sink.
+    ///
+    /// [`Verifier::authenticate`] does this internally, but a verifier that
+    /// resolves credentials some other way — [`crate::gcp::GoogleVerifier`]
+    /// asks an identity provider — needs the same wrapper so its principals
+    /// emit the same authorization events. Without it the Google paths would
+    /// authorize silently while the bearer path stayed audited.
+    pub fn audited(&self, principal: RoleMapPrincipal) -> AuditedRoleMapPrincipal {
+        AuditedRoleMapPrincipal {
+            inner: principal,
+            sink: Arc::clone(&self.sink),
+        }
     }
 
     pub fn revision(&self) -> u64 {
@@ -384,20 +458,48 @@ impl ReloadableRoleMapVerifier {
 
     /// Read, parse, validate, and atomically adopt a registry file.
     pub fn reload_file(&self, path: impl AsRef<Path>) -> Result<u64> {
-        let path = path.as_ref();
-        let json = match std::fs::read_to_string(path) {
-            Ok(json) => json,
-            Err(error) => {
-                self.record_reload_failure(ReloadFailure::Read);
-                return Err(error).with_context(|| format!("read registry {}", path.display()));
+        self.reload_files(std::slice::from_ref(&path.as_ref().to_owned()))
+    }
+
+    /// Re-read every file the registry is projected from, union them, and
+    /// adopt the result as one snapshot.
+    ///
+    /// All-or-nothing on purpose: when `identities` and `tokens` arrive from
+    /// different Kubernetes objects (#2764), adopting only the file that
+    /// changed would drop the other namespace entirely. A read or parse
+    /// failure on any single file leaves the previous snapshot serving.
+    pub fn reload_files(&self, paths: &[PathBuf]) -> Result<u64> {
+        let mut registry = Registry::default();
+        for path in paths {
+            let json = match std::fs::read_to_string(path) {
+                Ok(json) => json,
+                Err(error) => {
+                    self.record_reload_failure(ReloadFailure::Read);
+                    return Err(error)
+                        .with_context(|| format!("read registry {}", path.display()));
+                }
+            };
+            let parsed = match Registry::parse(&json) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    self.record_reload_failure(ReloadFailure::Parse);
+                    return Err(error).with_context(|| {
+                        format!("replacement credential registry {} rejected", path.display())
+                    });
+                }
+            };
+            if let Err(error) = registry.try_merge(parsed) {
+                self.record_reload_failure(ReloadFailure::Invalid);
+                return Err(error)
+                    .with_context(|| format!("merging registry {}", path.display()));
             }
-        };
-        self.reload_json(&json)
+        }
+        self.reload_registry(registry)
     }
 
     /// Validate and atomically adopt an already-parsed replacement.
     pub fn reload_registry(&self, registry: Registry) -> Result<u64> {
-        if let Err(error) = validate_registry(self.required, &registry) {
+        if let Err(error) = self.validate(&registry) {
             self.record_reload_failure(ReloadFailure::Invalid);
             return Err(error);
         }
@@ -415,6 +517,21 @@ impl ReloadableRoleMapVerifier {
             failure: None,
         });
         Ok(revision)
+    }
+
+    /// Everything a candidate snapshot must satisfy before adoption: the
+    /// shared structural rules, plus this verifier's own reservations.
+    fn validate(&self, registry: &Registry) -> Result<()> {
+        validate_registry(self.required, registry)?;
+        if let Some((section, key, subject)) =
+            registry.reserved_subject_violation(&self.reserved_subjects)
+        {
+            bail!(
+                "replacement registry `{section}` entry `{key}` claims the reserved subject \
+                 `{subject}`, which this service presents on its own behalf"
+            );
+        }
+        Ok(())
     }
 
     fn record_reload_failure(&self, failure: ReloadFailure) {
@@ -733,6 +850,174 @@ mod tests {
         );
         task.abort();
         std::fs::remove_file(path).ok();
+    }
+
+    // -- #2764: reloading a registry that arrives as two files -------------
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("service-auth-reload-2764-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The trap this test exists for: reloading only the file that changed
+    /// would publish a snapshot containing that file alone, silently dropping
+    /// the other namespace. A ConfigMap edit would revoke every bearer secret.
+    #[test]
+    fn reloading_one_of_two_files_keeps_the_other_file_serving() {
+        let dir = scratch("both");
+        let identities = dir.join("identities.json");
+        let tokens = dir.join("token-registry.json");
+        std::fs::write(
+            &identities,
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"resource":"read"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &tokens,
+            r#"{"tokens":{"s3cret":{"subject":"svc","roles":{"resource":"write"}}}}"#,
+        )
+        .unwrap();
+
+        let verifier = ReloadableRoleMapVerifier::new(
+            true,
+            HashMap::from([("s3cret".to_owned(), claims("svc", Role::Write))]),
+        );
+        let paths = vec![identities.clone(), tokens.clone()];
+        verifier.reload_files(&paths).unwrap();
+        assert!(verifier.authenticate(&headers("s3cret")).is_ok());
+        assert!(verifier.lookup_identity("a@b.com").is_some());
+
+        // Edit only the ConfigMap half.
+        std::fs::write(
+            &identities,
+            r#"{"identities":{"c@d.com":{"subject":"ops","roles":{"resource":"admin"}}}}"#,
+        )
+        .unwrap();
+        verifier.reload_files(&paths).unwrap();
+
+        assert!(verifier.lookup_identity("a@b.com").is_none());
+        assert!(verifier.lookup_identity("c@d.com").is_some());
+        assert!(
+            verifier.authenticate(&headers("s3cret")).is_ok(),
+            "editing the identity map must not revoke the bearer secrets"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// All-or-nothing across sources. A half-written ConfigMap must not take
+    /// the Secret's entries down with it.
+    #[test]
+    fn one_unreadable_source_leaves_the_previous_snapshot_serving() {
+        let dir = scratch("partial");
+        let good = dir.join("identities.json");
+        std::fs::write(
+            &good,
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"resource":"read"}}}}"#,
+        )
+        .unwrap();
+
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = ReloadableRoleMapVerifier::with_sink(
+            true,
+            HashMap::from([("old".to_owned(), claims("alice", Role::Read))]),
+            sink.clone(),
+        );
+
+        let err = verifier
+            .reload_files(&[good.clone(), dir.join("does-not-exist.json")])
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("does-not-exist"), "{err:#}");
+
+        assert!(verifier.authenticate(&headers("old")).is_ok());
+        assert!(
+            verifier.lookup_identity("a@b.com").is_none(),
+            "the readable half must not be published on its own"
+        );
+        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
+            event,
+            AuthEvent::RegistryReload {
+                applied: false,
+                failure: Some(ReloadFailure::Read),
+                ..
+            }
+        )));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #2679. A tenant-editable ConfigMap that grants the control plane's own
+    /// subject is rejected at reload, not at request time: accepting it would
+    /// let a tenant credential act as the operator and sign every audit line
+    /// with the operator's name.
+    #[test]
+    fn a_replacement_claiming_the_reserved_subject_is_refused() {
+        let verifier = ReloadableRoleMapVerifier::new(
+            true,
+            HashMap::from([("old".to_owned(), claims("alice", Role::Read))]),
+        )
+        .reserving_subjects(["lumen-control-plane".to_owned()]);
+        assert_eq!(verifier.reserved_subjects(), ["lumen-control-plane"]);
+
+        let err = verifier
+            .reload_json(
+                r#"{"identities":{"tenant@b.com":{"subject":"lumen-control-plane","roles":{"resource":"admin"}}}}"#,
+            )
+            .unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("lumen-control-plane"), "{message}");
+        assert!(message.contains("tenant@b.com"), "{message}");
+
+        assert_eq!(verifier.revision(), 0);
+        assert!(verifier.authenticate(&headers("old")).is_ok());
+    }
+
+    /// The watcher's contract when the registry spans two files: a change to
+    /// either one republishes the union.
+    #[tokio::test]
+    async fn the_multi_file_watcher_republishes_the_union_on_any_change() {
+        let dir = scratch(&format!("watch-{}", std::process::id()));
+        let identities = dir.join("identities.json");
+        let tokens = dir.join("token-registry.json");
+        std::fs::write(&identities, r#"{"identities":{}}"#).unwrap();
+        std::fs::write(
+            &tokens,
+            r#"{"tokens":{"s3cret":{"subject":"svc","roles":{"resource":"write"}}}}"#,
+        )
+        .unwrap();
+
+        let verifier = Arc::new(ReloadableRoleMapVerifier::new(
+            true,
+            HashMap::from([("s3cret".to_owned(), claims("svc", Role::Write))]),
+        ));
+        let task = spawn_registry_files_watcher_with_interval(
+            Arc::clone(&verifier),
+            &[identities.clone(), tokens.clone()],
+            Duration::from_millis(5),
+        );
+
+        tokio::task::yield_now().await;
+        std::fs::write(
+            &identities,
+            r#"{"identities":{"a@b.com":{"subject":"dev","roles":{"resource":"read"}}}}"#,
+        )
+        .unwrap();
+        for _ in 0..40 {
+            if verifier.lookup_identity("a@b.com").is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        assert!(verifier.lookup_identity("a@b.com").is_some());
+        assert!(
+            verifier.authenticate(&headers("s3cret")).is_ok(),
+            "the untouched file stays in the published snapshot"
+        );
+
+        task.abort();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 // HANDWRITE-END
