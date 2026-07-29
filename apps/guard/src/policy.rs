@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/policy.py
-// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2866" reason="Guard policy behavior remains native Rust"
+// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2866" reason="Guard policy domain behavior remains native Rust"
 use cclab_compass::diagnostic::{DiagnosticCategory, DiagnosticSeverity};
 
 use crate::report::Severity;

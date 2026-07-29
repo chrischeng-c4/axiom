@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/guard/tech-design/src/evidence.py
-// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard evidence behavior remains native Rust"
+// HANDWRITE-BEGIN gap="python-td-rust-body" tracker="#2823" reason="Guard evidence domain behavior remains native Rust"
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
