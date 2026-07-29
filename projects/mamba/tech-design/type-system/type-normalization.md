@@ -230,6 +230,43 @@ This first local slice classifies the failure from initializer syntax plus the
 inference path. It must not reject an arbitrary `Ty::Any` solely from normalized
 identity; explicit-boundary flow remains an N4 concern.
 
+#### N3-G1 — empty-collection global binding
+
+Authoritative pair:
+
+- negative:
+  `tests/cpython/_regression/core/typecheck/implicit_any_ingress/global_binding.py`;
+- positive:
+  `tests/cpython/_regression/core/typecheck/explicit_any_acceptance/global_binding.py`.
+
+The executable Python body is identical after removing the positive fixture's
+single `: Any` token. Harness-only `EXPECT-ERROR` metadata is excluded before
+that normalized-source comparison.
+
+Bounded behavior:
+
+- apply only to the first simple-name assignment whose binding scope is the
+  module scope;
+- classify an empty list initializer as
+  `ImplicitUnknown { inference_path: "global_binding -> list_literal -> element" }`;
+- store the failed omitted declaration at the target span with
+  `normalized = None`;
+- emit one stable compile error naming binding `items`, the target span, and
+  the exact inference path;
+- record a non-empty homogeneous module list as `Inferred` with path
+  `global_binding -> list_literal` and its concrete normalized list type;
+- let module-level `items: Any = []` continue through the N2 authored path as
+  `ExplicitAny`;
+- advance N3-L1's module-scope negative control into this slice's positive
+  diagnostic case, while keeping class/function bindings, `global`-statement
+  rebinding, unpacking, reassignments, and the other N3 ingress families
+  unchanged.
+
+Like N3-L1, this slice must classify from module binding scope, initializer
+syntax, and the inference path. It must not reject an arbitrary `Ty::Any` or
+reuse the local-binding path merely because the normalized recovery type is
+`list[Any]`.
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
