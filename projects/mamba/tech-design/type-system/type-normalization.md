@@ -394,6 +394,8 @@ empty-list expression, never from the preregistered callable's recovery
 `Ty::Any`. Its successful-signature update must preserve the callable's
 parameter list, variadic flag, callable signature, and parameter specification.
 
+Completed by #2963 (`91e87348b5`).
+
 ### N4 — propagate explicit Any to dynamic walls
 
 - Expose provenance to the boundary model owned by #2007.
