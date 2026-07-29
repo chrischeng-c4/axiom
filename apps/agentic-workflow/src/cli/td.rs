@@ -2916,11 +2916,37 @@ pub(crate) fn resolve_issue_td_spec_paths(
                 row.effective_artifact_model()
                     == crate::models::project::ProjectArtifactModel::PythonV1
             });
-        paths.push(if python_project {
-            default_python_td_path_for_issue_in_project(project_root, issue, fallback_slug)?
+        if python_project {
+            let td_root_rel = configured_td_root.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "issue '{fallback_slug}' belongs to a Python-v1 project without a configured TD root"
+                )
+            })?;
+            let ir = crate::services::python_td::compile_python_td_project(
+                &project_root.join(td_root_rel),
+            )?;
+            paths.extend(
+                ir.modules
+                    .iter()
+                    .filter(|module| {
+                        let path = std::path::Path::new(&module.path);
+                        path.starts_with("src") && path.extension().is_some_and(|ext| ext == "py")
+                    })
+                    .map(|module| slash_path(td_root_rel.join(&module.path))),
+            );
+            if paths.is_empty() {
+                anyhow::bail!(
+                    "issue '{fallback_slug}' has no exact implements reference and configured Python TD root `{}` has no source modules",
+                    td_root_rel.display()
+                );
+            }
         } else {
-            default_spec_path_for_issue_in_project(project_root, issue, fallback_slug)?
-        });
+            paths.push(default_spec_path_for_issue_in_project(
+                project_root,
+                issue,
+                fallback_slug,
+            )?);
+        }
     }
     Ok(paths)
 }
@@ -6838,6 +6864,46 @@ artifact_model = "python-v1"
         assert_eq!(
             resolve_issue_td_spec_paths(tmp.path(), &issue, "2874").unwrap(),
             vec!["examples/todo-app/td/src/todo/work_items/exact.py"]
+        );
+    }
+
+    #[test]
+    fn python_issue_without_exact_reference_uses_existing_flat_td_modules() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[[projects]]
+name = "guard"
+path = "apps/guard"
+td_path = "apps/guard/tech-design"
+label = "app:guard"
+artifact_model = "python-v1"
+"#,
+        )
+        .unwrap();
+        let source = tmp.path().join("apps/guard/tech-design/src");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("policy.py"),
+            "__aw_artifact_id__ = \"artifact:guard/policy\"\n\ndef policy() -> None:\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("scan.py"),
+            "__aw_artifact_id__ = \"artifact:guard/scan\"\n\ndef scan() -> None:\n    pass\n",
+        )
+        .unwrap();
+        let mut issue = issue_with_title("Align existing flat Guard TD modules");
+        issue.slug = "2866".to_string();
+        issue.labels = vec!["app:guard".to_string()];
+
+        assert_eq!(
+            resolve_issue_td_spec_paths(tmp.path(), &issue, "2866").unwrap(),
+            vec![
+                "apps/guard/tech-design/src/policy.py",
+                "apps/guard/tech-design/src/scan.py",
+            ]
         );
     }
 

@@ -19,7 +19,8 @@ def td_existing_workspace_dirty_persistent_branch() -> str:
 def python_td_bounded_native_handwrite() -> str:
     return (
         "Python EC and TD may drive a bounded native HANDWRITE implementation; "
-        "TD identity resolves from the configured project TD root; "
+        "TD identity resolves from the configured project TD root, using exact WI "
+        "references when present and existing flat source modules for bounded adoption; "
         "a WI-scoped TD check records an exact idempotent Td-Python-Source baseline; "
         "generator-owned targets retain cold parity while HANDWRITE targets "
         "classify every native source in every configured workspace root and "
