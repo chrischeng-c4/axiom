@@ -490,9 +490,68 @@ Completed by #2965 (`114f6ca798`).
 
 ### N4 — propagate explicit Any to dynamic walls
 
-- Expose provenance to the boundary model owned by #2007.
-- Prove that explicit Any stays usable and implicit unknown cannot cross the
-  same boundary.
+N4 closes the Type Normalization bounded context by handing a typed license to
+the downstream Dynamic Boundary context owned by #2007. It does not implement
+runtime boundary propagation itself.
+
+#### N4-H1 — typed HIR boundary-license handoff
+
+Introduce the closed value object:
+
+```text
+DynamicBoundaryLicense
+└── ExplicitAny
+```
+
+The license is deliberately narrower than `TypeProvenance`. A
+`DeclaredType` may yield `Some(ExplicitAny)` only when its stored provenance is
+`TypeProvenance::ExplicitAny`; `Explicit`, `Inferred`, and `ImplicitUnknown`
+all yield no license. The adapter must not inspect normalized `TypeId`, rendered
+annotation text, or raw `TypeExpr` spelling.
+
+`HirParamSig` carries `dynamic_boundary_license:
+Option<DynamicBoundaryLicense>` alongside its existing textual annotation and
+declared/entry types. `func_sig_meta` obtains the license through the
+checker-owned `DeclaredType` lookup at the authored parameter type span.
+Omitted parameters never have an authored declaration to query and therefore
+carry `None`.
+
+The handoff must cover the same function-definition shapes already frozen by
+N1: regular, positional-only, keyword-only, `*args`, `**kwargs`, method,
+decorated, and generator parameters. It must additionally distinguish
+authored `Any` and `typing.Any` from authored concrete/unresolved types.
+
+Exact production paths for H1:
+
+- `src/types/normalization.rs`;
+- `src/types/mod.rs`;
+- `src/hir/mod.rs`;
+- `src/lower/ast_to_hir.rs`.
+
+H1 changes no MIR tuple shape, runtime function metadata, entry ABI,
+introspection annotation, compatibility relation, diagnostic, or execution
+behavior. #2007 is the sole owner of consuming this HIR license across
+eval/exec, import, reflection, callback, serialization, and native boundaries.
+
+N4-H1 is complete only when:
+
+- license derivation is exhaustive over all four `TypeProvenance` variants;
+- `Any` and `typing.Any` produce `Some(ExplicitAny)` without consulting their
+  normalized `TypeId`;
+- concrete and unresolved authored annotations produce `None`;
+- omitted parameters and every N3 `ImplicitUnknown` path cannot produce a
+  license;
+- the eight N1 function shapes preserve their existing annotation and entry
+  ABI behavior while carrying the new typed license only for authored Any;
+- the normalized-type, checker, parser, lowering, and strict dynamic-ingress
+  floors remain green;
+- no process-global registry, runtime lock, MIR payload, or `projects/mamba`
+  path outside the four exact source files changes.
+
+After H1 lands, #2011 may close if its seven paired ingress families and
+roll-up gates remain green. #2007 then consumes the typed handoff; it must not
+reopen Type Normalization by deriving authorization from a string or
+`Ty::Any`.
 
 ## N1 acceptance contract
 
