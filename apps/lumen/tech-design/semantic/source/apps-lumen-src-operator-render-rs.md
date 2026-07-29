@@ -57,9 +57,12 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 99 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 124 | render(lumen: &Lumen) -> Vec<Value> |
-| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 88 | wants_hpa(_lumen: &Lumen) -> bool |
+| `auth_delegator_binding` | apps/lumen/src/operator/render.rs | function | pub | 295 | auth_delegator_binding(lumen: &Lumen) -> Value |
+| `auth_delegator_binding_name` | apps/lumen/src/operator/render.rs | function | pub | 233 | auth_delegator_binding_name(lumen: &Lumen) -> String |
+| `auth_delegator_labels` | apps/lumen/src/operator/render.rs | function | pub | 251 | auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 112 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 137 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 101 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -86,7 +89,7 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 use serde_json::{json, Value};
 
 use super::crd::Lumen;
-use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
+use service_k8s::render::{self, rbac, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
 use service_k8s::service::PruneTarget;
 
 const APP: &str = "lumen";
@@ -97,6 +100,19 @@ const COMPONENT: &str = "server";
 const CLIENT_PORT: i32 = 7373;
 const RAFT_PORT: i32 = 7374;
 const BACKUP_COMPONENT: &str = "backup";
+/// Component label for the cluster-scoped auth-delegation binding (#2876). Its
+/// own value, not `server`: the sweep in [`super::reconcile`] selects on it,
+/// and sharing a component with the namespaced serving children would make
+/// that selector match objects the sweep has no business deleting.
+const AUTH_DELEGATION_COMPONENT: &str = "auth-delegation";
+/// The built-in ClusterRole granting `create` on `tokenreviews` and
+/// `subjectaccessreviews` — the two APIs delegated request auth is made of.
+/// Kubernetes ships and maintains it; lumen binds it rather than copying it.
+const AUTH_DELEGATOR_ROLE: &str = "system:auth-delegator";
+/// Which namespace a cluster-scoped child belongs to (#2876). The recommended
+/// label set has no equivalent, and the object has no `metadata.namespace` of
+/// its own to read.
+const OWNER_NAMESPACE_LABEL: &str = "lumen.dev/owner-namespace";
 const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
 // #1387: embedded-mode persistence subtree, disjoint from the raft backend's
 // `/var/lib/lumen/raft` default (`LUMEN_RAFT_DATA_DIR` in `bin/lumen.rs`) so
@@ -257,6 +273,109 @@ pub fn prunes(lumen: &Lumen) -> Vec<PruneTarget> {
     }]
 }
 
+/// The ServiceAccount the serving pods actually run as (#2497, #2876).
+///
+/// Two callers depend on this being one answer: [`serving_statefulset`] puts it
+/// in the pod spec, and [`auth_delegator_binding`] grants it delegated review.
+/// If they resolved it separately, a spec that names an external SA would run
+/// pods as one identity and authorize a different one — and the symptom would
+/// be every request failing authentication, not an obviously wrong manifest.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub(crate) fn serving_service_account_name(lumen: &Lumen) -> String {
+    lumen
+        .spec
+        .service_account_name
+        .clone()
+        .unwrap_or_else(|| instance(lumen))
+}
+
+/// The cluster-scoped ClusterRoleBinding's name for this instance (#2876).
+///
+/// Dots, not dashes, join the two components. A cluster-scoped name has no
+/// namespace to disambiguate it, so `lumen-<ns>-<name>-…` would map
+/// `(a-b, c)` and `(a, b-c)` to one object — two Lumens in different
+/// namespaces silently sharing a binding, each granting the other's
+/// ServiceAccount delegated review. A namespace is a DNS-1123 *label* and
+/// cannot contain a dot, so splitting at the first dot recovers the namespace
+/// exactly and the mapping is injective.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_binding_name(lumen: &Lumen) -> String {
+    format!(
+        "lumen.{}.{}.auth-delegator",
+        namespace(lumen),
+        instance(lumen)
+    )
+}
+
+/// The exact labels [`auth_delegator_binding`] stamps.
+///
+/// These are load-bearing, not decoration. A cluster-scoped object cannot be
+/// owned by a namespaced CR (see [`service_k8s::render::rbac`]), so labels are
+/// the only link back to the instance — and the only thing the cleanup sweep
+/// in [`super::reconcile`] can use to prove lumen rendered a binding before
+/// deleting it. `lumen.dev/owner-namespace` exists because the recommended
+/// label set has no way to say which namespace an object belongs *to* when the
+/// object itself has none.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
+    labels.insert("app.kubernetes.io/instance".to_string(), instance(lumen));
+    labels.insert(
+        "app.kubernetes.io/component".to_string(),
+        AUTH_DELEGATION_COMPONENT.to_string(),
+    );
+    labels.insert(
+        "app.kubernetes.io/managed-by".to_string(),
+        MANAGER.to_string(),
+    );
+    labels.insert("app.kubernetes.io/part-of".to_string(), APP.to_string());
+    labels.insert(OWNER_NAMESPACE_LABEL.to_string(), namespace(lumen));
+    labels
+}
+
+/// The ClusterRoleBinding that lets the serving ServiceAccount ask the API
+/// server to validate a caller's token and authorize the request (#2876).
+///
+/// Lumen delegates both halves of request auth: `TokenReview` decides who the
+/// caller is, `SubjectAccessReview` decides what they may do. Both are
+/// cluster-scoped review APIs, so no namespaced RoleBinding can grant them —
+/// this has to be a ClusterRoleBinding or the serving process cannot
+/// authenticate anyone.
+///
+/// It binds the built-in `system:auth-delegator`. Rendering a replacement
+/// ClusterRole would mean maintaining a private copy of a grant Kubernetes
+/// already maintains, and every future upstream change to it would be a
+/// divergence nobody is watching for.
+///
+/// Exactly one subject, always: the resolved serving ServiceAccount. Not
+/// `system:authenticated`, not the namespace's ServiceAccount group, not the
+/// operator's own identity, not the backup runner's, not a client's. Each of
+/// those would hand delegated authentication review to a population rather
+/// than to a process.
+///
+/// This is deliberately *not* part of [`render`]. Everything that function
+/// returns is applied into the CR's namespace and owned by the CR; this object
+/// is neither, and mixing it in would either be applied to a namespaced
+/// endpoint that rejects it or stamped with an owner reference that gets it
+/// garbage collected. [`super::reconcile`] applies it on its own path and
+/// sweeps it on its own path.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
+pub fn auth_delegator_binding(lumen: &Lumen) -> Value {
+    let sa = serving_service_account_name(lumen);
+    let ns = namespace(lumen);
+    let subjects = [rbac::ServiceAccountSubject {
+        namespace: &ns,
+        name: &sa,
+    }];
+    rbac::cluster_role_binding(rbac::ClusterRoleBinding {
+        name: &auth_delegator_binding_name(lumen),
+        labels: serde_json::to_value(auth_delegator_labels(lumen)).unwrap_or_else(|_| json!({})),
+        cluster_role: AUTH_DELEGATOR_ROLE,
+        subjects: &subjects,
+    })
+}
+
 /// The optional per-instance NetworkPolicy (#2603), rendered only when
 /// `spec.networkPolicy` is set.
 ///
@@ -391,6 +510,7 @@ fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
 /// pod would be an uncoordinated shard-0 copy with no consensus link.
 fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
+    let sa_name = serving_service_account_name(lumen);
     let res = render::requested_resources(&s.cpu, &s.memory);
     let volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
@@ -434,14 +554,10 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         voter_count: lumen.spec.voter_count,
         headless_env_key: HEADLESS_ENV_KEY,
         // External SA name wins when configured (#2497); default to the
-        // operator-owned per-instance SA when unset.
-        service_account_name: Some(
-            lumen
-                .spec
-                .service_account_name
-                .as_deref()
-                .unwrap_or(cx.name),
-        ),
+        // operator-owned per-instance SA when unset. Resolved through the same
+        // helper the auth-delegator binding uses, so the identity the pods run
+        // as and the identity that is granted delegated review cannot diverge.
+        service_account_name: Some(&sa_name),
         env: serving_env(lumen),
         env_from: vec![],
         resources: res,

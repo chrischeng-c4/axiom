@@ -13,7 +13,9 @@ use lumen::operator::crd::{
     AuthMode, Autoscaling, LogFormat, PlacementSpec, ReshardPhase, ReshardPolicy,
     ReshardWorkflowSpec, ServingBootstrapSpec, ServingSpec, ShardMapSpec, Toleration,
 };
-use lumen::operator::render::{prunes, render};
+use lumen::operator::render::{
+    auth_delegator_binding, auth_delegator_binding_name, auth_delegator_labels, prunes, render,
+};
 use lumen::operator::{Lumen, LumenSpec};
 use serde::Deserialize;
 use serde_json::Value;
@@ -249,6 +251,135 @@ fn set_service_account_name_never_emits_any_serviceaccount_named_the_instance() 
             "no ServiceAccount named the instance may ever be rendered when \
              serviceAccountName is externally managed; got {:?}",
             kinds(&objs)
+        );
+    }
+}
+
+// ---- #2876: the serving KSA's delegated-review grant -----------------------
+
+#[test]
+fn auth_delegator_binding_grants_exactly_the_serving_service_account() {
+    // AC1: one ClusterRoleBinding, bound to the built-in delegator role, with
+    // the instance's own serving ServiceAccount as its only subject.
+    let l = lumen("search", dev_spec());
+    let binding = auth_delegator_binding(&l);
+
+    assert_eq!(binding["kind"], "ClusterRoleBinding");
+    assert_eq!(binding["roleRef"]["kind"], "ClusterRole");
+    assert_eq!(binding["roleRef"]["name"], "system:auth-delegator");
+    assert_eq!(
+        binding["subjects"],
+        serde_json::json!([{
+            "kind": "ServiceAccount",
+            "name": "search",
+            "namespace": "acme",
+        }]),
+        "got {binding}"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_follows_an_externally_managed_service_account() {
+    // The pod runs as `spec.serviceAccountName` when it is set, so the grant
+    // has to follow it. Binding the instance-named SA instead would authorize
+    // an identity nothing runs as, and every request would fail authentication
+    // against a manifest that looks correct.
+    let mut spec = dev_spec();
+    spec.service_account_name = Some("external-sa".into());
+    let l = lumen("search", spec);
+    let objs = render(&l);
+    let binding = auth_delegator_binding(&l);
+
+    assert_eq!(binding["subjects"][0]["name"], "external-sa");
+    assert_eq!(
+        binding["subjects"][0]["name"],
+        find(&objs, "StatefulSet", "search")["spec"]["template"]["spec"]["serviceAccountName"],
+        "the bound subject and the identity the pods run as are one answer"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_names_no_wildcard_and_no_group_subject() {
+    // AC5. `system:authenticated` or a ServiceAccount *group* would turn a
+    // grant for one process into a grant for a population; `*` in the roleRef
+    // would hand out every verb on every resource.
+    for spec_fn in [dev_spec, prod_spec] {
+        let l = lumen("search", spec_fn());
+        let binding = auth_delegator_binding(&l);
+
+        assert_ne!(binding["roleRef"]["name"], "*");
+        assert_ne!(binding["roleRef"]["name"], "cluster-admin");
+        assert!(
+            binding.get("rules").is_none(),
+            "the binding must reference the built-in role, never define one: {binding}"
+        );
+        let subjects = binding["subjects"].as_array().expect("subjects");
+        assert_eq!(subjects.len(), 1, "got {binding}");
+        for s in subjects {
+            assert_eq!(s["kind"], "ServiceAccount", "no Group/User subject");
+            assert_ne!(s["name"], "*");
+            assert_ne!(s["name"], "system:authenticated");
+            assert_ne!(s["namespace"], "*");
+        }
+    }
+}
+
+#[test]
+fn auth_delegator_binding_is_cluster_scoped_and_unowned() {
+    // A cluster-scoped object may not name a namespaced owner: the garbage
+    // collector does not ignore such a reference, it reads the owner as already
+    // gone and deletes the dependent. The `lumen.dev/owner-namespace` label is
+    // what replaces the reference for cleanup purposes.
+    let l = lumen("search", dev_spec());
+    let binding = auth_delegator_binding(&l);
+    let meta = binding["metadata"].as_object().expect("metadata");
+
+    assert!(meta.get("ownerReferences").is_none(), "got {binding}");
+    assert!(meta.get("namespace").is_none(), "got {binding}");
+    assert_eq!(meta["labels"]["lumen.dev/owner-namespace"], "acme");
+    assert_eq!(meta["labels"]["app.kubernetes.io/managed-by"], "lumen-operator");
+    assert_eq!(meta["labels"]["app.kubernetes.io/component"], "auth-delegation");
+    assert_eq!(
+        serde_json::to_value(auth_delegator_labels(&l)).unwrap(),
+        binding["metadata"]["labels"],
+        "the sweep proves authorship by full label-set equality, so the labels \
+         it recomputes must be the ones the render actually stamps"
+    );
+}
+
+#[test]
+fn auth_delegator_binding_names_cannot_collide_across_namespaces() {
+    // The hazard a dash separator would create: `lumen-a-b-c-auth-delegator`
+    // is both (ns `a-b`, name `c`) and (ns `a`, name `b-c`). Two unrelated
+    // Lumens would share one binding, each granting the other's ServiceAccount
+    // delegated review.
+    let mut names = std::collections::BTreeSet::new();
+    for (ns, name) in [
+        ("a-b", "c"),
+        ("a", "b-c"),
+        ("team", "search"),
+        ("team-search", ""),
+    ] {
+        let mut l = lumen(if name.is_empty() { "x" } else { name }, dev_spec());
+        l.metadata.namespace = Some(ns.to_string());
+        assert!(
+            names.insert(auth_delegator_binding_name(&l)),
+            "two distinct instances rendered the same binding name"
+        );
+    }
+}
+
+#[test]
+fn the_auth_delegator_binding_is_never_one_of_the_namespaced_children() {
+    // `render`'s objects are all applied with a namespaced API and stamped with
+    // the CR's owner reference (see the assertions above). A cluster-scoped
+    // binding in that list would be applied to an endpoint that rejects it, or
+    // owner-stamped into deletion.
+    for spec_fn in [dev_spec, prod_spec] {
+        let l = lumen("search", spec_fn());
+        assert!(
+            !render(&l).iter().any(|o| o["kind"] == "ClusterRoleBinding"),
+            "the delegated-review grant is applied on its own path, not as a child"
         );
     }
 }

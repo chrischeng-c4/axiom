@@ -88,6 +88,23 @@ rules:
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
+  # The per-instance `system:auth-delegator` binding that lets a serving pod
+  # ask the apiserver to review its callers (#2876). `delete` is not optional
+  # here: the binding is cluster-scoped, so it cannot carry an owner reference
+  # back to a namespaced Lumen, and the sweep loop is the only thing that
+  # removes it when the CR goes away.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RBAC refuses to let a subject hand out permissions it does not itself hold
+  # (escalation prevention). `bind` on exactly this one ClusterRole is the
+  # narrow alternative to giving the operator the delegated-review powers it is
+  # granting away; `resourceNames` keeps it from binding anything else —
+  # notably not `cluster-admin`.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["system:auth-delegator"]
+    verbs: ["bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

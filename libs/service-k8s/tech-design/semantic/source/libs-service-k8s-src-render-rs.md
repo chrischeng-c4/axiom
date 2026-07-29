@@ -86,6 +86,9 @@ pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 pub mod common;
 /// Stateless `apps/v1` Deployment composition.
 pub mod deployment;
+/// Cluster-scoped RBAC children — bindings that cannot carry an owner
+/// reference and must not accept a group subject (#2876).
+pub mod rbac;
 
 /// Per-service render identity, threaded through the helpers.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
