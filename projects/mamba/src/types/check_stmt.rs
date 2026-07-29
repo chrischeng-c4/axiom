@@ -485,6 +485,7 @@ impl TypeChecker {
                 let declaration_symbol = self
                     .declaration_symbol(stmt)
                     .expect("function declarations must be preregistered");
+                let is_decorated = !decorators.is_empty();
                 self.check_fn_body(
                     declaration_symbol,
                     name,
@@ -493,6 +494,7 @@ impl TypeChecker {
                     return_ty.as_ref(),
                     body,
                     overload_decorated,
+                    is_decorated,
                 );
                 self.unregister_type_params(type_params);
             }
@@ -1091,7 +1093,13 @@ impl TypeChecker {
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
         overload_decorated: bool,
+        is_decorated: bool,
     ) {
+        let is_method = self
+            .class_scope_stack
+            .contains(&self.symbols.current_scope_idx());
+        let is_generator = body_has_yield(body);
+
         // A parameter default value must satisfy the parameter's annotation
         // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
         // `x: int = "3"` check. Defaults are evaluated in the *enclosing*
@@ -1106,6 +1114,9 @@ impl TypeChecker {
             if let Some(default) = &param.default {
                 let declared_ty = self.resolve_param_type_expr(param);
                 let default_ty = self.check_expr(default);
+                if !is_method && !is_decorated && !is_generator {
+                    self.check_n3_param_default_inference(param, default, default_ty);
+                }
                 if !generic_params.is_empty() {
                     let (subst, conflicts) =
                         infer_type_args(generic_params, &[declared_ty], &[default_ty], &self.tcx);
@@ -1636,4 +1647,137 @@ impl TypeChecker {
             _ => self.tcx.any(),
         }
     }
+}
+
+fn body_has_yield(stmts: &[Spanned<Stmt>]) -> bool {
+    stmts.iter().any(|stmt| stmt_has_yield(&stmt.node))
+}
+
+fn stmt_has_yield(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::FnDef { .. } | Stmt::AsyncFnDef { .. } | Stmt::ClassDef { .. } => false,
+        Stmt::VarDecl { value, .. } => expr_has_yield(&value.node),
+        Stmt::Assign { target, value } => expr_has_yield(&target.node) || expr_has_yield(&value.node),
+        Stmt::AugAssign { target, value, .. } => expr_has_yield(&target.node) || expr_has_yield(&value.node),
+        Stmt::BareAnnotation { .. } => false,
+        Stmt::Return(opt_expr) => opt_expr.as_ref().map_or(false, |e| expr_has_yield(&e.node)),
+        Stmt::ExprStmt(expr) => expr_has_yield(&expr.node),
+        Stmt::If { condition, body, elif_clauses, else_body } => {
+            expr_has_yield(&condition.node)
+                || body_has_yield(body)
+                || elif_clauses.iter().any(|(c, b)| expr_has_yield(&c.node) || body_has_yield(b))
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::While { condition, body, else_body } => {
+            expr_has_yield(&condition.node)
+                || body_has_yield(body)
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::For { iter, body, else_body, .. } | Stmt::AsyncFor { iter, body, else_body, .. } => {
+            expr_has_yield(&iter.node)
+                || body_has_yield(body)
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::Match { expr, arms } => {
+            expr_has_yield(&expr.node)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, |g| expr_has_yield(&g.node))
+                        || body_has_yield(&arm.body)
+                })
+        }
+        Stmt::Try { body, handlers, else_body, finally_body } => {
+            body_has_yield(body)
+                || handlers.iter().any(|h| body_has_yield(&h.body))
+                || else_body.as_ref().map_or(false, |b| body_has_yield(b))
+                || finally_body.as_ref().map_or(false, |b| body_has_yield(b))
+        }
+        Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
+            items.iter().any(|item| expr_has_yield(&item.context.node)) || body_has_yield(body)
+        }
+        Stmt::Assert { test, msg } => {
+            expr_has_yield(&test.node) || msg.as_ref().map_or(false, |m| expr_has_yield(&m.node))
+        }
+        Stmt::Del(target) => expr_has_yield(&target.node),
+        Stmt::Raise { value, from } => {
+            value.as_ref().map_or(false, |v| expr_has_yield(&v.node))
+                || from.as_ref().map_or(false, |f| expr_has_yield(&f.node))
+        }
+        Stmt::TypeAlias { value, .. } => expr_has_yield(&value.node),
+        Stmt::EnumDef { .. }
+        | Stmt::Pass
+        | Stmt::Break
+        | Stmt::Continue
+        | Stmt::Import { .. }
+        | Stmt::Global(_)
+        | Stmt::Nonlocal(_) => false,
+    }
+}
+
+fn expr_has_yield(expr: &Expr) -> bool {
+    match expr {
+        Expr::Yield(_) | Expr::YieldFrom(_) => true,
+        Expr::Lambda { .. } => false,
+        Expr::UnaryOp { operand, .. } => expr_has_yield(&operand.node),
+        Expr::BinOp { lhs, rhs, .. } => expr_has_yield(&lhs.node) || expr_has_yield(&rhs.node),
+        Expr::Call { func, args } => {
+            expr_has_yield(&func.node)
+                || args.iter().any(|arg| match arg {
+                    CallArg::Positional(e) | CallArg::StarArg(e) | CallArg::DoubleStarArg(e) => {
+                        expr_has_yield(&e.node)
+                    }
+                    CallArg::Keyword { value, .. } => expr_has_yield(&value.node),
+                })
+        }
+        Expr::Attr { object, .. } => expr_has_yield(&object.node),
+        Expr::Index { object, index } => {
+            expr_has_yield(&object.node) || expr_has_yield(&index.node)
+        }
+        Expr::Slice { start, stop, step } => {
+            start.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+                || stop.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+                || step.as_ref().map_or(false, |s| expr_has_yield(&s.node))
+        }
+        Expr::ListLit(elems)
+        | Expr::SetLit(elems)
+        | Expr::TupleLit(elems)
+        | Expr::UnpackTarget(elems) => elems.iter().any(|e| expr_has_yield(&e.node)),
+        Expr::DictLit(entries) => entries.iter().any(|(k, v)| {
+            k.as_ref().map_or(false, |k| expr_has_yield(&k.node)) || expr_has_yield(&v.node)
+        }),
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            expr_has_yield(&body.node)
+                || expr_has_yield(&condition.node)
+                || expr_has_yield(&else_body.node)
+        }
+        Expr::ListComp { element, generators } | Expr::SetComp { element, generators } => {
+            expr_has_yield(&element.node) || comp_generators_have_yield(generators)
+        }
+        Expr::DictComp { key, value, generators } => {
+            expr_has_yield(&key.node)
+                || expr_has_yield(&value.node)
+                || comp_generators_have_yield(generators)
+        }
+        Expr::GeneratorExpr { element, generators } => {
+            expr_has_yield(&element.node) || comp_generators_have_yield(generators)
+        }
+        Expr::FString(parts) => parts.iter().any(|part| match part {
+            FStringPart::Expr(e, _) => expr_has_yield(&e.node),
+            FStringPart::Literal(_) => false,
+        }),
+        Expr::Await(operand) | Expr::Starred(operand) => expr_has_yield(&operand.node),
+        Expr::Walrus { value, .. } => expr_has_yield(&value.node),
+        Expr::ChainedCompare { operands, .. } => operands.iter().any(|e| expr_has_yield(&e.node)),
+        _ => false,
+    }
+}
+
+fn comp_generators_have_yield(generators: &[Comprehension]) -> bool {
+    generators.iter().any(|g| {
+        expr_has_yield(&g.iter.node)
+            || g.conditions.iter().any(|i| expr_has_yield(&i.node))
+    })
 }

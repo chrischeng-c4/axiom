@@ -3470,6 +3470,37 @@ impl TypeChecker {
         }
     }
 
+    pub(crate) fn check_n3_param_default_inference(
+        &mut self,
+        param: &Param,
+        default: &Spanned<Expr>,
+        default_ty: TypeId,
+    ) {
+        if param.annotation != ParamAnnotation::Omitted {
+            return;
+        }
+        if param.kind != crate::parser::ast::ParamKind::Regular || param.pos_only || param.kw_only {
+            return;
+        }
+        if let Expr::ListLit(elems) = &default.node {
+            if elems.is_empty() {
+                let path = "parameter -> default -> list_literal -> element";
+                let decl = DeclaredType::from_implicit_unknown(path);
+                self.record_declared_type(param.span, decl);
+                self.error(
+                    param.span,
+                    format!("cannot infer type for parameter `{}`: {}", param.name.as_str(), path),
+                );
+            } else if let Ty::List(elem_ty) = self.tcx.get(default_ty) {
+                if !matches!(self.tcx.get(*elem_ty), Ty::Any | Ty::Error) {
+                    let path = "parameter -> default -> list_literal";
+                    let decl = DeclaredType::from_inferred(path, default_ty);
+                    self.record_declared_type(param.span, decl);
+                }
+            }
+        }
+    }
+
     pub fn get_declared_type(&self, span: Span) -> Option<&DeclaredType> {
         self.declared_types.get(&span)
     }
@@ -6071,5 +6102,127 @@ mod tests {
             checker.get_declared_type(target.span).is_none(),
             "first scalar local assignment must NOT acquire a DeclaredType aggregate"
         );
+    }
+
+    #[test]
+    fn test_n3_p1_negative_parameter_empty_list_default_inference_failure() {
+        use crate::source::span::FileId;
+        let src = "def collect(items = []):\n    items.append(1)\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
+
+        let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
+        let decl = checker.get_declared_type(params[0].span).expect("aggregate recorded at param span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), None);
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::ImplicitUnknown {
+                inference_path: "parameter -> default -> list_literal -> element".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_p1_explicit_parameter_any_acceptance() {
+        use crate::source::span::FileId;
+        let src = "from typing import Any\ndef collect(items: Any = []):\n    items.append(1)\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { params, .. } = &module.stmts[1].node else { panic!() };
+        let ParamAnnotation::Authored(spanned_ty) = &params[0].annotation else { panic!() };
+        let decl = checker
+            .get_declared_type(spanned_ty.span)
+            .expect("explicit annotation aggregate recorded");
+        assert!(matches!(decl.source(), SourceAnnotation::Authored(_)));
+        assert_eq!(decl.normalized(), Some(checker.tcx.any()));
+        assert_eq!(*decl.provenance(), TypeProvenance::ExplicitAny);
+    }
+
+    #[test]
+    fn test_n3_p1_non_empty_homogeneous_parameter_list_default_inference() {
+        use crate::source::span::FileId;
+        let src = "def collect(items = [1, 2]):\n    pass\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
+        let int_ty = checker.tcx.int();
+        let expected_list = checker.tcx.intern(Ty::List(int_ty));
+        let decl = checker.get_declared_type(params[0].span).expect("aggregate recorded at param span");
+        assert_eq!(*decl.source(), SourceAnnotation::Omitted);
+        assert_eq!(decl.normalized(), Some(expected_list));
+        assert_eq!(
+            *decl.provenance(),
+            TypeProvenance::Inferred {
+                inference_path: "parameter -> default -> list_literal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_n3_p1_omitted_parameter_without_default_unchanged() {
+        use crate::source::span::FileId;
+        let src = "def collect(items):\n    pass\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
+        assert!(checker.get_declared_type(params[0].span).is_none());
+    }
+
+    #[test]
+    fn test_n3_p1_method_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "class C:\n    def collect(self, items = []):\n        pass\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::ClassDef { body, .. } = &module.stmts[0].node else { panic!() };
+        let Stmt::FnDef { params, .. } = &body[0].node else { panic!() };
+        assert!(checker.get_declared_type(params[1].span).is_none());
+    }
+
+    #[test]
+    fn test_n3_p1_decorated_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def dec(f): return f\n@dec\ndef collect(items = []):\n    pass\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { params, .. } = &module.stmts[1].node else { panic!() };
+        assert!(checker.get_declared_type(params[0].span).is_none());
+    }
+
+    #[test]
+    fn test_n3_p1_generator_form_negative_control() {
+        use crate::source::span::FileId;
+        let src = "def gen(items = []):\n    yield 1\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert!(errors.is_empty());
+        let Stmt::FnDef { params, .. } = &module.stmts[0].node else { panic!() };
+        assert!(checker.get_declared_type(params[0].span).is_none());
+    }
+
+    #[test]
+    fn test_n3_p1_generator_yield_in_nested_function_does_not_affect_outer() {
+        use crate::source::span::FileId;
+        let src = "def collect(items = []):\n    def gen():\n        yield 1\n";
+        let module = crate::parser::parse(src, FileId(0)).unwrap();
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_module(&module);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].to_string().contains("cannot infer type for parameter `items`: parameter -> default -> list_literal -> element"));
     }
 }
