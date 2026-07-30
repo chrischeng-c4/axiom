@@ -63,21 +63,25 @@ def _capability(
     *,
     title: str,
     cap_id: str,
-    feature_class: str,
+    feature_class: str | None,
     promise: str,
     surface: str,
     work_roots: tuple[str, ...],
+    heading: str = "####",
 ) -> str:
     rows = "\n".join(
         f"| {root} | change | - | implemented | verified | smoke | `true` |"
         for root in work_roots
     )
-    return f"""#### {title}
+    # `feature_class=None` is the pre-migration shape: no field at all. Emitting
+    # an empty field instead would be a different document -- an author who
+    # declared nothing, versus one who declared a blank.
+    class_field = "" if feature_class is None else f"Feature Class: {feature_class}\n"
+    return f"""{heading} {title}
 
 ID: {cap_id}
 Type: Service
-Feature Class: {feature_class}
-Surfaces:
+{class_field}Surfaces:
 - CLI: `{surface}` - {promise.lower().rstrip('.')}.
 EC Dimensions:
 - behavior: `true` - {cap_id} behavior gate.
@@ -154,7 +158,11 @@ _CONFLICT_MEMBER = (
 )
 
 
-def _section(member: tuple[Any, ...], feature_class: str) -> str:
+def _section(
+    member: tuple[Any, ...],
+    feature_class: str | None,
+    heading: str = "####",
+) -> str:
     title, cap_id, promise, surface, work_roots = member
     return _capability(
         title=title,
@@ -163,6 +171,7 @@ def _section(member: tuple[Any, ...], feature_class: str) -> str:
         promise=promise,
         surface=surface,
         work_roots=work_roots,
+        heading=heading,
     )
 
 
@@ -215,6 +224,42 @@ service baselines are non-core.
 REFERENCE_DOCUMENT = _document(_CORE_MEMBERS, _NON_CORE_MEMBERS)
 
 
+def _flat_document(brief: str, members: tuple[tuple[tuple[Any, ...], str | None], ...]) -> str:
+    """A pre-migration document: no feature roots, `###` capability headings.
+
+    Each member carries the class it *declares*, or `None` for the unclassified
+    shape every adopter document had before #3059. The index lists every member,
+    because a capability missing from the index is a different defect and would
+    confound what the migration legs are asserting.
+    """
+    index = "\n".join(_index_rows((member,), "pre-migration") for member, _ in members)
+    body = "".join(_section(member, declared, "###") for member, declared in members)
+    return f"""# Lumen
+
+## Brief
+
+{brief}
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+{index}
+
+{body}"""
+
+
+#: The pre-migration shape with nothing classified: the only input from which
+#: `aw capability migrate` has to derive every class itself rather than copy a
+#: declaration.
+UNCLASSIFIED_DOCUMENT = _flat_document(
+    "Lumen reference fixture, pre-migration: nothing is classified.",
+    tuple((member, None) for member in _CORE_MEMBERS + _NON_CORE_MEMBERS),
+)
+
+
 def baseline_declared_core_document(cap_id: str) -> str:
     """Falsifier 1, per baseline: promote one baseline into the core root.
 
@@ -240,6 +285,33 @@ ROOT_FIELD_CONFLICT_DOCUMENT = _document(
 )
 
 
+#: Falsifier 3 -- the same root declared twice. This is the rule the earlier
+#: whitelist-based filter structurally could not see: its message names neither
+#: "feature class" nor "feature root", so it is the sharpest available proof that
+#: `document_blockers` subtracts an environment rather than admitting a wording.
+DUPLICATE_ROOT_DOCUMENT = REFERENCE_DOCUMENT.replace(
+    "### Non-Core Features",
+    "### Core Features\n\n### Non-Core Features",
+    1,
+)
+assert DUPLICATE_ROOT_DOCUMENT.count("### Core Features") == 2
+
+#: `observability` is a real Lumen capability and *not* a trait-derived
+#: baseline, so migration's derivation would call it core. Declaring it
+#: `non_core` before migration therefore puts the declaration and the derivation
+#: in direct conflict, which is the only shape that can tell "the author's class
+#: is preserved" apart from "the derivation happened to agree".
+DECLARED_CLASS_ID = CONFLICT_ID
+DECLARED_CLASS = "non_core"
+
+#: The pre-migration shape again, except one capability already states its class.
+PARTIALLY_CLASSIFIED_DOCUMENT = _flat_document(
+    "Lumen reference fixture, pre-migration: one capability states its class.",
+    tuple((member, None) for member in _CORE_MEMBERS + _NON_CORE_MEMBERS)
+    + ((_CONFLICT_MEMBER, DECLARED_CLASS),),
+)
+
+
 def digest_production_contract(repository_root: Path) -> dict[str, str]:
     """Digest Lumen's real contract so mutation of it cannot go unnoticed."""
     digests: dict[str, str] = {}
@@ -259,18 +331,42 @@ def assert_production_contract_unmutated(
     assert before == after, f"Lumen production contract changed: {before} -> {after}"
 
 
-#: Substrings that identify a feature-class finding, so the assertions below can
-#: separate them from the fixture-environment blockers a temporary project always
-#: carries (no Python EC or TD inventory exists under a scratch root).
-_FEATURE_CLASS_MARKERS = ("Feature Class", "feature class", "feature root", "classified")
+#: A scratch project has no Python EC or TD inventory, so every report carries
+#: exactly these three blockers regardless of the document. They are subtracted
+#: by prefix (the messages embed a temporary path).
+#:
+#: Subtraction, not a whitelist of feature-class wordings. A whitelist silently
+#: drops any finding phrased outside it — the duplicate-root message
+#: ("duplicate `### Core Features` root (2 occurrences)") names neither "feature
+#: class" nor "feature root" — which would turn the reference document's
+#: `== []` assertion into a rubber stamp for every rule it failed to anticipate.
+#: Subtracting a closed, pinned environment set is total: a finding this fixture
+#: never imagined still shows up.
+_ENVIRONMENT_BLOCKER_PREFIXES = (
+    "Python EC inventory unavailable:",
+    "Python TD inventory unavailable:",
+    "td capability scan unavailable:",
+)
 
 
-def feature_class_blockers(report: dict[str, Any]) -> list[str]:
-    return [
+def document_blockers(report: dict[str, Any]) -> list[str]:
+    """Every blocker the *document* caused, with the scratch environment removed.
+
+    The environment set is asserted to be exactly what is expected, so a change
+    in fixture surroundings fails loudly here instead of quietly widening or
+    narrowing what the subtraction removes.
+    """
+    blockers = report["blockers"]
+    environment = [
         blocker
-        for blocker in report["blockers"]
-        if any(marker in blocker for marker in _FEATURE_CLASS_MARKERS)
+        for blocker in blockers
+        if blocker.startswith(_ENVIRONMENT_BLOCKER_PREFIXES)
     ]
+    assert len(environment) == len(_ENVIRONMENT_BLOCKER_PREFIXES), (
+        f"scratch-environment blockers changed shape; expected one per "
+        f"{_ENVIRONMENT_BLOCKER_PREFIXES}, got {environment}"
+    )
+    return [blocker for blocker in blockers if blocker not in environment]
 
 
 def assert_feature_class_attribution(report: dict[str, Any]) -> None:
@@ -316,7 +412,7 @@ def assert_feature_class_attribution(report: dict[str, Any]) -> None:
     # The correctly classified document is the negative half of the falsifiers
     # below: whatever rule rejects them must stay silent here, or "rejected"
     # would carry no information.
-    assert feature_class_blockers(report) == [], report["blockers"]
+    assert document_blockers(report) == [], report["blockers"]
 
 
 def assert_baseline_core_is_rejected(report: dict[str, Any], cap_id: str) -> None:
@@ -326,7 +422,7 @@ def assert_baseline_core_is_rejected(report: dict[str, Any], cap_id: str) -> Non
     that rejected every document, or that rejected the right document while
     naming the wrong capability, would pass a mere `any(...)`.
     """
-    assert feature_class_blockers(report) == [
+    assert document_blockers(report) == [
         f"trait-derived baseline capability `{cap_id}` is classified `core`; "
         "archetype baselines are always `non_core` and belong under `Non-Core Features`"
     ], report["blockers"]
@@ -338,7 +434,101 @@ def assert_root_field_conflict_is_rejected(report: dict[str, Any]) -> None:
     The message has to name both sides of the disagreement, because the author
     cannot tell which of the two to change from the fact of rejection alone.
     """
-    assert feature_class_blockers(report) == [
+    assert document_blockers(report) == [
         f"capability `{CONFLICT_ID}` declares `Feature Class: non_core` but is "
         "nested under `Core Features`; make the field and the root agree"
     ], report["blockers"]
+
+
+def assert_duplicate_root_is_rejected(report: dict[str, Any]) -> None:
+    """The same feature root declared twice is a blocker, and the only one.
+
+    Kept as its own falsifier because it is the one root rule whose message
+    mentions neither the field nor the word "class". If `document_blockers` ever
+    regresses to matching wordings instead of subtracting the environment, this
+    assertion is what fails.
+    """
+    assert document_blockers(report) == [
+        "duplicate `### Core Features` root (2 occurrences); "
+        "merge them into one root under `## Capabilities`"
+    ], report["blockers"]
+
+
+def assert_migration_preserves_declared_class(migrated: str) -> None:
+    """An author's stated class survives migration; only silence is filled in.
+
+    `observability` is not a trait-derived baseline, so the derivation would put
+    it under `Core Features`. It declared `non_core`, so it must come out
+    `non_core` — and under the matching root, since migration must not emit the
+    field/root contradiction the checker rejects. Asserted alongside the derived
+    members, so "declaration wins" cannot be satisfied by migration simply
+    declining to classify anything.
+    """
+    assert_migration_derives_the_split(migrated)
+
+    non_core_root = migrated.find("### Non-Core Features")
+    at = migrated.find(f"ID: {DECLARED_CLASS_ID}\n")
+    assert at != -1, f"`{DECLARED_CLASS_ID}` missing from the migrated document"
+    assert at > non_core_root, (
+        f"`{DECLARED_CLASS_ID}` declared `{DECLARED_CLASS}` and must migrate "
+        f"under the matching root, not the one its id would have derived"
+    )
+
+    block = migrated[at:]
+    line = next(
+        stripped
+        for stripped in (raw.strip() for raw in block.splitlines())
+        if stripped.startswith("Feature Class:")
+    )
+    assert line == f"Feature Class: {DECLARED_CLASS}", (
+        f"migration overwrote a class the author stated: {line}"
+    )
+
+
+def assert_migration_derives_the_split(migrated: str) -> None:
+    """`aw capability migrate` derives the class from the id, not from a copy.
+
+    The input declared nothing, so every class in `migrated` was computed. This
+    is the only assertion in the fixture that binds the derivation rule itself;
+    everywhere else the document already states the answer, so the derivation
+    could be inverted without any of the other assertions noticing.
+
+    Containment is asserted alongside the field, because a document whose field
+    says `core` while the capability sits under `Non-Core Features` is exactly
+    the contradiction the checker rejects — migration must not produce it.
+    """
+    core_root = migrated.find("### Core Features")
+    non_core_root = migrated.find("### Non-Core Features")
+    assert core_root != -1, migrated
+    assert non_core_root != -1, migrated
+    assert core_root < non_core_root, "core root must precede non-core"
+
+    for cap_id in CORE_IDS:
+        at = migrated.find(f"ID: {cap_id}\n")
+        assert at != -1, f"`{cap_id}` missing from the migrated document"
+        assert core_root < at < non_core_root, (
+            f"`{cap_id}` is an authored promise and must migrate under "
+            f"`Core Features`, not `Non-Core Features`"
+        )
+    for cap_id in NON_CORE_IDS:
+        at = migrated.find(f"ID: {cap_id}\n")
+        assert at != -1, f"`{cap_id}` missing from the migrated document"
+        assert at > non_core_root, (
+            f"`{cap_id}` is a trait-derived baseline and must migrate under "
+            f"`Non-Core Features`; migration must never manufacture a core "
+            f"promise out of an archetype obligation"
+        )
+
+    # The field, not only the position: both halves have to agree, or the
+    # migrated document is one the checker would turn around and reject.
+    expected_classes = [(cap_id, "core") for cap_id in CORE_IDS] + [
+        (cap_id, "non_core") for cap_id in NON_CORE_IDS
+    ]
+    for cap_id, expected in expected_classes:
+        block = migrated[migrated.find(f"ID: {cap_id}\n") :]
+        line = next(
+            stripped
+            for stripped in (raw.strip() for raw in block.splitlines())
+            if stripped.startswith("Feature Class:")
+        )
+        assert line == f"Feature Class: {expected}", f"{cap_id}: {line}"
