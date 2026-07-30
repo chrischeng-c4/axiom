@@ -51,6 +51,7 @@ unbound.
 from __future__ import annotations
 
 import hashlib
+import re
 from itertools import permutations
 from pathlib import Path
 from typing import Any
@@ -488,6 +489,103 @@ UNCLASSIFIED_DOCUMENT = _flat_document(
     "Lumen reference fixture, pre-migration: nothing is classified.",
     tuple((member, None) for member in _CORE_MEMBERS + _NON_CORE_MEMBERS),
 )
+
+#: The one capability whose tracker state is live in `LIVE_TRACKER_DOCUMENT`,
+#: and the two places it is carried. Both are needed, not one: `Root WI:` and
+#: the work-root `WI` cell are erased by two different assignments, and
+#: `root_wi_for_capability` (`capability.rs:9253-9270`) reads the field first
+#: and falls back to the work-root value -- so a document carrying only the
+#: field would render `-` the moment the field were blanked, whatever happened
+#: to the fallback, and a document carrying only the fallback would never
+#: exercise the field. Carrying both makes each assignment independently
+#: observable in the rendered index.
+LIVE_TRACKER_ID = "search-core"
+LIVE_TRACKER_TITLE = "Search Core"
+LIVE_TRACKER_WORK_ROOT = "query-planner-boolean-eval"
+LIVE_ROOT_WI = "#91"
+LIVE_WORK_ROOT_WI = "#92"
+
+
+def _live_tracker_document() -> str:
+    """`UNCLASSIFIED_DOCUMENT` with one capability's tracker state left live.
+
+    Every other fixture document in this module is authored the way `aw wi`
+    leaves one: `Root WI: -` and `-` in every work-root `WI` cell. That is a
+    faithful shape, but it is also one from which erasing tracker state cannot
+    change a single byte -- so the second of the two transformations
+    `migrated_capability_document` documents (`capability.rs:8480-8493`) was
+    bound by nothing until this document existed. Hand-authored adopter
+    documents predating `aw capability` do carry these values, which is why the
+    transformation is there at all.
+    """
+    document = UNCLASSIFIED_DOCUMENT
+    marker = f"ID: {LIVE_TRACKER_ID}\n"
+    assert document.count(marker) == 1, marker
+    head, tail = document.split(marker, 1)
+    assert tail.count("Root WI: -\n") >= 1
+    tail = tail.replace("Root WI: -\n", f"Root WI: {LIVE_ROOT_WI}\n", 1)
+    row = f"| {LIVE_TRACKER_WORK_ROOT} | change | - |"
+    assert tail.count(row) == 1, row
+    tail = tail.replace(
+        row, f"| {LIVE_TRACKER_WORK_ROOT} | change | {LIVE_WORK_ROOT_WI} |", 1
+    )
+    return head + marker + tail
+
+
+LIVE_TRACKER_DOCUMENT = _live_tracker_document()
+assert LIVE_TRACKER_DOCUMENT.count(LIVE_ROOT_WI) == 1
+assert LIVE_TRACKER_DOCUMENT.count(LIVE_WORK_ROOT_WI) == 1
+
+
+def assert_migration_erases_document_stored_tracker_state(migrated: str) -> None:
+    """Format migration drops every work-item reference the document stored.
+
+    The rule and its reason are documented at `capability.rs:8488-8489`:
+    delivery provenance is one-way, so a capability contract never stores a
+    work-item reference back. `apps/agentic-workflow/CAPABILITIES.md` declares
+    it implemented and verified. Deleting the whole
+    `clear_document_stored_tracker_state` call, or any one of its three
+    assignments, changes rendered output only for a document that carried
+    tracker state to begin with -- which is what `LIVE_TRACKER_DOCUMENT` is for.
+
+    Each of the three assignments is asserted through a different rendered
+    surface, so no single one of them can be deleted silently:
+
+    - `capability.current_state` -> the index `Root WI` column, and the
+      section's own `Root WI:` field.
+    - `gap.active_wi = None` -> also the index column, via the fallback in
+      `root_wi_for_capability`. With the field already blanked, the fallback is
+      the only thing that can put `#92` back there.
+    - `work_root.wi` -> the work-root table's `WI` cell.
+
+    The class derivation and the gate inventory are asserted too, so a
+    migration that erased tracker state by destroying the section could not
+    pass.
+    """
+    for value in (LIVE_ROOT_WI, LIVE_WORK_ROOT_WI):
+        assert not re.search(rf"{re.escape(value)}(?!\d)", migrated), (
+            f"document-stored tracker state {value} survived migration"
+        )
+
+    rows = {row[0]: row for row in _index_rows_parsed(migrated)}
+    assert LIVE_TRACKER_TITLE in rows, sorted(rows)
+    assert rows[LIVE_TRACKER_TITLE][1] == "-", rows[LIVE_TRACKER_TITLE]
+
+    body = _capability_section_body(migrated, LIVE_TRACKER_TITLE)
+    lines = [raw.strip() for raw in body.splitlines()]
+    root_wi_fields = [line for line in lines if line.startswith("Root WI:")]
+    assert root_wi_fields == ["Root WI: -"], root_wi_fields
+
+    work_root_rows = [
+        line for line in lines if line.startswith(f"| {LIVE_TRACKER_WORK_ROOT} |")
+    ]
+    assert len(work_root_rows) == 1, work_root_rows
+    cells = [cell.strip() for cell in work_root_rows[0].strip("|").split("|")]
+    assert cells[2] == "-", cells
+
+    assert f"- tech-design/{LIVE_TRACKER_ID}.md" in body, body
+    _assert_declared_class(migrated, LIVE_TRACKER_ID, "core")
+
 
 #: Capability titles in the order the two roots impose, which is the order both
 #: the index and the sections of a migrated document must be in.
@@ -1234,22 +1332,31 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
         f"capabilities; index={sorted(index_titles)} sections={sorted(section_titles)}"
     )
 
-    # Only column 1 is asserted *here*, and the reason recorded in an earlier
-    # revision was wrong in a way worth keeping visible. It said blanking the
-    # rendered `Root WI` cell was an equivalent mutation because "no
+    # Column 2 -- the rendered `Root WI` -- is asserted by
+    # `assert_migration_erases_legacy_row_tracker_state`, and the history of
+    # *why it was not* is worth keeping visible.
+    #
+    # An early revision excused it as an equivalent mutation because "no
     # `#1`/`#2`/`#3` survives anywhere". That premise is false: this leg's path
     # erases document-stored tracker state before rendering, but the *other*
     # entry point of `aw capability migrate` -- relocating a README-resident
     # legacy table -- preserves every `Active WI` as `Root WI`. Verified
-    # directly, and now bound by
-    # `assert_readme_relocation_preserves_tracker_state`.
+    # directly, and bound by `assert_readme_relocation_preserves_tracker_state`.
     #
-    # The conclusion drawn from the false premise happened to be right for this
-    # path, and asserting `-` here would still freeze current behavior as the
-    # contract while the two paths disagree, which is filed separately. So the
-    # assertion stays off -- for the correct reason this time.
+    # The revision after that kept the assertion off on a different ground:
+    # asserting `-` would freeze current behavior as the contract while the two
+    # paths disagree. Round 17 showed that ground does not hold either, and the
+    # refutation is the asymmetry it created. The *preserving* side was already
+    # frozen by the relocation assertion, so declining only the *erasing* side
+    # did not avoid taking a position on the disagreement -- it took the
+    # opposite one, freezing the side this repository has filed as possibly
+    # wrong and leaving unasserted the side `capability.rs:8488-8489` documents,
+    # `apps/agentic-workflow/CAPABILITIES.md` declares implemented and verified,
+    # and whose deletion `aw capability migrate` will happily ship. A
+    # disagreement between two paths is a reason to file a defect about one of
+    # them, not a reason to leave the documented rule unbound.
     #
-    # The standing lesson, recorded because it has now cost three rounds: "this
+    # The standing lesson, recorded because it has now cost four rounds: "this
     # rule cannot be observed" is a claim about the inputs the fixture drives,
     # never about the rule. Enumerate the callers before excusing a mutation as
     # equivalent -- an unexercised caller looks exactly like an unobservable
@@ -1265,6 +1372,43 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
     # because any rule was unreachable. When a mutation cannot be killed, the
     # first hypothesis should be a missing input, and "unobservable" should be
     # the conclusion of an exhausted search rather than its premise.
+
+
+def assert_migration_erases_legacy_row_tracker_state(migrated: str) -> None:
+    """Format migration drops every legacy row's `Active WI`.
+
+    `migrated_capability_document` documents two transformations
+    (`capability.rs:8480-8493`): derive the class, and erase document-stored
+    tracker state, because delivery provenance is one-way -- a work item
+    references capability and claim ids, never the reverse. The class half is
+    bound many times over in this case. This is the legacy-row half of the
+    other one (`capability.rs:8502-8504`), whose deletion leaves migration
+    shipping `| Search Core | #1 | ... |` into the canonical contract.
+
+    Asserted three ways, because the first alone is weaker than it looks: the
+    index cell could be `-` while the value survived in a section field, and a
+    value could vanish from the index because the index broke rather than
+    because it was erased. So the index column, every rendered `Root WI:` field,
+    and the absence of the raw values from the whole document are each asserted,
+    and the row count is pinned so an empty index cannot satisfy any of them.
+    """
+    rows = _index_rows_parsed(migrated)
+    assert len(rows) == LEGACY_ROW_COUNT, rows
+    for row in rows:
+        assert row[1] == "-", (
+            f"migrated legacy row {row[0]!r} still carries tracker state "
+            f"{row[1]!r} in the Capability Index"
+        )
+    for raw in migrated.splitlines():
+        line = raw.strip()
+        if line.startswith("Root WI:"):
+            assert line == "Root WI: -", (
+                f"a migrated legacy section still carries tracker state: {line!r}"
+            )
+    for title, wi in LEGACY_ROW_TRACKER_STATE.items():
+        assert not re.search(rf"{re.escape(wi)}(?!\d)", migrated), (
+            f"{title}'s legacy `Active WI` {wi} survived format migration"
+        )
 
 
 def assert_migration_preserves_declared_class(migrated: str) -> None:
@@ -1656,8 +1800,11 @@ def _capability_section_body(migrated: str, title: str) -> str:
         if start == -1:
             continue
         rest = migrated[start + len(marker) :]
-        end = rest.find("\n### ")
-        return rest if end == -1 else rest[:end]
+        # Bounded at the next heading of this level *or shallower*. Stopping
+        # only at `\n### ` would let a `####` section run on into its siblings,
+        # which reads as this capability owning their fields.
+        ends = [at for at in (rest.find(f"\n{level}"), rest.find("\n### ")) if at != -1]
+        return rest if not ends else rest[: min(ends)]
     raise AssertionError(
         f"no capability section rendered for {title!r}; document was:\n{migrated}"
     )

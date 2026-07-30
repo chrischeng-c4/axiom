@@ -512,6 +512,12 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         legacy_migrated = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_legacy_migration_derives_the_split(legacy_migrated)
         lumen_reference.assert_migrated_legacy_index_lists_every_row(legacy_migrated)
+        # The rows arrive carrying `Active WI` values, so the legacy branch is
+        # the one place a fixture can watch tracker state actually be dropped
+        # rather than watch an already-empty field stay empty.
+        lumen_reference.assert_migration_erases_legacy_row_tracker_state(
+            legacy_migrated
+        )
         # The negative half: migration must emit a document the checker accepts,
         # not merely one containing the right substrings.
         legacy_migrated_report = final_json(
@@ -599,6 +605,24 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         fixed_point_text = cap_path.read_text(encoding="utf-8")
         lumen_reference.assert_migration_reaches_a_fixed_point(fixed_point_text)
         lumen_reference.assert_migration_derives_the_split(fixed_point_text)
+
+        # The section branch's half of tracker-state erasure. Every document
+        # above is authored the way `aw wi` leaves one -- `Root WI: -`, `-` in
+        # every work-root cell -- so erasing tracker state on them is a no-op
+        # that no assertion can distinguish from doing nothing. This document
+        # carries live values in both places at once, which is what makes each
+        # of the three assignments separately visible.
+        cap_path.write_text(
+            lumen_reference.LIVE_TRACKER_DOCUMENT, encoding="utf-8"
+        )
+        final_json(run_aw(root, "capability", "migrate", "--project", "demo"))
+        live_tracker_text = cap_path.read_text(encoding="utf-8")
+        lumen_reference.assert_migration_erases_document_stored_tracker_state(
+            live_tracker_text
+        )
+        # And the same derivation the unclassified leg binds still has to hold
+        # on it, so erasure cannot be achieved by discarding the section.
+        lumen_reference.assert_migration_derives_the_split(live_tracker_text)
 
         # Migration fills silence only. A class the author already stated has to
         # survive even where the derivation would have chosen the other one,
@@ -797,6 +821,7 @@ def _lumen_feature_class_snapshot() -> dict[str, Any]:
         "unclassified": unclassified,
         "migrated": migrated_report,
         "fixed_point": fixed_point_text,
+        "live_tracker": live_tracker_text,
         "preserved": preserved_text,
         "verified": verified,
         "partial": partial,
@@ -897,9 +922,11 @@ def verify(case_id: str) -> list[str]:
                 "a legacy capability table is diagnosed as legacy and its rows are attributed wholly to non-core rather than falling out of both classes, which is the branch of that default rule where no capability section parses at all",
                 "aw capability migrate derives the split for the rows of a legacy table through its own branch, placing the authored promises under Core Features and the trait-derived baseline under Non-Core Features, and the migrated document is accepted by a follow-up report with no blocker",
                 "the migrated legacy document indexes every row it turned into a capability section, through the index branch legacy rows reach and the capability sections do not, so a migrated document cannot ship an empty table of contents alongside its sections",
+                "the migrated legacy document carries none of the Active WI values its rows arrived with, asserted through the index column, every rendered Root WI field, and the absence of the raw values from the whole document, so the delivery-provenance-is-one-way rule is bound on the one input branch whose rows actually supply tracker state",
                 "a retired capability is excluded from both per-class counts and from the retained totals alike, so each per-class pair still sums against a total that genuinely excludes something",
                 "aw capability migrate derives the split from an unclassified document, placing every authored promise under Core Features and every trait-derived baseline under Non-Core Features with the field and the containing root agreeing",
                 "aw capability migrate reaches a fixed point on a non-core-first document: the migrated Capability Index and the migrated capability sections list the same capabilities in the same core-then-non-core order, so re-parsing the migrated document cannot render a different index again",
+                "aw capability migrate erases the tracker state a capability section stored, asserted on the one document carrying both a live Root WI field and a live work-root WI at once -- so the field, the work-root cell, and the gap fallback that root_wi_for_capability reads when the field is blank are each separately observable -- while the same document still derives its split and keeps its gate inventory",
                 "aw capability migrate preserves a class the author already declared, even where the derivation from the capability id would have chosen the other class",
                 "aw capability migrate relocating a README-resident legacy table into a project with no CAPABILITIES.md preserves each row's tracker state as its Root WI in both the index column and the section field, derives the same core/non-core split, and leaves the README a forwarding pointer instead of the table",
                 "aw capability migrate relocating a README whose contract is canonical capability sections preserves each capability's own declared Root WI into both the index column and the section field, which is the branch that resolves it through root_wi_for_capability on live tracker state rather than through the legacy row or through format migration's pre-blanked input",
