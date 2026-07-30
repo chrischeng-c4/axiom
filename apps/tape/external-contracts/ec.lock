@@ -2,594 +2,73 @@ version = 1
 project = "tape"
 ir_kind = "ec"
 ec_path = "apps/tape/external-contracts"
-inventory_path = "apps/tape/aw.toml"
-generated_at = "2026-07-20T06:55:15.237543+00:00"
-ir_digest = "sha256:4c24dfb66cba96b9f53ed6a0a2c918900d31dd1caf7b43fb3f389ba1b1ba79ac"
-source_digest = "sha256:c91df22cf98911b5801b5dd205666268dd80cfb8bd967c9fe356d49feb60b7a8"
+inventory_path = "apps/tape/external-contracts/pyproject.toml"
+generated_at = "2026-07-30T11:48:41.255413+00:00"
+ir_digest = "sha256:abdd0788d236cbe8e5551e0f6c1ce42c7b3ed30a73a3376dd333f6b0578dcac8"
+source_digest = "sha256:7aaa568af26a1b4e7d06d0fc53e375bef69b948f70e844d0ca538922a95e68a7"
+tool_contracts = []
 
 [[sources]]
-path = "apps/tape/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:98ed2a7b2ee97ccbac5d5519e42083658593ba2988c44fc7f20c9df24aa18fd5"
+path = "apps/tape/external-contracts/pyproject.toml"
+digest = "sha256:3b4df982350557d5df0bf506660286581fe77a063cb97e67bb537d93ae7beddf"
 
 [[sources]]
-path = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md"
-digest = "sha256:9d135dad54b408fc10a42af172b11a5bd2a4fe74083f417623af5ef3f85db43f"
+path = "apps/tape/external-contracts/src/ec-3052-durability-under-sigkill.py"
+digest = "sha256:e7c045288306e415f0271693a2edec44bfce2cdb70d289600ff8ff100d8b41fa"
 
 [[sources]]
-path = "apps/tape/external-contracts/competitor-feature-parity/behavior/topic-exchange-functional.md"
-digest = "sha256:649a26b5f767b8339a536336d8ea0a712b7fae6de3441a31bf60c43241d820b3"
+path = "apps/tape/external-contracts/src/ec-3052-durable-append-scaling.py"
+digest = "sha256:07a4d89b6ab3f28c01f896acb351b028f3fad1847bdb7f39717a8176ca8b01f5"
 
 [[sources]]
-path = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
-digest = "sha256:29f64f330d7e28a2f5a8c76d8fc9fa37c33fb4b8229db25ffa81cda02214b91b"
+path = "apps/tape/external-contracts/src/harness.py"
+digest = "sha256:95cc3cb61312c9c20e8cba1a3bc71c57e717eaa97b2a288776f69a0825f8b65f"
 
 [[sources]]
-path = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md"
-digest = "sha256:e3decb42b51843f683863bfbcf67dc3980871d92afa0ef5d897b59540661cf68"
+path = "apps/tape/external-contracts/src/runner.py"
+digest = "sha256:37d89b2e02e0ffe1fdf17c10a0da776a3d637796badd581d53e4cfab3606664e"
 
 [[sources]]
-path = "apps/tape/external-contracts/long-running-stability/behavior/devops-render.md"
-digest = "sha256:b97f84a96824281cdec70acd63df3eab4964b0ce662590aec0bacd397a8912a5"
-
-[[sources]]
-path = "apps/tape/external-contracts/long-running-stability/behavior/meta-api.md"
-digest = "sha256:1cab1b31bcdcb09c8555c60fbe58fcf1e3162681e347aea4f28c599344b0f452"
-
-[[sources]]
-path = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md"
-digest = "sha256:5739ae6c01a6bd15b8ee63aa2f37621c0d49529b6ca1a525741eeee4cfb02368"
-
-[[sources]]
-path = "apps/tape/external-contracts/long-running-stability/stability/resilience-survival.md"
-digest = "sha256:90f7bbb850edcd36c014008b7c092aae7b02ea179eb7d1c472852ce8b9c6fc89"
-
-[[sources]]
-path = "apps/tape/external-contracts/security-hardening/security/access-control.md"
-digest = "sha256:f8def488fd53c595d5ea802032639337b1131ac092ef4a9d8a6cd0b572ee83c9"
-
-[[sources]]
-path = "apps/tape/external-contracts/security-hardening/security/auth-bearer-rbac.md"
-digest = "sha256:33659e09d04bc40ebf1218a815be0d2668e83d32da1c7adc291b4a70b94551ac"
-
-[[sources]]
-path = "apps/tape/external-contracts/security-hardening/security/security-evidence.md"
-digest = "sha256:5d226ea1046412248944083a76ac4b276ec7872e0ad20f41b512a584efced587"
-
-[[sources]]
-path = "apps/tape/external-contracts/topology/behavior/shard-topology.md"
-digest = "sha256:c1360683822aa2d4a66604f2a8dd0a8ce10383199c1da727af827c1f6b90d662"
+path = "apps/tape/external-contracts/uv.lock"
+digest = "sha256:8044ab298604ff03a7dabb4460d6c7dea2b8610bb8cc18b973fa3455d25c200d"
 
 [[cases]]
-id = "tape-chainable-output-conformance"
-capability_id = "chainable-output-conformance"
-claim_id = "local-replay-command-next-markers"
-contract_id = "tape-local-command-chainability"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-chainable-output-conformance"
-test_path = "apps/tape/tests/behavior_tape_claim_chainable_output.rs"
-command = "cargo test -p tape --test cli_contract append_replay_checkpoint_roundtrip -- --exact --nocapture"
-required_for_production = true
-assertions = ["Append, replay, and checkpoint commands emit parseable JSON payloads with next-step markers for agent chaining."]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cbeb3b9c744bb62546b899dbb79929838c137025da978b1c9afd8e920a10ee43"
-
-[[cases]]
-id = "tape-cli-interface-generated-clients"
-capability_id = "http2-api-list"
-claim_id = "tape-openapi-generated-client-contract"
-contract_id = "tape-spec-gen-public-api-journey"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-generated-clients"
-test_path = "apps/tape/tests/behavior_tape_cli_interface_generated_clients.rs"
-command = "cargo test -p tape --test spec_generated_clients -- --nocapture"
-required_for_production = true
-assertions = [
-    "The non-zero integration test executes tape spec gen and emits typed TypeScript, Python, and Rust client artifacts from Tape's offline OpenAPI document.",
-    "Every generated language is inspected for Tape's topic append, replay, checkpoint, and administrative backup route scope.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:54bd5a0ad615b39c9fdd581752711bf98d2dd71f2e67481a14dfbfa8eb605d5c"
-
-[[cases]]
-id = "tape-cli-interface-offline-cli"
-capability_id = "cli-interface"
-claim_id = "tape-cli-replay-admin-contract"
-contract_id = "tape-offline-cli-agent-onboarding"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-offline-cli"
-test_path = "apps/tape/tests/behavior_tape_cli_interface_offline_cli.rs"
-command = "cargo test -p tape --test cli_contract --test behavior_tape_claim_cli_interface -- --nocapture"
-required_for_production = true
-assertions = [
-    "tape append, replay, checkpoint, spec, llm, upgrade, and issue parse through the real Tape binary.",
-    "tape spec emits deterministic route, OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.",
-    "tape llm publishes deterministic, offline guidance for topic replay and checkpoint workflows.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f29d358561eb482b990a1647a071db820f25aca0279ed21988f9507e8e5d9035"
-
-[[cases]]
-id = "tape-cli-interface-protocol-transport"
-capability_id = "http2-api-list"
-claim_id = "tape-http1-h2c-listener-contract"
-contract_id = "tape-service-listener-http1-and-h2c"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/cli-interface/behavior/cli-interface.md#tape-cli-interface-protocol-transport"
-test_path = "apps/tape/tests/behavior_tape_cli_interface_protocol_transport.rs"
-command = "cargo test -p tape --test http_transport -- --nocapture"
-required_for_production = true
-assertions = [
-    "Tape serves HTTP/1.1 and h2c prior-knowledge HTTP/2 on the same listener.",
-    "Both protocols reach the same Tape topic replay API and standard operational endpoints.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fa7909127014ff5938d8ff1200ad716dc5966ddcdba8b6f388da986d45011dcf"
-
-[[cases]]
-id = "tape-cli-interface-replay-verbs"
-capability_id = "cli-interface"
-claim_id = "tape-cli-convention-and-replay-verbs"
-contract_id = "tape-cli-command-surface-and-replay-ergonomics"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-cli-interface-replay-verbs"
-test_path = "apps/tape/tests/behavior_tape_claim_cli_interface.rs"
-command = "cargo test -p tape --test cli_contract -- --nocapture"
-required_for_production = true
-assertions = [
-    "The tape binary exposes append, replay, checkpoint, spec, llm, upgrade, and issue commands.",
-    "The local append/replay/checkpoint workflow runs end to end through the CLI.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dd69fd220fce6f2f8b6aac7b3060120d4d6f7a21c29dcc6925808b16b97f2d1f"
-
-[[cases]]
-id = "tape-cli-standard-surface"
-capability_id = "cli-standard-surface"
-claim_id = "shared-llm-upgrade-issue-surface"
-contract_id = "tape-shared-cli-std-surface"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-cli-standard-surface"
-test_path = "apps/tape/tests/behavior_tape_claim_cli_standard_surface.rs"
-command = "cargo test -p tape --test cli_contract help_ships_standard_and_replay_commands -- --exact --nocapture"
-required_for_production = true
-assertions = ["The mandatory llm, upgrade, and issue command groups remain visible on top-level help."]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2c5714b3c0278ceb69320f541fea8859dbcab9eabeac84e50876b37e6d646d0c"
-
-[[cases]]
-id = "tape-competitor-feature-parity-topic-exchange-functional"
-capability_id = "competitor-feature-parity"
-claim_id = "topic-replay-competitor-feature-matrix"
-contract_id = "topic-replay-vs-log-and-exchange-functional-correctness"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/competitor-feature-parity/behavior/topic-exchange-functional.md#tape-competitor-feature-parity-topic-exchange-functional"
-test_path = "apps/tape/tests/behavior_tape_claim_competitor_feature_topic_exchange_functional.rs"
-command = "cargo test -p tape --test competitor_feature_parity -- --nocapture"
-required_for_production = true
-assertions = [
-    "Tape validates ordered append, offset replay, timestamp replay, and durable consumer checkpoints through the local journal core.",
-    "The test consumes a versioned fixture whose every competitor row resolves to pinned official upstream provenance.",
-    "That external oracle classifies Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams as replay-log baselines for feature parity.",
-    "The same oracle classifies RabbitMQ topic exchange as topic-routing/fanout only, not Tape's offset/time replay baseline.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6c24e0b29d624ac3739f3c7471fecdd8087a5365becef0a051cf5d1ef6cbfa71"
-
-[[cases]]
-id = "tape-competitor-performance-claim-closure"
-capability_id = "competitor-performance"
-claim_id = "topic-replay-competitor-performance-baseline"
-contract_id = "topic-replay-performance-local-and-nats-win"
-dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-competitor-performance-claim-closure"
-test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_closure.rs"
-command = "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
-required_for_production = true
-assertions = [
-    "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.",
-    "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
-    "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a62e1de46e96afe6fdca460b1e63edd8e280036ee71247865d6da9906e06aab8"
-
-[[cases]]
-id = "tape-competitor-performance-kafka-replay-win"
-capability_id = "competitor-performance"
-claim_id = "topic-replay-competitor-performance-baseline"
-contract_id = "topic-replay-kafka-local-backlog-win"
-dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
-test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
-command = "cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture"
-required_for_production = true
-assertions = [
-    "The release-only production gate must start apache/kafka:3.9.0 in single-node KRaft mode and fail closed if Docker, the pinned image, or a usable broker port is unavailable.",
-    "Tape and Kafka replay the same 20,000-event, 128-byte-payload durable backlog from the beginning through real h2c and rskafka clients.",
-    "The EC test independently computes kafka_replay_us / max(tape_replay_us, 1) and requires the ratio to be >= 1.5 without trusting Tape's external_replay_win or verify_external_replay_win helpers.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:854d65104ec17f46e54693c2e4a7478201ee229090166f3961a212a8e3995eca"
-
-[[cases]]
-id = "tape-competitor-performance-local-regression-and-calibration-ledger"
-capability_id = "competitor-performance"
-claim_id = "topic-replay-competitor-performance-baseline"
-contract_id = "topic-replay-local-performance-and-peer-calibration"
-dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger"
-test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance.rs"
-command = "cargo test -p tape --test tape_perf_gate -- --nocapture"
-required_for_production = true
-assertions = [
-    "The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.",
-    "The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.",
-    "Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1c1913a3da55ddf2a14221b43844a067840841979ec7667a37238e20e13e8d0c"
-
-[[cases]]
-id = "tape-competitor-performance-nats-jetstream-replay-win"
-capability_id = "competitor-performance"
-claim_id = "topic-replay-competitor-performance-baseline"
-contract_id = "topic-replay-nats-jetstream-local-backlog-win"
-dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-nats-jetstream-replay-win"
-test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs"
-command = "cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
-required_for_production = true
-assertions = [
-    "The release-only gate must start a real local nats-server with JetStream enabled and fail closed when that prerequisite cannot be started.",
-    "Tape and JetStream replay five samples of the same 20,000-event, 128-byte-payload durable backlog from the beginning.",
-    "The EC test independently computes nats_p50_us / max(tape_p50_us, 1) and requires the ratio to be >= 1.5 without trusting Tape's external_replay_win or verify_external_replay_win helpers.",
-    "The report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:133dd4a74a85c284891865838266f6efa4065e33138015886b8e714a19299b13"
-
-[[cases]]
-id = "tape-consumer-checkpoints"
-capability_id = "consumer-checkpoints"
-claim_id = "durable-consumer-cursor-contract"
-contract_id = "tape-durable-consumer-checkpoint"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-consumer-checkpoints"
-test_path = "apps/tape/tests/behavior_tape_claim_consumer_checkpoints.rs"
-command = "cargo test -p tape tests::checkpoints_advance_and_reject_stale_offsets --lib -- --exact --nocapture"
-required_for_production = true
-assertions = [
-    "Tape stores consumer checkpoints.",
-    "Tape rejects stale checkpoint writes.",
-    "Tape rejects checkpoints beyond the topic end offset.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cf9434ca2b5610d9980ec6a617a6711c696a3fe63273a18fc0a961da6f187db1"
-
-[[cases]]
-id = "tape-http2-api-list"
-capability_id = "http2-api-list"
-claim_id = "h2c-openapi-route-list"
-contract_id = "tape-offline-openapi-route-inventory"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-http2-api-list"
-test_path = "apps/tape/tests/behavior_tape_claim_http2_api_list.rs"
-command = "cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact --nocapture"
-required_for_production = true
-assertions = [
-    "The offline route inventory includes topic append, replay, and checkpoint routes.",
-    "The offline route inventory includes the OpenAPI route.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fab80980e713c8b4338a6e39e034ca6e2cae18d5eafec5402c6fd63de4c377b4"
-
-[[cases]]
-id = "tape-long-running-stability-admission"
-capability_id = "long-running-stability"
-claim_id = "tape-write-admission-boundary"
-contract_id = "tape-replay-stability-admission"
-dimension = "stability"
-source_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-admission"
-test_path = "apps/tape/tests/stability_tape_long_running_stability_admission.rs"
-command = "cargo test -p tape --test service_admission -- --nocapture"
-required_for_production = true
-assertions = ["Append requests are classified as write admission while the default router remains explicitly unbounded until a configured shared admission policy is supplied."]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bb714cf5763bfa218d86e01084690e979cea64b7faf46b4f8848093bd30c0f21"
-
-[[cases]]
-id = "tape-long-running-stability-bounded-replay-soak"
-capability_id = "long-running-stability"
-claim_id = "tape-bounded-replay-rss-plateau"
-contract_id = "tape-replay-stability-bounded-soak"
-dimension = "stability"
-source_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-bounded-replay-soak"
-test_path = "apps/tape/tests/stability_tape_long_running_stability_bounded_replay_soak.rs"
-command = "TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh"
-required_for_production = true
-assertions = [
-    "A fixed event window is seeded before measurement, then replay/checkpoint/health traffic succeeds across two steady windows.",
-    "The Tape process RSS drift stays within the configured steady-window budget without treating append-only journal growth as a leak.",
-    "No packet-loss, FD-leak, retention/compaction, or multi-hour production-soak threshold is claimed by this baseline contract.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a9a63a1acd29bc43f45f70cdf4aa51f2ef394d5ea96760dca6785c4385cc285c"
-
-[[cases]]
-id = "tape-long-running-stability-meta-api"
-capability_id = "standard-operational-endpoints"
-claim_id = "tape-meta-api-health-ready-metrics-openapi"
-contract_id = "tape-ops-meta-api-surface"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/long-running-stability/behavior/meta-api.md#tape-long-running-stability-meta-api"
-test_path = "apps/tape/tests/behavior_tape_long_running_stability_meta_api.rs"
-command = "cargo test -p tape --test http_transport --test behavior_tape_claim_standard_operational_endpoints -- --nocapture"
-required_for_production = true
-assertions = [
-    "GET /healthz stays live and auth-exempt; GET /readyz is drain-aware and auth-exempt.",
-    "GET /metrics emits Prometheus text for Tape operations and stays available to the scrape path under required auth.",
-    "GET /openapi.json and GET /docs expose the same Tape API described by tape spec offline output.",
-    "The operator's liveness and readiness probes use /healthz and /readyz respectively.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b100a7109fddfb30fe72509d524548b9b65049c092f6d8a41568309ea1cde553"
-
-[[cases]]
-id = "tape-long-running-stability-operator-render"
-capability_id = "kubernetes-native-deployment"
-claim_id = "tape-crd-reconcile-loop-kube-rs-operator"
-contract_id = "tape-devops-operator-render-golden"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/long-running-stability/behavior/devops-render.md#tape-long-running-stability-operator-render"
-test_path = "apps/tape/tests/behavior_tape_long_running_stability_operator_render.rs"
-command = "cargo test -p tape --features operator --test operator -- --nocapture"
-required_for_production = true
-assertions = [
-    "render(Tape) emits the managed StatefulSet, client and headless Services, PDB, and Tape CRD-owned labels/selectors.",
-    "The rendered workload uses the shared StatefulSet topology projection and carries Tape's journal storage, raft topology, and standard probe configuration.",
-    "Optional token-registry and bootstrap-seed inputs alter only their explicit Tape wiring and do not create a second service topology.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:95ac3ab41c0f1342ca687a0dc0650f95808903438fd133cfefb5be4e2d482134"
-
-[[cases]]
-id = "tape-long-running-stability-raft-survival"
-capability_id = "long-running-stability"
-claim_id = "tape-raft-leader-loss-replay-survival"
-contract_id = "tape-raft-failover-and-snapshot-survival"
-dimension = "stability"
-source_ref = "apps/tape/external-contracts/long-running-stability/stability/resilience-survival.md#tape-long-running-stability-raft-survival"
-test_path = "apps/tape/tests/stability_tape_long_running_stability_raft_survival.rs"
-command = "cargo test -p tape --test raft_cluster --test raft_failover -- --test-threads=1"
-required_for_production = true
-assertions = [
-    "A three-node Tape group elects a leader, replicates ordered journal events, forwards follower writes, and continues after leader loss.",
-    "A new Tape node catches up through snapshot installation without losing committed replay history.",
-    "SIGKILL of the elected leader leaves surviving Tape nodes able to reelect with no committed-event loss.",
-    "This contract proves replay survival; it does not claim search latency, packet-loss p99, or a completed live multi-shard soak.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8c84f2ebea812cd415ccc5daac3be4d1385a1755364c8a78239aae528f6ed392"
-
-[[cases]]
-id = "tape-long-running-stability-replay-restart"
-capability_id = "long-running-stability"
-claim_id = "tape-append-checkpoint-restart-recovery"
-contract_id = "tape-replay-stability-restart-recovery"
-dimension = "stability"
-source_ref = "apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-replay-restart"
-test_path = "apps/tape/tests/stability_tape_long_running_stability_replay_restart.rs"
-command = "cargo test -p tape --test long_running_stability --test raft_persistence -- --nocapture"
-required_for_production = true
-assertions = [
-    "Repeated Raft restart preserves committed append history and consumer checkpoint progress.",
-    "A restarted node recovers its applied floor and accepts new proposals without replaying an already persisted checkpoint.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:19141d2ffaec9a49560eeca50297f80947a024c4bbf4e54388798f4bdd8231d4"
-
-[[cases]]
-id = "tape-meter-performance-gate"
-capability_id = "competitor-performance"
-claim_id = "topic-replay-competitor-performance-baseline"
-contract_id = "tape-meter-throughput-ratchet"
-dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance-gate"
-test_path = "apps/tape/tests/benchmark_tape_meter_performance_gate.rs"
-command = "cd apps/tape && ../../target/debug/vat run meter-perf"
-required_for_production = true
-assertions = [
-    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
-    "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
-    "The gate is executed by meter inside a vat workspace, not by a direct-cargo-only dispatch path.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6af0c6c92f963355964a02165eb739f823f91c1c82cadd3826c54d1309cbf191"
-
-[[cases]]
-id = "tape-pull-subscription-cursor"
-capability_id = "subscription-delivery-resources"
-claim_id = "pull-subscription-cursor-contract"
-contract_id = "tape-bounded-pull-cursor-and-explicit-ack"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-pull-subscription-cursor"
-test_path = "apps/tape/tests/behavior_tape_claim_pull_subscription.rs"
-command = "cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture"
-required_for_production = true
-assertions = [
-    "Bounded pull reads start from the durable topic/name checkpoint and never implicitly advance it.",
-    "Explicit pull ack reuses stale and beyond-end checkpoint rejection.",
-    "No push delivery reliability claim is made by the pull cursor contract.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:be2af35004e41d6fbedbdd3f3f25d65a3bdf9670b93f55e87d45ed51366440fc"
-
-[[cases]]
-id = "tape-security-hardening-access-control"
-capability_id = "security-hardening"
-claim_id = "tape-topic-subscription-authz-boundary"
-contract_id = "tape-topic-security-rbac-and-admission"
-dimension = "security"
-source_ref = "apps/tape/external-contracts/security-hardening/security/access-control.md#tape-security-hardening-access-control"
-test_path = "apps/tape/tests/security_tape_security_hardening_access_control.rs"
-command = "cargo test -p service-auth -- --nocapture && cargo test -p tape --test service_auth --test service_admission -- --nocapture"
-required_for_production = false
-assertions = [
-    "Appending to a topic requires that topic's write grant.",
-    "Replay and checkpoint operations require that topic's read grant and never expose data from an unauthorized topic.",
-    "Authentication failures retain the shared service-auth error shape while operational probes remain tokenless.",
-    "Append is classified as write admission and a configured shared policy returns bounded 429 responses without limiting probes.",
-    "The projected token registry rotates atomically without restarting Tape, while the shared service-auth suite independently verifies credential-free authorization audit events.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:502de486082fbefc72c47fafe89fc6b4b07bacc56205b60460ca9c7d5b64a899"
-
-[[cases]]
-id = "tape-security-hardening-auth-bearer-rbac"
-capability_id = "security-hardening"
-claim_id = "tape-bearer-topic-role-auth"
-contract_id = "tape-bearer-token-topic-rbac"
-dimension = "security"
-source_ref = "apps/tape/external-contracts/security-hardening/security/auth-bearer-rbac.md#tape-security-hardening-auth-bearer-rbac"
-test_path = "apps/tape/tests/security_tape_security_hardening_auth_bearer_rbac.rs"
-command = "cargo test -p tape --test service_auth -- --nocapture"
-required_for_production = false
-assertions = [
-    "When TAPE_AUTH=required, missing and unknown bearer tokens are rejected; a reader cannot append to a topic.",
-    "Topic-scoped write grants authorize append, topic-scoped read grants authorize replay and checkpoint operations, and wildcard administrator grants cover every topic.",
-    "The required-mode registry fails fast for missing, malformed, empty, or unknown auth configuration; TAPE_AUTH=off remains the explicit local tokenless mode.",
-    "Auth rejection uses the shared unauthenticated/forbidden envelope and the standard probe, metrics, OpenAPI, and docs routes remain tokenless.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d46130968b9046f9199fadf8fd69e3d83344c2cce633383cf0ea1ecee8745da9"
-
-[[cases]]
-id = "tape-security-hardening-guard-scan"
-capability_id = "security-hardening"
-claim_id = "guard-static-runtime-evidence"
-contract_id = "tape-guard-security-report"
-dimension = "security"
-source_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-security-hardening-guard-scan"
-test_path = "apps/tape/tests/security_tape_security_hardening_guard_scan.rs"
-command = "cd apps/tape && ../../target/debug/vat run guard-security"
-required_for_production = false
-assertions = [
-    "guard scan over apps/tape reports no untriaged Docker, Kubernetes, or static security findings.",
-    "guard attaches non-zero meter evidence for Tape's service_auth bearer-token, topic-RBAC, and credential-rotation journey.",
-    "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9fe8f33c67f2f6a8619bdef2ff338dd8e3f111efaaf835fcee9caa53deed5da9"
-
-[[cases]]
-id = "tape-standard-operational-endpoints"
-capability_id = "standard-operational-endpoints"
-claim_id = "standard-service-route-inventory"
-contract_id = "tape-standard-service-endpoint-inventory"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-standard-operational-endpoints"
-test_path = "apps/tape/tests/behavior_tape_claim_standard_operational_endpoints.rs"
-command = "cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact --nocapture"
-required_for_production = true
-assertions = ["The offline route inventory includes /healthz, /readyz, /metrics, /openapi.json, and /docs."]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c81a7fef888ad40eb57c816b5d184401061d409822fa884fec7aa21d2a3b70f6"
-
-[[cases]]
-id = "tape-topic-replay-journal"
+id = "ec-3052-durability"
 capability_id = "topic-replay-journal"
-claim_id = "append-and-replay-contract"
-contract_id = "tape-append-replay-local-journal"
+claim_id = "ec-3052"
+contract_id = "ec-3052-durability"
 dimension = "behavior"
-source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-topic-replay-journal"
-test_path = "apps/tape/tests/behavior_tape_claim_topic_replay_journal.rs"
-command = "cargo test -p tape tests::append_and_replay_by_offset_and_time --lib -- --exact --nocapture"
+source_ref = "apps/tape/external-contracts/pyproject.toml#case:ec-3052-durability"
+test_path = "apps/tape/external-contracts/src/ec-3052-durability-under-sigkill.py"
+command = "uv run --frozen --offline --project apps/tape/external-contracts python apps/tape/external-contracts/src/runner.py ec-3052-durability"
 required_for_production = true
 assertions = [
-    "Tape assigns ordered offsets per topic.",
-    "Tape replays by offset and by timestamp.",
+    "Every append that returned 2xx is replayable after the server process is SIGKILLed and restarted from the same data directory; every append the server refused with a non-2xx status is absent; replay invents nothing that was never submitted and applies nothing twice.",
+    "artifact: artifact:tape/ec-3052",
+    "oracle: The verifying client's own in-memory record of what each append returned, partitioned into acknowledged (2xx), refused (non-2xx) and unknown (no response, killed in flight). It is built before the kill and never derived from server state or from on-disk files. The server is a black box reached only over HTTP, and the kill is a real SIGKILL to a real child process -- which is why this cannot be an in-process Rust test. The run is refused as ungradeable unless the kill fired on the acknowledgement threshold rather than on its timeout, so a stalled server cannot report green by never putting the property at risk, and equally unless the refusal probes were in fact refused: the non-2xx half of the promise is driven deliberately rather than hoped for, by submitting appends with a truncated JSON body that the handler rejects at parse time before touching the journal, each body still carrying its own key in its bytes so that recovering one is unambiguous. Without those probes a healthy server refuses nothing and that clause is satisfied by every green run with an empty set; with them the assertion has been shown to go red against a real server that stored a write it had declined. Scope boundary, stated rather than implied: SIGKILL ends the process but not the page cache, so this case establishes crash consistency across process death and not survival of power loss; a build that acknowledged before its barrier is caught by the barrier ceiling in ec-3052-scaling, not here.",
+    "target: rust",
 ]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evidence_digest = "sha256:93c6d73c1c5901c0a727749d8fcecf840b397a71dba7682119d8daad0bb8d21d"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b9fa06a36dc692732a6c90e79082746bd7a6ac5017ba77dd2e99e98b56999c14"
+digest = "sha256:910d1cd445778637b1e0a2ae13ff552017615b28c6259e787699739edb1d008d"
 
 [[cases]]
-id = "tape-topology-existing-backup-seed"
-capability_id = "primary-replicas"
-claim_id = "tape-external-backup-disaster-recovery-seed"
-contract_id = "tape-topology-existing-backup-seed"
-dimension = "behavior"
-source_ref = "apps/tape/external-contracts/topology/behavior/shard-topology.md#tape-topology-existing-backup-seed"
-test_path = "apps/tape/tests/behavior_tape_topology_existing_backup_seed.rs"
-command = "cargo test -p tape --test bootstrap -- --nocapture"
-required_for_production = true
-assertions = [
-    "Tape's empty-PVC bootstrap seed restores a consistent journal snapshot before normal Raft catch-up.",
-    "The backup seed is cold recovery evidence and does not replace live Raft replication.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2e50bc2c12b355fd82d955cf43e2a5ec85c83ddad7764f35385c6833fbd7d498"
-
-[[cases]]
-id = "tape-topology-existing-raft-replica-sync"
-capability_id = "primary-replicas"
-claim_id = "tape-raft-log-replica-sync-existing-pvc"
-contract_id = "tape-topology-existing-raft-replica-sync"
-dimension = "stability"
-source_ref = "apps/tape/external-contracts/topology/behavior/shard-topology.md#tape-topology-existing-raft-replica-sync"
-test_path = "apps/tape/tests/stability_tape_topology_existing_raft_replica_sync.rs"
-command = "cargo test -p tape --test raft_cluster --test raft_failover --test raft_persistence -- --test-threads=1"
-required_for_production = true
-assertions = [
-    "A Tape Raft group elects, replicates committed journal appends, forwards follower appends to its leader, and retains the durable applied floor across restart.",
-    "A fresh Tape node catches up by InstallSnapshot and a killed leader is replaced by a surviving elected group without committed-event loss.",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:028a9c9f0638fd208a8f060fa998ff4453a686e6f6b5ed9b4a8260ac0efa30f1"
-
-[[tool_contracts]]
-id = "tape-guard-security"
-tool = "guard"
-dimension = "security"
-source_ref = "apps/tape/external-contracts/security-hardening/security/security-evidence.md#tape-guard-security"
-manifest_path = "apps/tape/guard-tape-security.toml"
-command = "cd apps/tape && ../../target/debug/vat run guard-security"
-content_digest = "sha256:922264b30cda807de231f2f3d2f94232ae3508b731283dd0a8ea2ad5ec95bd18"
-digest = "sha256:b7534a2e8da44fa2a8a01ae464457088cd6ddc05931d8d40148705a418509ebb"
-
-[[tool_contracts]]
-id = "tape-meter-performance"
-tool = "meter"
+id = "ec-3052-scaling"
+capability_id = "topic-replay-journal"
+claim_id = "ec-3052"
+contract_id = "ec-3052-scaling"
 dimension = "efficiency"
-source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md#tape-meter-performance"
-manifest_path = "apps/tape/meter-tape-performance.toml"
-command = "cd apps/tape && ../../target/debug/vat run meter-perf"
-content_digest = "sha256:f5479a59ab66bf97873041dc86ace84b890fc557b6ccfa680ce823cf35748f95"
-digest = "sha256:14dc63269076053de61d79ec0b3dd5156de76429067a735208c3e82611bcbd49"
+source_ref = "apps/tape/external-contracts/pyproject.toml#case:ec-3052-scaling"
+test_path = "apps/tape/external-contracts/src/ec-3052-durable-append-scaling.py"
+command = "uv run --frozen --offline --project apps/tape/external-contracts python apps/tape/external-contracts/src/runner.py ec-3052-scaling"
+required_for_production = true
+assertions = [
+    "Durable append throughput rises with connection count: 16 concurrent connections commit at least 4x the events per second of 1, measured on two independent servers with separate empty data directories; the 1-connection level stays above a floor derived from the measured durability barrier so the ratio cannot be won by starving the lone writer; and neither level exceeds the ceiling that barrier arithmetic allows, so the ratio cannot be won by not being durable at all.",
+    "artifact: artifact:tape/ec-3052",
+    "oracle: Wall-clock rate measured by an external HTTP client across two concurrency levels, expressed as the ratio between them and bounded on both sides by a durability barrier measured on the same host in the same run. The ceiling is arithmetic rather than a tuning choice: with N closed-loop connections at most N records are in flight, so at most N can share one barrier, and a build that acknowledges without waiting for a barrier exceeds N * barrier_hz by orders of magnitude. That ceiling is what covers the one thing the kill cannot: each level is SIGKILLed and counted from a fresh process, which proves the writes left the process but not that they reached the medium, because the page cache outlives SIGKILL. No absolute throughput is asserted, because absolutes do not transfer off this hardware; every bound here is expressed against the in-run barrier measurement.",
+    "threshold: scaled_ops_per_s / baseline_ops_per_s >= 4.0, where baseline is 1 connection and scaled is 16, each measured on its own fresh server and empty data directory; and baseline_ops_per_s >= 0.25 * barrier_hz; and ops_per_s <= 3.0 * connections * barrier_hz at both levels. barrier_hz is the median rate of the durability barrier Rust uses on this platform (F_FULLFSYNC on macOS, fsync elsewhere), measured in the same run on the same host.",
+    "target: rust",
+]
+evidence_digest = "sha256:8d92d141ae9a424d3e3dbea769170085e74ca3ec8ee946bf0c5cad5875c48645"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:71c8557532fa20282b7d13b5543dcb201bc0be39bf80769dd6b57bc6b48940cc"
