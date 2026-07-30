@@ -972,14 +972,22 @@ def assert_migrated_legacy_index_lists_every_row(migrated: str) -> None:
     # contract while the two paths disagree, which is filed separately. So the
     # assertion stays off -- for the correct reason this time.
     #
-    # The standing lesson, recorded because it has now cost a round in each
-    # direction: "this rule cannot be observed" is a claim about the inputs the
-    # fixture drives, never about the rule. Enumerate the callers before
-    # excusing a mutation as equivalent -- an unexercised second caller looks
-    # exactly like an unobservable rule. And enumerate them *precisely*: the two
-    # migrate paths render tracker state through different functions, so
-    # discovering that one path preserves the value does not make the other
-    # path's renderer observable.
+    # The standing lesson, recorded because it has now cost three rounds: "this
+    # rule cannot be observed" is a claim about the inputs the fixture drives,
+    # never about the rule. Enumerate the callers before excusing a mutation as
+    # equivalent -- an unexercised caller looks exactly like an unobservable
+    # rule.
+    #
+    # Each successive revision of this comment narrowed the excuse and each was
+    # still too broad. "No `#1` survives anywhere" was refuted by the relocation
+    # path. "The two migrate paths render through different functions" was
+    # refuted too: they render through the *same* function,
+    # `render_capability_registry`, which branches on whether the document parsed
+    # into capability sections -- and only one of those branches was being
+    # driven. The mutation was surviving because one input shape was missing, not
+    # because any rule was unreachable. When a mutation cannot be killed, the
+    # first hypothesis should be a missing input, and "unobservable" should be
+    # the conclusion of an exhausted search rather than its premise.
 
 
 def assert_migration_preserves_declared_class(migrated: str) -> None:
@@ -1170,14 +1178,17 @@ def assert_readme_relocation_preserves_tracker_state(readme: str, migrated: str)
     survives into both the index column and the section field, which are rendered
     by separate passes, so blanking either one is caught.
 
-    A precision worth keeping, because getting it wrong cost a review round in each
-    direction. The renderer this leg binds is the legacy one that reads
-    `row.active_wi`. It is *not* `root_wi_for_capability`, which serves documents
-    that parsed into capability sections; relocation never calls that function.
-    `root_wi_for_capability` is unobservable through `aw capability` in this
-    fixture for the reason above -- by the time it runs, its input has already been
-    blanked -- and its coverage question belongs to whichever case owns the surface
-    that still feeds it live tracker state.
+    The renderer this leg binds is the legacy one that reads `row.active_wi`. It
+    is *not* `root_wi_for_capability`: `render_capability_registry` branches on
+    `document.capabilities.is_empty()`, and a legacy table parses to zero
+    capability sections, so this input takes the legacy branch. An earlier
+    revision turned that observation into "relocation never calls that function",
+    which is false -- relocation calls it for every README that parses into
+    capability *sections*, and renders it into both the index column and the
+    section field on live, unblanked tracker state. The correct statement is
+    narrower and is about the input, not the path: *this document shape* cannot
+    reach it. `assert_relocation_preserves_section_tracker_state` drives the shape
+    that does.
 
     Tracker state is asserted as *preserved*, not as any particular literal: the
     expectation is derived from `_LEGACY_ROWS`, which is the input this leg
@@ -1228,6 +1239,354 @@ def assert_readme_relocation_preserves_tracker_state(readme: str, migrated: str)
     assert README_CONTRACT_POINTER in readme, readme
     assert "CAPABILITIES.md" in readme, readme
     assert "| Capability | Current State |" not in readme, readme
+
+
+#: Per-capability tracker state for the section-shaped relocation fixtures. The
+#: values are distinct so a renderer that emitted one capability's `Root WI` for
+#: every row could not satisfy the assertions drawn from them.
+_ALL_MEMBERS = _CORE_MEMBERS + _NON_CORE_MEMBERS
+SECTION_RELOCATION_WI = {
+    member[0]: f"#{10 + index}" for index, member in enumerate(_ALL_MEMBERS)
+}
+assert len(set(SECTION_RELOCATION_WI.values())) == len(_ALL_MEMBERS)
+
+
+def _section_readme(
+    members: tuple[tuple[Any, ...], ...],
+    classes: tuple[str | None, ...],
+    brief: str,
+) -> str:
+    """A README whose capability contract is canonical `###` sections.
+
+    This is the relocation input shape the legacy-table fixture cannot produce.
+    A legacy table parses to zero capability sections, so it takes
+    `render_capability_registry`'s legacy branch; a README shaped like this
+    parses into `document.capabilities` and takes the other branch, which is
+    where the section renderers and `root_wi_for_capability` live.
+
+    Each capability carries its own `Root WI`, overwriting the neutral `-` the
+    section builder emits, so relocation has real tracker state to preserve or
+    lose.
+    """
+    body = ""
+    for member, declared in zip(members, classes):
+        body += _section(member, declared, "###").replace(
+            "Root WI: -", f"Root WI: {SECTION_RELOCATION_WI[member[0]]}"
+        )
+    return f"""# Lumen
+
+## Brief
+
+{brief}
+
+## Capabilities
+
+{body}
+## Contributing
+
+See CONTRIBUTING.md.
+"""
+
+
+#: Relocation input: every capability a section, none classified. Migration has
+#: to derive every class *and* render every section itself.
+UNCLASSIFIED_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    (None,) * len(_ALL_MEMBERS),
+    "Lumen README-resident capability contract, nothing classified.",
+)
+
+#: Relocation input: the domain promises declare `core`, the baselines declare
+#: nothing. Classified capabilities render under their root one level deeper;
+#: unclassified ones keep their top-level position. Both halves render in the
+#: same pass, so a renderer that dropped either would still produce a document.
+PARTIALLY_CLASSIFIED_SECTION_README = _section_readme(
+    _ALL_MEMBERS,
+    ("core",) * len(_CORE_MEMBERS) + (None,) * len(_NON_CORE_MEMBERS),
+    "Lumen README-resident capability contract, domain promises classified.",
+)
+
+#: Relocation input where one canonical class has no members at all. The
+#: contract is that migration still emits *both* roots: an absent root is a
+#: structural defect its own checker reports, so emitting only the populated one
+#: would produce a document the product rejects.
+ALL_CORE_SECTION_README = _section_readme(
+    _CORE_MEMBERS,
+    ("core",) * len(_CORE_MEMBERS),
+    "Lumen README-resident capability contract, every capability core.",
+)
+
+#: The titles each relocation input is required to carry through.
+UNCLASSIFIED_SECTION_TITLES = tuple(member[0] for member in _ALL_MEMBERS)
+
+
+def _capability_section_body(migrated: str, title: str) -> str:
+    """One capability section's body, at whichever heading level it rendered.
+
+    Classified capabilities render at `####` under a feature root and
+    unclassified ones at `###` at top level, so a level-fixed reader would
+    silently skip half of a partially classified document -- and silently pass.
+    """
+    for level in ("#### ", "### "):
+        marker = f"{level}{title}\n"
+        start = migrated.find(marker)
+        if start == -1:
+            continue
+        rest = migrated[start + len(marker) :]
+        end = rest.find("\n### ")
+        return rest if end == -1 else rest[:end]
+    raise AssertionError(
+        f"no capability section rendered for {title!r}; document was:\n{migrated}"
+    )
+
+
+def _rendered_capability_titles(migrated: str) -> list[str]:
+    """Every capability section title, at either heading level, in order.
+
+    The feature roots are headings at the same level as an unclassified
+    capability section, so they are excluded by name rather than by level.
+    """
+    roots = {"Capability Index", "Core Features", "Non-Core Features"}
+    titles = []
+    for raw in migrated.splitlines():
+        line = raw.strip()
+        for level in ("#### ", "### "):
+            if line.startswith(level):
+                title = line[len(level) :].strip()
+                if title not in roots:
+                    titles.append(title)
+                break
+    return titles
+
+
+def assert_relocation_preserves_section_tracker_state(migrated: str) -> None:
+    """Relocating a section-shaped README preserves each capability's `Root WI`.
+
+    This is the caller of `root_wi_for_capability` that `aw capability migrate`
+    actually reaches. `render_relocated_capability_document` passes the *raw*
+    parsed document to `render_capability_registry`, so unlike format migration
+    -- which blanks document-stored tracker state before rendering -- the value
+    arrives live and is rendered twice, into the index column and into the
+    section field, by two separate passes.
+
+    Asserted per capability against the value that capability declared, so a
+    renderer emitting one capability's tracker state for all of them, or a
+    constant, fails. As on the legacy leg this asserts only that the path does
+    observably what it does; whether preserving or erasing is the right contract
+    is a disagreement between the two entry points, filed separately rather than
+    settled by this fixture.
+    """
+    rows = _index_rows_parsed(migrated)
+    assert [row[0] for row in rows] == list(UNCLASSIFIED_SECTION_TITLES), (
+        f"the relocated index must list every capability in document order, "
+        f"got {[row[0] for row in rows]}"
+    )
+    for row in rows:
+        expected = SECTION_RELOCATION_WI[row[0]]
+        assert row[1] == expected, (
+            f"relocated index row {row[0]!r} lost its tracker state; "
+            f"expected {expected!r}, got {row[1]!r}"
+        )
+    for title, wi in SECTION_RELOCATION_WI.items():
+        body = _capability_section_body(migrated, title)
+        assert f"Root WI: {wi}\n" in body, (
+            f"relocated section {title!r} lost its tracker state; "
+            f"expected 'Root WI: {wi}', section was:\n{body}"
+        )
+
+
+def assert_relocation_renders_every_capability_section(
+    migrated: str, report: dict[str, Any]
+) -> None:
+    """Relocation emits a section for every capability, not just an index.
+
+    The index and the capability sections are rendered by separate passes, and
+    the pass that renders *unclassified* capabilities is a separate loop again.
+    A relocation that dropped the sections would still emit a complete-looking
+    Capability Index, so the resulting document reads as populated while
+    carrying no contract at all -- and the follow-up report parses zero
+    capabilities.
+
+    Asserted through both the rendered document and a re-report of it, because
+    either alone is satisfiable: the text could contain the headings while the
+    document fails to parse, and the report could be right about a document this
+    fixture never actually read back.
+    """
+    assert _rendered_capability_titles(migrated) == list(UNCLASSIFIED_SECTION_TITLES), (
+        f"relocation must render one section per capability, got "
+        f"{_rendered_capability_titles(migrated)}"
+    )
+    parsed = [item["id"] for item in report["capabilities"]]
+    expected_ids = [member[1] for member in _ALL_MEMBERS]
+    assert sorted(parsed) == sorted(expected_ids), parsed
+    assert report["capability_count"] == len(expected_ids), report
+    assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_relocation_emits_both_roots_when_one_is_empty(
+    migrated: str, report: dict[str, Any]
+) -> None:
+    """Both canonical roots survive relocation even when one has no members.
+
+    Once any capability is classified the document is committed to the two-root
+    shape, and a document missing a root is rejected by the checker. So the
+    contract is not "emit the roots that have members" but "emit both", and the
+    only input that can tell those apart is one where a class is empty.
+
+    The re-report is what makes this more than a substring check: it asserts the
+    emitted document is one the product itself accepts.
+    """
+    for root in ("### Core Features", "### Non-Core Features"):
+        assert root in migrated, (
+            f"relocation dropped {root!r} on a document with no members in that "
+            f"class; migrated document was:\n{migrated}"
+        )
+    assert migrated.index("### Core Features") < migrated.index("### Non-Core Features")
+    assert report["core_capability_count"] == len(_CORE_MEMBERS), report
+    assert report["non_core_capability_count"] == 0, report
+    assert document_blockers(report) == [], report["blockers"]
+
+
+def assert_next_coverage_matches_the_report(
+    coverage: dict[str, Any], report: dict[str, Any]
+) -> None:
+    """`aw capability next` renders the same split its report computed.
+
+    A third rendering of the split, built by its own JSON literal rather than by
+    the report serializer, so it can zero or transpose a field while every
+    report-reading leg in this fixture stays green -- the same argument the
+    `--human` leg makes, applied to the surface it also applies to.
+
+    Honest limitation, stated because it bounds what this leg proves: `aw
+    capability next` has no `--verify`, so the four verified operands are zero on
+    both sides and their equality here is real but not falsifiable. The four
+    populated operands carry the non-vacuity, and are guarded as distinct so a
+    transposition among them cannot pass.
+    """
+    populated = (
+        "core_capability_count",
+        "non_core_capability_count",
+        "core_claim_count",
+        "non_core_claim_count",
+    )
+    verified = (
+        "core_verified_count",
+        "non_core_verified_count",
+        "core_verified_claim_count",
+        "non_core_verified_claim_count",
+    )
+    for field in populated + verified:
+        assert coverage[field] == report[field], (
+            f"`aw capability next` coverage disagrees with the report on "
+            f"{field}: {coverage[field]!r} vs {report[field]!r}"
+        )
+    for field in populated:
+        assert coverage[field] > 0, (
+            f"{field} must be non-zero here, or its equality is 0 == 0 and a "
+            f"coverage summary that zeroed it would pass"
+        )
+    assert coverage["core_capability_count"] != coverage["non_core_capability_count"]
+    assert coverage["core_claim_count"] != coverage["non_core_claim_count"]
+    # And the pairs still exhaust the totals *this surface* reports, so the split
+    # cannot be right per field while the summary disagrees with itself.
+    assert (
+        coverage["core_capability_count"] + coverage["non_core_capability_count"]
+        == coverage["capability_count"]
+    ), coverage
+    assert (
+        coverage["core_claim_count"] + coverage["non_core_claim_count"]
+        == coverage["claim_count"]
+    ), coverage
+
+
+def baseline_placed_core_document(cap_id: str) -> str:
+    """Falsifier: a baseline nested under `Core Features` declaring no class.
+
+    `baseline_declared_core_document` states `Feature Class: core`, so it is
+    rejected on the field alone. The effective class is resolved as the declared
+    field *or else* the containing root, and this document exercises the second
+    half: nothing is declared, and the placement is what makes it core.
+    """
+    document = baseline_declared_core_document(cap_id)
+    marker = f"ID: {cap_id}\nType: Service\nFeature Class: core\n"
+    assert document.count(marker) == 1, (
+        f"expected exactly one declared-core section for {cap_id}; "
+        f"found {document.count(marker)}"
+    )
+    return document.replace(marker, f"ID: {cap_id}\nType: Service\n")
+
+
+def assert_baseline_placed_core_is_rejected(
+    report: dict[str, Any], cap_id: str
+) -> None:
+    """Placement alone is enough to classify, and enough to be rejected for it.
+
+    The capability declares no class, so the report attributes it to the
+    non-core default -- and it is still rejected, because the rule reads the
+    containing root when the field is silent. Both halves are asserted: an
+    implementation that only ever read the field would leave `blockers` empty
+    here while every other baseline leg in this fixture still passed.
+    """
+    assert document_blockers(report) == [
+        f"trait-derived baseline capability `{cap_id}` is classified `core`; "
+        f"archetype baselines are always `non_core` and belong under "
+        f"`Non-Core Features`"
+    ], report["blockers"]
+    by_id = {item["id"]: item for item in report["capabilities"]}
+    assert by_id[cap_id].get("feature_class") is None, by_id[cap_id]
+
+
+#: The `Feature Class` spellings a human writes, each mapped to the class it must
+#: resolve to. Backticks, hyphens, camel case and case folding are all accepted
+#: by the parser; this pins that acceptance as product behavior rather than
+#: leaving it to a colocated unit test.
+HUMAN_CLASS_SPELLINGS = (
+    ("`Core`", "core"),
+    ("non-core", "non_core"),
+    ("NonCore", "non_core"),
+    ("Non-Core", "non_core"),
+    ("noncore", "non_core"),
+)
+
+
+def human_spelling_document() -> str:
+    """The reference document with every class restated the way a human types it.
+
+    Each declaration is replaced with a *different* accepted spelling, so the
+    document exercises the whole accepting set in one report rather than one
+    representative. Core stays core and non-core stays non-core, so the
+    attribution assertion is the same one the canonical document satisfies -- a
+    parser that resolved an accepted spelling to the wrong class, or refused it,
+    fails here and nowhere else.
+    """
+    document = REFERENCE_DOCUMENT
+    core_spelling = HUMAN_CLASS_SPELLINGS[0][0]
+    assert document.count("Feature Class: core") == len(CORE_IDS)
+    document = document.replace("Feature Class: core", f"Feature Class: {core_spelling}")
+    non_core_spellings = [
+        spelling for spelling, expected in HUMAN_CLASS_SPELLINGS if expected == "non_core"
+    ]
+    assert document.count("Feature Class: non_core") == len(NON_CORE_IDS)
+    assert len(non_core_spellings) == len(NON_CORE_IDS), non_core_spellings
+    for spelling in non_core_spellings:
+        document = document.replace(
+            "Feature Class: non_core", f"Feature Class: {spelling}", 1
+        )
+    assert "Feature Class: core\n" not in document
+    assert "Feature Class: non_core\n" not in document
+    return document
+
+
+def assert_human_class_spellings_are_accepted(report: dict[str, Any]) -> None:
+    """Every accepted spelling resolves to its canonical class with no blocker.
+
+    Reusing the canonical attribution assertion is the point: the document says
+    the same thing as `REFERENCE_DOCUMENT` in different words, so it must report
+    identically, counts included. Refusing a spelling would fail the command
+    outright, and resolving one to the wrong class would contradict the
+    containing root and raise a blocker -- neither can pass quietly.
+    """
+    assert_feature_class_attribution(report)
 
 
 def assert_verified_split_is_non_degenerate(report: dict[str, Any]) -> None:
