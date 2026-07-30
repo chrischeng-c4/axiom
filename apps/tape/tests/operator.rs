@@ -197,7 +197,11 @@ fn render_emits_expected_child_objects() {
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
-    assert!(container["resources"].get("limits").is_none());
+    // #3051: memory limit is present and equals the request for attributed OOMKill.
+    assert!(container["resources"]["limits"].is_object());
+    assert_eq!(container["resources"]["limits"]["memory"], "4Gi");
+    // No CPU limit; Burstable QoS only bounds memory.
+    assert!(container["resources"]["limits"].get("cpu").is_none());
     assert_eq!(sts["spec"]["revisionHistoryLimit"], 5);
     assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert_eq!(
@@ -300,9 +304,7 @@ fn token_registry_secret_wiring_is_opt_in() {
         "the serving process's TAPE_AUTH keeps taking `off`, not `disabled`"
     );
     assert_eq!(AuthMode::Off.as_env(), "off");
-    assert!(!env
-        .iter()
-        .any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"));
+    assert!(!env.iter().any(|(n, _)| *n == "TAPE_TOKEN_REGISTRY_FILE"));
 
     // auth: required + tokensSecret: env + read-only Secret mount.
     let mut secured = spec(3);
@@ -851,13 +853,18 @@ fn prometheus_rule_exprs_keep_the_metrics_and_thresholds() {
     }
 
     /// Every literal a comparison operator is tested against.
+    ///
+    /// Fractional literals count (#3051): `TapeMemoryHeadroomLow` fires at
+    /// `> 0.85`, and stopping at the decimal point would reduce it to `0` —
+    /// the same value as its divide-by-zero guard — so the two files could
+    /// disagree on the actual headroom budget and this guard would pass.
     fn thresholds(expr: &str) -> Vec<String> {
         expr.split('>')
             .skip(1)
             .map(|tail| {
                 tail.trim_start()
                     .chars()
-                    .take_while(char::is_ascii_digit)
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
                     .collect::<String>()
             })
             .filter(|n| !n.is_empty())
@@ -925,6 +932,43 @@ fn prometheus_rule_exprs_keep_the_metrics_and_thresholds() {
     assert!(
         static_exprs["TapePodRestarting"].contains("container=\"tape\""),
         "the static component's container name changed — recheck the substitution"
+    );
+
+    // #3051: Memory headroom alert uses cAdvisor series that exist in both the
+    // operator-rendered and static paths, but they come from different scrapers.
+    // The operator path labels with `app.kubernetes.io/*` and container="server",
+    // the static path labels with `app="tape",role="server"` and container="tape".
+    let rendered_memory = &rendered_exprs
+        .get("TapeMemoryHeadroomLow")
+        .expect("operator must render TapeMemoryHeadroomLow");
+    let static_memory = &static_exprs
+        .get("TapeMemoryHeadroomLow")
+        .expect("static component must define TapeMemoryHeadroomLow");
+
+    // Both use the same cAdvisor metrics: working set and spec limit.
+    for metric in [
+        "container_memory_working_set_bytes",
+        "container_spec_memory_limit_bytes",
+    ] {
+        assert!(
+            rendered_memory.contains(metric),
+            "rendered TapeMemoryHeadroomLow must read metric {metric}"
+        );
+        assert!(
+            static_memory.contains(metric),
+            "static TapeMemoryHeadroomLow must read metric {metric}"
+        );
+    }
+
+    // Container name differs as expected: operator uses component name "server",
+    // static file uses the direct-install name "tape".
+    assert!(
+        rendered_memory.contains("container=\"server\""),
+        "operator TapeMemoryHeadroomLow must filter container=server: {rendered_memory}"
+    );
+    assert!(
+        static_memory.contains("container=\"tape\""),
+        "static TapeMemoryHeadroomLow must filter container=tape"
     );
 }
 

@@ -56,6 +56,9 @@ patches:
         path: /spec/template/spec/containers/0/resources/requests/memory
         value: "4Gi"
       - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "4Gi"
+      - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: "100Gi"
 # HANDWRITE-END
